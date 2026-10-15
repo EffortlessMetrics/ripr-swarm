@@ -136,6 +136,10 @@ struct Fixture(PathBuf);
 
 impl Fixture {
     fn create() -> Result<Self, String> {
+        Self::with_files(FILES)
+    }
+
+    fn with_files(files: &[(&str, &str)]) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let fixture = Self(std::env::temp_dir().join(format!(
             "ripr-private-inherent-receiver-{}-{}",
@@ -143,7 +147,7 @@ impl Fixture {
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         )));
         std::fs::create_dir(&fixture.0).map_err(|error| error.to_string())?;
-        for (relative, text) in FILES {
+        for (relative, text) in files {
             let path = fixture.0.join(relative);
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -453,6 +457,100 @@ fn module_assertion_shadow_and_standard_positive_have_consistent_diff_relations(
                 .find(|test| test.name == "ignored_operand")
                 .ok_or("missing retained macro control")?;
             assert_eq!(related.relation_reason, Some(expected));
+        }
+    }
+    Ok(())
+}
+
+/// Exercise the actual diff producer on the same native subjects as the
+/// full/compact repository matrix. Helper-only reach remains repository-specific.
+#[test]
+fn executable_owner_identity_boundaries_agree_in_diff() -> Result<(), String> {
+    #[derive(serde::Deserialize)]
+    struct Case {
+        path: String,
+        name: String,
+        relation: Option<RelationReason>,
+    }
+    let cases: Vec<Case> = serde_json::from_str(include_str!(
+        "../../../fixtures/inherent_receiver_free_helper_identity/cases.json"
+    ))
+    .map_err(|error| error.to_string())?;
+    assert_eq!(cases.len(), 19);
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    for case in cases {
+        let source = std::fs::read_to_string(fixtures.join(&case.path))
+            .map_err(|error| error.to_string())?;
+        let fixture = Fixture::with_files(&[
+            (
+                "Cargo.toml",
+                include_str!(
+                    "../../../fixtures/inherent_receiver_free_helper_identity/input/Cargo.toml"
+                ),
+            ),
+            ("src/lib.rs", &source),
+            (
+                "diff.patch",
+                include_str!("../../../fixtures/inherent_receiver_free_helper_identity/diff.patch"),
+            ),
+        ])?;
+        let output = check_workspace(CheckInput {
+            root: fixture.0.clone(),
+            diff_file: Some(fixture.0.join("diff.patch")),
+            mode: Mode::Ready,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        assert_eq!(
+            output.findings.len(),
+            2,
+            "{}: retain both changed-owner probes",
+            case.path
+        );
+        for finding in &output.findings {
+            let rows: Vec<_> = finding
+                .related_tests
+                .iter()
+                .filter(|test| test.name == case.name)
+                .collect();
+            // Diff reports retain oracle rows: one test may have both an
+            // inner assertion and an outer assertion. Check every row rather
+            // than silently collapsing them by test name.
+            assert!(!rows.is_empty(), "{}: retain the named subject", case.path);
+            assert_eq!(
+                rows.len(),
+                finding.related_tests.len(),
+                "{}: no substitute subjects",
+                case.path
+            );
+            for row in rows {
+                if case.relation == Some(RelationReason::DirectOwnerCall) {
+                    assert_eq!(
+                        row.relation_reason,
+                        Some(RelationReason::DirectOwnerCall),
+                        "{}",
+                        case.path
+                    );
+                    assert_eq!(
+                        row.relation_confidence,
+                        Some(RelationConfidence::High),
+                        "{}",
+                        case.path
+                    );
+                } else {
+                    assert!(
+                        !matches!(
+                            row.relation_reason,
+                            Some(RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall)
+                        ),
+                        "{}: {:?}",
+                        case.path,
+                        row
+                    );
+                    assert_ne!(finding.class, ExposureClass::Exposed, "{}", case.path);
+                }
+            }
         }
     }
     Ok(())

@@ -3195,3 +3195,30 @@ real object/null calls and the genuine-helper relation. The
 `inherent_receiver_operand_item_shadow` honesty fixture pins a retained weak
 relation independently of its golden output. This establishes a refusal boundary,
 not general Rust type or value-flow resolution.
+
+
+### Owner evidence requires execution and declaration identity (#8004)
+
+A scope-aware nominal receiver check is only one part of owner admission.
+Repository direct calls must reuse the complete refusal used by diff and helper
+last hops; otherwise a module-local type with the right terminal name can regain
+high credit. Audit every consumer when extending a shared admission boundary.
+
+Descendant syntax is not execution: an uncalled nested function, closure or
+async body can contain a perfect assertion without running the owner. Keep the
+outer executable walk separate from declared/deferred bodies and use that same
+walk for helper entry. A helper-name graph supplies candidates, not identities:
+`foreign::read_as_object()` cannot borrow the root helper's real owner call.
+Resolve the specific free call in each hop's own module/import scope, retaining
+conservative refusal for unknown declarations. Paired native controls distinguish
+runtime discrimination from static support; invoking a nested function can kill
+the mutant while its static route remains unresolved.
+
+Boundary tests must exercise the candidate route as well as the final gate.
+The initial one-line qualified `bridge` control was already absent from the
+pre-repair candidate graph. The retained multiline bare-call pair uses the
+existing route, then changes the intermediate function's actual import binding.
+Its negative must refuse owner reach and its positive must retain it. Keep such
+setup failures and raw original inputs rather than counting a vacuous negative
+as identity proof. Repeated parsing and discarded per-call syntax caches remain
+performance work under #8005, independently of semantic test results.

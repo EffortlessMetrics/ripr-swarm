@@ -1,0 +1,116 @@
+[
+  {
+    "path": "inherent_receiver_module_type_shadow/input/src/lib.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "inherent_receiver_dormant_body/input/src/lib.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "inherent_receiver_free_helper_identity/input/src/lib.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "inherent_receiver_module_type_shadow/controls/genuine-owner.rs",
+    "name": "actual",
+    "relation": "direct_owner_call",
+    "native_reaches": true
+  },
+  {
+    "path": "inherent_receiver_dormant_body/controls/dormant-plain.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "inherent_receiver_dormant_body/controls/dormant-closure.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "inherent_receiver_dormant_body/controls/dormant-async.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "inherent_receiver_dormant_body/controls/outer-call.rs",
+    "name": "actual",
+    "relation": "direct_owner_call",
+    "native_reaches": true
+  },
+  {
+    "path": "inherent_receiver_dormant_body/controls/nested-invoked.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": true
+  },
+  {
+    "path": "inherent_receiver_free_helper_identity/controls/genuine-root.rs",
+    "name": "actual",
+    "relation": "helper_owner_call",
+    "native_reaches": true
+  },
+  {
+    "path": "inherent_receiver_free_helper_identity/controls/unique-foreign-value.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "inherent_receiver_free_helper_identity/controls/imported-foreign.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "inherent_receiver_free_helper_identity/controls/imported-root.rs",
+    "name": "actual",
+    "relation": "helper_owner_call",
+    "native_reaches": true
+  },
+  {
+    "path": "inherent_receiver_free_helper_identity/controls/intermediate-foreign.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "inherent_receiver_free_helper_identity/controls/intermediate-root.rs",
+    "name": "actual",
+    "relation": "helper_owner_call",
+    "native_reaches": true
+  },
+  {
+    "path": "inherent_receiver_free_helper_identity/controls/same-line-foreign.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "inherent_receiver_free_helper_identity/controls/generic-root.rs",
+    "name": "actual",
+    "relation": "helper_owner_call",
+    "native_reaches": true
+  },
+  {
+    "path": "inherent_receiver_free_helper_identity/controls/test-module-helper.rs",
+    "name": "actual",
+    "relation": "helper_owner_call",
+    "native_reaches": true
+  },
+  {
+    "path": "inherent_receiver_free_helper_identity/controls/qualified-test-module-helper.rs",
+    "name": "actual",
+    "relation": "helper_owner_call",
+    "native_reaches": true
+  }
+]

@@ -3053,26 +3053,103 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
     if method.is_empty() || impl_type.is_empty() {
         return false;
     }
-    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&test.body) else {
-        return false;
-    };
-    let syntax = parse.tree().syntax().clone();
     let pin_syntax = super::OwnerPinSyntax::default();
     let unit_struct = |name: &str| {
         index.is_some_and(|index| {
             super::owner_pin::unit_struct_value(name, &test.file, index, &pin_syntax)
         })
     };
+    executable_call_resolves(test, index, &pin_syntax, &|node, scope| {
+        inherent_call_node_resolves(node, scope, method, impl_type, &unit_struct)
+    })
+}
+
+/// A helper-name graph supplies candidates, never executable function identity.
+/// Resolve each observed free call in its caller's real source/module scope.
+/// Nested local functions and unsupported paths fail closed.
+pub(in crate::analysis) fn free_helper_call_resolves(
+    caller: &TestSummary,
+    helper: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    if helper.item.container != FunctionContainer::Free {
+        return false;
+    }
+    let syntax = super::OwnerPinSyntax::default();
+    executable_call_resolves(caller, Some(index), &syntax, &|node, _| {
+        let Some(call) = ast::CallExpr::cast(node) else {
+            return false;
+        };
+        let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+            return false;
+        };
+        let Some(path) = callee.path() else {
+            return false;
+        };
+        let Some(segment) = path.segment() else {
+            return false;
+        };
+        if segment
+            .name_ref()
+            .is_none_or(|name| name.text() != helper.name)
+        {
+            return false;
+        }
+        let prefix = path.qualifier().map(|path| {
+            path.syntax()
+                .text()
+                .to_string()
+                .split_whitespace()
+                .collect::<String>()
+        });
+        super::owner_pin::same_file_free_helper_call_reaches_owner(
+            caller,
+            helper,
+            prefix.as_deref(),
+            index,
+            &syntax,
+        )
+    })
+}
+
+/// Walk only syntax executed by the outer function. Item declarations,
+/// closures and async blocks do not execute their bodies by being declared.
+/// Even an invoked nested function stays unresolved here; its body cannot
+/// borrow the outer function's receiver bindings. Standard assertion operands
+/// share the source-aware macro refusal and the same call-site predicate.
+fn executable_call_resolves(
+    test: &TestSummary,
+    index: Option<&RustIndex>,
+    pin_syntax: &super::OwnerPinSyntax,
+    resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
+) -> bool {
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&test.body) else {
+        return false;
+    };
+    let syntax = parse.tree().syntax().clone();
+    let Some(function) = syntax.children().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    let executable = |node: &SyntaxNode| {
+        node.ancestors()
+            .skip(1)
+            .take_while(|scope| scope != function.syntax())
+            .all(|scope| {
+                !ast::Item::can_cast(scope.kind())
+                    && !ast::ClosureExpr::can_cast(scope.kind())
+                    && !ast::BlockExpr::cast(scope)
+                        .is_some_and(|block| block.async_token().is_some())
+            })
+    };
     syntax
         .descendants()
-        .any(|node| inherent_call_node_resolves(node, None, method, impl_type, &unit_struct))
+        .filter(executable)
+        .any(|node| resolves(node, None))
         || syntax
             .descendants()
+            .filter(executable)
             .filter_map(ast::MacroCall::cast)
             .any(|call| {
-                // A function-only parse cannot see enclosing module imports or
-                // macro definitions. Borrow the existing source/module binding
-                // authority before interpreting assertion operands (#8004).
                 let binding_admitted = index.is_none_or(|index| {
                     let offset = u32::from(call.syntax().text_range().start()) as usize;
                     let line = test.start_line
@@ -3089,8 +3166,7 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
                         )
                     })
                 });
-                binding_admitted
-                    && inherent_assertion_arguments_resolve(&call, method, impl_type, &unit_struct)
+                binding_admitted && assertion_arguments_resolve(&call, resolves)
             })
 }
 
@@ -3138,11 +3214,9 @@ fn inherent_call_node_resolves(
 /// Assertion token trees are not expression descendants of the source AST.
 /// Parse only their evaluated operands, preserving the original invocation as
 /// the lexical scope anchor. Diagnostics and unsupported macros add no proof.
-fn inherent_assertion_arguments_resolve(
+fn assertion_arguments_resolve(
     call: &ast::MacroCall,
-    method: &str,
-    impl_type: &str,
-    unit_struct: &dyn Fn(&str) -> bool,
+    resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
 ) -> bool {
     let Some(path) = call.path() else {
         return false;
@@ -3199,9 +3273,9 @@ fn inherent_assertion_arguments_resolve(
         }) {
             return false;
         }
-        syntax.descendants().any(|node| {
-            inherent_call_node_resolves(node, Some(call.syntax()), method, impl_type, unit_struct)
-        })
+        syntax
+            .descendants()
+            .any(|node| resolves(node, Some(call.syntax())))
     })
 }
 

@@ -269,6 +269,29 @@ return-type conventions, aliases and general factory/value flow remain bounded
 limitations tracked by #7415. Trait dispatch and associated functions without
 `self` retain their existing rules.
 
+Repository direct inherent calls use the same complete owner refusal as diff
+calls and helper last hops, including module-local type shadows. A nominal
+receiver alone cannot override that refusal. Calls inside a nested item,
+closure or async body are not calls executed by the enclosing test merely
+because its syntax contains them. Invoked nested functions remain conservatively
+unresolved by this bounded walk; their native mutation controls can discriminate
+without receiving direct static credit.
+
+For the existing bounded same-file helper chain, every admitted entry and
+intermediate free-function hop must contain an executable call bound to the
+candidate's actual module/function declaration. The existing helper-name graph
+only supplies candidates. Caller-scope memos distinguish function names even
+when declarations share a line; an ambiguous same-name/same-line lookup refuses.
+Explicit foreign paths, wrong imports, dormant local
+helpers and unplaced bindings cannot borrow a same-named root helper's owner
+credit. Genuine root/imported helpers and same-name inherent wrapper delegation
+retain repository reach. Diff helper evidence remains conservative; repository
+helper reach is not a new diff-helper claim. The three executable-identity
+fixtures and their paired native/full/compact/diff matrix pin this boundary.
+Repeated parsing and per-call `OwnerPinSyntax` cache loss remain substantive,
+unbenchmarked performance concerns tracked by #8005; correctness controls do
+not refute them.
+
 The verdict corpus keeps the accuracy cost of this boundary visible: arbitrary
 `ByteSize::gb`/`ByteSize::kib` factories, rstest parameter receivers and bare
 imported enum variants in table loops do not acquire identity from a unique

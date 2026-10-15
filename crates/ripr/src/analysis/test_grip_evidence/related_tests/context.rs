@@ -4017,8 +4017,7 @@ fn inherent_helper_path_reaches_owner(
         let entry_resolves = if requires_inherent_receiver_identity(helper) {
             inherent_owner_call_resolves(caller, helper, index)
         } else {
-            helper.impl_context == FunctionImplContext::Free
-                && test_calls_free_function(caller, &helper.name)
+            free_helper_call_resolves(caller, helper, index)
         };
         if !entry_resolves {
             continue;

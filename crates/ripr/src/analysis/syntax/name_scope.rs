@@ -101,12 +101,18 @@ pub(crate) fn name_scopes_for_fn(
     let parse = parse_clean_source_file(source)?;
     let line_index = LineIndex::new(source);
     let tree = parse.tree();
-    let function = tree.syntax().descendants().find_map(|node| {
+    let mut functions = tree.syntax().descendants().filter_map(|node| {
         let function = ast::Fn::cast(node)?;
         let token = function.fn_token()?;
         let named = function.name().is_some_and(|ident| ident.text() == fn_name);
         (named && line_index.line(token.text_range().start()) == fn_line).then_some(function)
-    })?;
+    });
+    let function = functions.next()?;
+    // A function summary's name/line cannot identify one of two same-named
+    // declarations on that line. Never borrow the first declaration's scope.
+    if functions.next().is_some() {
+        return None;
+    }
     let modules_of = |node: &SyntaxNode| {
         let mut modules: Vec<String> = node
             .ancestors()
@@ -524,5 +530,10 @@ mod tests {
         assert!(name_scopes_for_fn("fn broken( {", 1, "broken").is_none());
         assert!(name_scopes_for_fn("fn present() {}", 1, "absent").is_none());
         assert!(name_scopes_for_fn("fn present() {}", 2, "present").is_none());
+    }
+    #[test]
+    fn same_named_functions_on_one_line_have_no_unique_scope() {
+        let source = "mod left { fn check() {} } mod right { fn check() {} }";
+        assert!(name_scopes_for_fn(source, 1, "check").is_none());
     }
 }

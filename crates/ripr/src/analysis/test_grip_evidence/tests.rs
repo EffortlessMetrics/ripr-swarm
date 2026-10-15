@@ -19675,6 +19675,124 @@ fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), S
     Ok(())
 }
 
+/// The native truth and static admission are separate axes. In particular an
+/// invoked nested function kills the native mutant but remains unsupported by
+/// this bounded static walk; its declaration must never supply direct credit.
+#[test]
+fn inherent_executable_owner_identity_boundary_matrix() -> Result<(), String> {
+    #[derive(serde::Deserialize)]
+    struct Case {
+        path: String,
+        name: String,
+        relation: Option<RelationReason>,
+    }
+    let cases: Vec<Case> = serde_json::from_str(include_str!(
+        "../../../../../fixtures/inherent_receiver_free_helper_identity/cases.json"
+    ))
+    .map_err(|error| error.to_string())?;
+    assert_eq!(cases.len(), 19, "complete hypothesis-led matrix");
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    for case in cases {
+        let source = std::fs::read_to_string(fixtures.join(&case.path))
+            .map_err(|error| error.to_string())?;
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), &source)])?;
+        assert_eq!(index.tests().len(), 1, "{}: one real subject", case.path);
+        let seams: Vec<_> = inventory_seams_from_index(&[path], &index)
+            .into_iter()
+            .filter(|seam| seam.owner() == "src/lib.rs::impl JsonValue::as_object")
+            .collect();
+        assert_eq!(seams.len(), 4, "{}: retain all owner seams", case.path);
+        let context = CompactGripContext::new(&index);
+        for seam in &seams {
+            let full = evidence_for_seam(seam, &index);
+            let compact = find_related_tests_with_context(seam, &context);
+            let full_rows: Vec<_> = full
+                .related_tests
+                .iter()
+                .map(|test| (test.test_name.as_str(), test.relation_reason))
+                .collect();
+            let compact_rows: Vec<_> = compact
+                .iter()
+                .map(|(test, relation)| (test.test.name.as_str(), *relation))
+                .collect();
+            assert_eq!(
+                full_rows, compact_rows,
+                "{}: complete row parity",
+                case.path
+            );
+            assert_eq!(
+                full_rows.len(),
+                1,
+                "{}: retain exactly one subject per seam",
+                case.path
+            );
+            assert_eq!(full_rows[0].0, case.name, "{}", case.path);
+            if let Some(expected) = case.relation {
+                assert_eq!(full_rows[0].1, expected, "{}", case.path);
+                assert_eq!(full.reach.state, StageState::Yes, "{}", case.path);
+            } else {
+                assert!(
+                    !matches!(
+                        full_rows[0].1,
+                        RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall
+                    ),
+                    "{}: wrong execution or identity: {full_rows:?}",
+                    case.path
+                );
+                assert_ne!(full.reach.state, StageState::Yes, "{}", case.path);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Two callers on one line have distinct lexical imports. A cached genuine
+/// caller scope must not authorize its same-line foreign sibling.
+#[test]
+fn same_line_helper_callers_keep_distinct_module_function_identity() -> Result<(), String> {
+    let source = include_str!(
+        "../../../../../fixtures/inherent_receiver_free_helper_identity/controls/same-line-callers.rs"
+    );
+    let path = PathBuf::from("src/lib.rs");
+    let index = index_from_files(&[(path.clone(), source)])?;
+    assert_eq!(index.tests().len(), 2);
+    let seams: Vec<_> = inventory_seams_from_index(&[path], &index)
+        .into_iter()
+        .filter(|seam| seam.owner() == "src/lib.rs::impl JsonValue::as_object")
+        .collect();
+    assert_eq!(seams.len(), 4);
+    let context = CompactGripContext::new(&index);
+    for seam in &seams {
+        let full = evidence_for_seam(seam, &index);
+        let compact = find_related_tests_with_context(seam, &context);
+        let full_rows: BTreeMap<_, _> = full
+            .related_tests
+            .iter()
+            .map(|test| (test.test_name.as_str(), test.relation_reason))
+            .collect();
+        let compact_rows: BTreeMap<_, _> = compact
+            .iter()
+            .map(|(test, relation)| (test.test.name.as_str(), *relation))
+            .collect();
+        assert_eq!(full.related_tests.len(), 2);
+        assert_eq!(compact.len(), 2);
+        assert_eq!(full_rows, compact_rows);
+        assert_eq!(
+            full_rows.get("actual"),
+            Some(&RelationReason::HelperOwnerCall)
+        );
+        assert!(
+            !matches!(
+                full_rows.get("decoy"),
+                Some(RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall)
+            ),
+            "foreign caller borrowed a cached sibling scope: {full_rows:?}"
+        );
+    }
+    Ok(())
+}
+
 /// Independent review #8004: each source is also a real native mutation control.
 #[test]
 fn inherent_receiver_review_last_hop_and_wrapper_controls() -> Result<(), String> {
@@ -19764,6 +19882,22 @@ fn inherent_receiver_review_last_hop_and_wrapper_controls() -> Result<(), String
                 .map(|(t, r)| (t.test.name.as_str(), *r))
                 .collect();
             assert_eq!(full_rows, compact_rows);
+            assert_eq!(
+                full.related_tests
+                    .iter()
+                    .filter(|test| test.test_name == name)
+                    .count(),
+                1,
+                "exactly one retained subject per owner seam: {name}"
+            );
+            assert_eq!(
+                compact
+                    .iter()
+                    .filter(|(test, _)| test.test.name == name)
+                    .count(),
+                1,
+                "exactly one compact subject per owner seam: {name}"
+            );
             assert!(
                 full_rows.contains_key(name),
                 "retain the subject: {name}: {full_rows:?}"
