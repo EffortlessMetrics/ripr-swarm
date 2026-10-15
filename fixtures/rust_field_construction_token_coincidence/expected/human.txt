@@ -35,6 +35,6 @@ Write a test for it:
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - fixtures/rust_field_construction_token_coincidence/input/src/lib.rs:9 (weakly_exposed)
+    - ./src/lib.rs:9 (weakly_exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

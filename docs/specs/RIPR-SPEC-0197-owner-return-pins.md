@@ -1407,9 +1407,56 @@ call grades as the canonical spelling does. A weaker reading of the compared
 value (a tautology, a broad `is_err()`) is kept.
 The oracle keeps RIPR-SPEC-0231's step-6 `snapshot` kind; as for the
 bool-owner pin, only its probe-relative strength rises once the pin admits
-it. `assert_debug_eq` (which compares the `Debug` text), `expect_file!`, a
-qualified `expect_test::expect!`, and every `insta` macro stay
-`snapshot` / medium.
+it. `assert_debug_eq` (which compares the `Debug` text), a qualified
+`expect_test::expect!` or `expect_test::expect_file!`, and every `insta`
+macro stay `snapshot` / medium.
+
+### Golden-file expect-test comparisons (#6578)
+
+`expect_file!["path"].assert_eq(&owner(..))` pins as the inline comparison
+does. `ExpectFile::assert_eq` reads the committed file (CRLF as LF; a missing
+file as the empty text), compares it with the actual text, and panics on a
+mismatch unless `UPDATE_EXPECT` is set, the same escape the inline form has.
+The rules above apply with four differences:
+
+1. The macro's one argument is a single string literal naming the file. A
+   computed path (`concat!(..)`, a binding) or the inline form's double
+   brackets refuses. `expect_file!` resolves the path against the test
+   source's directory, so the literal must be relative and stay in the
+   tree: an absolute path (`/tmp/x`, a drive-letter path, `\\host\x`), a `~` path or
+   any `..` segment may name text the commit does not fix, and refuses. A
+   non-raw literal with any escape (`"\u{2e}\u{2e}/x"`) refuses too, since
+   its decoded segments are not the source text.
+2. The bare `expect_file!` must be expect-test's under rule 2: its file
+   imports `use expect_test::expect_file;` (alone or grouped) under its own
+   name, verified against the manifest, and nothing else binds
+   `expect_file`. In an owner body it stays an unknown macro.
+3. The file is never read. The pin needs only that the compared text is
+   fixed by the commit; its content does not decide whether a changed
+   return fails. So the expected side is a stand-in that only a return-path
+   gate admitting any value of the owner's type accepts; a gate that checks
+   the expected value (an exact bool, a constructor head, a whole-value
+   field literal) refuses it.
+4. The test must not be able to write the file first. A test body that
+   writes, creates, copies or renames a file (`fs::write`, a bare `write(..)`
+   under `use std::fs::write`, `File::create`, `OpenOptions`, `fs::copy`,
+   `fs::rename`, any path-qualified `write(..)` or `create(..)` such as
+   `<File>::create` or `fs_err::write`), runs a `Command`, makes a symlink,
+   persists a temp file, or calls `set_var` / names `UPDATE_EXPECT`, lends no
+   golden-file pin, and neither does a test whose file renames an import
+   from `std::fs` or `std::env` (`use std::fs::write as save;`), which would
+   hide the write behind another name: it could derive the golden from the owner and compare
+   the owner with itself. Read from the test's masked body text, so it also
+   refuses a test that writes some unrelated file; a write hidden in a
+   helper the test calls is not seen (#8097 tracks the same hole for
+   `assert_eq!` against a file read back).
+
+Rejected: reading the golden file into the expected literal. The seam cache
+keys on Rust sources, so a golden edit would not invalidate the reading, and
+no gate the stand-in passes depends on the text. Rejected: keeping
+`expect_file!` at `snapshot` / medium. It compares the whole value exactly,
+as the inline form does; the corpus row
+`lib-expect-test-expect-file-golden` kills both mutants at runtime.
 
 ### Short-circuit tails (#7969)
 
@@ -1702,7 +1749,24 @@ idx + 1 });` got no pin and read as a gap although
   mention of a trusted name in another macro's arguments stays ambiguous,
   a plain `assert_eq!(..)` included: to that macro it is only tokens, and
   `define!(assert_eq!(mod tests;))` can emit `macro_rules! assert_eq`
-  together with the module whose tests then compile against it.
+  together with the module whose tests then compile against it. The one
+  exception is a call to a wrapper that cannot bind a name at all (#6648):
+  an unqualified call to a `macro_rules!` this file defines exactly once,
+  without an attribute and never names in a `use`. The definition sits at
+  file level, or in an inline module whose textual scope can be bounded and
+  contains the call, and ends before the call. Neither the definition nor
+  the call's arguments hold a binding word (`macro_rules`, `macro`, `use`,
+  `extern`, `mod`, `include`, `macro_use`, `macro_export`,
+  `no_implicit_prelude`) or an attribute other than a built-in test, lint,
+  `cfg` or `doc` attribute. The definition holds no `!` at all and captures
+  no `tt` fragment (the only fragment that can lift a lone `!` or `#` out of
+  the arguments and splice it after another name), and the arguments hold a
+  `!` only as a bare trusted `name!` (a unary `!` fails closed, since a `tt`
+  fragment or a repetition can splice it after a name). No module item sits
+  between the definition and the call, and every macro call there is another
+  such call of the same wrapper (even a trusted name may be a local macro
+  there), so nothing can bring in a shadowing definition. Attribute proc
+  macros elsewhere in the file stay invisible, as for every other site.
   `macro_use` or `no_implicit_prelude` anywhere in a non-trusted macro's
   arguments makes every trusted name ambiguous (stricter than the same
   attribute written on an item, which a resolved module can admit). A
@@ -2191,6 +2255,8 @@ assertions. This repair shares the existing callback without that larger migrati
   mutant fails; `raw_path_shadow_module_keeps_the_mutant_green` (#7098
   review) loads a rival `Unit` from a `#[r#path]`-named non-`.rs` module,
   and the mutant passes while the finding refuses.
+- Binding-free local wrappers (#6648): `owner_pin/tests.rs`
+  `a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted`.
 - Short-circuit tail propagation (#8037): `propagation_witness.rs`
   `short_circuit_owner_tail_completes_only_an_admitted_chain`;
   `crates/ripr/tests/short_circuit_or_tail.rs`

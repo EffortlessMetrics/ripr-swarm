@@ -981,6 +981,8 @@ fn push_powershell_variant(out: &mut String, indent: &str, command: &str) {
 
 mod evidence_lines;
 mod explain;
+#[cfg(test)]
+mod hidden_locations_tests;
 mod sections;
 mod shared;
 mod triage;
