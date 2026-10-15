@@ -13717,6 +13717,83 @@ fn expected_side_is_live_unique_line_still_folds_liveness() {
     );
 }
 
+/// Signed matcher text (`-1`, `+1`) is a numeric expected value. On the
+/// discount boundary it matches neither 90 nor 100, so it is dead rather
+/// than an unparsed `None` that would leave the witness standing (#7647).
+#[test]
+fn expected_side_is_live_treats_signed_numeric_literals_as_numbers() {
+    let owner = boundary_witness_owner();
+    for expected in ["-1", "+1"] {
+        assert_eq!(
+            expected_side_is_live(
+                &owner,
+                "  if (total >= 100) {",
+                "total",
+                "100",
+                &["100".to_string()],
+                expected,
+            ),
+            Some(false),
+            "{expected}"
+        );
+    }
+}
+
+/// A changed branch that returns `-1` is live when the matcher pins that
+/// same signed literal.
+#[test]
+fn expected_side_is_live_credits_a_signed_live_expected_value() {
+    let owner = TypeScriptOwner {
+        name: "polarity".to_string(),
+        file: PathBuf::from("src/lib.ts"),
+        start_line: 1,
+        end_line: 6,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        exported_as_default: false,
+        class_default_export: false,
+        module_entries: Vec::new(),
+        imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+        arity: Some(1),
+        params: vec!["n".to_string()],
+        source_text: Some(
+            concat!(
+                "export function polarity(n: number): number {\n",
+                "    if (n <= 0) {\n",
+                "        return -1;\n",
+                "    }\n",
+                "    return 1;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    if (n <= 0) {",
+            "n",
+            "0",
+            &["0".to_string()],
+            "-1",
+        ),
+        Some(true)
+    );
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    if (n <= 0) {",
+            "n",
+            "0",
+            &["0".to_string()],
+            "1",
+        ),
+        Some(false)
+    );
+}
+
 /// #4117 review (fail-closed branch scan, end to end): the test pins the
 /// genuine changed value — at input 100 the changed comparison enters the
 /// branch, reassigns `total` to `90`, and returns `81`, while the unchanged

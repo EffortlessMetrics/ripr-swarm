@@ -547,6 +547,14 @@ fn boundary_input_without_discriminator_is_reached_not_missed() -> Result<(), St
             "dead expected side",
             "  expect(applyDiscount(100)).toBe(999);",
         ),
+        (
+            "dead signed expected side",
+            "  expect(applyDiscount(100)).toBe(-1);",
+        ),
+        (
+            "dead plus expected side",
+            "  expect(applyDiscount(100)).toBe(+1);",
+        ),
     ] {
         let source = one_test(name, IMPORT_DISCOUNT, body);
         let evaluated = evaluate(&DISCOUNT, &source, true)?;
@@ -558,6 +566,34 @@ fn boundary_input_without_discriminator_is_reached_not_missed() -> Result<(), St
         );
         assert!(!evaluated.witnessed, "{body}");
     }
+    Ok(())
+}
+
+/// A signed numeric `toBe(-1)` is a pinned literal, but `-x` stays a dynamic
+/// matcher argument and cannot witness the boundary (#7647).
+#[test]
+fn signed_numeric_literal_is_pinned_and_dynamic_unary_stays_excluded() -> Result<(), String> {
+    let live = one_test(
+        "live unsigned",
+        IMPORT_DISCOUNT,
+        "  expect(applyDiscount(100)).toBe(90);",
+    );
+    let evaluated = evaluate(&DISCOUNT, &live, true)?;
+    assert_eq!(evaluated.activation("live unsigned")?, A::Witnessed);
+    assert!(evaluated.witnessed);
+
+    let dynamic = one_test(
+        "dynamic unary",
+        IMPORT_DISCOUNT,
+        "  expect(applyDiscount(100)).toBe(-x);",
+    );
+    let evaluated = evaluate(&DISCOUNT, &dynamic, true)?;
+    assert_ne!(
+        evaluated.activation("dynamic unary")?,
+        A::Witnessed,
+        "a dynamic unary expected argument must not witness"
+    );
+    assert!(!evaluated.witnessed);
     Ok(())
 }
 

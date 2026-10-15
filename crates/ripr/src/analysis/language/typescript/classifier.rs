@@ -2680,6 +2680,22 @@ pub(crate) fn numeric_literal_value(token: &str) -> Option<String> {
     })
 }
 
+/// Matcher expected text that is a plain decimal, optionally with a leading
+/// `+` or `-` (`-1`, `+1.5`). Nested or non-numeric unaries (`--1`, `-x`)
+/// stay unparsed so they cannot borrow numeric liveness.
+fn signed_numeric_expected_value(token: &str) -> Option<f64> {
+    let token = token.trim();
+    let (negative, rest) = if let Some(rest) = token.strip_prefix('-') {
+        (true, rest)
+    } else if let Some(rest) = token.strip_prefix('+') {
+        (false, rest)
+    } else {
+        (false, token)
+    };
+    let value = numeric_literal_value(rest)?.parse::<f64>().ok()?;
+    Some(if negative { -value } else { value })
+}
+
 /// Return the argument lists (one per call) of every `<owner_name>(...)` call
 /// inside `observed`, split at top-level commas.
 /// Receiver names in `test` that bind to the owner's own module through a
@@ -3296,7 +3312,7 @@ pub(crate) fn expected_side_is_live(
     expected: &str,
 ) -> Option<bool> {
     let source = owner.source_text.as_deref()?;
-    let expected_value = numeric_literal_value(expected).and_then(|v| v.parse::<f64>().ok())?;
+    let expected_value = signed_numeric_expected_value(expected)?;
     let operator = changed_comparison_operator(line_text)?;
     let lines: Vec<&str> = source.lines().collect();
     // Locate the changed line inside the owner body. Uniqueness runs before
