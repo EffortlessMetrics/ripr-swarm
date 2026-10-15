@@ -92,6 +92,8 @@ fn accepted_empty_placeholder_fenced_and_unrelated_plans_remain_failures() -> Re
         "Planned tests:\n- None.\n",
         "Planned tests:\n- N/A.\n",
         "Planned tests:\n- planned.\n",
+        "Planned tests:\n- ...\n",
+        "Planned tests:\n- !!!\n",
         "Planned tests:\n- None yet\n",
         "Planned tests:\n- planned\n",
         "Planned tests:\n- <test name>\n",
