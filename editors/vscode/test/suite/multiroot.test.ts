@@ -5,6 +5,7 @@ import * as path from 'path';
 import type { ChildProcess, SpawnOptions } from 'child_process';
 import * as vscode from 'vscode';
 import type { LanguageClient } from 'vscode-languageclient/node';
+import { observeCodeActionRequests } from '../multiRootRequestDiagnostics';
 import { assertActionTargets, assertContextPacket, normalizeUriSpelling, RootExpectation } from '../multiRootAssertions';
 
 // Read observations from the activated controller without supplying a runtime,
@@ -14,6 +15,7 @@ interface ControllerObservation {
   client?: LanguageClient;
   workspaceRoot?: string;
   status: { kind: string };
+  startGeneration: number;
 }
 
 interface ProcessObservation {
@@ -351,16 +353,47 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         `Weakly gripped behavioral seam (predicate_boundary): ${expected.changedExpression}`);
       assert.strictEqual(diagnostic.range.start.line, 1);
       let actions: Array<vscode.CodeAction | vscode.Command>;
+      const requestEvents: Record<string, unknown>[] = [];
+      const observe = () => ({ at: new Date().toISOString(), phase,
+        uri: uri.toString(), root: controller.workspaceRoot, generation: controller.startGeneration,
+        client_same: controller.client === client, client_state: client.state,
+        pid: client.serverProcess?.pid,
+        document: vscode.workspace.textDocuments.filter(d => d.uri.toString() === uri.toString())
+          .map(d => ({ version: d.version, dirty: d.isDirty, closed: d.isClosed })),
+        active_uri: vscode.window.activeTextEditor?.document.uri.toString() });
+      const subscriptions: vscode.Disposable[] = [
+        client.onDidChangeState(event => requestEvents.push({ kind: 'client_state', ...event, ...observe() })),
+        vscode.workspace.onDidChangeTextDocument(event => {
+          if (event.document.uri.toString() === uri.toString()) {
+            requestEvents.push({ kind: 'document_change', ...observe() });
+          }
+        }),
+        vscode.workspace.onDidCloseTextDocument(document => {
+          if (document.uri.toString() === uri.toString()) {
+            requestEvents.push({ kind: 'document_close', ...observe() });
+          }
+        }),
+      ];
+      const restoreRequests = observeCodeActionRequests(client, observe, requestEvents);
+      requestEvents.push({ kind: 'provider_start', ...observe() });
       try {
         actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
           'vscode.executeCodeActionProvider', uri, diagnostic.range);
       } catch (error) {
+        requestEvents.push({ kind: 'provider_failed', error: String(error), ...observe() });
+        // Keep the failing request observable without retrying or replacing its result.
+        console.error('MULTIROOT_CODE_ACTION_TRACE', JSON.stringify(requestEvents));
         // executeCodeActionProvider throws a bare illegal-argument when the
         // URI has no open text model; disclose the open-document set so the
         // failing point is diagnosable from the CI log alone.
         throw new Error(`code actions for ${uri} failed: ${String(error)}`
           + ` open=${vscode.workspace.textDocuments.map(d => d.uri.toString()).join(', ')}`
           + ` phase=${phase}`, { cause: error });
+      } finally {
+        requestEvents.push({ kind: 'provider_end', ...observe() });
+        stages.push({ phase, code_action_request: requestEvents });
+        restoreRequests();
+        subscriptions.forEach(subscription => subscription.dispose());
       }
       const commands = (actions ?? []).flatMap(action => {
         const command = typeof action.command === 'string' ? action as vscode.Command : action.command;
