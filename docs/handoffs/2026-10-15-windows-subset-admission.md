@@ -474,3 +474,48 @@ Push/manual inputs are explicitly branch-isolation controls, not admitted events
 The repaired suite executes6/6; logs `docs-routing-before.log` and
 `docs-routing-after.log` bind setup failure and restored decision coverage. This
 is a test-adapter repair, not a production routing behavior change.
+
+
+### Wheel successor — four-child source graph, feature-shell finding unresolved
+
+Reviewed wheel leaf `c9b70660a522cc53f722ced42c2e12dfefbe9e15` was supplied
+explicitly by its owner on `codex/4987-wheel-callable-leaf`, verified at the
+published ref, and merged cleanly at
+`bc2304cf390ab364b9fd39a35ccacbd4be2fbe79`. Its workflow remains byte-identical
+to that leaf. This supersedes the earlier wheel-integration wait; the CI source
+and tests remain untouched while their assigned author repairs review5528944270.
+
+The shared `python-wheel` job passes the same seven admitted strings as Windows,
+printed and feature CI: qualification profile, native run-attempt request, H, B,
+G, tree and workflow generation. There are no workflow outputs or inherited
+secrets. Until canonical package applicability is evaluated completely, wheel is
+conservatively selected for every new admitted execution, including docs-only.
+The protected aggregate requires its native reusable-job success before either
+docs or product success. Missing/skipped/neutral/failed/timed-out/cancelled wheel
+results refuse. Prior admission-owned exact-subject success reuse remains intact.
+The leaf's producer and both pip/uv consumers stay selected together; the original
+legacy PR/manual/MCP routes are preserved. No trigger retirement or activation.
+
+Two new pre-wiring controls fail on composed baselinebc2304cf at missing-call
+and false-green wheel-result assertions (native101). The existing docs decision
+fixture gains only a successful wheel prerequisite; its negative assertions and
+named-step binding remain. Existing old source/test green records are historical
+and do not override unresolved CI effective-shell failure semantics.
+
+**REPAIR_REQUIRED:** independent review5528944270 established that implicit
+release-step Bash lacks pipefail while the CI harness enables it; pkgid failure
+can therefore be masked by sed. CI author task01a13e13-ebfc-748e-9631-9af8ba91a0cd
+owns the focused source/test successor. Do not edit that leaf concurrently or
+clear the finding before integrating its exact reviewed repair and affected
+proof. Wheel/caller proof is a separate dimension, not overall source acceptance.
+
+The delegated wheel handoff requests combined check-fast/precommit because its
+broad local epoch stalled on I/O. Combined executor is Linux x86_64/Bash/Rust1.95,
+with an exclusive warm target at `/workspace/caller-integration-proof/target`.
+Before the broader batch,30GiB free and16GiB available memory were observed;
+retained focused output328MiB. The root-owned peak additional budget is expanded
+to16GiB with8GiB reserve, two Cargo jobs, dev debug/incremental expansion disabled.
+This replaces only the earlier4GiB generation budget. No existing resource is
+removed or counted as prospective reclaimed capacity. The root retains native
+session handles/logs, inspects actual terminal statuses, and keeps broad results
+separate from source qualification and activation. PR8082 remains Draft.

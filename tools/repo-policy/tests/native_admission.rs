@@ -99,6 +99,7 @@ fn execute_review_stream(
         "WINDOWS_RESULT",
         "PASTE_RESULT",
         "CI_RESULT",
+        "WHEEL_RESULT",
         "TARGET",
         "REASON",
         "ROUTE_RESULT",
@@ -193,6 +194,7 @@ fn final_result_replays_all_independent_terminal_vectors() -> Result<(), String>
         let mut environment = case["environment"].clone();
         environment["PASTE_RESULT"] = json!("success");
         environment["CI_RESULT"] = json!("success");
+        environment["WHEEL_RESULT"] = json!("success");
         environment["LABEL"] = event["contexts"]["github"]["event"]["label"]["name"].clone();
         let requested = event["expected"]["qualification_request"]
             .as_bool()
@@ -356,7 +358,7 @@ fn terminal_cancellation_check_rejects_green_dependencies_and_prior_success() ->
     let aggregate = body("Summarize routed result")?;
     let guard = body("Reject workflow cancellation before final result")?;
     // Separate steps: exit 0 in the reuse branch must not bypass the terminal guard.
-    let mut env = json!({"ADMISSION_RESULT":"success", "EXECUTE":"true", "PRIOR_RESULT":"none", "WINDOWS_RESULT":"success", "PASTE_RESULT":"success", "CI_RESULT":"success",
+    let mut env = json!({"ADMISSION_RESULT":"success", "EXECUTE":"true", "PRIOR_RESULT":"none", "WINDOWS_RESULT":"success", "PASTE_RESULT":"success", "CI_RESULT":"success", "WHEEL_RESULT":"success",
         "DOCS_DETECT_RESULT":"success", "DOCS_ONLY":"false", "DOCS_GATE_RESULT":"skipped", "ROUTE_RESULT":"success", "TARGET":"github", "GITHUB_RESULT":"success", "EVENT_NAME":"pull_request"});
     let terminal = WORKFLOW
         .split_once("      - name: Reject workflow cancellation before final result\n")
@@ -605,7 +607,7 @@ fn printed_child_is_mandatory_and_native_failures_reach_the_aggregate() -> Resul
     let live = &vectors["live_drift_cases"][0];
     let script = body("Summarize routed result")?;
     let mut env = json!({"ADMISSION_RESULT":"success", "EXECUTE":"true", "PRIOR_RESULT":"none",
-        "WINDOWS_RESULT":"success", "PASTE_RESULT":"success", "CI_RESULT":"success", "DOCS_DETECT_RESULT":"success",
+        "WINDOWS_RESULT":"success", "PASTE_RESULT":"success", "CI_RESULT":"success", "WHEEL_RESULT":"success", "DOCS_DETECT_RESULT":"success",
         "DOCS_ONLY":"false", "ROUTE_RESULT":"success", "TARGET":"github", "GITHUB_RESULT":"success",
         "EVENT_NAME":"pull_request", "DOCS_GATE_RESULT":"success"});
     for docs in ["false", "true"] {
@@ -685,7 +687,7 @@ fn ci_native_result_is_mandatory_for_product_and_docs_subjects() -> Result<(), S
     let live = &vectors["live_drift_cases"][0];
     let script = body("Summarize routed result")?;
     let mut env = json!({"ADMISSION_RESULT":"success", "EXECUTE":"true", "PRIOR_RESULT":"none",
-        "WINDOWS_RESULT":"success", "PASTE_RESULT":"success", "CI_RESULT":"success",
+        "WINDOWS_RESULT":"success", "PASTE_RESULT":"success", "CI_RESULT":"success", "WHEEL_RESULT":"success",
         "DOCS_DETECT_RESULT":"success", "DOCS_ONLY":"false", "DOCS_GATE_RESULT":"success",
         "ROUTE_RESULT":"success", "TARGET":"github", "GITHUB_RESULT":"success", "EVENT_NAME":"pull_request"});
     for docs in ["false", "true"] {
@@ -760,5 +762,85 @@ fn ci_call_binds_identities_and_conservatively_freezes_all_rows() -> Result<(), 
         .ok_or("needs missing")?;
     assert!(dependency.contains(", ci-feature,"));
     assert!(result.contains("CI_RESULT: ${{ needs.ci-feature.result }}"));
+    Ok(())
+}
+#[test]
+fn wheel_native_result_is_mandatory_for_product_and_docs_subjects() -> Result<(), String> {
+    let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
+    let live = &vectors["live_drift_cases"][0];
+    let script = body("Summarize routed result")?;
+    let mut env = json!({"ADMISSION_RESULT":"success", "EXECUTE":"true", "PRIOR_RESULT":"none",
+        "WINDOWS_RESULT":"success", "PASTE_RESULT":"success", "WHEEL_RESULT":"success", "CI_RESULT":"success",
+        "DOCS_DETECT_RESULT":"success", "DOCS_ONLY":"false", "DOCS_GATE_RESULT":"success",
+        "ROUTE_RESULT":"success", "TARGET":"github", "GITHUB_RESULT":"success", "EVENT_NAME":"pull_request"});
+    for docs in ["false", "true"] {
+        env["DOCS_ONLY"] = json!(docs);
+        for result in [
+            "success",
+            "failure",
+            "skipped",
+            "cancelled",
+            "timed_out",
+            "",
+            "neutral",
+        ] {
+            env["WHEEL_RESULT"] = json!(result);
+            assert_eq!(
+                execute(&script, &live["live_pull_request"], &live["reviews"], &env)?,
+                result == "success",
+                "docs={docs}, wheel result={result}"
+            );
+        }
+    }
+    env["EXECUTE"] = json!("false");
+    env["PRIOR_RESULT"] = json!("success");
+    env["WHEEL_RESULT"] = json!("skipped");
+    assert!(execute(
+        &script,
+        &live["live_pull_request"],
+        &live["reviews"],
+        &env
+    )?);
+    env["PRIOR_RESULT"] = json!("failure");
+    assert!(!execute(
+        &script,
+        &live["live_pull_request"],
+        &live["reviews"],
+        &env
+    )?);
+    Ok(())
+}
+
+#[test]
+fn wheel_call_binds_every_identity_and_native_result() -> Result<(), String> {
+    let (_, call) = WORKFLOW
+        .split_once("  python-wheel:\n")
+        .ok_or("wheel call missing")?;
+    let (call, _) = call
+        .split_once("  ci-feature:\n")
+        .ok_or("CI child missing")?;
+    assert!(call.contains("needs: [admission]"));
+    assert!(call.contains("if: needs.admission.outputs.execute == 'true'"));
+    assert!(call.contains("uses: ./.github/workflows/python-wheel-qualification.yml"));
+    for binding in [
+        "proof_profile: qualification",
+        "request_id: ${{ format('{0}-{1}', github.run_id, github.run_attempt) }}",
+        "head_sha: ${{ github.event.pull_request.head.sha }}",
+        "base_sha: ${{ github.event.pull_request.base.sha }}",
+        "subject_sha: ${{ github.sha }}",
+        "subject_tree: ${{ needs.admission.outputs.tree }}",
+        "workflow_generation: ${{ github.workflow_sha }}",
+    ] {
+        assert!(call.contains(binding), "missing {binding}");
+    }
+    assert!(!call.contains("continue-on-error"));
+    assert!(!call.contains("secrets:"));
+    let (_, result) = WORKFLOW.split_once("  result:\n").ok_or("result missing")?;
+    let dependency = result
+        .lines()
+        .find(|line| line.starts_with("    needs:"))
+        .ok_or("needs missing")?;
+    assert!(dependency.contains(", python-wheel,"));
+    assert!(result.contains("WHEEL_RESULT: ${{ needs.python-wheel.result }}"));
     Ok(())
 }

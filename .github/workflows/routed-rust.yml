@@ -340,6 +340,19 @@ jobs:
       subject_tree: ${{ needs.admission.outputs.tree }}
       workflow_generation: ${{ github.workflow_sha }}
 
+  python-wheel:
+    needs: [admission]
+    if: needs.admission.outputs.execute == 'true'
+    uses: ./.github/workflows/python-wheel-qualification.yml
+    with:
+      proof_profile: qualification
+      request_id: ${{ format('{0}-{1}', github.run_id, github.run_attempt) }}
+      head_sha: ${{ github.event.pull_request.head.sha }}
+      base_sha: ${{ github.event.pull_request.base.sha }}
+      subject_sha: ${{ github.sha }}
+      subject_tree: ${{ needs.admission.outputs.tree }}
+      workflow_generation: ${{ github.workflow_sha }}
+
   ci-feature:
     needs: [admission]
     if: needs.admission.outputs.execute == 'true'
@@ -374,7 +387,7 @@ jobs:
 
   result:
     name: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}
-    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, docs-gate, windows-subset, ci-feature, printed-command]
+    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, docs-gate, windows-subset, python-wheel, ci-feature, printed-command]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -424,6 +437,7 @@ jobs:
           WINDOWS_RESULT: ${{ needs.windows-subset.result }}
           PASTE_RESULT: ${{ needs.printed-command.result }}
           CI_RESULT: ${{ needs.ci-feature.result }}
+          WHEEL_RESULT: ${{ needs.python-wheel.result }}
           TARGET: ${{ needs.route.outputs.router_target }}
           REASON: ${{ needs.route.outputs.router_reason }}
           ROUTE_RESULT: ${{ needs.route.result }}
@@ -460,6 +474,7 @@ jobs:
           [ "$WINDOWS_RESULT" = success ] || { echo 'Selected Windows evidence missing/failed' >&2; exit 1; }
           [ "$PASTE_RESULT" = success ] || { echo 'Selected printed-command evidence missing/failed' >&2; exit 1; }
           [ "$CI_RESULT" = success ] || { echo 'Selected CI evidence missing/failed' >&2; exit 1; }
+          [ "$WHEEL_RESULT" = success ] || { echo 'Selected wheel evidence missing/failed' >&2; exit 1; }
           status=pass
           message="selected implementation job succeeded"
           if [ "$DOCS_DETECT_RESULT" != "success" ]; then
