@@ -1,0 +1,19 @@
+{
+  "source_receipt_sha256": "1e85e943fbfab13e8a6041edf6d2b4d89211b732852aa95278ba4835b67631b6",
+  "at_utc": "2026-10-15T00:22:02.194638+00:00",
+  "commit": "b960feed712cbb71e6d07c9f902e057a677261c3",
+  "tree": "159f28028a3e91cd4256fa2b95d0c65c2d5c5354",
+  "parents": [
+    "2946fc9be09dd1e4f2a248c209561f718aa976df",
+    "def018d1a67109fa327f094cd63c38b936a407e0"
+  ],
+  "git_status": "",
+  "cargo_version": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+  "rustc_version": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "host": "release: 1.95.0",
+  "build_jobs": "1",
+  "incremental": "0",
+  "dev_debug": "0",
+  "test_debug": "0",
+  "network_offline": "true"
+}

@@ -1,0 +1,22 @@
+   Compiling ripr v0.11.0 (<candidate-checkout>/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 3m 43s
+     Running unittests src/lib.rs (<cargo-target>/debug/deps/ripr-67c20de708634f70)
+
+running 1 test
+test analysis::test_grip_evidence::tests::unique_inherent_receiver_refuses_decoys_in_full_and_compact_repo_evidence ... FAILED
+
+failures:
+
+---- analysis::test_grip_evidence::tests::unique_inherent_receiver_refuses_decoys_in_full_and_compact_repo_evidence stdout ----
+
+thread 'analysis::test_grip_evidence::tests::unique_inherent_receiver_refuses_decoys_in_full_and_compact_repo_evidence' (87) panicked at crates/ripr/src/analysis/test_grip_evidence/tests.rs:19539:17:
+retain the decoy: {"actual_null": DirectOwnerCall, "actual_object": DirectOwnerCall, "mixed_valid_helper_and_wrong_direct": HelperOwnerCall, "wrong_json_type": SameTestFile}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    analysis::test_grip_evidence::tests::unique_inherent_receiver_refuses_decoys_in_full_and_compact_repo_evidence
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10815 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `-p ripr --lib`

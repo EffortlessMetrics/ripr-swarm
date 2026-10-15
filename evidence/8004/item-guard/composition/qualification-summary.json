@@ -1,0 +1,228 @@
+{
+  "at_utc": "2026-10-15T00:29:48.714001+00:00",
+  "review_disposition": "Ready-to-start-checks prerequisites and transition are verified. Required hosted checks and merge clearance remain pending.",
+  "candidate": {
+    "head": "def018d1a67109fa327f094cd63c38b936a407e0",
+    "tree": "a8c022a078c40285c8e38624c5c0431f9e907531",
+    "parent": "f6aab7639b88be1a21c757be74baef833e636f17"
+  },
+  "metadata_bridge": {
+    "commit": "15ca898ad1d3571d104ce1ae20b629fe2f55fc86",
+    "parent": "f6aab7639b88be1a21c757be74baef833e636f17",
+    "tree": "a8c022a078c40285c8e38624c5c0431f9e907531",
+    "empty_source_diff": true,
+    "remote_ref_readback": null
+  },
+  "composition": {
+    "commit": "b960feed712cbb71e6d07c9f902e057a677261c3",
+    "tree": "159f28028a3e91cd4256fa2b95d0c65c2d5c5354",
+    "base": "2946fc9be09dd1e4f2a248c209561f718aa976df",
+    "parents": [
+      "2946fc9be09dd1e4f2a248c209561f718aa976df",
+      "def018d1a67109fa327f094cd63c38b936a407e0"
+    ],
+    "merge_base": "89ac47a603092ba7f9f55cf74999b88649621abf",
+    "delta_paths": 19
+  },
+  "toolchain": {
+    "cargo": "1.95.0",
+    "rustc": "1.95.0",
+    "host": "x86_64-unknown-linux-gnu",
+    "features": "default, lang-python, lang-rust, lang-typescript",
+    "target_profile": "test, opt-level 0, debug 0, debug_assertions true, overflow_checks true"
+  },
+  "checks": [
+    {
+      "name": "composition-units",
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "--message-format=json",
+        "-p",
+        "ripr",
+        "--lib",
+        "inherent_receiver"
+      ],
+      "exit": 0,
+      "status": "PASS",
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered_out": 10844,
+      "total_tests_in_subject": 10846,
+      "source_log": "composition-units.log",
+      "source_log_sha256": "5492882c6da43f3cdf9ac042517bea0dd00cfed1803a97d2a1bd23ea7f984200",
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": 0,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": true
+      },
+      "artifact_targets": [
+        "ripr"
+      ]
+    },
+    {
+      "name": "composition-integration",
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "--message-format=json",
+        "-p",
+        "ripr",
+        "--test",
+        "private_inherent_receiver"
+      ],
+      "exit": 0,
+      "status": "PASS",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered_out": 0,
+      "total_tests_in_subject": 6,
+      "source_log": "composition-integration.log",
+      "source_log_sha256": "a611e33fecb23a2afc4c2dcc9d552802182ed6ce63a4682ec3e58d5c5d714688",
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": 0,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": true
+      },
+      "artifact_targets": [
+        "private_inherent_receiver",
+        "ripr"
+      ]
+    },
+    {
+      "name": "composition-cli-rerun",
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "--message-format=json",
+        "-p",
+        "ripr",
+        "--test",
+        "cli_smoke",
+        "rerun"
+      ],
+      "exit": 0,
+      "status": "PASS",
+      "passed": 17,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered_out": 502,
+      "total_tests_in_subject": 519,
+      "source_log": "composition-cli-rerun.log",
+      "source_log_sha256": "b50f5a7563218865478bd0d15eca7c504f073bd0a8ccbe60a634d45f25d722d0",
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": 0,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": true
+      },
+      "artifact_targets": [
+        "cli_smoke",
+        "ripr"
+      ]
+    },
+    {
+      "name": "composition-native-paths",
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "--message-format=json",
+        "-p",
+        "ripr",
+        "--test",
+        "native_path_roots"
+      ],
+      "exit": 0,
+      "status": "PASS",
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered_out": 0,
+      "total_tests_in_subject": 5,
+      "source_log": "composition-native-paths.log",
+      "source_log_sha256": "823795af3a32787b2f0829d10033648659bbd4565e112aeac553b4a4ae661fac",
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": 0,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": true
+      },
+      "artifact_targets": [
+        "native_path_roots",
+        "ripr"
+      ]
+    }
+  ],
+  "frozen_local_binary_identities": [
+    {
+      "sha256": "c272f6f98e809b5ef0c7205e4472102b18b0558fa07f3212650eb8a0d9908120"
+    },
+    {
+      "sha256": "5af5f602be4b0b8cd8b62b242eec94c62b57fc35866ff3ac64e6cf5bb8e5a75a"
+    },
+    {
+      "target": "private_inherent_receiver",
+      "kind": [
+        "test"
+      ],
+      "fresh": false,
+      "sha256": "27963a9fed78213e74c7eaf1bb5fa088e30664f2afc425723fc28a81090dbbd7"
+    },
+    {
+      "target": "ripr",
+      "kind": [
+        "bin"
+      ],
+      "fresh": false,
+      "sha256": "21ec0eb60dab8bec3ee355bca1f1a1adbbef32ef0a5d1375d5c88683beff7799"
+    },
+    {
+      "sha256": "253725d72dd485890a2c41dd85acc4447e2d5542bd13be8c9665287766bd8858"
+    }
+  ],
+  "clean_composed_cli_version": "ripr 0.11.0 (b960feed712cbb71e6d07c9f902e057a677261c3)",
+  "post_status_clean": true,
+  "published_head_readback": {
+    "head": "15ca898ad1d3571d104ce1ae20b629fe2f55fc86",
+    "tree": "a8c022a078c40285c8e38624c5c0431f9e907531",
+    "parent": "f6aab7639b88be1a21c757be74baef833e636f17",
+    "readback_status": "open; draft=false; merged=false",
+    "actual_hosted_job_checkout_verified": false
+  },
+  "reported_merge_object": {
+    "commit": "2fa3df5b4eca7cfb8376a676b2380a59aaf02c35",
+    "tree": "d1c80eaa9192ca99b11011221bc80d0b342f9010",
+    "parents": [
+      "9543a9bd733b0921886306abd2c2609fbe73b62e",
+      "15ca898ad1d3571d104ce1ae20b629fe2f55fc86"
+    ],
+    "executed": false
+  },
+  "api_base_sha_note": "PR metadata currently reports base_sha 0e8d006e9845339a58902bb2baa28dbc4fd23c18, while the fetched GitHub merge object parent is 9543a9bd733b0921886306abd2c2609fbe73b62e. These identifiers are both retained; no hosted checkout is inferred.",
+  "ready_transition": {
+    "status": "verified",
+    "at_utc": "2026-10-15T00:32:54Z",
+    "readback": "open; draft=false; merged=false",
+    "scope": "Readiness to start checks only; does not establish hosted-check success or merge clearance."
+  }
+}

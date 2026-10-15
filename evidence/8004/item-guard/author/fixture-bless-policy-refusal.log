@@ -1,0 +1,6 @@
+   Compiling repo-policy v0.1.0 (<candidate-checkout>/tools/repo-policy)
+   Compiling ripr v0.11.0 (<candidate-checkout>/crates/ripr)
+   Compiling xtask v0.1.0 (<candidate-checkout>/xtask)
+    Finished `dev` profile [unoptimized] target(s) in 2m 34s
+     Running `<cargo-target>/debug/xtask goldens bless inherent_receiver_operand_item_shadow --reason 'Refuse operand-local item shadowing of an outer inherent receiver; independently pinned by the honesty corpus and compiled dispatch witness (#8004).'`
+xtask: --reason must cite a spec id (e.g. RIPR-SPEC-0001: output contract changed); got: "Refuse operand-local item shadowing of an outer inherent receiver; independently pinned by the honesty corpus and compiled dispatch witness (#8004)."

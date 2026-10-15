@@ -1,0 +1,813 @@
+{
+  "source_receipt_sha256": "2aa6da52ddec6e310cca45b79cd19443e926e0db4899931583bba7c2a4341e76",
+  "composed_commit": "b960feed712cbb71e6d07c9f902e057a677261c3",
+  "composed_tree": "159f28028a3e91cd4256fa2b95d0c65c2d5c5354",
+  "producer_version": "ripr 0.11.0 (b960feed712cbb71e6d07c9f902e057a677261c3)",
+  "producer_sha256": "21ec0eb60dab8bec3ee355bca1f1a1adbbef32ef0a5d1375d5c88683beff7799",
+  "old_control_sha256": "1a522b8f2202333fdcf961b56546dcec0feb7d05f18ae1568040bba065b18617",
+  "total_reports": 30,
+  "case_count": 10,
+  "surface_counts": {
+    "diff": 10,
+    "full": 10,
+    "compact": 10
+  },
+  "all_exit_zero": true,
+  "source_hashes_match": true,
+  "detailed_reports_complete": 10,
+  "compact_complete_claimed": false,
+  "rows": [
+    {
+      "case": "unit",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "83f10e3d8f8f2ff632aba80be97e965cf86aecca857db7bbf236cf038bda044d",
+      "fixture_sha256": "83f10e3d8f8f2ff632aba80be97e965cf86aecca857db7bbf236cf038bda044d",
+      "source_match": true,
+      "relations": [
+        "weak_token_substring",
+        "weak_token_substring"
+      ],
+      "complete": true,
+      "source_report_sha256": "d05723ac6628d7f8753c6b7d960ee5a74c6e15c912c0a432ce0351aed0fad0a6",
+      "source_report_bytes": 11800,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/unit",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/unit/diff.patch"
+      ]
+    },
+    {
+      "case": "unit",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "83f10e3d8f8f2ff632aba80be97e965cf86aecca857db7bbf236cf038bda044d",
+      "fixture_sha256": "83f10e3d8f8f2ff632aba80be97e965cf86aecca857db7bbf236cf038bda044d",
+      "source_match": true,
+      "relations": [
+        "same_test_file",
+        "same_test_file",
+        "assertion_target_affinity",
+        "same_test_file"
+      ],
+      "complete": "complete",
+      "source_report_sha256": "0aad4b7f97235b80eb002b86c1dba1df194413a2b60420cbc010e9e533953160",
+      "source_report_bytes": 27380,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/unit",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "unit",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "83f10e3d8f8f2ff632aba80be97e965cf86aecca857db7bbf236cf038bda044d",
+      "fixture_sha256": "83f10e3d8f8f2ff632aba80be97e965cf86aecca857db7bbf236cf038bda044d",
+      "source_match": true,
+      "relations": [],
+      "complete": null,
+      "source_report_sha256": "13b8215c7aa7920e71606937544191dec00a18d35fb18f50e3e72cfe1f0d0db6",
+      "source_report_bytes": 1892,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/unit",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    },
+    {
+      "case": "tuple",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "fe2a34f8373669c26160a866d8b1c428806259f3d3efdbdf57c89b1ba31545d3",
+      "fixture_sha256": "fe2a34f8373669c26160a866d8b1c428806259f3d3efdbdf57c89b1ba31545d3",
+      "source_match": true,
+      "relations": [
+        "weak_token_substring",
+        "weak_token_substring"
+      ],
+      "complete": true,
+      "source_report_sha256": "9972e2060e0d9315f5fe5220e72dabad6073c4b7af4b2bc8c6b80ce971750cee",
+      "source_report_bytes": 11814,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/tuple",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/tuple/diff.patch"
+      ]
+    },
+    {
+      "case": "tuple",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "fe2a34f8373669c26160a866d8b1c428806259f3d3efdbdf57c89b1ba31545d3",
+      "fixture_sha256": "fe2a34f8373669c26160a866d8b1c428806259f3d3efdbdf57c89b1ba31545d3",
+      "source_match": true,
+      "relations": [
+        "same_test_file",
+        "same_test_file",
+        "assertion_target_affinity",
+        "same_test_file"
+      ],
+      "complete": "complete",
+      "source_report_sha256": "f64d345206d60381f7bfd612b53e3ebc0c6de43018f214d49acb4794eaf796ce",
+      "source_report_bytes": 27381,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/tuple",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "tuple",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "fe2a34f8373669c26160a866d8b1c428806259f3d3efdbdf57c89b1ba31545d3",
+      "fixture_sha256": "fe2a34f8373669c26160a866d8b1c428806259f3d3efdbdf57c89b1ba31545d3",
+      "source_match": true,
+      "relations": [],
+      "complete": null,
+      "source_report_sha256": "1d53c542514431c6a115e6b7b91d20f774a27699ec6b2bb9789fafd6292a5674",
+      "source_report_bytes": 1893,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/tuple",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    },
+    {
+      "case": "local_enum",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "4e4b6afec266de6ef5a5dd8af2312d01ba13544ee9a2aed7c31e47e2e356fdfc",
+      "fixture_sha256": "4e4b6afec266de6ef5a5dd8af2312d01ba13544ee9a2aed7c31e47e2e356fdfc",
+      "source_match": true,
+      "relations": [
+        "weak_token_substring",
+        "weak_token_substring"
+      ],
+      "complete": true,
+      "source_report_sha256": "e2e01bd8907e91c48ba804ea6a3dba5826875a0e38057331d97948d8c0cace18",
+      "source_report_bytes": 13007,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/local_enum",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/local_enum/diff.patch"
+      ]
+    },
+    {
+      "case": "local_enum",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "4e4b6afec266de6ef5a5dd8af2312d01ba13544ee9a2aed7c31e47e2e356fdfc",
+      "fixture_sha256": "4e4b6afec266de6ef5a5dd8af2312d01ba13544ee9a2aed7c31e47e2e356fdfc",
+      "source_match": true,
+      "relations": [
+        "same_test_file",
+        "same_test_file",
+        "same_test_file",
+        "same_test_file"
+      ],
+      "complete": "complete",
+      "source_report_sha256": "498b9944ce3de97b957e2518aa589ced696527ab96dd4bc8c3382060ae1b7a26",
+      "source_report_bytes": 27342,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/local_enum",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "local_enum",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "4e4b6afec266de6ef5a5dd8af2312d01ba13544ee9a2aed7c31e47e2e356fdfc",
+      "fixture_sha256": "4e4b6afec266de6ef5a5dd8af2312d01ba13544ee9a2aed7c31e47e2e356fdfc",
+      "source_match": true,
+      "relations": [],
+      "complete": null,
+      "source_report_sha256": "349651410611c565c5b8ce423482833a0b8b29fb5e8a582ab29c8ac9f2f16423",
+      "source_report_bytes": 1898,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/local_enum",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    },
+    {
+      "case": "alias",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "fc90d936912df7af5eee56a0b4a395fc1f02f19332e9c2e668d06f54f6ac5433",
+      "fixture_sha256": "fc90d936912df7af5eee56a0b4a395fc1f02f19332e9c2e668d06f54f6ac5433",
+      "source_match": true,
+      "relations": [
+        "weak_token_substring",
+        "weak_token_substring"
+      ],
+      "complete": true,
+      "source_report_sha256": "2108c3e6a7ad37f53bb3951d6e5a5041e685a6f6f29d6e214afe4159674aac27",
+      "source_report_bytes": 13097,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/alias",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/alias/diff.patch"
+      ]
+    },
+    {
+      "case": "alias",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "fc90d936912df7af5eee56a0b4a395fc1f02f19332e9c2e668d06f54f6ac5433",
+      "fixture_sha256": "fc90d936912df7af5eee56a0b4a395fc1f02f19332e9c2e668d06f54f6ac5433",
+      "source_match": true,
+      "relations": [
+        "same_test_file",
+        "same_test_file",
+        "same_test_file",
+        "same_test_file"
+      ],
+      "complete": "complete",
+      "source_report_sha256": "926e11b763c2a529aeb2d61432384885cd1d73d7f2a1cc7c6c4cba255cb1e96a",
+      "source_report_bytes": 27337,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/alias",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "alias",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "fc90d936912df7af5eee56a0b4a395fc1f02f19332e9c2e668d06f54f6ac5433",
+      "fixture_sha256": "fc90d936912df7af5eee56a0b4a395fc1f02f19332e9c2e668d06f54f6ac5433",
+      "source_match": true,
+      "relations": [],
+      "complete": null,
+      "source_report_sha256": "655eda86fbf50a48d7b890c5c45605f670af2c64283ad1dacb3f6f2573731711",
+      "source_report_bytes": 1893,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/alias",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    },
+    {
+      "case": "module",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "778291221e17a6f3d1bdc4329f2b8393b82594edb52b5fcde06daf2d3a5cae6f",
+      "fixture_sha256": "778291221e17a6f3d1bdc4329f2b8393b82594edb52b5fcde06daf2d3a5cae6f",
+      "source_match": true,
+      "relations": [
+        "weak_token_substring",
+        "weak_token_substring"
+      ],
+      "complete": true,
+      "source_report_sha256": "f1b343e80ad51cf1cafa5845fde7b6b875610f564c6d47575522d3d29ee869ba",
+      "source_report_bytes": 13049,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/module",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/module/diff.patch"
+      ]
+    },
+    {
+      "case": "module",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "778291221e17a6f3d1bdc4329f2b8393b82594edb52b5fcde06daf2d3a5cae6f",
+      "fixture_sha256": "778291221e17a6f3d1bdc4329f2b8393b82594edb52b5fcde06daf2d3a5cae6f",
+      "source_match": true,
+      "relations": [
+        "same_test_file",
+        "same_test_file",
+        "same_test_file",
+        "same_test_file"
+      ],
+      "complete": "complete",
+      "source_report_sha256": "beac55ea051e9723d98400124715f04721fddb417b9f025e5e4225f2b1584a0a",
+      "source_report_bytes": 27338,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/module",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "module",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "778291221e17a6f3d1bdc4329f2b8393b82594edb52b5fcde06daf2d3a5cae6f",
+      "fixture_sha256": "778291221e17a6f3d1bdc4329f2b8393b82594edb52b5fcde06daf2d3a5cae6f",
+      "source_match": true,
+      "relations": [],
+      "complete": null,
+      "source_report_sha256": "8fa463f3e8ddac5610e42e9194c60febe9ca998ca36df5e8a6be09b8356cbfac",
+      "source_report_bytes": 1894,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/module",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    },
+    {
+      "case": "same_wrapper",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "0aeccbc67adcd1f8336b04bb6853f8d61e43c5536e23f4ff766c7975fff2bf07",
+      "fixture_sha256": "0aeccbc67adcd1f8336b04bb6853f8d61e43c5536e23f4ff766c7975fff2bf07",
+      "source_match": true,
+      "relations": [
+        "weak_token_substring",
+        "weak_token_substring"
+      ],
+      "complete": true,
+      "source_report_sha256": "6b28cf889b7491db6c0c65e6b58858d621fa9092c0ca4da17a8e9680647c7526",
+      "source_report_bytes": 12076,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/same_wrapper",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/same_wrapper/diff.patch"
+      ]
+    },
+    {
+      "case": "same_wrapper",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "0aeccbc67adcd1f8336b04bb6853f8d61e43c5536e23f4ff766c7975fff2bf07",
+      "fixture_sha256": "0aeccbc67adcd1f8336b04bb6853f8d61e43c5536e23f4ff766c7975fff2bf07",
+      "source_match": true,
+      "relations": [
+        "same_test_file",
+        "same_test_file",
+        "assertion_target_affinity",
+        "same_test_file"
+      ],
+      "complete": "complete",
+      "source_report_sha256": "d7087e4fe3358ab8a92f0a7625c523744c00699669f3baf6337409c3dab3da34",
+      "source_report_bytes": 27388,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/same_wrapper",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "same_wrapper",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "0aeccbc67adcd1f8336b04bb6853f8d61e43c5536e23f4ff766c7975fff2bf07",
+      "fixture_sha256": "0aeccbc67adcd1f8336b04bb6853f8d61e43c5536e23f4ff766c7975fff2bf07",
+      "source_match": true,
+      "relations": [],
+      "complete": null,
+      "source_report_sha256": "460ee4b14c01d611f8bb1eb258edc6bd5346c418f150f01d9569f6621e345394",
+      "source_report_bytes": 1900,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/same_wrapper",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    },
+    {
+      "case": "nested_impl",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "d17ea5cf78348cd76d8ce3d8e18841bda13a3ee3e746b753a9e0e9adae27495e",
+      "fixture_sha256": "d17ea5cf78348cd76d8ce3d8e18841bda13a3ee3e746b753a9e0e9adae27495e",
+      "source_match": true,
+      "relations": [
+        "weak_token_substring",
+        "weak_token_substring"
+      ],
+      "complete": true,
+      "source_report_sha256": "bb5aecc093eb26bfd400627e3949da66a99b33b381e374ed794a1e45b8a3e99c",
+      "source_report_bytes": 12074,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/nested_impl",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/nested_impl/diff.patch"
+      ]
+    },
+    {
+      "case": "nested_impl",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "d17ea5cf78348cd76d8ce3d8e18841bda13a3ee3e746b753a9e0e9adae27495e",
+      "fixture_sha256": "d17ea5cf78348cd76d8ce3d8e18841bda13a3ee3e746b753a9e0e9adae27495e",
+      "source_match": true,
+      "relations": [
+        "same_test_file",
+        "same_test_file",
+        "assertion_target_affinity",
+        "same_test_file"
+      ],
+      "complete": "complete",
+      "source_report_sha256": "9de7bd143e1479a51b584feb88c6f7f8ec90598f941adb9a463b353b30b21348",
+      "source_report_bytes": 27387,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/nested_impl",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "nested_impl",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "d17ea5cf78348cd76d8ce3d8e18841bda13a3ee3e746b753a9e0e9adae27495e",
+      "fixture_sha256": "d17ea5cf78348cd76d8ce3d8e18841bda13a3ee3e746b753a9e0e9adae27495e",
+      "source_match": true,
+      "relations": [],
+      "complete": null,
+      "source_report_sha256": "332c0347d3ebc37fd0eda6997d7ab9e189eb990830e25da119ab6f8cbd8c00e9",
+      "source_report_bytes": 1899,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/nested_impl",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    },
+    {
+      "case": "debug_assert",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "8f2b00c8462eafdd219a052d18e45664ce7be9b62d934819c51501a5d7f9ab40",
+      "fixture_sha256": "8f2b00c8462eafdd219a052d18e45664ce7be9b62d934819c51501a5d7f9ab40",
+      "source_match": true,
+      "relations": [
+        "weak_token_substring",
+        "weak_token_substring"
+      ],
+      "complete": true,
+      "source_report_sha256": "c0188cd604eba133af83fcf6f01ee68fb1e869a2726bfa741c33e5dc777a23f6",
+      "source_report_bytes": 11087,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/debug_assert",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/debug_assert/diff.patch"
+      ]
+    },
+    {
+      "case": "debug_assert",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "8f2b00c8462eafdd219a052d18e45664ce7be9b62d934819c51501a5d7f9ab40",
+      "fixture_sha256": "8f2b00c8462eafdd219a052d18e45664ce7be9b62d934819c51501a5d7f9ab40",
+      "source_match": true,
+      "relations": [
+        "same_test_file",
+        "same_test_file",
+        "same_test_file",
+        "same_test_file"
+      ],
+      "complete": "complete",
+      "source_report_sha256": "ef7c77768b28bf3e83ea14e67232710999c7cebc98cbb869f97d7cd3260c6f8d",
+      "source_report_bytes": 28852,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/debug_assert",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "debug_assert",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "8f2b00c8462eafdd219a052d18e45664ce7be9b62d934819c51501a5d7f9ab40",
+      "fixture_sha256": "8f2b00c8462eafdd219a052d18e45664ce7be9b62d934819c51501a5d7f9ab40",
+      "source_match": true,
+      "relations": [],
+      "complete": null,
+      "source_report_sha256": "cd7f66c77a49cd240d71141a7e8f608befca7ec34877023d04c5a092df05da11",
+      "source_report_bytes": 1852,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/debug_assert",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    },
+    {
+      "case": "actual_null",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "823334cc96f1e9b596cd421fbe808cc6f99a07e0ce0bf4db98914de8a9dec94c",
+      "fixture_sha256": "823334cc96f1e9b596cd421fbe808cc6f99a07e0ce0bf4db98914de8a9dec94c",
+      "source_match": true,
+      "relations": [
+        "direct_owner_call",
+        "direct_owner_call"
+      ],
+      "complete": true,
+      "source_report_sha256": "ddc3dc23a02ebd3169231b4295a9b69e395a5215f91cbe4864eac4fcaa8473d4",
+      "source_report_bytes": 11061,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/actual_null",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/actual_null/diff.patch"
+      ]
+    },
+    {
+      "case": "actual_null",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "823334cc96f1e9b596cd421fbe808cc6f99a07e0ce0bf4db98914de8a9dec94c",
+      "fixture_sha256": "823334cc96f1e9b596cd421fbe808cc6f99a07e0ce0bf4db98914de8a9dec94c",
+      "source_match": true,
+      "relations": [
+        "direct_owner_call",
+        "direct_owner_call",
+        "direct_owner_call",
+        "direct_owner_call"
+      ],
+      "complete": "complete",
+      "source_report_sha256": "e8c297c0d34ff0bf9377607dad2efab498ac29e4aac89c75c6271fbc0a2df291",
+      "source_report_bytes": 25627,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/actual_null",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "actual_null",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "823334cc96f1e9b596cd421fbe808cc6f99a07e0ce0bf4db98914de8a9dec94c",
+      "fixture_sha256": "823334cc96f1e9b596cd421fbe808cc6f99a07e0ce0bf4db98914de8a9dec94c",
+      "source_match": true,
+      "relations": [],
+      "complete": null,
+      "source_report_sha256": "72b152864c0ea729e17267c9d8318fb0400e977431bd9f6a62eac92f1cb5020e",
+      "source_report_bytes": 1846,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/actual_null",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    },
+    {
+      "case": "actual_object",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "97c2e9cebcd397541bc97a9a378ef18fd770bde578451729bde257c1eefc38f2",
+      "fixture_sha256": "97c2e9cebcd397541bc97a9a378ef18fd770bde578451729bde257c1eefc38f2",
+      "source_match": true,
+      "relations": [
+        "direct_owner_call",
+        "direct_owner_call"
+      ],
+      "complete": true,
+      "source_report_sha256": "50f410bb33b9748f01b5413d0b2f24278575ba7ec565d57f026b32c7090bc0f6",
+      "source_report_bytes": 11799,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/actual_object",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/actual_object/diff.patch"
+      ]
+    },
+    {
+      "case": "actual_object",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "97c2e9cebcd397541bc97a9a378ef18fd770bde578451729bde257c1eefc38f2",
+      "fixture_sha256": "97c2e9cebcd397541bc97a9a378ef18fd770bde578451729bde257c1eefc38f2",
+      "source_match": true,
+      "relations": [
+        "direct_owner_call",
+        "direct_owner_call",
+        "direct_owner_call",
+        "direct_owner_call"
+      ],
+      "complete": "complete",
+      "source_report_sha256": "71283150aa888cbd7ece867aea16dc56ccaae9e12be60540c4746cccbb8a6b61",
+      "source_report_bytes": 25629,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/actual_object",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "actual_object",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "97c2e9cebcd397541bc97a9a378ef18fd770bde578451729bde257c1eefc38f2",
+      "fixture_sha256": "97c2e9cebcd397541bc97a9a378ef18fd770bde578451729bde257c1eefc38f2",
+      "source_match": true,
+      "relations": [],
+      "complete": null,
+      "source_report_sha256": "a0e2925d7ef7b622431efcd65416d5a970b106c404066aaea6f35849f80ea2f4",
+      "source_report_bytes": 1848,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/actual_object",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    }
+  ],
+  "caveat": "Compact output has no typed run_status; only inventory and grip-class parity are checked.",
+  "command_note": "Templates preserve exact flags/format and normalize only producer/fixture paths; each row links the original raw report SHA-256. The source receipt SHA is retained."
+}

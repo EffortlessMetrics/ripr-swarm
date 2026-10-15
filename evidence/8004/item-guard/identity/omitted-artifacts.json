@@ -1,0 +1,344 @@
+[
+  {
+    "source_path": "review-operand-guard-8004-evidence/actual_null-compact.json",
+    "sha256": "a0f0855644c4ec14900d1306f4d68aa98fb940e4c59ad7a2658e1d9bd8c75129",
+    "bytes": 1824,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/actual_null-diff.json",
+    "sha256": "d4bce5359e7142ae412e02f9aade718e0a6f63578a06add990e2832bb88468b0",
+    "bytes": 10929,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/actual_null-full.json",
+    "sha256": "2ebfeadcbe646a56f1de26de4ef6dca9e25db52855a1f37c0f4e246235eb9689",
+    "bytes": 25605,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/actual_object-compact.json",
+    "sha256": "882f58977372b90e4ee1b268c0aa5140776dad257533d0b47a4b3988204eff84",
+    "bytes": 1826,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/actual_object-diff.json",
+    "sha256": "e1e9e193d5a70f02aaf22ef3fbc9d93005272da13c11314b74a6b070049bfb80",
+    "bytes": 11667,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/actual_object-full.json",
+    "sha256": "93c1716a7b7336dd04b2d73e981d13fe5ad2e33612e0b84f9b1fabdad6953c02",
+    "bytes": 25607,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/alias-compact.json",
+    "sha256": "bda00aaaed9aeb1e515ee07cba87ad5b626a1821df17cce43a0024cd74f220d2",
+    "bytes": 1871,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/alias-diff.json",
+    "sha256": "b02bf53d66dabcc033552dac2107bff6cb98e9e1df3d9c41ad4c0cb1d71d683d",
+    "bytes": 12965,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/alias-full.json",
+    "sha256": "65ee44ea14383f9a84ef39bd62be6c27e38a073ce330027e306b0617f7fd6dd5",
+    "bytes": 27315,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/debug_assert-compact.json",
+    "sha256": "15f899f31126afd40d63bd1e604490aeafb5169c1582f01e82e46b8ae893ce82",
+    "bytes": 1830,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/debug_assert-diff.json",
+    "sha256": "61400aca08a6e61f693dfb2a7eb900f5bdd9eed1ddd12dc005faae48bf6a16c6",
+    "bytes": 10955,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/debug_assert-full.json",
+    "sha256": "0df95c201db2ecb691f4d00947193680092eb6668f9e23926e27b954fe977d89",
+    "bytes": 28830,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/local_enum-compact.json",
+    "sha256": "6fa522d6163e6aaf5e05b570ab40343755c2f53053b190c798c52553d8239684",
+    "bytes": 1876,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/local_enum-diff.json",
+    "sha256": "53c8f76e6f44465887fe9f1b1f65d507cc11d179f2c88ee57697dd0b47481995",
+    "bytes": 12875,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/local_enum-full.json",
+    "sha256": "6409fd0c09dfccddd477b730e281916984962a2a1424345cd9e24c659bf8ff7d",
+    "bytes": 27320,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/module-compact.json",
+    "sha256": "f5b8632613b54a77885d8e97b7c57cd59dbabd73f024a1f2cdf742ce8b3dac9f",
+    "bytes": 1872,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/module-diff.json",
+    "sha256": "32ed3da2f20677434d3726029c1b5fc43cf7d5c2857e58afa89d85171b5a5099",
+    "bytes": 12917,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/module-full.json",
+    "sha256": "25f144ddfa0b86f9df22950f318c3891ef19ead7bd7319ce8b7224ef0a8fc6a2",
+    "bytes": 27316,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/nested_impl-compact.json",
+    "sha256": "70ae643730575f9ebeca822f90e1933e86ea069cc3c49001adbbb7fb8d24bce4",
+    "bytes": 1877,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/nested_impl-diff.json",
+    "sha256": "fcefa2cf218d40baed2bd4c22c48fff4583f15cb3c568d1597667db97362b808",
+    "bytes": 11942,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/nested_impl-full.json",
+    "sha256": "a384891f24920d7b578e0a578674c6c4e2a76bd2fafafa835b6aaa3fd728da2a",
+    "bytes": 27365,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/old-unit-diff.json",
+    "sha256": "54af259635604bd9e6331b73727deecaeec866485406e18012ba6794c00fbf99",
+    "bytes": 11016,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/same_wrapper-compact.json",
+    "sha256": "2a4e832ddc298965e3f7f215efa3dc077e2e44d84738adf9c87b2c00f04e067c",
+    "bytes": 1878,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/same_wrapper-diff.json",
+    "sha256": "cafb2e5f7e1db41a31d08d264398ec7ebd4643436d6a75b3610953e8da7a50f8",
+    "bytes": 11944,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/same_wrapper-full.json",
+    "sha256": "083053a7c3174fd4a207380ff925de7c36bf33143d234e10ce3fc95efa883fce",
+    "bytes": 27366,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/tuple-compact.json",
+    "sha256": "e44a1478ed44692ac221f5f186846bf7fb9268389cc1096ac7db35fbebc371c6",
+    "bytes": 1871,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/tuple-diff.json",
+    "sha256": "f68ee557afc3e62ca6ab1865606ba526ca7bf521d42ee4d92790ac34f90891c8",
+    "bytes": 11682,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/tuple-full.json",
+    "sha256": "f11756129550b46260d7a73265f574c5dcafffc80b12c7ef968f2c45488b2840",
+    "bytes": 27359,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/unit-compact.json",
+    "sha256": "cae0dcae3aec7708ee835172b08bf0e000d596d679e086d12023dd34995d5336",
+    "bytes": 1870,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/unit-diff.json",
+    "sha256": "854b6ed726752a6627d8ba5df9a8f8a2ad6be8251bb22cb00525a3ac8ad49f5e",
+    "bytes": 11668,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/unit-full.json",
+    "sha256": "29cd42aa8d4c07f3a938d0bed9e4016dfe765c8d205725629a1ad5e8440cfcc5",
+    "bytes": 27358,
+    "kind": "omitted raw reviewer report or stderr; summarized in review/independent-controls-summary.json"
+  },
+  {
+    "source_path": "operand-item-shadow-8004-evidence/receiver-units-def018d1",
+    "sha256": "8892ec6f007c603ab61d593bd3c41df1147f051fea67a9a1d037a6466885457e",
+    "bytes": 242248736,
+    "kind": "omitted executable/binary"
+  },
+  {
+    "source_path": "operand-item-shadow-8004-evidence/ripr-operand-item-fixed",
+    "sha256": "f7590b594c7f8f2ff847e12a29960a97265fc2f708568b879b6dffaed7b0c630",
+    "bytes": 119518200,
+    "kind": "omitted executable/binary"
+  },
+  {
+    "source_path": "operand-item-shadow-8004-evidence/private-receiver-fixed",
+    "sha256": "76dd182e422172443f363ab72f3b1769de4cb921c7d113add690f179e2ea2856",
+    "bytes": 59088968,
+    "kind": "omitted executable/binary"
+  },
+  {
+    "source_path": "operand-item-shadow-8004-evidence/corpus-native",
+    "sha256": "9f22af3c06486e23ae930c0da80135db39e5c075a450580c377ab2a56990f04f",
+    "bytes": 6900344,
+    "kind": "omitted executable/binary"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/native-matrix",
+    "sha256": "7c7a21ab194e73c527528240e932063bbe6fa33c955314b98efbce1ee80971fe",
+    "bytes": 6992504,
+    "kind": "omitted executable/binary"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/native-owner-wrong",
+    "sha256": "8b6d2dcd219d1e4607bc39924b97a838dbfdf1b6b67a01d051c2506c1797665e",
+    "bytes": 6992720,
+    "kind": "omitted executable/binary"
+  },
+  {
+    "source_path": "operand-item-shadow-8004-evidence/publication-entries.json",
+    "sha256": "35683372f5ba3b4fa8555d68a07e5ea6de129d2cb44deb618842886ae2ae9389",
+    "bytes": 2744258,
+    "kind": "omitted large source/progress artifact"
+  },
+  {
+    "source_path": "operand-item-shadow-8004-evidence/repo-first-oracle.rs",
+    "sha256": "16d840e12e576f237d0bd43447eeba6c5446689b89bf407c7ae2edbeb58e0ad2",
+    "bytes": 674577,
+    "kind": "omitted large source/progress artifact"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/composition-units.log",
+    "sha256": "5492882c6da43f3cdf9ac042517bea0dd00cfed1803a97d2a1bd23ea7f984200",
+    "bytes": 253258,
+    "kind": "omitted large source/progress artifact"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/independent-controls-receipt.json",
+    "sha256": "55044a4d2de1a9a50c7f424ec8a66586bc48a3f71f054b2ccc3596c62c80035e",
+    "bytes": 20850,
+    "kind": "omitted full receipt/source review; normalized claim-essential fields are included in packet"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/review-record.md",
+    "sha256": "17250e6c0993dc5dd7e921973e8dc9a9150dcb50fccc363f2b1af4e886625716",
+    "bytes": 15169,
+    "kind": "omitted full receipt/source review; normalized claim-essential fields are included in packet"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/composition-qualification-receipt.json",
+    "sha256": "a0f6885ff1b0d4d4870fb6a568eb401f3a4563e6fa727e6378acd8bc2f58c58c",
+    "bytes": 11183,
+    "kind": "omitted full receipt/source review; normalized claim-essential fields are included in packet"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/composition-environment.json",
+    "sha256": "1e85e943fbfab13e8a6041edf6d2b4d89211b732852aa95278ba4835b67631b6",
+    "bytes": 2237,
+    "kind": "omitted full receipt/source review; normalized claim-essential fields are included in packet"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/composition-build-script.json",
+    "sha256": "8b769452577ea6a50aa89d41f7051804dd41a20b498292a4852ad3f1a3fe5c41",
+    "bytes": 556,
+    "kind": "omitted full receipt/source review; normalized claim-essential fields are included in packet"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/composed-cli-controls/independent-controls-receipt.json",
+    "sha256": "2aa6da52ddec6e310cca45b79cd19443e926e0db4899931583bba7c2a4341e76",
+    "bytes": 21696,
+    "kind": "omitted full receipt/source review; normalized claim-essential fields are included in packet"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/composition-integration.log",
+    "sha256": "a611e33fecb23a2afc4c2dcc9d552802182ed6ce63a4682ec3e58d5c5d714688",
+    "bytes": 255350,
+    "kind": "omitted full verbose Cargo JSON log; selected test output is included and source log hash retained"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/composition-cli-rerun.log",
+    "sha256": "b50f5a7563218865478bd0d15eca7c504f073bd0a8ccbe60a634d45f25d722d0",
+    "bytes": 256282,
+    "kind": "omitted full verbose Cargo JSON log; selected test output is included and source log hash retained"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/composition-native-paths.log",
+    "sha256": "823795af3a32787b2f0829d10033648659bbd4565e112aeac553b4a4ae661fac",
+    "bytes": 255215,
+    "kind": "omitted full verbose Cargo JSON log; selected test output is included and source log hash retained"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/receiver-units-b960feed",
+    "sha256": "253725d72dd485890a2c41dd85acc4447e2d5542bd13be8c9665287766bd8858",
+    "bytes": 243050792,
+    "kind": "omitted local test/control executable"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/private-receiver-b960feed",
+    "sha256": "27963a9fed78213e74c7eaf1bb5fa088e30664f2afc425723fc28a81090dbbd7",
+    "bytes": 59557832,
+    "kind": "omitted local test/control executable"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/ripr-b960feed",
+    "sha256": "21ec0eb60dab8bec3ee355bca1f1a1adbbef32ef0a5d1375d5c88683beff7799",
+    "bytes": 120314216,
+    "kind": "omitted local test/control executable"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/cli_smoke-b960feed",
+    "sha256": "c272f6f98e809b5ef0c7205e4472102b18b0558fa07f3212650eb8a0d9908120",
+    "bytes": 81033632,
+    "kind": "omitted local test/control executable"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/native_path_roots-b960feed",
+    "sha256": "5af5f602be4b0b8cd8b62b242eec94c62b57fc35866ff3ac64e6cf5bb8e5a75a",
+    "bytes": 1736696,
+    "kind": "omitted local test/control executable"
+  },
+  {
+    "source_path": "receiver-gap-8004-evidence/ripr-ba04f2af-default",
+    "sha256": "1a522b8f2202333fdcf961b56546dcec0feb7d05f18ae1568040bba065b18617",
+    "bytes": 120172224,
+    "kind": "omitted old-control executable"
+  },
+  {
+    "source_path": "review-operand-guard-8004-evidence/final-published-head-review.json",
+    "sha256": "84ad5ea29d1189ced79951b72e543ca6830aac9650b5889ea4271c5e02d1e158",
+    "bytes": 13283,
+    "kind": "omitted full exact published-head review receipt; normalized claim-essential fields are represented in packet"
+  },
+  {
+    "source_path": "operand-item-shadow-8004-evidence/published-merge-observation.json",
+    "sha256": "7aa86541c00a17346237552574d291190fb603b35ce80bf84eba3238cd99e448",
+    "bytes": 571,
+    "kind": "omitted merge object observation receipt; normalized identities are represented in packet"
+  }
+]

@@ -1,0 +1,2 @@
+$ cargo build -p ripr
+    Finished `dev` profile [unoptimized] target(s) in 0.12s

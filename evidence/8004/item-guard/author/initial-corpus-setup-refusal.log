@@ -1,0 +1,2 @@
+xtask: check-evidence-promotion-honesty failed; see target/ripr/reports/evidence-promotion-honesty.md
+evidence promotion honesty case `rust_inherent_receiver_operand_item_shadow` (fixture `fixtures/inherent_receiver_operand_item_shadow`): `expected_class` requires fixture human output at `expected/human-full.txt`, but it was missing

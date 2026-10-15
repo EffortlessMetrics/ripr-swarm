@@ -1,0 +1,27 @@
+
+running 10 tests
+test actual_null::tests::operand_constructor_is_not_the_outer_receiver ... ok
+test alias::tests::operand_constructor_is_not_the_outer_receiver ... ok
+test debug_assert::tests::operand_constructor_is_not_the_outer_receiver ... ok
+test actual_object::tests::operand_constructor_is_not_the_outer_receiver ... FAILED
+test local_enum::tests::operand_constructor_is_not_the_outer_receiver ... ok
+test module::tests::operand_constructor_is_not_the_outer_receiver ... ok
+test nested_impl::tests::operand_constructor_is_not_the_outer_receiver ... ok
+test same_wrapper::tests::operand_constructor_is_not_the_outer_receiver ... ok
+test tuple::tests::operand_constructor_is_not_the_outer_receiver ... ok
+test unit::tests::operand_constructor_is_not_the_outer_receiver ... ok
+
+failures:
+
+---- actual_object::tests::operand_constructor_is_not_the_outer_receiver stdout ----
+
+thread 'actual_object::tests::operand_constructor_is_not_the_outer_receiver' (63) panicked at <review-controls>/native-owner-wrong.rs:306:38:
+called `Option::unwrap()` on a `None` value
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    actual_object::tests::operand_constructor_is_not_the_outer_receiver
+
+test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

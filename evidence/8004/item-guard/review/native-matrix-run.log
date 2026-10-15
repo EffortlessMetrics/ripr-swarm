@@ -1,0 +1,15 @@
+
+running 10 tests
+test actual_null::tests::operand_constructor_is_not_the_outer_receiver ... ok
+test alias::tests::operand_constructor_is_not_the_outer_receiver ... ok
+test debug_assert::tests::operand_constructor_is_not_the_outer_receiver ... ok
+test actual_object::tests::operand_constructor_is_not_the_outer_receiver ... ok
+test module::tests::operand_constructor_is_not_the_outer_receiver ... ok
+test local_enum::tests::operand_constructor_is_not_the_outer_receiver ... ok
+test nested_impl::tests::operand_constructor_is_not_the_outer_receiver ... ok
+test same_wrapper::tests::operand_constructor_is_not_the_outer_receiver ... ok
+test tuple::tests::operand_constructor_is_not_the_outer_receiver ... ok
+test unit::tests::operand_constructor_is_not_the_outer_receiver ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

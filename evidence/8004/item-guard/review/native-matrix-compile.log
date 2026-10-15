@@ -1,0 +1,263 @@
+warning: type `value` should have an upper camel case name
+  --> <review-controls>/native-matrix.rs:27:29
+   |
+27 |         assert_eq!({ struct value; value.as_object() }, None);
+   |                             ^^^^^ help: convert the identifier to upper camel case (notice the capitalization): `Value`
+   |
+   = note: `#[warn(non_camel_case_types)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: type `value` should have an upper camel case name
+  --> <review-controls>/native-matrix.rs:58:29
+   |
+58 |         assert_eq!({ struct value(); value.as_object() }, None);
+   |                             ^^^^^ help: convert the identifier to upper camel case (notice the capitalization): `Value`
+
+warning: type `value` should have an upper camel case name
+   --> <review-controls>/native-matrix.rs:213:29
+    |
+213 |         assert_eq!({ struct value; impl value { fn as_object(&self) -> Option<()> { None } } value.as_object() }, None);
+    |                             ^^^^^ help: convert the identifier to upper camel case (notice the capitalization): `Value`
+
+warning: type `value` should have an upper camel case name
+   --> <review-controls>/native-matrix.rs:244:32
+    |
+244 |         debug_assert!({ struct value; value.as_object().is_none() });
+    |                                ^^^^^ help: convert the identifier to upper camel case (notice the capitalization): `Value`
+
+warning: unused variable: `value`
+  --> <review-controls>/native-matrix.rs:26:13
+   |
+26 |         let value = JsonValue::Null;
+   |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `value`
+  --> <review-controls>/native-matrix.rs:57:13
+   |
+57 |         let value = JsonValue::Null;
+   |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+
+warning: unused variable: `value`
+  --> <review-controls>/native-matrix.rs:88:13
+   |
+88 |         let value = JsonValue::Null;
+   |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+
+warning: unused variable: `value`
+   --> <review-controls>/native-matrix.rs:119:13
+    |
+119 |         let value = JsonValue::Null;
+    |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+
+warning: unused variable: `value`
+   --> <review-controls>/native-matrix.rs:150:13
+    |
+150 |         let value = JsonValue::Null;
+    |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+
+warning: unused variable: `value`
+   --> <review-controls>/native-matrix.rs:181:13
+    |
+181 |         let value = JsonValue::Null;
+    |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+
+warning: unused variable: `value`
+   --> <review-controls>/native-matrix.rs:212:13
+    |
+212 |         let value = JsonValue::Null;
+    |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+
+warning: unused variable: `value`
+   --> <review-controls>/native-matrix.rs:243:13
+    |
+243 |         let value = JsonValue::Null;
+    |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+
+warning: variant `Object` is never constructed
+ --> <review-controls>/native-matrix.rs:5:5
+  |
+4 | pub(crate) enum JsonValue {
+  |                 --------- variant in this enum
+5 |     Object(BTreeMap<String, i32>),
+  |     ^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `as_object` is never used
+  --> <review-controls>/native-matrix.rs:10:19
+   |
+ 9 | impl JsonValue {
+   | -------------- method in this implementation
+10 |     pub(crate) fn as_object(&self) -> Option<&BTreeMap<String, i32>> {
+   |                   ^^^^^^^^^
+
+warning: variant `Object` is never constructed
+  --> <review-controls>/native-matrix.rs:36:5
+   |
+35 | pub(crate) enum JsonValue {
+   |                 --------- variant in this enum
+36 |     Object(BTreeMap<String, i32>),
+   |     ^^^^^^
+
+warning: method `as_object` is never used
+  --> <review-controls>/native-matrix.rs:41:19
+   |
+40 | impl JsonValue {
+   | -------------- method in this implementation
+41 |     pub(crate) fn as_object(&self) -> Option<&BTreeMap<String, i32>> {
+   |                   ^^^^^^^^^
+
+warning: variant `Object` is never constructed
+  --> <review-controls>/native-matrix.rs:67:5
+   |
+66 | pub(crate) enum JsonValue {
+   |                 --------- variant in this enum
+67 |     Object(BTreeMap<String, i32>),
+   |     ^^^^^^
+
+warning: method `as_object` is never used
+  --> <review-controls>/native-matrix.rs:72:19
+   |
+71 | impl JsonValue {
+   | -------------- method in this implementation
+72 |     pub(crate) fn as_object(&self) -> Option<&BTreeMap<String, i32>> {
+   |                   ^^^^^^^^^
+
+warning: variant `Object` is never constructed
+  --> <review-controls>/native-matrix.rs:98:5
+   |
+97 | pub(crate) enum JsonValue {
+   |                 --------- variant in this enum
+98 |     Object(BTreeMap<String, i32>),
+   |     ^^^^^^
+
+warning: method `as_object` is never used
+   --> <review-controls>/native-matrix.rs:103:19
+    |
+102 | impl JsonValue {
+    | -------------- method in this implementation
+103 |     pub(crate) fn as_object(&self) -> Option<&BTreeMap<String, i32>> {
+    |                   ^^^^^^^^^
+
+warning: variant `Object` is never constructed
+   --> <review-controls>/native-matrix.rs:129:5
+    |
+128 | pub(crate) enum JsonValue {
+    |                 --------- variant in this enum
+129 |     Object(BTreeMap<String, i32>),
+    |     ^^^^^^
+
+warning: method `as_object` is never used
+   --> <review-controls>/native-matrix.rs:134:19
+    |
+133 | impl JsonValue {
+    | -------------- method in this implementation
+134 |     pub(crate) fn as_object(&self) -> Option<&BTreeMap<String, i32>> {
+    |                   ^^^^^^^^^
+
+warning: variant `Object` is never constructed
+   --> <review-controls>/native-matrix.rs:160:5
+    |
+159 | pub(crate) enum JsonValue {
+    |                 --------- variant in this enum
+160 |     Object(BTreeMap<String, i32>),
+    |     ^^^^^^
+
+warning: method `as_object` is never used
+   --> <review-controls>/native-matrix.rs:165:19
+    |
+164 | impl JsonValue {
+    | -------------- method in this implementation
+165 |     pub(crate) fn as_object(&self) -> Option<&BTreeMap<String, i32>> {
+    |                   ^^^^^^^^^
+
+warning: trait `ForeignView` is never used
+   --> <review-controls>/native-matrix.rs:173:7
+    |
+173 | trait ForeignView { fn as_object(&self) -> Option<()> { None } }
+    |       ^^^^^^^^^^^
+
+warning: function `ripr_receiver_operand` is never used
+   --> <review-controls>/native-matrix.rs:182:25
+    |
+182 |         assert_eq!({ fn ripr_receiver_operand(value: ()) -> Option<()> { value.as_object(); None } None::<()> }, None);
+    |                         ^^^^^^^^^^^^^^^^^^^^^
+
+warning: variant `Object` is never constructed
+   --> <review-controls>/native-matrix.rs:191:5
+    |
+190 | pub(crate) enum JsonValue {
+    |                 --------- variant in this enum
+191 |     Object(BTreeMap<String, i32>),
+    |     ^^^^^^
+
+warning: method `as_object` is never used
+   --> <review-controls>/native-matrix.rs:196:19
+    |
+195 | impl JsonValue {
+    | -------------- method in this implementation
+196 |     pub(crate) fn as_object(&self) -> Option<&BTreeMap<String, i32>> {
+    |                   ^^^^^^^^^
+
+warning: trait `ForeignView` is never used
+   --> <review-controls>/native-matrix.rs:204:7
+    |
+204 | trait ForeignView { fn as_object(&self) -> Option<()> { None } }
+    |       ^^^^^^^^^^^
+
+warning: variant `Object` is never constructed
+   --> <review-controls>/native-matrix.rs:222:5
+    |
+221 | pub(crate) enum JsonValue {
+    |                 --------- variant in this enum
+222 |     Object(BTreeMap<String, i32>),
+    |     ^^^^^^
+
+warning: method `as_object` is never used
+   --> <review-controls>/native-matrix.rs:227:19
+    |
+226 | impl JsonValue {
+    | -------------- method in this implementation
+227 |     pub(crate) fn as_object(&self) -> Option<&BTreeMap<String, i32>> {
+    |                   ^^^^^^^^^
+
+warning: variant `Object` is never constructed
+   --> <review-controls>/native-matrix.rs:253:5
+    |
+252 | pub(crate) enum JsonValue {
+    |                 --------- variant in this enum
+253 |     Object(BTreeMap<String, i32>),
+    |     ^^^^^^
+
+warning: trait `ForeignView` is never used
+   --> <review-controls>/native-matrix.rs:266:7
+    |
+266 | trait ForeignView { fn as_object(&self) -> Option<()> { None } }
+    |       ^^^^^^^^^^^
+
+warning: variant `Null` is never constructed
+   --> <review-controls>/native-matrix.rs:285:5
+    |
+283 | pub(crate) enum JsonValue {
+    |                 --------- variant in this enum
+284 |     Object(BTreeMap<String, i32>),
+285 |     Null,
+    |     ^^^^
+
+warning: trait `ForeignView` is never used
+   --> <review-controls>/native-matrix.rs:297:7
+    |
+297 | trait ForeignView { fn as_object(&self) -> Option<()> { None } }
+    |       ^^^^^^^^^^^
+
+warning: module `JsonValue` should have a snake case name
+   --> <review-controls>/native-matrix.rs:151:26
+    |
+151 |         assert_eq!({ mod JsonValue { pub struct Null; } JsonValue::Null.as_object() }, None);
+    |                          ^^^^^^^^^ help: convert the identifier to snake case: `json_value`
+    |
+    = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: 36 warnings emitted
+

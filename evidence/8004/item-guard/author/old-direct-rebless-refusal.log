@@ -1,0 +1,2 @@
+xtask: check-evidence-promotion-honesty failed; see target/ripr/reports/evidence-promotion-honesty.md
+evidence promotion honesty case `rust_inherent_receiver_operand_item_shadow` (fixture `fixtures/inherent_receiver_operand_item_shadow`): `expected_related_test` requires `src/lib.rs:24 operand_constructor_is_not_the_outer_receiver` with oracle `whole_object_equality/strong` with relation `weak_token_substring` on finding `probe:src_lib.rs:match_arm:f9032269`

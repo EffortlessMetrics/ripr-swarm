@@ -1,0 +1,70 @@
+{
+  "head": "def018d1a67109fa327f094cd63c38b936a407e0",
+  "tree": "a8c022a078c40285c8e38624c5c0431f9e907531",
+  "files": [
+    {
+      "path": ".ripr/traceability.toml",
+      "sha256": "981271e80faac60627411f4403879161acbc88961d10b858b6791e981b66bea3"
+    },
+    {
+      "path": "changelog.d/7415-inherent-receiver-admission.md",
+      "sha256": "352bab827c60686f83af821a5300fe2e685a43d3ceccac5c1acb2ec91062db6a"
+    },
+    {
+      "path": "crates/ripr/src/analysis/classify/related_tests.rs",
+      "sha256": "243c6fd594c8571b925a5d4f73eddff0de952532da494590943723a8fe5ef838"
+    },
+    {
+      "path": "crates/ripr/src/analysis/test_grip_evidence/tests.rs",
+      "sha256": "25c523336cf2c822f89c5476d2f1e8a248b206e0e5d6864f085ee0e82f6464c7"
+    },
+    {
+      "path": "crates/ripr/tests/private_inherent_receiver.rs",
+      "sha256": "53ce8acb47ea81ad7222fd3c360cf5dcc58b27c1435abc8a959814781a757196"
+    },
+    {
+      "path": "docs/LEARNINGS.md",
+      "sha256": "5d72a8bba0109db535eecb3dbde10afbc10cf74b7a9881a5bed2beb3984621c1"
+    },
+    {
+      "path": "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md",
+      "sha256": "2aecf27a12e58f4c56463a45f7efc2bb353452f94a8d439677fe1a100b4cddf2"
+    },
+    {
+      "path": "fixtures/evidence-promotion-honesty-corpus/corpus.json",
+      "sha256": "6f4d738bbfe402312942cc9dc61e108b896a100f1be2522308284ffe104fc3af"
+    },
+    {
+      "path": "fixtures/inherent_receiver_operand_item_shadow/SPEC.md",
+      "sha256": "8f3c622d5b40a929d86fed8b0a04437fb5a28b12ede45722d911b00fbd56b6e6"
+    },
+    {
+      "path": "fixtures/inherent_receiver_operand_item_shadow/diff.patch",
+      "sha256": "50cf55621b65dc0bcc990935270a00f627c22121da41729940ff0e09d000e580"
+    },
+    {
+      "path": "fixtures/inherent_receiver_operand_item_shadow/expected/CHANGELOG.md",
+      "sha256": "a7eb9d9640b272286c3780ec91f300a23d219fd09344d246e095df0271c1c8ef"
+    },
+    {
+      "path": "fixtures/inherent_receiver_operand_item_shadow/expected/check.json",
+      "sha256": "4b0282f3d6c9748be967f07da8a66d421e54875e0d5ea17d142f6281dcb7f337"
+    },
+    {
+      "path": "fixtures/inherent_receiver_operand_item_shadow/expected/human-full.txt",
+      "sha256": "572966a36f2f861e03eb87ea60a81c70034563c8a9783afe7800489c02fc1955"
+    },
+    {
+      "path": "fixtures/inherent_receiver_operand_item_shadow/expected/human.txt",
+      "sha256": "4d230b2dc848c6f6de9db58dd77e8fd3b4cddfb9f7dd2521b33897b5b7664e64"
+    },
+    {
+      "path": "fixtures/inherent_receiver_operand_item_shadow/input/Cargo.toml",
+      "sha256": "4bc05027660c00d66a08b12a0f92d5e5848b4e3633793833cac7bf9149930fa0"
+    },
+    {
+      "path": "fixtures/inherent_receiver_operand_item_shadow/input/src/lib.rs",
+      "sha256": "83f10e3d8f8f2ff632aba80be97e965cf86aecca857db7bbf236cf038bda044d"
+    }
+  ]
+}

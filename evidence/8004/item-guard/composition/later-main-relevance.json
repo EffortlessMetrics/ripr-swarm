@@ -1,0 +1,6 @@
+{
+  "head": "5469089b81d7a59d7059e2b8aab64d109cc9c095",
+  "parent": "2946fc9be09dd1e4f2a248c209561f718aa976df",
+  "clean_textual_composition_tree": "fe0852322f88ab4a4aa79f61ebf4bf5b00c68061",
+  "relevance": "13-file #7943 delta: new infection condition is in ProbeFamily::Predicate, same_connectives diff emission refinement applies to guarded predicate edits. Receiver helper/full-compact consumers and receiver integration blobs unchanged. Concrete private receiver reports contain only MatchArm/ReturnValue with no connective/guard edits. Frozen2946 execution remains applicable to receiver claim; no execution at5469089 is claimed."
+}

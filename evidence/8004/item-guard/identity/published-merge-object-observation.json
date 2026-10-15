@@ -1,0 +1,16 @@
+{
+  "observed_at": "2026-10-15T00:32:39.802994+00:00",
+  "reported_git_object": "2fa3df5b4eca7cfb8376a676b2380a59aaf02c35",
+  "tree": "d1c80eaa9192ca99b11011221bc80d0b342f9010",
+  "parents": [
+    "9543a9bd733b0921886306abd2c2609fbe73b62e",
+    "15ca898ad1d3571d104ce1ae20b629fe2f55fc86"
+  ],
+  "relation_to_local_validation": {
+    "executed_composition": "b960feed712cbb71e6d07c9f902e057a677261c3",
+    "same_object": false,
+    "hosted_job_checkout_verified": false
+  },
+  "later_main_relevance": "5469089 guarded-predicate connective infection and9543a9b packaged README release-facts command inspected separately; no receiver-claim change",
+  "caveat": "This is a GitHub-reported PR merge/test object identity, not evidence the PR merged or that a hosted job checked out these bytes."
+}

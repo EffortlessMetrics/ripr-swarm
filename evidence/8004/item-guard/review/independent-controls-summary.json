@@ -1,0 +1,817 @@
+{
+  "source_receipt_sha256": "55044a4d2de1a9a50c7f424ec8a66586bc48a3f71f054b2ccc3596c62c80035e",
+  "reviewed_head": "def018d1a67109fa327f094cd63c38b936a407e0",
+  "candidate_producer": {
+    "version": "ripr 0.11.0 (f6aab7639b88be1a21c757be74baef833e636f17-dirty)",
+    "sha256": "f7590b594c7f8f2ff847e12a29960a97265fc2f708568b879b6dffaed7b0c630",
+    "kind": "replayed source-equivalent precommit CLI; not clean exact-commit build"
+  },
+  "old_control_sha256": "1a522b8f2202333fdcf961b56546dcec0feb7d05f18ae1568040bba065b18617",
+  "total_reports": 30,
+  "case_count": 10,
+  "surface_counts": {
+    "diff": 10,
+    "full": 10,
+    "compact": 10
+  },
+  "case_counts": {
+    "unit": 3,
+    "tuple": 3,
+    "local_enum": 3,
+    "alias": 3,
+    "module": 3,
+    "same_wrapper": 3,
+    "nested_impl": 3,
+    "debug_assert": 3,
+    "actual_null": 3,
+    "actual_object": 3
+  },
+  "all_exit_zero": true,
+  "complete_detailed_reports": 10,
+  "compact_complete_claimed": false,
+  "old_wrong_control": {
+    "exit": 0,
+    "relations": [
+      "direct_owner_call",
+      "direct_owner_call"
+    ],
+    "status": "old producer reports direct_owner_call for unit-struct operand control"
+  },
+  "native_matrix": {
+    "rustc": "1.95.0",
+    "status": "PASS",
+    "tests": 10,
+    "passed": 10,
+    "failed": 0,
+    "mutated_owner_control": {
+      "status": "FAIL_AS_EXPECTED",
+      "passed": 9,
+      "failed": 1,
+      "sole_failure": "actual_object genuine-owner positive"
+    }
+  },
+  "rows": [
+    {
+      "case": "unit",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "83f10e3d8f8f2ff632aba80be97e965cf86aecca857db7bbf236cf038bda044d",
+      "relations": [
+        "weak_token_substring",
+        "weak_token_substring"
+      ],
+      "complete": true,
+      "source_report": "unit-diff.json",
+      "source_report_sha256": "854b6ed726752a6627d8ba5df9a8f8a2ad6be8251bb22cb00525a3ac8ad49f5e",
+      "source_report_bytes": 11668,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/unit",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/unit/diff.patch"
+      ]
+    },
+    {
+      "case": "unit",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "83f10e3d8f8f2ff632aba80be97e965cf86aecca857db7bbf236cf038bda044d",
+      "relations": [
+        "same_test_file",
+        "same_test_file",
+        "assertion_target_affinity",
+        "same_test_file"
+      ],
+      "complete": "complete",
+      "source_report": "unit-full.json",
+      "source_report_sha256": "29cd42aa8d4c07f3a938d0bed9e4016dfe765c8d205725629a1ad5e8440cfcc5",
+      "source_report_bytes": 27358,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/unit",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "unit",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "83f10e3d8f8f2ff632aba80be97e965cf86aecca857db7bbf236cf038bda044d",
+      "relations": [],
+      "complete": null,
+      "source_report": "unit-compact.json",
+      "source_report_sha256": "cae0dcae3aec7708ee835172b08bf0e000d596d679e086d12023dd34995d5336",
+      "source_report_bytes": 1870,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/unit",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    },
+    {
+      "case": "tuple",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "fe2a34f8373669c26160a866d8b1c428806259f3d3efdbdf57c89b1ba31545d3",
+      "relations": [
+        "weak_token_substring",
+        "weak_token_substring"
+      ],
+      "complete": true,
+      "source_report": "tuple-diff.json",
+      "source_report_sha256": "f68ee557afc3e62ca6ab1865606ba526ca7bf521d42ee4d92790ac34f90891c8",
+      "source_report_bytes": 11682,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/tuple",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/tuple/diff.patch"
+      ]
+    },
+    {
+      "case": "tuple",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "fe2a34f8373669c26160a866d8b1c428806259f3d3efdbdf57c89b1ba31545d3",
+      "relations": [
+        "same_test_file",
+        "same_test_file",
+        "assertion_target_affinity",
+        "same_test_file"
+      ],
+      "complete": "complete",
+      "source_report": "tuple-full.json",
+      "source_report_sha256": "f11756129550b46260d7a73265f574c5dcafffc80b12c7ef968f2c45488b2840",
+      "source_report_bytes": 27359,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/tuple",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "tuple",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "fe2a34f8373669c26160a866d8b1c428806259f3d3efdbdf57c89b1ba31545d3",
+      "relations": [],
+      "complete": null,
+      "source_report": "tuple-compact.json",
+      "source_report_sha256": "e44a1478ed44692ac221f5f186846bf7fb9268389cc1096ac7db35fbebc371c6",
+      "source_report_bytes": 1871,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/tuple",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    },
+    {
+      "case": "local_enum",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "4e4b6afec266de6ef5a5dd8af2312d01ba13544ee9a2aed7c31e47e2e356fdfc",
+      "relations": [
+        "weak_token_substring",
+        "weak_token_substring"
+      ],
+      "complete": true,
+      "source_report": "local_enum-diff.json",
+      "source_report_sha256": "53c8f76e6f44465887fe9f1b1f65d507cc11d179f2c88ee57697dd0b47481995",
+      "source_report_bytes": 12875,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/local_enum",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/local_enum/diff.patch"
+      ]
+    },
+    {
+      "case": "local_enum",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "4e4b6afec266de6ef5a5dd8af2312d01ba13544ee9a2aed7c31e47e2e356fdfc",
+      "relations": [
+        "same_test_file",
+        "same_test_file",
+        "same_test_file",
+        "same_test_file"
+      ],
+      "complete": "complete",
+      "source_report": "local_enum-full.json",
+      "source_report_sha256": "6409fd0c09dfccddd477b730e281916984962a2a1424345cd9e24c659bf8ff7d",
+      "source_report_bytes": 27320,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/local_enum",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "local_enum",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "4e4b6afec266de6ef5a5dd8af2312d01ba13544ee9a2aed7c31e47e2e356fdfc",
+      "relations": [],
+      "complete": null,
+      "source_report": "local_enum-compact.json",
+      "source_report_sha256": "6fa522d6163e6aaf5e05b570ab40343755c2f53053b190c798c52553d8239684",
+      "source_report_bytes": 1876,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/local_enum",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    },
+    {
+      "case": "alias",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "fc90d936912df7af5eee56a0b4a395fc1f02f19332e9c2e668d06f54f6ac5433",
+      "relations": [
+        "weak_token_substring",
+        "weak_token_substring"
+      ],
+      "complete": true,
+      "source_report": "alias-diff.json",
+      "source_report_sha256": "b02bf53d66dabcc033552dac2107bff6cb98e9e1df3d9c41ad4c0cb1d71d683d",
+      "source_report_bytes": 12965,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/alias",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/alias/diff.patch"
+      ]
+    },
+    {
+      "case": "alias",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "fc90d936912df7af5eee56a0b4a395fc1f02f19332e9c2e668d06f54f6ac5433",
+      "relations": [
+        "same_test_file",
+        "same_test_file",
+        "same_test_file",
+        "same_test_file"
+      ],
+      "complete": "complete",
+      "source_report": "alias-full.json",
+      "source_report_sha256": "65ee44ea14383f9a84ef39bd62be6c27e38a073ce330027e306b0617f7fd6dd5",
+      "source_report_bytes": 27315,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/alias",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "alias",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "fc90d936912df7af5eee56a0b4a395fc1f02f19332e9c2e668d06f54f6ac5433",
+      "relations": [],
+      "complete": null,
+      "source_report": "alias-compact.json",
+      "source_report_sha256": "bda00aaaed9aeb1e515ee07cba87ad5b626a1821df17cce43a0024cd74f220d2",
+      "source_report_bytes": 1871,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/alias",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    },
+    {
+      "case": "module",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "778291221e17a6f3d1bdc4329f2b8393b82594edb52b5fcde06daf2d3a5cae6f",
+      "relations": [
+        "weak_token_substring",
+        "weak_token_substring"
+      ],
+      "complete": true,
+      "source_report": "module-diff.json",
+      "source_report_sha256": "32ed3da2f20677434d3726029c1b5fc43cf7d5c2857e58afa89d85171b5a5099",
+      "source_report_bytes": 12917,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/module",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/module/diff.patch"
+      ]
+    },
+    {
+      "case": "module",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "778291221e17a6f3d1bdc4329f2b8393b82594edb52b5fcde06daf2d3a5cae6f",
+      "relations": [
+        "same_test_file",
+        "same_test_file",
+        "same_test_file",
+        "same_test_file"
+      ],
+      "complete": "complete",
+      "source_report": "module-full.json",
+      "source_report_sha256": "25f144ddfa0b86f9df22950f318c3891ef19ead7bd7319ce8b7224ef0a8fc6a2",
+      "source_report_bytes": 27316,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/module",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "module",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "778291221e17a6f3d1bdc4329f2b8393b82594edb52b5fcde06daf2d3a5cae6f",
+      "relations": [],
+      "complete": null,
+      "source_report": "module-compact.json",
+      "source_report_sha256": "f5b8632613b54a77885d8e97b7c57cd59dbabd73f024a1f2cdf742ce8b3dac9f",
+      "source_report_bytes": 1872,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/module",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    },
+    {
+      "case": "same_wrapper",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "0aeccbc67adcd1f8336b04bb6853f8d61e43c5536e23f4ff766c7975fff2bf07",
+      "relations": [
+        "weak_token_substring",
+        "weak_token_substring"
+      ],
+      "complete": true,
+      "source_report": "same_wrapper-diff.json",
+      "source_report_sha256": "cafb2e5f7e1db41a31d08d264398ec7ebd4643436d6a75b3610953e8da7a50f8",
+      "source_report_bytes": 11944,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/same_wrapper",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/same_wrapper/diff.patch"
+      ]
+    },
+    {
+      "case": "same_wrapper",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "0aeccbc67adcd1f8336b04bb6853f8d61e43c5536e23f4ff766c7975fff2bf07",
+      "relations": [
+        "same_test_file",
+        "same_test_file",
+        "assertion_target_affinity",
+        "same_test_file"
+      ],
+      "complete": "complete",
+      "source_report": "same_wrapper-full.json",
+      "source_report_sha256": "083053a7c3174fd4a207380ff925de7c36bf33143d234e10ce3fc95efa883fce",
+      "source_report_bytes": 27366,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/same_wrapper",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "same_wrapper",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "0aeccbc67adcd1f8336b04bb6853f8d61e43c5536e23f4ff766c7975fff2bf07",
+      "relations": [],
+      "complete": null,
+      "source_report": "same_wrapper-compact.json",
+      "source_report_sha256": "2a4e832ddc298965e3f7f215efa3dc077e2e44d84738adf9c87b2c00f04e067c",
+      "source_report_bytes": 1878,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/same_wrapper",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    },
+    {
+      "case": "nested_impl",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "d17ea5cf78348cd76d8ce3d8e18841bda13a3ee3e746b753a9e0e9adae27495e",
+      "relations": [
+        "weak_token_substring",
+        "weak_token_substring"
+      ],
+      "complete": true,
+      "source_report": "nested_impl-diff.json",
+      "source_report_sha256": "fcefa2cf218d40baed2bd4c22c48fff4583f15cb3c568d1597667db97362b808",
+      "source_report_bytes": 11942,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/nested_impl",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/nested_impl/diff.patch"
+      ]
+    },
+    {
+      "case": "nested_impl",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "d17ea5cf78348cd76d8ce3d8e18841bda13a3ee3e746b753a9e0e9adae27495e",
+      "relations": [
+        "same_test_file",
+        "same_test_file",
+        "assertion_target_affinity",
+        "same_test_file"
+      ],
+      "complete": "complete",
+      "source_report": "nested_impl-full.json",
+      "source_report_sha256": "a384891f24920d7b578e0a578674c6c4e2a76bd2fafafa835b6aaa3fd728da2a",
+      "source_report_bytes": 27365,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/nested_impl",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "nested_impl",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "d17ea5cf78348cd76d8ce3d8e18841bda13a3ee3e746b753a9e0e9adae27495e",
+      "relations": [],
+      "complete": null,
+      "source_report": "nested_impl-compact.json",
+      "source_report_sha256": "70ae643730575f9ebeca822f90e1933e86ea069cc3c49001adbbb7fb8d24bce4",
+      "source_report_bytes": 1877,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/nested_impl",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    },
+    {
+      "case": "debug_assert",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "8f2b00c8462eafdd219a052d18e45664ce7be9b62d934819c51501a5d7f9ab40",
+      "relations": [
+        "weak_token_substring",
+        "weak_token_substring"
+      ],
+      "complete": true,
+      "source_report": "debug_assert-diff.json",
+      "source_report_sha256": "61400aca08a6e61f693dfb2a7eb900f5bdd9eed1ddd12dc005faae48bf6a16c6",
+      "source_report_bytes": 10955,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/debug_assert",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/debug_assert/diff.patch"
+      ]
+    },
+    {
+      "case": "debug_assert",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "8f2b00c8462eafdd219a052d18e45664ce7be9b62d934819c51501a5d7f9ab40",
+      "relations": [
+        "same_test_file",
+        "same_test_file",
+        "same_test_file",
+        "same_test_file"
+      ],
+      "complete": "complete",
+      "source_report": "debug_assert-full.json",
+      "source_report_sha256": "0df95c201db2ecb691f4d00947193680092eb6668f9e23926e27b954fe977d89",
+      "source_report_bytes": 28830,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/debug_assert",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "debug_assert",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "8f2b00c8462eafdd219a052d18e45664ce7be9b62d934819c51501a5d7f9ab40",
+      "relations": [],
+      "complete": null,
+      "source_report": "debug_assert-compact.json",
+      "source_report_sha256": "15f899f31126afd40d63bd1e604490aeafb5169c1582f01e82e46b8ae893ce82",
+      "source_report_bytes": 1830,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/debug_assert",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    },
+    {
+      "case": "actual_null",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "823334cc96f1e9b596cd421fbe808cc6f99a07e0ce0bf4db98914de8a9dec94c",
+      "relations": [
+        "direct_owner_call",
+        "direct_owner_call"
+      ],
+      "complete": true,
+      "source_report": "actual_null-diff.json",
+      "source_report_sha256": "d4bce5359e7142ae412e02f9aade718e0a6f63578a06add990e2832bb88468b0",
+      "source_report_bytes": 10929,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/actual_null",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/actual_null/diff.patch"
+      ]
+    },
+    {
+      "case": "actual_null",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "823334cc96f1e9b596cd421fbe808cc6f99a07e0ce0bf4db98914de8a9dec94c",
+      "relations": [
+        "direct_owner_call",
+        "direct_owner_call",
+        "direct_owner_call",
+        "direct_owner_call"
+      ],
+      "complete": "complete",
+      "source_report": "actual_null-full.json",
+      "source_report_sha256": "2ebfeadcbe646a56f1de26de4ef6dca9e25db52855a1f37c0f4e246235eb9689",
+      "source_report_bytes": 25605,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/actual_null",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "actual_null",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "823334cc96f1e9b596cd421fbe808cc6f99a07e0ce0bf4db98914de8a9dec94c",
+      "relations": [],
+      "complete": null,
+      "source_report": "actual_null-compact.json",
+      "source_report_sha256": "a0f0855644c4ec14900d1306f4d68aa98fb940e4c59ad7a2658e1d9bd8c75129",
+      "source_report_bytes": 1824,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/actual_null",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    },
+    {
+      "case": "actual_object",
+      "surface": "diff",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "97c2e9cebcd397541bc97a9a378ef18fd770bde578451729bde257c1eefc38f2",
+      "relations": [
+        "direct_owner_call",
+        "direct_owner_call"
+      ],
+      "complete": true,
+      "source_report": "actual_object-diff.json",
+      "source_report_sha256": "e1e9e193d5a70f02aaf22ef3fbc9d93005272da13c11314b74a6b070049bfb80",
+      "source_report_bytes": 11667,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/actual_object",
+        "--mode",
+        "ready",
+        "--format",
+        "json",
+        "--diff",
+        "<fixture>/actual_object/diff.patch"
+      ]
+    },
+    {
+      "case": "actual_object",
+      "surface": "full",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "97c2e9cebcd397541bc97a9a378ef18fd770bde578451729bde257c1eefc38f2",
+      "relations": [
+        "direct_owner_call",
+        "direct_owner_call",
+        "direct_owner_call",
+        "direct_owner_call"
+      ],
+      "complete": "complete",
+      "source_report": "actual_object-full.json",
+      "source_report_sha256": "93c1716a7b7336dd04b2d73e981d13fe5ad2e33612e0b84f9b1fabdad6953c02",
+      "source_report_bytes": 25607,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/actual_object",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-json"
+      ]
+    },
+    {
+      "case": "actual_object",
+      "surface": "compact",
+      "exit": 0,
+      "status": "PASS",
+      "source_sha256": "97c2e9cebcd397541bc97a9a378ef18fd770bde578451729bde257c1eefc38f2",
+      "relations": [],
+      "complete": null,
+      "source_report": "actual_object-compact.json",
+      "source_report_sha256": "882f58977372b90e4ee1b268c0aa5140776dad257533d0b47a4b3988204eff84",
+      "source_report_bytes": 1826,
+      "argv_template": [
+        "<producer-cli>",
+        "check",
+        "--root",
+        "<fixture>/actual_object",
+        "--mode",
+        "ready",
+        "--format",
+        "repo-exposure-summary-json"
+      ]
+    }
+  ],
+  "summary_contract_caveat": "Compact repo-exposure summary has no typed run_status; only inventory and grip-class parity are asserted.",
+  "command_note": "Templates preserve exact flags/format and normalize only producer/fixture paths; each row links the original raw report SHA-256. The source receipt SHA is retained."
+}

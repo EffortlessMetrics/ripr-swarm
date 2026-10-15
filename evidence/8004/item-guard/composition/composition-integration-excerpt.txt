@@ -1,0 +1,12 @@
+composition-integration
+Source log SHA-256: a611e33fecb23a2afc4c2dcc9d552802182ed6ce63a4682ec3e58d5c5d714688
+Exit: 0
+
+running 6 tests
+test public_inherent_method_keeps_cross_target_receiver_attribution ... ok
+test unique_private_inherent_receiver_keeps_real_calls_and_refuses_serde_decoys ... ok
+test expired_inner_binding_cannot_type_outer_inherent_receiver ... ok
+test while_let_pattern_cannot_borrow_outer_inherent_receiver_type ... ok
+test raw_call_line_comment_cannot_supply_inherent_receiver ... ok
+test scope_items_and_assertion_operand_items_cannot_borrow_outer_receiver_type ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.11s

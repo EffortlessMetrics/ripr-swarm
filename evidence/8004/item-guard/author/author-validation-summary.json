@@ -1,0 +1,94 @@
+{
+  "candidate": {
+    "head": "def018d1a67109fa327f094cd63c38b936a407e0",
+    "tree": "a8c022a078c40285c8e38624c5c0431f9e907531",
+    "parent": "f6aab7639b88be1a21c757be74baef833e636f17",
+    "base_for_check_fast": "0e8d006e9845339a58902bb2baa28dbc4fd23c18"
+  },
+  "profile": {
+    "features": "default, lang-python, lang-rust, lang-typescript",
+    "rustc": "1.95.0",
+    "unit_binary_commit_stamp": "def018d1a67109fa327f094cd63c38b936a407e0",
+    "unit_binary_dirty": false,
+    "unit_binary_sha256": "8892ec6f007c603ab61d593bd3c41df1147f051fea67a9a1d037a6466885457e",
+    "precommit_cli_stamp": "f6aab7639b88be1a21c757be74baef833e636f17-dirty",
+    "precommit_cli_sha256": "f7590b594c7f8f2ff847e12a29960a97265fc2f708568b879b6dffaed7b0c630",
+    "precommit_cli_is_release_artifact": false
+  },
+  "focused_default_feature_unit": {
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "ripr",
+      "--lib",
+      "inherent_receiver"
+    ],
+    "status": "PASS",
+    "executed": 2,
+    "passed": 2,
+    "failed": 0,
+    "filtered_out": 10814,
+    "total_tests_in_binary": 10816
+  },
+  "receiver_integration": {
+    "status": "PASS",
+    "passed": 6,
+    "failed": 0,
+    "test_target": "crates/ripr/tests/private_inherent_receiver.rs",
+    "raw_log": "receiver-integration-green.log",
+    "argv_recorded_in_author_source_receipt": false,
+    "command_note": "The author receipt records the private_inherent_receiver target and pass count but not its argv; the retained integration log shows the executed target and test results. Exact composed-tree integration argv is retained in composition/qualification-summary.json."
+  },
+  "check_fast": {
+    "status": "PASS",
+    "exit": 0,
+    "passed_gates": 15,
+    "skipped_gates": 0,
+    "selected_changed_path_count": 19,
+    "repair_path_count": 16,
+    "selector_base": "0e8d006e9845339a58902bb2baa28dbc4fd23c18",
+    "gates": [
+      "fmt --check",
+      "check-static-language",
+      "check-command-catalog",
+      "check-support-tiers",
+      "check-no-panic-family",
+      "check-allow-attributes",
+      "check-file-policy",
+      "clippy",
+      "check-covered-by",
+      "check-process-policy",
+      "check-network-policy",
+      "check-fixture-contracts",
+      "check-generated",
+      "check-generated-clean",
+      "check-lint-policy"
+    ],
+    "wrapper_command_from_repo_instructions": "cargo xtask check-fast",
+    "wrapper_argv_recorded_in_author_source_receipt": false,
+    "raw_child_commands_recorded": [
+      "cargo fmt --check",
+      "cargo clippy --workspace --all-targets -- -D warnings"
+    ]
+  },
+  "fixture_and_corpus": {
+    "live_fixture_three_surfaces_exit": 0,
+    "honesty_corpus_exit": 0,
+    "old_direct_relation_rebless_exit": 1
+  },
+  "historical_attempts": {
+    "old_guard_red": "expected pre-repair red retained in old-guard-red.log",
+    "first_overstrict_oracle": "initial assertion failed; corrected version passed in focused-unit-green.log",
+    "initial_corpus_setup": "setup refusal due missing human-full output, later completed green",
+    "initial_fixture_bless": "policy refused reason without spec id; not a content failure"
+  },
+  "scope_limits": [
+    "No full default suite claim",
+    "No release-binary claim",
+    "No dogfood or full-golden cycle claim",
+    "Precommit CLI is a source-equivalent f6-dirty witness; clean exact-head unit binary is separately stamped def018d1/DIRTY=false"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "recorded_at_utc": "2026-10-15T00:33:48Z",
+  "source": "read-only connected GitHub pull-request metadata read",
+  "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004",
+  "number": 8004,
+  "state": "open",
+  "draft": false,
+  "merged": false,
+  "head_ref": "rook/7415-private-target-attribution",
+  "head_sha": "15ca898ad1d3571d104ce1ae20b629fe2f55fc86",
+  "base_ref": "main",
+  "api_base_sha": "0e8d006e9845339a58902bb2baa28dbc4fd23c18",
+  "api_reported_merge_commit_sha": "2fa3df5b4eca7cfb8376a676b2380a59aaf02c35",
+  "updated_at": "2026-10-15T00:32:51Z",
+  "interpretation": "This readback confirms the PR is open, non-draft, and unmerged at the published source head. The independent review cleared Ready-to-start-checks prerequisites and the Ready transition is verified. Required hosted checks and merge clearance remain pending; the actual hosted job checkout is unverified.",
+  "ready_transition_verified_at_utc": "2026-10-15T00:32:54Z"
+}

@@ -1,0 +1,8 @@
+composition-units
+Source log SHA-256: 5492882c6da43f3cdf9ac042517bea0dd00cfed1803a97d2a1bd23ea7f984200
+Exit: 0
+
+running 2 tests
+test analysis::test_grip_evidence::tests::public_inherent_receiver_keeps_cross_target_full_and_compact_repo_evidence ... ok
+test analysis::test_grip_evidence::tests::unique_inherent_receiver_refuses_decoys_in_full_and_compact_repo_evidence ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 10844 filtered out; finished in 0.74s
