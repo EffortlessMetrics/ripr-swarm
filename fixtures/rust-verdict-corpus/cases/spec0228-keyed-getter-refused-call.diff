@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index c2a968f..e1ca883 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -27,7 +27,7 @@ impl Shelf {
+         if qty == 0 {
+             return Err(format!("empty delivery for {sku}"));
+         }
+-        self.stock.insert(sku.to_string(), qty);
++        self.stock.insert(sku.to_owned(), qty);
+         Ok(())
+     }
+ 

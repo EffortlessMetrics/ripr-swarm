@@ -141,6 +141,7 @@ mod tests {
                         kind: ProbeShapeKind::ErrorPath,
                         text: "Err(AuthError::Revoked)".into(),
                         value_consumed: false,
+                        source_lines: None,
                     }],
                     ..FileFacts::default()
                 },
@@ -213,6 +214,7 @@ mod tests {
                         kind: ProbeShapeKind::ErrorPath,
                         text: "value > self.limit".into(),
                         value_consumed: false,
+                        source_lines: None,
                     }],
                     ..FileFacts::default()
                 },

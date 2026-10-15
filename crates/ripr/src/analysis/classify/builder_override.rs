@@ -29,7 +29,7 @@
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::{
     AstNode, SourceFile, SyntaxKind, SyntaxNode, TextSize,
-    ast::{self, HasArgList, HasName},
+    ast::{self, HasArgList, HasAttrs, HasGenericParams, HasName},
 };
 
 use super::super::rust_index::{OracleFact, RustIndex, TestSummary};
@@ -598,19 +598,26 @@ pub(in crate::analysis) fn setter_plainly_writes(
 /// exclusions keep the body the one the call site runs: functions in an
 /// evidence role (tests, fixtures) are skipped, and so are trait impls
 /// (`impl Trait for Type`), since a trait method may dispatch to another
-/// impl's body. `None` when no candidate remains, or several do.
+/// impl's body. `None` when no candidate remains, or several do, or a test
+/// or fixture also defines an inherent `name` on a type of that name (a
+/// `#[cfg(test)] impl` the test build may run instead).
 pub(in crate::analysis) fn inherent_method_body<'a>(
     index: &'a RustIndex,
     impl_type: &str,
     name: &str,
 ) -> Option<&'a str> {
-    let mut candidates = index.functions().iter().filter(|function| {
-        function.name == name
-            && !function.source_role.is_evidence_role()
-            && !function.id.0.contains(" for ")
-            && OwnerCall::from_symbol(&function.id.0)
-                .is_some_and(|candidate| candidate.impl_type == Some(impl_type))
-    });
+    let named = || {
+        index.functions().iter().filter(|function| {
+            function.name == name
+                && !function.id.0.contains(" for ")
+                && OwnerCall::from_symbol(&function.id.0)
+                    .is_some_and(|candidate| candidate.impl_type == Some(impl_type))
+        })
+    };
+    if named().any(|function| function.source_role.is_evidence_role()) {
+        return None;
+    }
+    let mut candidates = named();
     let (Some(function), None) = (candidates.next(), candidates.next()) else {
         return None;
     };
@@ -671,6 +678,933 @@ pub(in crate::analysis) fn getter_plainly_reads(
         format!("{read}.as_slice()"),
     ]
     .contains(&text)
+}
+
+/// What a keyed getter returns for a missing key: an assertion whose
+/// expected value equals it passes whether or not the insert ran.
+#[derive(Debug, Clone, PartialEq)]
+pub(in crate::analysis) enum KeyedFallback {
+    /// `self.f.get(k)` with no default: `None`.
+    Absent,
+    /// `.unwrap_or(<literal>)`.
+    Literal(String),
+    /// `.unwrap_or_default()`: zero, `""` or `false`.
+    TypeDefault,
+}
+
+impl KeyedFallback {
+    /// Whether the `assert_eq!` operand `expected` is a value the getter
+    /// cannot return for a missing key. Anything that is not a plain
+    /// literal (or `Some(..)` against [`KeyedFallback::Absent`]) cannot be
+    /// told apart and gives `false`.
+    pub(in crate::analysis) fn differs_from(&self, expected: &str) -> bool {
+        let expected = expected.trim();
+        match self {
+            Self::Absent => expected.starts_with("Some("),
+            Self::Literal(fallback) => literal_value(expected)
+                .zip(literal_value(fallback))
+                .is_some_and(|(expected, fallback)| expected != fallback),
+            Self::TypeDefault => literal_value(expected).is_some_and(|value| match value {
+                LiteralValue::Number(number) => number != 0.0,
+                LiteralValue::Text(text) => !text.is_empty(),
+                LiteralValue::Bool(value) => value,
+                LiteralValue::Char(_) => true,
+            }),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum LiteralValue {
+    Number(f64),
+    Text(String),
+    Char(String),
+    Bool(bool),
+}
+
+/// The value of a plain literal ([`is_plain_literal`]), or of a negated
+/// number. A radix-prefixed or exponent number (`0x7`, `1e3`: an unknown
+/// suffix after the digits) or anything else gives `None`.
+fn literal_value(text: &str) -> Option<LiteralValue> {
+    let text = text.trim();
+    if !(is_plain_literal(text) || text.strip_prefix('-').is_some_and(is_plain_literal)) {
+        return None;
+    }
+    match text {
+        "true" => return Some(LiteralValue::Bool(true)),
+        "false" => return Some(LiteralValue::Bool(false)),
+        _ => {}
+    }
+    let inner = || text.get(1..text.len() - 1).map(str::to_string);
+    if text.starts_with('"') {
+        return inner().map(LiteralValue::Text);
+    }
+    if text.starts_with('\'') {
+        return inner().map(LiteralValue::Char);
+    }
+    let digits: String = text.chars().filter(|ch| *ch != '_').collect();
+    let number_end = digits
+        .char_indices()
+        .find(|(at, ch)| !(ch.is_ascii_digit() || *ch == '.' || (*at == 0 && *ch == '-')))
+        .map_or(digits.len(), |(at, _)| at);
+    let (number, suffix) = digits.split_at(number_end);
+    const SUFFIXES: [&str; 15] = [
+        "", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+        "f32", "f64",
+    ];
+    if !SUFFIXES.contains(&suffix) {
+        return None;
+    }
+    number.parse::<f64>().ok().map(LiteralValue::Number)
+}
+
+/// Whether a keyed read's `key` is a plain literal (`"BOLT"`, `7`), which
+/// names the same value wherever it is spelled.
+pub(in crate::analysis) fn is_literal_key(key: &str) -> bool {
+    literal_value(key).is_some()
+}
+
+/// Whether `function` (its source text) binds or assigns `name` anywhere in
+/// its body (`let sku = ..`, `sku = ..`, `if let Some(sku)`, `|sku|`), so a
+/// use of `name` there may not be the parameter. Fails closed: a body that
+/// does not parse counts as rebinding it.
+pub(in crate::analysis) fn parameter_rebound(function: &str, name: &str) -> bool {
+    let Some(body) = parse_clean_source_file(function)
+        .and_then(|parse| parse.tree().syntax().descendants().find_map(ast::Fn::cast))
+        .and_then(|method| method.body())
+    else {
+        return true;
+    };
+    body.syntax().descendants().any(|node| {
+        ast::IdentPat::cast(node.clone())
+            .and_then(|pat| pat.name())
+            .is_some_and(|bound| bound.text() == name)
+            || ast::BinExpr::cast(node).is_some_and(|expr| {
+                matches!(expr.op_kind(), Some(ast::BinaryOp::Assignment { .. }))
+                    && expr
+                        .lhs()
+                        .is_some_and(|lhs| lhs.syntax().text().to_string().trim() == name)
+            })
+    })
+}
+
+/// Whether `function` (its source text) declares a return type. Fails
+/// closed: a body that does not parse counts as returning a value.
+pub(in crate::analysis) fn function_returns_value(function: &str) -> bool {
+    parse_clean_source_file(function)
+        .and_then(|parse| parse.tree().syntax().descendants().find_map(ast::Fn::cast))
+        .is_none_or(|method| method.ret_type().is_some())
+}
+
+/// Upper bound on constructor delegations (`new` -> `default`) and owner
+/// helper calls (`ship` -> `refresh` -> `on_hand`) the keyed checks follow.
+const MAX_KEYED_HOPS: usize = 4;
+
+/// RIPR-SPEC-0228 keyed reads: whether `impl_type::ctor()` builds a value
+/// whose map field `field` holds no entries, so an entry a test reads back
+/// after the owner call can only have come from a call in the test. The
+/// constructor body must be one tail expression: a struct literal setting
+/// `field` to an empty std collection (`BTreeMap::new()`,
+/// `HashMap::default()`, `Default::default()`), or leaving it to a
+/// `..Self::default()` spread; or a delegation (`Self::default()`,
+/// `Shelf::with_capacity(4)`) to a constructor that does. The field must be
+/// declared as such a collection. `default` (`T::default()`) resolves to an
+/// inherent `default`, then a manual `impl Default`, then a derived
+/// `Default`; [`TRAIT_DEFAULT`] (`Default::default()`) skips the inherent
+/// method, which the trait call never runs. A nested path, a
+/// statement in the body, an unresolved or ambiguous constructor and
+/// anything else give `false`.
+pub(in crate::analysis) fn constructor_starts_empty(
+    index: &RustIndex,
+    impl_type: &str,
+    ctor: &str,
+    field: &str,
+) -> bool {
+    !field.contains('.')
+        && type_declared_once(index, impl_type)
+        && starts_empty_within(index, impl_type, ctor, field, MAX_KEYED_HOPS)
+}
+
+/// Whether exactly one `struct impl_type` is declared across the index.
+/// Methods resolve by bare type name, so two modules declaring the same
+/// name may lend one type's getter or constructor to the other's test.
+fn type_declared_once(index: &RustIndex, impl_type: &str) -> bool {
+    declared_structs(index, impl_type).is_some_and(|found| found.len() == 1)
+}
+
+/// Every `struct impl_type` in the index; `None` when a file that may
+/// declare it does not parse cleanly, so a hidden second declaration
+/// cannot pass for one.
+fn declared_structs(index: &RustIndex, impl_type: &str) -> Option<Vec<ast::Struct>> {
+    let declaration = format!("struct {impl_type}");
+    let mut found = Vec::new();
+    for file in index
+        .files()
+        .values()
+        .filter(|file| file.source.contains(&declaration))
+    {
+        let parse = parse_clean_source_file(&file.source)?;
+        found.extend(
+            parse
+                .tree()
+                .syntax()
+                .descendants()
+                .filter_map(ast::Struct::cast)
+                .filter(|item| item.name().is_some_and(|name| name.text() == impl_type)),
+        );
+    }
+    Some(found)
+}
+
+/// The `ctor` naming `Default::default()`, which always runs the trait
+/// implementation even when the type also has an inherent `default`.
+pub(in crate::analysis) const TRAIT_DEFAULT: &str = "Default::default";
+
+fn starts_empty_within(
+    index: &RustIndex,
+    impl_type: &str,
+    ctor: &str,
+    field: &str,
+    hops: usize,
+) -> bool {
+    let Some(hops) = hops.checked_sub(1) else {
+        return false;
+    };
+    if ctor != "default" && ctor != TRAIT_DEFAULT {
+        return inherent_method_body(index, impl_type, ctor)
+            .is_some_and(|body| body_starts_empty(index, impl_type, body, field, hops));
+    }
+    let candidates = |inherent: bool| {
+        index
+            .functions()
+            .iter()
+            .filter(move |function| {
+                function.name == "default"
+                    && !function.source_role.is_evidence_role()
+                    && function.id.0.contains(" for ") != inherent
+                    && (inherent || function.id.0.contains("Default for "))
+                    && OwnerCall::from_symbol(&function.id.0)
+                        .is_some_and(|candidate| candidate.impl_type == Some(impl_type))
+            })
+            .map(|function| function.body.as_str())
+            .collect::<Vec<_>>()
+    };
+    // An inherent `default` shadows the trait method at `T::default()`, but
+    // never at `Default::default()`.
+    let inherent = if ctor == TRAIT_DEFAULT {
+        Vec::new()
+    } else {
+        candidates(true)
+    };
+    match (inherent.as_slice(), candidates(false).as_slice()) {
+        ([body], _) | ([], [body]) => body_starts_empty(index, impl_type, body, field, hops),
+        ([], []) => derived_default_starts_empty(index, impl_type, field),
+        _ => false,
+    }
+}
+
+fn body_starts_empty(
+    index: &RustIndex,
+    impl_type: &str,
+    body: &str,
+    field: &str,
+    hops: usize,
+) -> bool {
+    let Some(block) = parse_clean_source_file(body)
+        .and_then(|parse| parse.tree().syntax().descendants().find_map(ast::Fn::cast))
+        .and_then(|method| method.body())
+        .and_then(|body| body.stmt_list())
+    else {
+        return false;
+    };
+    if block.statements().next().is_some() {
+        return false;
+    }
+    let compact = |node: &SyntaxNode| -> String {
+        node.text()
+            .to_string()
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect()
+    };
+    let names_self_type = |path: &str| path == "Self" || path == impl_type;
+    match block.tail_expr() {
+        Some(ast::Expr::RecordExpr(record)) => {
+            if !record
+                .path()
+                .is_some_and(|path| names_self_type(&compact(path.syntax())))
+            {
+                return false;
+            }
+            let Some(fields) = record.record_expr_field_list() else {
+                return false;
+            };
+            let mut named = fields
+                .fields()
+                .filter(|entry| entry.field_name().is_some_and(|name| name.text() == field));
+            if let Some(entry) = named.next() {
+                // A shorthand `Self { stock }` reads a local, never an empty
+                // collection path.
+                // `Default::default()` builds whatever the field's type
+                // defaults to, so the declaration must name a std collection.
+                return entry
+                    .expr()
+                    .is_some_and(|value| is_empty_collection(&compact(value.syntax())))
+                    && field_declared_as_std_collection(index, impl_type, field);
+            }
+            fields.spread().is_some_and(|spread| {
+                let spread = compact(spread.syntax());
+                let ctor = if spread == "Default::default()" {
+                    TRAIT_DEFAULT
+                } else if spread
+                    .strip_suffix("::default()")
+                    .is_some_and(names_self_type)
+                {
+                    "default"
+                } else {
+                    return false;
+                };
+                starts_empty_within(index, impl_type, ctor, field, hops)
+            })
+        }
+        Some(ast::Expr::CallExpr(call)) => {
+            let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+                return false;
+            };
+            let callee = compact(callee.syntax());
+            callee
+                .rsplit_once("::")
+                .filter(|(owner, ctor)| names_self_type(owner) && is_identifier(ctor))
+                .is_some_and(|(_, ctor)| starts_empty_within(index, impl_type, ctor, field, hops))
+        }
+        _ => false,
+    }
+}
+
+/// Whether `impl_type`, declared once in the index, derives `Default` and
+/// declares `field` as a std map or set, whose derived default is empty.
+fn derived_default_starts_empty(index: &RustIndex, impl_type: &str, field: &str) -> bool {
+    let Some(item) = declared_once(index, impl_type) else {
+        return false;
+    };
+    let derives_default = item.attrs().any(|attr| {
+        let text: String = attr
+            .syntax()
+            .text()
+            .to_string()
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect();
+        text.starts_with("#[derive(")
+            && text
+                .trim_start_matches("#[derive(")
+                .trim_end_matches(")]")
+                .split(',')
+                .any(|name| name == "Default" || name.ends_with("::Default"))
+    });
+    derives_default && struct_declares_std_collection(&item, field)
+}
+
+/// The one `struct impl_type` in the index, if exactly one parses.
+fn declared_once(index: &RustIndex, impl_type: &str) -> Option<ast::Struct> {
+    let [item] = <[ast::Struct; 1]>::try_from(declared_structs(index, impl_type)?).ok()?;
+    Some(item)
+}
+
+/// Whether `impl_type`, declared once, declares `field` as a std map or set.
+fn field_declared_as_std_collection(index: &RustIndex, impl_type: &str, field: &str) -> bool {
+    declared_once(index, impl_type).is_some_and(|item| struct_declares_std_collection(&item, field))
+}
+
+fn struct_declares_std_collection(item: &ast::Struct, field: &str) -> bool {
+    let Some(ast::FieldList::RecordFieldList(fields)) = item.field_list() else {
+        return false;
+    };
+    fields.fields().any(|entry| {
+        entry.name().is_some_and(|name| name.text() == field)
+            && entry.ty().is_some_and(|ty| {
+                let ty: String = ty
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .chars()
+                    .filter(|ch| !ch.is_whitespace())
+                    .collect();
+                let path = ty.split('<').next().unwrap_or_default();
+                let path = path.strip_prefix("::").unwrap_or(path);
+                if let Some(name) = path.strip_prefix("std::collections::") {
+                    return EMPTY_COLLECTIONS.contains(&name);
+                }
+                EMPTY_COLLECTIONS.contains(&path) && bare_name_is_std(item, path)
+            })
+    })
+}
+
+/// Whether the bare collection name `name` in `item`'s file is the std
+/// type: the struct's own module imports it from `std::collections`
+/// without renaming, no other import in the file names it,
+/// and neither the struct's generics nor any item in the file reuse the
+/// name (`mod seeded { pub struct BTreeMap .. }` with `use
+/// seeded::BTreeMap`, `type HashMap = ..`, `struct Bin<BTreeMap>`).
+fn bare_name_is_std(item: &ast::Struct, name: &str) -> bool {
+    let Some(file) = item.syntax().ancestors().find_map(ast::SourceFile::cast) else {
+        return false;
+    };
+    let names_it = |node: &SyntaxNode| {
+        node.descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .any(|token| token.kind() == SyntaxKind::IDENT && token.text() == name)
+    };
+    if item
+        .generic_param_list()
+        .is_some_and(|generics| names_it(generics.syntax()))
+    {
+        return false;
+    }
+    // Only an import beside the struct, in the same module, names its type.
+    let scope = item.syntax().parent();
+    let mut imported = false;
+    for node in file.syntax().descendants() {
+        if let Some(import) = ast::Use::cast(node.clone()) {
+            if !names_it(import.syntax()) {
+                continue;
+            }
+            if import.syntax().parent() != scope {
+                return false;
+            }
+            let text: String = import
+                .syntax()
+                .text()
+                .to_string()
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect();
+            let renames = import
+                .syntax()
+                .descendants()
+                .any(|node| node.kind() == SyntaxKind::RENAME);
+            let from_std = text.starts_with("usestd::collections::")
+                || text.starts_with("use::std::collections::");
+            if renames || !from_std {
+                return false;
+            }
+            imported = true;
+        } else if let Some(declared) = ast::Name::cast(node)
+            && declared.text() == name
+        {
+            return false;
+        }
+    }
+    imported
+}
+
+/// Std maps and sets, whose `new()` and `default()` are empty. Matched by
+/// last path segment, so third-party look-alikes are left out.
+const EMPTY_COLLECTIONS: [&str; 4] = ["BTreeMap", "HashMap", "BTreeSet", "HashSet"];
+
+/// `BTreeMap::new()`, `std::collections::HashMap::<K, V>::default()` or
+/// `Default::default()`, whitespace removed.
+fn is_empty_collection(expression: &str) -> bool {
+    if expression == "Default::default()" {
+        return true;
+    }
+    let Some(path) = expression
+        .strip_suffix("::new()")
+        .or_else(|| expression.strip_suffix("::default()"))
+    else {
+        return false;
+    };
+    let path = path.split("::<").next().unwrap_or_default();
+    let path = path.strip_prefix("std::collections::").unwrap_or(path);
+    EMPTY_COLLECTIONS.contains(&path)
+}
+
+/// RIPR-SPEC-0228 keyed reads: whether the owner (`owner_body`, first line
+/// `owner_start_line`) touches the map field `field` only through the
+/// insert statement on `probe_line` and read-only lookups
+/// (`self.f.get(..)`, `.contains_key(..)`, `.len()`, `.is_empty()`), and
+/// every `self.m(..)` helper it calls does the same. A second insert, an
+/// `entry(..)` update or a helper that rewrites the entry would decide what
+/// the test reads instead of the probe. A bare `self` (handed to a free
+/// function), a helper that does not resolve to one inherent method of the
+/// owner's impl type (from its symbol `owner_id`), or a helper chain deeper
+/// than [`MAX_KEYED_HOPS`] (a recursive helper) gives `false`.
+pub(in crate::analysis) fn owner_touches_field_only_at(
+    index: &RustIndex,
+    owner_id: &str,
+    owner_body: &str,
+    owner_start_line: usize,
+    probe_line: usize,
+    field: &str,
+) -> bool {
+    let mut masked = crate::analysis::extract::mask_comments_and_strings(owner_body);
+    let Some(lines_before) = probe_line.checked_sub(owner_start_line) else {
+        return false;
+    };
+    let line_at: usize = masked
+        .split_inclusive('\n')
+        .take(lines_before)
+        .map(str::len)
+        .sum();
+    let Some(end) = masked
+        .get(line_at..)
+        .and_then(|rest| rest.find(';'))
+        .map(|at| line_at + at)
+    else {
+        return false;
+    };
+    masked.replace_range(line_at..end, &" ".repeat(end - line_at));
+    let Some(impl_type) = OwnerCall::from_symbol(owner_id).and_then(|owner| owner.impl_type())
+    else {
+        return false;
+    };
+    let mut verified = Vec::new();
+    method_touches_field_read_only(
+        index,
+        impl_type,
+        &masked,
+        field,
+        &mut verified,
+        MAX_KEYED_HOPS,
+    )
+}
+
+fn method_touches_field_read_only(
+    index: &RustIndex,
+    impl_type: &str,
+    masked: &str,
+    field: &str,
+    verified: &mut Vec<String>,
+    hops: usize,
+) -> bool {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    // The signature's `&mut self` is not a use.
+    let Some(body_start) = masked.find('{') else {
+        return false;
+    };
+    let body = &masked[body_start..];
+    body.match_indices("self").all(|(at, word)| {
+        if body[..at].chars().next_back().is_some_and(ident) {
+            return true;
+        }
+        let rest = &body[at + word.len()..];
+        if rest.starts_with(ident) {
+            return true;
+        }
+        let Some(member) = rest.strip_prefix('.') else {
+            return false;
+        };
+        let name_len = member.find(|ch: char| !ident(ch)).unwrap_or(member.len());
+        let (name, after) = member.split_at(name_len);
+        if name == field {
+            return [".get(", ".contains_key(", ".len()", ".is_empty()"]
+                .iter()
+                .any(|read| after.starts_with(read));
+        }
+        if !after.starts_with('(') {
+            return true;
+        }
+        // A helper already found read-only need not be walked again.
+        if verified.iter().any(|seen| seen == name) {
+            return true;
+        }
+        let Some(next) = hops.checked_sub(1) else {
+            return false;
+        };
+        let Some(callee) = inherent_method_body(index, impl_type, name) else {
+            return false;
+        };
+        let callee = crate::analysis::extract::mask_comments_and_strings(callee);
+        let read_only =
+            method_touches_field_read_only(index, impl_type, &callee, field, verified, next);
+        if read_only {
+            verified.push(name.to_string());
+        }
+        read_only
+    })
+}
+
+/// RIPR-SPEC-0228 keyed reads: whether `impl_type`'s inherent method
+/// `method`, called by a test on its binding before the owner call, can
+/// never store the literal `expected` in the map field `field`. Its body
+/// (and every `self.m(..)` helper it calls) must spell no literal equal to
+/// `expected` (`load_defaults` inserting `("K", 5)` before `put("K", 5)`
+/// and `assert_eq!(.., 5)`), must not hand `self` or `&mut self.f` to
+/// other code, and may write `self.<field>` only as
+/// `self.<field>.insert(k, v)` or `*self.<field>.entry(k).or_insert(0)
+/// += v` (or `.or_default()`) with `v` a parameter (optionally `.clone()`d
+/// or `.to_owned()`; a conversion such as `.into()` or `.to_string()` turns
+/// `true` into 1 or `5` into `"5"`): a constant, another field, or a function
+/// result (`SEED`, `self.base`, `five()`, `self.m = Self::defaults()`)
+/// may hold the expected value under another name. A `mut` or shadowed
+/// parameter (`let qty = SEED;`) does not count, and a helper is followed
+/// only when every argument is a parameter or a literal. The method and its
+/// helpers may write the field at most once, with no macro, loop or closure
+/// in any body. The test passes each parameter a literal other than
+/// `expected`. `Some` says how the method writes the field; an unresolved
+/// or ambiguous method gives `None`.
+pub(in crate::analysis) fn method_cannot_store(
+    index: &RustIndex,
+    impl_type: &str,
+    method: &str,
+    field: &str,
+    expected: &str,
+) -> Option<EarlierWrite> {
+    let writes = std::cell::Cell::new(0);
+    let accumulates = std::cell::Cell::new(false);
+    cannot_store_within(
+        index,
+        impl_type,
+        method,
+        field,
+        expected,
+        (&writes, &accumulates),
+        MAX_KEYED_HOPS,
+    )
+    .then(|| match (writes.get(), accumulates.get()) {
+        (0, _) => EarlierWrite::Reads,
+        (_, false) => EarlierWrite::Overwrites,
+        (_, true) => EarlierWrite::Accumulates,
+    })
+}
+
+/// How a test's earlier call that [`method_cannot_store`] admits writes the
+/// map field. Each call alone leaves the key at a value other than the
+/// expected one, but an accumulating write adds to what an earlier call
+/// stored (`add("K", 2); add("K", 3)` reaches 5), so the test may make it
+/// only when no other earlier call writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::analysis) enum EarlierWrite {
+    /// The method only reads the field.
+    Reads,
+    /// The method overwrites one entry with a parameter (`insert(k, v)`).
+    Overwrites,
+    /// The method adds a parameter to an entry (`entry(k).or_insert(0) += v`).
+    Accumulates,
+}
+
+/// `writes` counts the field writes seen across the method and its helpers:
+/// two (`+= 2; += qty`, or one helper called twice) can sum to the expected
+/// value from literals that each differ from it.
+fn cannot_store_within(
+    index: &RustIndex,
+    impl_type: &str,
+    method: &str,
+    field: &str,
+    expected: &str,
+    (writes, accumulates): (&std::cell::Cell<usize>, &std::cell::Cell<bool>),
+    hops: usize,
+) -> bool {
+    let Some(hops) = hops.checked_sub(1) else {
+        return false;
+    };
+    let Some(function) = inherent_method_body(index, impl_type, method)
+        .and_then(parse_clean_source_file)
+        .and_then(|parse| parse.tree().syntax().descendants().find_map(ast::Fn::cast))
+    else {
+        return false;
+    };
+    let parameters: Vec<String> = function
+        .param_list()
+        .into_iter()
+        .flat_map(|list| list.params().collect::<Vec<_>>())
+        .filter_map(|parameter| match parameter.pat() {
+            // A `mut` parameter can be reassigned before it is stored.
+            Some(ast::Pat::IdentPat(pat)) if pat.mut_token().is_none() => {
+                pat.name().map(|name| name.text().to_string())
+            }
+            _ => None,
+        })
+        .collect();
+    let Some(block) = function.body() else {
+        return false;
+    };
+    // `let qty = SEED;` (or a `for`/`match`/closure binding) shadows the
+    // parameter, so its name no longer carries the test's literal.
+    let shadows_parameter = block
+        .syntax()
+        .descendants()
+        .filter_map(ast::IdentPat::cast)
+        .any(|pat| {
+            pat.name()
+                .is_some_and(|name| parameters.iter().any(|p| p.as_str() == name.text()))
+        });
+    if shadows_parameter {
+        return false;
+    }
+    // A macro (`shadow!(qty)`) can rebind a parameter out of the parser's
+    // sight, and a loop or closure can repeat a write.
+    let opaque_or_repeating = block.syntax().descendants().any(|node| {
+        matches!(
+            node.kind(),
+            SyntaxKind::MACRO_CALL
+                | SyntaxKind::FOR_EXPR
+                | SyntaxKind::WHILE_EXPR
+                | SyntaxKind::LOOP_EXPR
+                | SyntaxKind::CLOSURE_EXPR
+        )
+    });
+    if opaque_or_repeating {
+        return false;
+    }
+    // `-5` lexes as `-` and `5`; compare magnitudes so the sign never hides
+    // a match.
+    let magnitude = expected.trim().trim_start_matches('-');
+    let spells_expected = block
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .any(|token| {
+            matches!(
+                token.kind(),
+                SyntaxKind::INT_NUMBER
+                    | SyntaxKind::FLOAT_NUMBER
+                    | SyntaxKind::STRING
+                    | SyntaxKind::CHAR
+                    | SyntaxKind::TRUE_KW
+                    | SyntaxKind::FALSE_KW
+            ) && literals_equal(token.text(), magnitude) != Some(false)
+        });
+    if spells_expected {
+        return false;
+    }
+    let masked =
+        crate::analysis::extract::mask_comments_and_strings(&block.syntax().text().to_string());
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked.match_indices("self").all(|(at, word)| {
+        if masked[..at].chars().next_back().is_some_and(ident) {
+            return true;
+        }
+        let rest = &masked[at + word.len()..];
+        if rest.starts_with(ident) {
+            return true;
+        }
+        if masked[..at].trim_end().ends_with("&mut") {
+            return false;
+        }
+        let Some(member) = rest.strip_prefix('.') else {
+            return false;
+        };
+        let name_len = member.find(|ch: char| !ident(ch)).unwrap_or(member.len());
+        let (name, after) = member.split_at(name_len);
+        if name == field {
+            if [".insert", ".entry"]
+                .iter()
+                .any(|write| after.starts_with(write))
+            {
+                accumulates.set(accumulates.get() || after.starts_with(".entry"));
+                writes.set(writes.get() + 1);
+                if writes.get() > 1 {
+                    return false;
+                }
+            }
+            return field_write_takes_parameter(after, &parameters);
+        }
+        if !after.starts_with('(') {
+            return true;
+        }
+        // A helper's parameters carry the test's literals only when this
+        // call passes it parameters or literals (`self.put(sku, SEED)`
+        // does not).
+        super::activation::call_arguments(after, "").is_some_and(|arguments| {
+            arguments.iter().all(|argument| {
+                let argument = argument.trim().trim_start_matches('&');
+                literal_value(argument).is_some() || parameter_value(argument, &parameters)
+            })
+        }) && cannot_store_within(
+            index,
+            impl_type,
+            name,
+            field,
+            expected,
+            (writes, accumulates),
+            hops,
+        )
+    })
+}
+
+/// Whether `after`, the masked text following `self.<field>`, reads the map
+/// or writes it only with a parameter value: `.get(`, `.contains_key(`,
+/// `.len()`, `.is_empty()`, `.insert(k, v)`, or `.entry(k).or_insert(0)
+/// += v` (`.or_default()` too), `v` a parameter as [`method_cannot_store`]
+/// describes. A nonzero `or_insert` start could sum with `v` to the expected
+/// value in one call; [`EarlierWrite::Accumulates`] keeps two such calls
+/// from summing to it.
+fn field_write_takes_parameter(after: &str, parameters: &[String]) -> bool {
+    let parameter_value = |value: &str| parameter_value(value, parameters);
+    if [".get(", ".contains_key(", ".len()", ".is_empty()"]
+        .iter()
+        .any(|read| after.starts_with(read))
+    {
+        return true;
+    }
+    if let Some(arguments) = after.strip_prefix(".insert") {
+        return super::activation::call_arguments(arguments, "")
+            .is_some_and(|arguments| arguments.len() == 2 && parameter_value(&arguments[1]));
+    }
+    let Some(entry) = after.strip_prefix(".entry") else {
+        return false;
+    };
+    let Some(close) = entry.strip_prefix('(').and_then(|_| {
+        let mut depth = 0usize;
+        entry.char_indices().find_map(|(at, ch)| match ch {
+            '(' => {
+                depth += 1;
+                None
+            }
+            ')' => {
+                depth -= 1;
+                (depth == 0).then_some(at)
+            }
+            _ => None,
+        })
+    }) else {
+        return false;
+    };
+    let rest = entry[close + 1..].trim_start();
+    let rest = if let Some(rest) = rest.strip_prefix(".or_default()") {
+        rest
+    } else if let Some(rest) = rest.strip_prefix(".or_insert(") {
+        let Some(end) = rest.find(')') else {
+            return false;
+        };
+        if literals_equal(&rest[..end], "0") != Some(true) {
+            return false;
+        }
+        &rest[end + 1..]
+    } else {
+        return false;
+    };
+    rest.trim_start()
+        .strip_prefix("+=")
+        .and_then(|value| value.split_once(';'))
+        .is_some_and(|(value, _)| parameter_value(value))
+}
+
+/// Whether `value` is one of `parameters`, optionally `.clone()`d or
+/// `.to_owned()`, so it holds the literal the test passed, unconverted.
+fn parameter_value(value: &str, parameters: &[String]) -> bool {
+    let mut value = value.trim();
+    while let Some(inner) = [".clone()", ".to_owned()"]
+        .iter()
+        .find_map(|suffix| value.strip_suffix(suffix))
+    {
+        value = inner.trim_end();
+    }
+    parameters.iter().any(|parameter| parameter == value)
+}
+
+/// RIPR-SPEC-0228 keyed reads: whether two plain literals ([`literal_value`])
+/// hold the same value (`5`, `5u32` and `5_u32` do). `None` when either is
+/// not a plain literal.
+pub(in crate::analysis) fn literals_equal(left: &str, right: &str) -> Option<bool> {
+    Some(literal_value(left)? == literal_value(right)?)
+}
+
+/// RIPR-SPEC-0228 keyed getter credit: whether `impl_type`'s method
+/// `getter` takes `&self` and one parameter `k` and its body is one tail
+/// expression that looks `k` up in the field path `field`:
+/// `self.f.get(k)` or `self.f.get(&k)`, optionally followed by `.copied()`
+/// or `.cloned()`, then optionally by `.unwrap_or_default()` or
+/// `.unwrap_or(<literal>)`. The method resolves as in
+/// [`getter_plainly_reads`]; anything else (another field, another key,
+/// arithmetic on the entry, a statement first) gives `None`. `Some` carries
+/// what the getter returns for a key the map does not hold.
+pub(in crate::analysis) fn getter_plainly_reads_key(
+    index: &RustIndex,
+    impl_type: &str,
+    getter: &str,
+    field: &str,
+) -> Option<KeyedFallback> {
+    let body = inherent_method_body(index, impl_type, getter)?;
+    let parse = parse_clean_source_file(body)?;
+    let method = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let parameters = method.param_list()?;
+    let shared_self = parameters
+        .self_param()
+        .is_some_and(|receiver| receiver.amp_token().is_some() && receiver.mut_token().is_none());
+    let mut params = parameters.params();
+    let key = match (params.next(), params.next()) {
+        (Some(param), None) => match param.pat() {
+            Some(ast::Pat::IdentPat(pat))
+                if pat.ref_token().is_none() && pat.mut_token().is_none() =>
+            {
+                pat.name().map(|name| name.text().to_string())
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    let (true, Some(key)) = (shared_self, key) else {
+        return None;
+    };
+    let body = method.body().and_then(|body| body.stmt_list())?;
+    if body.statements().next().is_some() {
+        return None;
+    }
+    let tail = body.tail_expr()?;
+    let text: String = tail
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let rest = [
+        format!("self.{field}.get({key})"),
+        format!("self.{field}.get(&{key})"),
+    ]
+    .iter()
+    .find_map(|lookup| text.strip_prefix(lookup.as_str()))?;
+    let rest = rest
+        .strip_prefix(".copied()")
+        .or_else(|| rest.strip_prefix(".cloned()"))
+        .unwrap_or(rest);
+    if rest.is_empty() {
+        return Some(KeyedFallback::Absent);
+    }
+    if rest == ".unwrap_or_default()" {
+        return Some(KeyedFallback::TypeDefault);
+    }
+    if !rest.starts_with(".unwrap_or(") {
+        return None;
+    }
+    // The whitespace-free `text` only matches the shape; the default comes
+    // from the syntax tree so a string default keeps its inner spaces.
+    let call = ast::MethodCallExpr::cast(tail.syntax().clone())?;
+    if call.name_ref()?.text() != "unwrap_or" {
+        return None;
+    }
+    let mut arguments = call.arg_list()?.args();
+    let default = match (arguments.next(), arguments.next()) {
+        (Some(default), None) => default.syntax().text().to_string(),
+        _ => return None,
+    };
+    is_plain_literal(&default).then_some(KeyedFallback::Literal(default))
+}
+
+/// A number, `true`/`false`, or a string or char literal without escapes:
+/// a default that cannot read the receiver or the key.
+fn is_plain_literal(text: &str) -> bool {
+    let quoted = |quote: char| {
+        text.len() >= 2
+            && text.starts_with(quote)
+            && text.ends_with(quote)
+            && text
+                .get(1..text.len() - 1)
+                .is_some_and(|inner| !inner.contains([quote, '\\']))
+    };
+    matches!(text, "true" | "false")
+        || quoted('"')
+        || quoted('\'')
+        || (text.starts_with(|ch: char| ch.is_ascii_digit())
+            && text
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.'))
 }
 
 fn is_path_named(expression: &ast::Expr, name: &str) -> bool {
@@ -928,6 +1862,655 @@ mod tests {
             "entries",
             "attempts"
         ));
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: a getter reads one entry of a field map
+    /// only when its body looks its own argument up in that field.
+    #[test]
+    fn keyed_getter_counts_only_when_it_looks_its_argument_up_in_the_field() {
+        for (getter, fallback) in [
+            (
+                "pub fn entry(&self, k: &str) -> Option<&u32> { self.attempts.get(k) }",
+                KeyedFallback::Absent,
+            ),
+            (
+                "pub fn entry(&self, k: &str) -> u32 { self.attempts.get(k).copied().unwrap_or(0) }",
+                KeyedFallback::Literal("0".to_string()),
+            ),
+            (
+                "pub fn entry(&self, k: String) -> Option<u32> { self.attempts.get(&k).cloned() }",
+                KeyedFallback::Absent,
+            ),
+            (
+                "pub fn entry(&self, k: &str) -> u32 { self.attempts.get(k).copied().unwrap_or_default() }",
+                KeyedFallback::TypeDefault,
+            ),
+            (
+                "pub fn entry(&self, k: &str) -> &str { self.attempts.get(k).copied().unwrap_or(\"none\") }",
+                KeyedFallback::Literal("\"none\"".to_string()),
+            ),
+            (
+                "pub fn entry(&self, k @ _: &str) -> Option<&u32> { self.attempts.get(k) }",
+                KeyedFallback::Absent,
+            ),
+            (
+                "pub fn entry(&self, k: &str) -> &str { self.attempts.get(k).copied().unwrap_or(\"n/a x\") }",
+                KeyedFallback::Literal("\"n/a x\"".to_string()),
+            ),
+        ] {
+            let index = settings_index(getter);
+            assert_eq!(
+                getter_plainly_reads_key(&index, "RetryBuilder", "entry", "attempts"),
+                Some(fallback),
+                "{getter}"
+            );
+        }
+        for getter in [
+            // Another field, another key, arithmetic on the entry, a default
+            // that reads state, a statement first, two arguments, no
+            // argument, a destructured or `mut` argument, `&mut self`.
+            "pub fn entry(&self, k: &str) -> Option<&u64> { self.delay_ms.get(k) }",
+            "pub fn entry(&self, k: &str) -> Option<&u32> { self.attempts.get(\"x\") }",
+            "pub fn entry(&self, k: &str) -> u32 { self.attempts.get(k).copied().unwrap_or(0) + 1 }",
+            "pub fn entry(&self, k: &str) -> u32 { self.attempts.get(k).copied().unwrap_or(self.base) }",
+            "pub fn entry(&self, k: &str) -> u32 { self.attempts.get(k).copied().map(|n| n + 1).unwrap_or(0) }",
+            "pub fn entry(&self, k: &str) -> Option<&u32> { let k = k.trim(); self.attempts.get(k) }",
+            "pub fn entry(&self, k: &str, j: &str) -> Option<&u32> { self.attempts.get(k) }",
+            "pub fn entry(&self) -> Option<&u32> { self.attempts.get(\"x\") }",
+            "pub fn entry(&self, (k, _): (&str, u8)) -> Option<&u32> { self.attempts.get(k) }",
+            "pub fn entry(&self, mut k: &str) -> Option<&u32> { self.attempts.get(k) }",
+            "pub fn entry(&mut self, k: &str) -> Option<&u32> { self.attempts.get(k) }",
+            "pub fn entry(&self, k: &str) -> bool { self.attempts.contains_key(k) }",
+        ] {
+            let index = settings_index(getter);
+            assert_eq!(
+                getter_plainly_reads_key(&index, "RetryBuilder", "entry", "attempts"),
+                None,
+                "{getter}"
+            );
+        }
+        // Another type's method of the same name proves nothing.
+        let index =
+            settings_index("pub fn entry(&self, k: &str) -> Option<&u32> { self.attempts.get(k) }");
+        assert_eq!(
+            getter_plainly_reads_key(&index, "Retry", "entry", "attempts"),
+            None
+        );
+    }
+
+    fn source_index(source: &str) -> RustIndex {
+        let path = PathBuf::from("src/shelf.rs");
+        let facts = crate::analysis::rust_index::summarize_file(path.clone(), source.to_string());
+        let mut index = RustIndex::default();
+        index.extend_functions(facts.functions.iter().cloned());
+        index.insert_file_only(path, facts);
+        index
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: a constructor counts as empty only when
+    /// it plainly builds the map field as an empty std collection.
+    #[test]
+    fn constructor_starts_empty_only_for_a_plainly_empty_field() {
+        let shelf = |derive: &str, field: &str, constructors: &str| {
+            source_index(&format!(
+                "use std::collections::BTreeMap;\n\
+                 #[derive(Debug{derive})]\n\
+                 pub struct Shelf {{ {field}, low: u32 }}\n\
+                 impl Shelf {{\n{constructors}\n}}\n"
+            ))
+        };
+        let map = "stock: BTreeMap<String, u32>";
+        let starts_empty =
+            |index: &RustIndex, ctor: &str| constructor_starts_empty(index, "Shelf", ctor, "stock");
+        for (derive, constructors, ctor) in [
+            (
+                ", Default",
+                "pub fn new(low: u32) -> Self { Self { low, ..Self::default() } }",
+                "new",
+            ),
+            (
+                ", Default",
+                "pub fn new() -> Self { Self::default() }",
+                "new",
+            ),
+            (", Default", "", "default"),
+            (
+                "",
+                "pub fn new() -> Self { Shelf { stock: BTreeMap::new(), low: 1 } }",
+                "new",
+            ),
+            (
+                "",
+                "pub fn new() -> Self { Self { stock: std::collections::BTreeMap::<String, u32>::default(), low: 1 } }",
+                "new",
+            ),
+            (
+                "",
+                "pub fn new() -> Self { Self::with_low(3) }\npub fn with_low(low: u32) -> Self { Self { stock: Default::default(), low } }",
+                "new",
+            ),
+            // An inherent `default` is what `Shelf::default()` calls.
+            (
+                "",
+                "pub fn default() -> Self { Self { stock: BTreeMap::new(), low: 0 } }",
+                "default",
+            ),
+        ] {
+            assert!(
+                starts_empty(&shelf(derive, map, constructors), ctor),
+                "{constructors} / {ctor}"
+            );
+        }
+        for (derive, field, constructors, ctor) in [
+            // Seeds the map, or builds it somewhere the check cannot see.
+            (
+                "",
+                map,
+                "pub fn new() -> Self { let mut stock = BTreeMap::new(); stock.insert(\"K\".into(), 5); Self { stock, low: 1 } }",
+                "new",
+            ),
+            (
+                "",
+                map,
+                "pub fn new() -> Self { Self { stock: BTreeMap::from([(\"K\".into(), 5)]), low: 1 } }",
+                "new",
+            ),
+            (
+                "",
+                map,
+                "pub fn new(stock: BTreeMap<String, u32>) -> Self { Self { stock, low: 1 } }",
+                "new",
+            ),
+            ("", map, "pub fn new() -> Self { build() }", "new"),
+            (
+                "",
+                map,
+                "pub fn new() -> Self { Other { stock: BTreeMap::new(), low: 1 } }",
+                "new",
+            ),
+            // A statement first, or a delegation to another type's constructor.
+            (
+                "",
+                map,
+                "pub fn new() -> Self { let low = 1; Self { stock: BTreeMap::new(), low } }",
+                "new",
+            ),
+            (
+                "",
+                map,
+                "pub fn new() -> Self { Other::make() }\npub fn make() -> Self { Self { stock: BTreeMap::new(), low: 1 } }",
+                "new",
+            ),
+            // No `Default` at all, and a constructor that calls itself.
+            ("", map, "pub fn new() -> Self { Self::default() }", "new"),
+            ("", map, "pub fn new() -> Self { Self::new() }", "new"),
+            // A derived Default over a field that is not a std collection, or
+            // `Default::default()` / a std constructor for a field that is not
+            // one (a custom map's default may be seeded).
+            (", Default", "stock: Stock", "", "default"),
+            (
+                "",
+                "stock: Stock",
+                "pub fn new() -> Self { Self { stock: Default::default(), low: 1 } }",
+                "new",
+            ),
+            // No such constructor.
+            (", Default", map, "", "with"),
+        ] {
+            assert!(
+                !starts_empty(&shelf(derive, field, constructors), ctor),
+                "{constructors} / {ctor}"
+            );
+        }
+        let manual = |body: &str| {
+            source_index(&format!(
+                "use std::collections::BTreeMap;\n\
+                 pub struct Shelf {{ {map} }}\n\
+                 impl Default for Shelf {{ fn default() -> Self {{ {body} }} }}\n"
+            ))
+        };
+        assert!(starts_empty(
+            &manual("Self { stock: BTreeMap::new() }"),
+            "default"
+        ));
+        // A spread takes the field from a `Default` that must itself be empty.
+        let seeding_default = |extra: &str| {
+            source_index(&format!(
+                "use std::collections::BTreeMap;\n\
+                 pub struct Shelf {{ {map}, low: u32 }}\n\
+                 impl Default for Shelf {{ fn default() -> Self {{ Self {{ stock: BTreeMap::from([(\"K\".into(), 5)]), low: 0 }} }} }}\n\
+                 impl Shelf {{ {extra} }}\n"
+            ))
+        };
+        assert!(!starts_empty(
+            &seeding_default("pub fn new(low: u32) -> Self { Self { low, ..Self::default() } }"),
+            "new"
+        ));
+        // An inherent `default` shadows the trait's at `Shelf::default()`,
+        // but `Default::default()` (directly or as a spread) runs the trait's.
+        let both = seeding_default(
+            "pub fn default() -> Self { Self { stock: BTreeMap::new(), low: 1 } }\n\
+             pub fn spread(low: u32) -> Self { Self { low, ..Default::default() } }",
+        );
+        assert!(starts_empty(&both, "default"));
+        assert!(!starts_empty(&both, TRAIT_DEFAULT));
+        assert!(!starts_empty(&both, "spread"));
+        assert!(!starts_empty(
+            &manual(
+                "let mut s = Self { stock: BTreeMap::new() }; s.stock.insert(\"K\".into(), 5); s"
+            ),
+            "default"
+        ));
+        // A nested field path is never checked.
+        assert!(!constructor_starts_empty(
+            &shelf(", Default", map, ""),
+            "Shelf",
+            "default",
+            "stock.inner"
+        ));
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: an earlier call on the test binding
+    /// counts only when its method, and the helpers it calls, spell no
+    /// literal equal to the expected value and hand `self` to nothing else.
+    #[test]
+    fn method_cannot_store_refuses_methods_spelling_the_expected_value() {
+        let cannot_store = |methods: &str, expected: &str| {
+            let index = source_index(&format!(
+                "pub struct Shelf {{ stock: BTreeMap<String, u32>, log: Vec<u32> }}\n\
+                 impl Shelf {{\n{methods}\n}}\n"
+            ));
+            method_cannot_store(&index, "Shelf", "prime", "stock", expected)
+        };
+        for (methods, write) in [
+            (
+                "pub fn prime(&mut self, sku: &str, qty: u32) { if self.stock.contains_key(sku) { return; } self.stock.insert(sku.to_string(), qty); self.log.push(qty); }",
+                EarlierWrite::Overwrites,
+            ),
+            (
+                "pub fn prime(&mut self, qty: u32) { self.stock.insert(\"K\".into(), qty.clone()); self.note(); }\nfn note(&mut self) { self.log.push(1); }",
+                EarlierWrite::Overwrites,
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { self.put(k, q); }\nfn put(&mut self, k: &str, v: u32) { self.stock.insert(k.into(), v); }",
+                EarlierWrite::Overwrites,
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { *self.stock.entry(k.into()).or_insert(0) += q; self.log.push(q); }",
+                EarlierWrite::Accumulates,
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { *self.stock.entry(k.into()).or_default() += q; }",
+                EarlierWrite::Accumulates,
+            ),
+            (
+                "pub fn prime(&self, k: &str) -> bool { self.stock.contains_key(k) }",
+                EarlierWrite::Reads,
+            ),
+        ] {
+            assert_eq!(cannot_store(methods, "7"), Some(write), "{methods}");
+        }
+        for (methods, expected) in [
+            (
+                "pub fn prime(&mut self) { self.stock.insert(\"K\".into(), 7); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self) { self.stock.insert(\"K\".into(), 7u32); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self) { self.stock.insert(\"K\".into(), 7); }",
+                "-7",
+            ),
+            (
+                "pub fn prime(&mut self) { self.stock.insert(\"K\".into(), \"x\\n\".len() as u32); }",
+                "\"x\\n\"",
+            ),
+            (
+                "pub fn prime(&mut self) { self.load(); }\nfn load(&mut self) { self.stock.insert(\"K\".into(), 7); }",
+                "7",
+            ),
+            ("pub fn prime(&mut self) { self.missing(); }", "7"),
+            ("pub fn prime(&mut self) { seed(self); }", "7"),
+            ("pub fn prime(&mut self) { seed(&mut self.stock); }", "7"),
+            ("pub fn prime(&mut self) { self.prime(); }", "7"),
+            // The value under another name: a constant, a field, a call.
+            (
+                "pub fn prime(&mut self) { self.stock.insert(\"K\".into(), SEED); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self) { self.stock.insert(\"K\".into(), self.base); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self) { self.stock.insert(\"K\".into(), five()); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self) { self.stock = Self::defaults(); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str) { *self.stock.entry(k.into()).or_insert(0) += SEED; }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { *self.stock.entry(k.into()).or_insert(q) += q; }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self) { self.stock.extend([(\"K\".into(), 1)]); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str) { *self.stock.entry(k.into()).or_default() += self.stock.len() as u32; }",
+                "7",
+            ),
+            // A converted parameter: `true.into()` is 1, `5.to_string()` is "5".
+            (
+                "pub fn prime(&mut self, k: &str, on: bool) { self.stock.insert(k.into(), on.into()); }",
+                "1",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { self.put(k, q.into()); }\nfn put(&mut self, k: &str, v: u32) { self.stock.insert(k.into(), v); }",
+                "7",
+            ),
+            // A value computed from parameters (#7988).
+            (
+                "pub fn prime(&mut self, k: &str, a: u32, b: u32) { self.stock.insert(k.into(), a + b); }",
+                "7",
+            ),
+            // A shadowed or `mut` parameter, a helper handed a constant, and
+            // a nonzero `or_insert` start summing to the expected value.
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { let q = SEED; self.stock.insert(k.into(), q); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { let q = q + 2; self.stock.insert(k.into(), q); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, mut q: u32) { q += 2; self.stock.insert(k.into(), q); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { for q in [q + 2] { self.stock.insert(k.into(), q); } }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str) { self.put(k, SEED); }\nfn put(&mut self, k: &str, v: u32) { self.stock.insert(k.into(), v); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { self.put(k, q + 2); }\nfn put(&mut self, k: &str, v: u32) { self.stock.insert(k.into(), v); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { *self.stock.entry(k.into()).or_insert(2) += q; }",
+                "7",
+            ),
+            // Two writes can sum to the expected value; a macro can rebind a
+            // parameter unseen; a loop or closure can repeat a write.
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { self.bump(k, 2); self.bump(k, q); }\nfn bump(&mut self, k: &str, v: u32) { *self.stock.entry(k.into()).or_insert(0) += v; }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, a: u32, b: u32) { *self.stock.entry(k.into()).or_insert(0) += a; *self.stock.entry(k.into()).or_insert(0) += b; }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { shadow!(q); self.stock.insert(k.into(), q); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { for _ in 0..2 { *self.stock.entry(k.into()).or_insert(0) += q; } }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { let mut f = || self.put(k, q); f(); f(); }\nfn put(&mut self, k: &str, v: u32) { *self.stock.entry(k.into()).or_insert(0) += v; }",
+                "7",
+            ),
+            ("", "7"),
+        ] {
+            assert_eq!(
+                cannot_store(methods, expected),
+                None,
+                "{methods} / {expected}"
+            );
+        }
+    }
+
+    /// A `#[cfg(test)]` impl defining the same method may be the body the
+    /// test build runs, so no body resolves.
+    #[test]
+    fn inherent_method_body_refuses_a_test_only_twin() {
+        let production = "pub struct Shelf { stock: BTreeMap<String, u32> }\n\
+                          impl Shelf { pub fn count(&self, k: &str) -> u32 { self.stock.get(k).copied().unwrap_or(0) } }\n";
+        assert!(inherent_method_body(&source_index(production), "Shelf", "count").is_some());
+        let twinned = format!(
+            "{production}#[cfg(test)]\nmod tests {{ use super::*; impl Shelf {{ pub fn count(&self, _k: &str) -> u32 {{ 5 }} }} }}\n"
+        );
+        assert!(inherent_method_body(&source_index(&twinned), "Shelf", "count").is_none());
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: two modules declaring the same type name
+    /// A bare collection name counts as std only when imported from
+    /// `std::collections` and not reused by a local item, alias or generic.
+    #[test]
+    fn constructor_starts_empty_requires_a_std_collection_type() {
+        let starts_empty = |prelude: &str, generics: &str, ty: &str| {
+            let index = source_index(&format!(
+                "{prelude}\n#[derive(Default)]\npub struct Shelf{generics} {{ stock: {ty} }}\n"
+            ));
+            constructor_starts_empty(&index, "Shelf", "default", "stock")
+        };
+        let map = "BTreeMap<String, u32>";
+        assert!(starts_empty("use std::collections::BTreeMap;", "", map));
+        assert!(starts_empty(
+            "use std::collections::{BTreeMap, HashSet};",
+            "",
+            map
+        ));
+        assert!(starts_empty(
+            "",
+            "",
+            "std::collections::BTreeMap<String, u32>"
+        ));
+        assert!(starts_empty(
+            "",
+            "",
+            "::std::collections::HashMap<String, u32>"
+        ));
+        for (prelude, generics) in [
+            ("", ""),
+            (
+                "use seeded::BTreeMap;\nmod seeded { pub struct BTreeMap<K, V>(K, V); }",
+                "",
+            ),
+            (
+                "use std::collections::BTreeMap;\nmod seeded { pub struct BTreeMap; }",
+                "",
+            ),
+            ("use std::collections::HashMap as BTreeMap;", ""),
+            (
+                "use std::collections::BTreeMap;\ntype BTreeMap<K, V> = Vec<(K, V)>;",
+                "",
+            ),
+            ("use std::collections::BTreeMap;", "<BTreeMap>"),
+            ("use std::collections::*;", ""),
+            (
+                "use std::collections::BTreeMap;\nmod other { use seeded::BTreeMap; }",
+                "",
+            ),
+            ("mod tests { use std::collections::BTreeMap; }", ""),
+        ] {
+            assert!(
+                !starts_empty(prelude, generics, map),
+                "{prelude} / {generics}"
+            );
+        }
+    }
+
+    /// make bare-name method resolution unsafe.
+    #[test]
+    fn constructor_starts_empty_refuses_a_type_name_declared_twice() {
+        let index = source_index(
+            "use std::collections::BTreeMap;\n\
+             pub mod a { #[derive(Default)] pub struct S { stock: BTreeMap<String, u32> } }\n\
+             pub mod b { pub struct S { stock: BTreeMap<String, u32> } }\n",
+        );
+        assert!(!constructor_starts_empty(&index, "S", "default", "stock"));
+        let index = source_index(
+            "pub mod a { use std::collections::BTreeMap;\n\
+             #[derive(Default)] pub struct S { stock: BTreeMap<String, u32> } }\n",
+        );
+        assert!(constructor_starts_empty(&index, "S", "default", "stock"));
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: the owner may touch the inserted map
+    /// elsewhere only to read it, itself or through its helpers.
+    #[test]
+    fn owner_touches_field_only_at_its_insert() {
+        let touches = |owner: &str, helpers: &str| {
+            let source = format!(
+                "pub struct Shelf {{ stock: BTreeMap<String, u32>, low_stock: Vec<String> }}\n\
+                 impl Shelf {{\n{owner}\n{helpers}\n}}\n"
+            );
+            let index = source_index(&source);
+            // The owner starts on file line 3 and its insert is line 5.
+            owner_touches_field_only_at(
+                &index,
+                "src/shelf.rs::impl Shelf::put",
+                owner,
+                3,
+                5,
+                "stock",
+            )
+        };
+        let owner = |middle: &str| {
+            format!(
+                "pub fn put(&mut self, sku: &str, qty: u32) {{\n    let had = self.stock.get(sku).copied();\n    self.stock.insert(sku.to_string(), qty);\n{middle}\n}}"
+            )
+        };
+        for (middle, helpers) in [
+            ("    self.low_stock.push(sku.to_string());", ""),
+            (
+                "    if self.stock.len() > 3 { self.refresh(sku); }",
+                "fn refresh(&mut self, sku: &str) { if self.count(sku) < 2 { self.low_stock.push(sku.into()); } }\nfn count(&self, sku: &str) -> u32 { self.stock.get(sku).copied().unwrap_or(0) }",
+            ),
+            (
+                "    let _ = self.stock.is_empty() || self.stock.contains_key(sku);",
+                "",
+            ),
+            // The same read-only helper called twice.
+            (
+                "    let _ = self.count(sku) + self.count(\"other\");",
+                "fn count(&self, sku: &str) -> u32 { self.stock.get(sku).copied().unwrap_or(0) }",
+            ),
+        ] {
+            assert!(touches(&owner(middle), helpers), "{middle}");
+        }
+        for (middle, helpers) in [
+            ("    self.stock.insert(sku.to_string(), qty + 1);", ""),
+            (
+                "    *self.stock.entry(sku.to_string()).or_insert(0) += 1;",
+                "",
+            ),
+            ("    self.stock.clear();", ""),
+            (
+                "    self.bump(sku);",
+                "fn bump(&mut self, sku: &str) { self.stock.insert(sku.into(), 9); }",
+            ),
+            ("    self.missing(sku);", ""),
+            ("    reset(self);", ""),
+            ("    std::mem::take(&mut self.stock);", ""),
+            (
+                "    self.again(sku);",
+                "fn again(&mut self, sku: &str) { self.again(sku); }",
+            ),
+        ] {
+            assert!(!touches(&owner(middle), helpers), "{middle}");
+        }
+        // The probe line must hold a statement.
+        assert!(!owner_touches_field_only_at(
+            &source_index("pub struct Shelf;"),
+            "src/shelf.rs::impl Shelf::put",
+            "fn put(&mut self) {}",
+            3,
+            1,
+            "stock",
+        ));
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: an expected value the getter also
+    /// returns for a missing key cannot show the insert ran.
+    #[test]
+    fn keyed_fallback_differs_only_from_a_distinct_literal() {
+        let zero = KeyedFallback::Literal("0".to_string());
+        assert!(zero.differs_from("7"));
+        assert!(zero.differs_from("7u32"));
+        assert!(zero.differs_from("-1"));
+        for same_or_unknown in ["0", "0u32", "0_0", "0.0", "expected", "0x7", "1e3", "7 + 0"] {
+            assert!(!zero.differs_from(same_or_unknown), "{same_or_unknown}");
+        }
+        let none = KeyedFallback::Literal("\"none\"".to_string());
+        assert!(none.differs_from("\"bolt\""));
+        assert!(!none.differs_from("\"none\""));
+        assert!(KeyedFallback::Absent.differs_from("Some(&7)"));
+        assert!(!KeyedFallback::Absent.differs_from("None"));
+        assert!(!KeyedFallback::Absent.differs_from("expected"));
+        let default = KeyedFallback::TypeDefault;
+        for distinct in ["5", "\"x\"", "true", "'a'", "0.5"] {
+            assert!(default.differs_from(distinct), "{distinct}");
+        }
+        for same_or_unknown in ["0", "0usize", "\"\"", "false", "count", "-0"] {
+            assert!(!default.differs_from(same_or_unknown), "{same_or_unknown}");
+        }
+    }
+
+    #[test]
+    fn parameter_rebound_finds_shadows_and_assignments() {
+        let rebound = |body: &str| {
+            parameter_rebound(
+                &format!("pub fn put(&mut self, sku: &str, qty: u32) {{ {body} }}"),
+                "sku",
+            )
+        };
+        assert!(!rebound("self.m.insert(sku.to_string(), qty);"));
+        assert!(!rebound(
+            "let other = sku; self.m.insert(sku.to_string(), qty);"
+        ));
+        for shadowing in [
+            "let sku = \"LAST\"; self.m.insert(sku.to_string(), qty);",
+            "if let Some(sku) = self.alias.get(sku) { self.m.insert(sku.to_string(), qty); }",
+            "self.items.iter().for_each(|sku| { self.m.insert(sku.to_string(), qty); });",
+            "let mut s = sku; s = \"x\"; let sku = s; self.m.insert(sku.to_string(), qty);",
+        ] {
+            assert!(rebound(shadowing), "{shadowing}");
+        }
+        assert!(parameter_rebound(
+            "pub fn put(&mut self, mut sku: &str) { sku = \"x\"; self.m.insert(sku.to_string(), 1); }",
+            "sku"
+        ));
+        assert!(parameter_rebound("not rust {", "sku"));
+    }
+
+    #[test]
+    fn function_returns_value_reads_the_signature() {
+        assert!(function_returns_value(
+            "pub fn place(&mut self, q: u32) -> Result<(), String> { Ok(()) }"
+        ));
+        assert!(!function_returns_value(
+            "pub fn restock(&mut self, sku: &str, qty: u32) { }"
+        ));
+        assert!(!function_returns_value(
+            "pub fn f<F: Fn() -> u8>(&mut self, f: F) { }"
+        ));
+        assert!(function_returns_value("not rust {"));
     }
 
     #[test]

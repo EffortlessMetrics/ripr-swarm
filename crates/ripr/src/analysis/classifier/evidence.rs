@@ -3,15 +3,18 @@ use crate::analysis::classify::{
     HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
     activation_and_boundary_input, assertion_observes_collection_argument,
-    body_contains_owner_call, callee_is_unique, chain_forwards_to_observed_hops,
-    chain_passes_effect_target_to_observed_hops, classify, confidence_score,
-    contains_as_whole_word, current_path_witness, direct_call_name,
-    direct_collection_mutation_receiver, fallible_check_receipt, fallible_literal_witness,
-    getter_plainly_reads, has_same_test_boundary_oracle_pairing, helper_only_reach,
+    body_contains_owner_call, call_parameter_names, callee_is_unique,
+    chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
+    confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness,
+    direct_call_name, direct_collection_mutation_receiver, fallible_check_receipt,
+    fallible_literal_witness, function_returns_value, getter_plainly_reads,
+    getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
     helper_pins_owner_call, infection_evidence_with_boundary_input, local_flow_sinks,
-    observes_returned_element_field, operand_only_pin, oracle_crediting_relations,
-    owner_may_be_reached_unseen, package_prefix, propagation_evidence_with_witness, reach_evidence,
+    method_cannot_store, observes_returned_element_field, operand_only_pin,
+    oracle_crediting_relations, owner_may_be_reached_unseen, owner_touches_field_only_at,
+    package_prefix, parameter_rebound, propagation_evidence_with_witness, reach_evidence,
     reveal_outcome, same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
+    unconditional_owner_insert_field,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -473,6 +476,47 @@ impl ClassifiedProbeEvidence {
             .owner_fn
             .map(owner_parameter_names)
             .unwrap_or_default();
+        // RIPR-SPEC-0228 keyed reads: only a map insert reads these names,
+        // and only one at the owner's top level (not under a branch, loop or
+        // closure), in an owner that touches that map nowhere else but to
+        // read it. An earlier `return` can still skip it; the reveal side's
+        // consumed-result and empty-start rules cover that. A
+        // parameter the owner rebinds in its body (`let sku = "LAST"`) may
+        // not be what a later use of its name holds, so it keys nothing.
+        let constructor_memo: RefCell<BTreeMap<(String, String, String), bool>> =
+            RefCell::new(BTreeMap::new());
+        let owner_argument_names: Vec<String> = context
+            .owner_fn
+            .filter(|function| {
+                unconditional_owner_insert_field(
+                    function.body.as_str(),
+                    function.start_line,
+                    context.probe.location.line,
+                )
+                .is_some_and(|field| {
+                    owner_touches_field_only_at(
+                        context.index,
+                        &function.id.0,
+                        function.body.as_str(),
+                        function.start_line,
+                        context.probe.location.line,
+                        &field,
+                    )
+                })
+            })
+            .map(|function| {
+                call_parameter_names(function)
+                    .into_iter()
+                    .map(|name| {
+                        if name.is_empty() || parameter_rebound(function.body.as_str(), &name) {
+                            String::new()
+                        } else {
+                            name
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         // #5830/#7024: names of functions that transitively call the owner,
         // computed once per owner per run through the attached memo and only
         // when an assertion asks. The memo answers under its borrow without
@@ -591,6 +635,27 @@ impl ClassifiedProbeEvidence {
                 },
                 getter_reads_field: &|impl_type, getter, field| {
                     getter_plainly_reads(context.index, impl_type, getter, field)
+                },
+                getter_reads_key: &|impl_type, getter, field| {
+                    getter_plainly_reads_key(context.index, impl_type, getter, field)
+                },
+                owner_argument_names: &owner_argument_names,
+                owner_returns_value: context
+                    .owner_fn
+                    .is_none_or(|function| function_returns_value(function.body.as_str())),
+                constructor_starts_empty: &|impl_type, ctor, field| {
+                    // Memoized per probe: the derived-`Default` check parses
+                    // the files declaring the type, once per question.
+                    let key = (impl_type.to_string(), ctor.to_string(), field.to_string());
+                    if let Some(known) = constructor_memo.borrow().get(&key) {
+                        return *known;
+                    }
+                    let empty = constructor_starts_empty(context.index, impl_type, ctor, field);
+                    constructor_memo.borrow_mut().insert(key, empty);
+                    empty
+                },
+                call_cannot_store: &|impl_type, method, field, expected| {
+                    method_cannot_store(context.index, impl_type, method, field, expected)
                 },
             },
             arm_selector.as_ref(),

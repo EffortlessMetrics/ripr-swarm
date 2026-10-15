@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0228-keyed-getter-refused-call",
+  "subject_id": "authored-keyed-getter",
+  "origin": "authored",
+  "anchor": "src/lib.rs:30",
+  "behavior_family": "side_effect",
+  "test_shape": "unit_test_unwrap_err_then_keyed_getter",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

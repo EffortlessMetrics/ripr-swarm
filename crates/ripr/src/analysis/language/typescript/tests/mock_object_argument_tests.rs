@@ -114,9 +114,6 @@ fn changed_call_a_nested_function_may_run_is_not_credited() {
         "function checkout(owner, lines, notifier) {\n  lines.forEach((line) => { log(line);\n  notifier.send(owner, `charged ${total} cents`);\n  });\n}",
         // The body of an expression-bodied arrow on the line before.
         "function checkout(owner, lines, notifier) {\n  const later = () =>\n  notifier.send(owner, `charged ${total} cents`);\n  return later;\n}",
-        // A braceless `if` or `else`.
-        "function checkout(owner, lines, notifier) {\n  const ok = lines.some((l) => l.qty);\n  if (ok)\n  notifier.send(owner, `charged ${total} cents`);\n}",
-        "function checkout(owner, lines, notifier) {\n  const ok = lines.some((l) => l.qty);\n  if (!ok) {} else\n  notifier.send(owner, `charged ${total} cents`);\n}",
         // A loop or recursion elsewhere in the body.
         "function checkout(owner, lines, notifier) {\n  const total = lines.reduce((s, l) => s + l, 0);\n  for (const l of lines) log(l);\n  notifier.send(owner, `charged ${total} cents`);\n}",
         "function checkout(owner, lines, notifier) {\n  const total = lines.reduce((s, l) => s + l, 0);\n  if (!total) checkout(owner, [], log);\n  notifier.send(owner, `charged ${total} cents`);\n}",
@@ -185,6 +182,76 @@ fn changed_call_a_nested_function_may_run_is_not_credited() {
     ] {
         assert!(
             !checkout_facts(owner).credits(&charged_payload(), CHECKOUT_TEST),
+            "{owner}"
+        );
+    }
+}
+
+/// RIPR-SPEC-0256 rule 1 (2026-10-15): the changed line as the branch of a
+/// braceless `if (...)` or `else` that sits directly in the owner body runs
+/// at most once, so it credits; every other head before the line refuses.
+#[test]
+fn changed_call_under_a_top_level_braceless_branch() {
+    const SOME: &str = "  const ok = lines.some((l) => l.qty);";
+    for head in [
+        // The corpus shape: a braceless `if` after a callback statement.
+        "  if (ok)",
+        // A condition that spans lines or holds its own arrow runs once,
+        // before the branch.
+        "  if (ok &&\n    lines.length > 0)",
+        "  if (lines.some((l) => l.qty))",
+        // An `if` as the first statement or after a block.
+        "  if (ok) { log(1); }\n  if (ok)",
+        // A braceless `else` after a block or after a braceless branch.
+        "  if (!ok) {} else",
+        "  if (!ok) log(1); else",
+    ] {
+        let owner = format!(
+            "function checkout(owner, lines, notifier) {{\n{SOME}\n{head}\n{CHECKOUT_LINE}\n}}"
+        );
+        assert!(
+            checkout_facts(&owner).credits(&charged_payload(), CHECKOUT_TEST),
+            "{owner}"
+        );
+    }
+    let first = format!(
+        "function checkout(owner, lines, notifier) {{\n  if (owner)\n{CHECKOUT_LINE}\n  lines.map((l) => l.qty);\n}}"
+    );
+    assert!(
+        checkout_facts(&first).credits(&charged_payload(), CHECKOUT_TEST),
+        "{first}"
+    );
+    for head in [
+        // `if` must start a statement: nested, `else if`, labelled.
+        "  if (owner) if (ok)",
+        "  if (!ok) log(1);\n  else if (ok)",
+        "  done: if (ok)",
+        // A property named `if` or `else` is not a branch head.
+        "  cfg.if (ok)",
+        "  cfg.else",
+        // Another word before `(...)`, or no word at all.
+        "  log(ok)",
+        "  (ok)",
+        // `else` must follow a `;` or a `}`.
+        "  if (!ok) log(1)\n  else",
+        // Another word after a `;` is not a branch head: `return` ends the
+        // statement, so the line after it never runs.
+        "  log(1);\n  return",
+        // A loop heading the branch may run it more than once.
+        "  for (const l of lines)\n  if (ok)",
+        // Inside a callback the branch may run once per item.
+        "  lines.forEach((l) => { if (ok)",
+    ] {
+        let tail = if head.contains("forEach") {
+            "  });"
+        } else {
+            ""
+        };
+        let owner = format!(
+            "function checkout(owner, lines, notifier) {{\n{SOME}\n{head}\n{CHECKOUT_LINE}\n{tail}\n}}"
+        );
+        assert!(
+            !checkout_facts(&owner).credits(&charged_payload(), CHECKOUT_TEST),
             "{owner}"
         );
     }

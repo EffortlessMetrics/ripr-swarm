@@ -197,8 +197,14 @@ not present the empty ranking as a clean result: the terminal and Markdown name
 each such language, its diff-first `ripr check --root <root>` route (or, when
 this binary cannot analyze the language, the unavailable-adapter notice), and
 close with that route instead of the Rust before/after snapshot commands. When
-Rust seams exist, the human output is unchanged and other languages are listed
-only in `pilot-summary.json` `language_routes` (#3906).
+an enabled language has that check route and no Rust seam or Python repair
+card ranks, the Top recommendation names the route (`analyze the Python
+diff: ripr check --root <root>`) instead of `none`; the "pilot ranks Rust
+seams and found none" explanation stays secondary. Disabled preview languages
+still list the route in the languages section. JSON `language_routes` and
+`current_change.top_recommendation_in_change` are unchanged (#3906, #7665).
+When Rust seams exist, the human output is unchanged and other languages are
+listed only in `pilot-summary.json` `language_routes`.
 
 Pilot's ranking is repo-wide, but a developer who just ran `ripr check` on a
 branch reads its top recommendation as the next step for that change. Pilot
@@ -207,7 +213,11 @@ resolves it, against the live working tree when it has uncommitted tracked
 changes, otherwise `<base>...HEAD`), ranks actionable seams on its changed
 lines first, and says in the terminal, Markdown and
 `pilot-summary.json` (`current_change`) whether the top recommendation is part
-of the change. When the change has no ranked seam, pilot says the
+of the change. For match seams, changed-line membership uses the parser-owned
+inclusive match head: the `match` keyword through the scrutinee, or the arm
+pattern and guard through `=>`. Separate arm-body lines do not touch that head.
+Token anchors, seam IDs and calibration spans stay unchanged. The coverage
+survives cached facts and classifications. When the change has no ranked seam, pilot says the
 recommendation is elsewhere in the repo, says why no seam on the change ranks
 (pilot withholds its seams as static limitations, they are already gripped,
 intentional or suppressed, the seam limit left seams unanalyzed, the change is
@@ -480,6 +490,20 @@ then pilot names each detected language and its diff-first ripr check route,
 or says the language is not available from this ripr binary, and does not
 report the empty ranking as a clean result.
 
+Given a workspace whose code is an enabled supported language (Python on a
+detected Python project, or TypeScript/JavaScript listed in `[languages]
+enabled`) with a runnable ripr check route, no Rust seams, and no Python
+repair card,
+when a user runs ripr pilot,
+then the Top recommendation names that language's check route rather than
+"none", and still says that pilot ranks Rust seams and found none.
+
+Given a workspace with TypeScript or JavaScript files, no Rust seams, and
+that language not listed in `[languages] enabled`,
+when a user runs ripr pilot,
+then the Top recommendation stays "none" while the languages section still
+names the check route.
+
 Given a workspace with Rust seams and other-language files,
 when a user runs ripr pilot,
 then the terminal and Markdown output are unchanged and pilot-summary.json
@@ -510,6 +534,12 @@ Given a branch whose committed or uncommitted change touches a ranked seam,
 when a user runs ripr pilot,
 then that seam ranks ahead of better-classed seams elsewhere and pilot says the
 top recommendation is part of the current change.
+
+Given an edit to a later line of a multiline match scrutinee, pattern or guard,
+when a user runs ripr pilot with cold or warm caches and either seam cap,
+then the corresponding match seam counts as changed, retains its original
+seam ID and ranks as part of the change. An edit confined to a separate arm
+body does not mark that match head as changed.
 
 Given a branch whose change touches no ranked seam,
 when a user runs ripr pilot,
@@ -654,6 +684,10 @@ Current tests and reports that support the contract:
 - `crates/ripr/tests/cli_smoke.rs::pilot_withholds_static_limitations_and_keeps_a_true_gap`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_excludes_solved_governed_classes`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_puts_seams_in_the_current_change_first`
+- `crates/ripr/src/output/pilot/tests.rs::multiline_match_heads_follow_changed_lines_without_moving_seam_identity`
+- `crates/ripr/src/output/pilot/tests.rs::multiline_match_guard_lines_exclude_the_arm_body`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_match_source_lines_preserve_identity_and_refuse_invalid_ranges`
+- `crates/ripr/tests/cli_smoke.rs::pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_current_change_matches_the_seam_span_and_new_side_lines`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change`
 - `crates/ripr/tests/cli_smoke.rs::pilot_ranks_and_labels_seams_in_the_current_change`
@@ -670,6 +704,7 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/output/pilot/tests.rs::pilot_markdown_and_terminal_use_python_repair_card_when_no_seam_ranked`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_language_routes_state_follows_rust_seams_and_discovered_languages`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_renderers_show_language_routes_only_without_rust_seams`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_headline_names_supported_language_check_route_when_no_rust_seams`
 - `crates/ripr/tests/cli_smoke.rs::pilot_writes_default_packet_outputs_for_boundary_gap_fixture`
 - `crates/ripr/src/cli/commands/pilot.rs::tests::timed_out_pilot_removes_prior_run_packet_siblings`
 - `crates/ripr/src/cli/commands/pilot.rs::tests::remove_unwritten_timeout_packet_siblings_is_a_no_op_when_absent`
