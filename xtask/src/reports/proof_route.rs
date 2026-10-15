@@ -1162,6 +1162,146 @@ mod tests {
             .to_vec()
     }
 
+    #[test]
+    fn carried_receipt_status_transition_matrix_preserves_outcomes_and_refusal_reasons()
+    -> Result<(), String> {
+        // Enumerate producer-legal sequences explicitly, independently of the
+        // parser's state machine. Canonical exits isolate status validation.
+        let statuses = [
+            Some(json!("pass")),
+            Some(json!("fail")),
+            Some(json!("not_run")),
+            None,
+            Some(Value::Null),
+            Some(json!("unknown")),
+            Some(json!(false)),
+        ];
+        let mut accepted = 0;
+        let mut sequence_refused = 0;
+        let mut overall_refused = 0;
+        for first in &statuses {
+            for second in &statuses {
+                for third in &statuses {
+                    let sequence = [first, second, third];
+                    let names = sequence.map(|status| status.as_ref().and_then(Value::as_str));
+                    let legal = match names {
+                        [Some("pass"), Some("pass"), Some("pass")] => Some(("pass", 3, 0, 0)),
+                        [Some("pass"), Some("pass"), Some("fail")] => Some(("fail", 2, 1, 0)),
+                        [Some("pass"), Some("fail"), Some("not_run")] => Some(("fail", 1, 1, 1)),
+                        [Some("fail"), Some("not_run"), Some("not_run")] => Some(("fail", 0, 1, 2)),
+                        _ => None,
+                    };
+                    for overall in &statuses {
+                        let mut value = bound_receipt();
+                        for (index, replacement) in sequence.iter().enumerate() {
+                            let command = value["commands"][index]
+                                .as_object_mut()
+                                .ok_or("fixture command")?;
+                            match replacement {
+                                Some(status) => {
+                                    command.insert("status".to_string(), status.clone());
+                                }
+                                None => {
+                                    command.remove("status");
+                                }
+                            }
+                            command.insert(
+                                "exit_code".to_string(),
+                                match names[index] {
+                                    Some("pass") => json!(0),
+                                    Some("fail") => json!(1),
+                                    _ => Value::Null,
+                                },
+                            );
+                        }
+                        let receipt = value.as_object_mut().ok_or("fixture receipt")?;
+                        match overall {
+                            Some(status) => {
+                                receipt.insert("overall_status".to_string(), status.clone());
+                            }
+                            None => {
+                                receipt.remove("overall_status");
+                            }
+                        }
+                        let expected = match legal {
+                            None => {
+                                sequence_refused += 1;
+                                PreflightReceiptStatus::Unreadable(
+                                    "preflight receipt has an invalid command outcome sequence"
+                                        .to_string(),
+                                )
+                            }
+                            Some((status, _, _, _))
+                                if overall.as_ref().and_then(Value::as_str) != Some(status) =>
+                            {
+                                overall_refused += 1;
+                                PreflightReceiptStatus::Unreadable(
+                                    "preflight receipt overall status contradicts command outcomes"
+                                        .to_string(),
+                                )
+                            }
+                            Some((status, passed, failed, not_run)) => {
+                                accepted += 1;
+                                PreflightReceiptStatus::CarriedForward {
+                                    execution_head_sha: "executed-sha".to_string(),
+                                    current_head_sha: "published-sha".to_string(),
+                                    overall_status: status.to_string(),
+                                    passed,
+                                    failed,
+                                    not_run,
+                                }
+                            }
+                        };
+                        let text = value.to_string();
+                        let actual = parse_preflight_receipt(
+                            &text,
+                            "published-sha",
+                            Some(&test_binding("published-sha")),
+                            &receipt_plan(),
+                        );
+                        assert_eq!(
+                            actual, expected,
+                            "sequence={sequence:?}, overall={overall:?}"
+                        );
+                        let rendered = preflight_receipt_line(&actual);
+                        match &expected {
+                            PreflightReceiptStatus::Unreadable(reason) => assert_eq!(
+                                rendered,
+                                format!(
+                                    "Preflight receipt: no fresh preflight receipt ({reason}).\n"
+                                )
+                            ),
+                            PreflightReceiptStatus::CarriedForward {
+                                overall_status,
+                                passed,
+                                failed,
+                                not_run,
+                                ..
+                            } => {
+                                assert_eq!(
+                                    rendered,
+                                    format!(
+                                        "Preflight receipt: carried forward from execution head `executed-sha` to source-equivalent current head `published-sha` — original overall status `{overall_status}`; original commands run: {passed} pass, {failed} fail ({not_run} not run); advisory only.\n"
+                                    )
+                                );
+                            }
+                            _ => {
+                                return Err(
+                                    "matrix expected only carried or refused outcomes".to_string()
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!((accepted, sequence_refused, overall_refused), (4, 2373, 24));
+        eprintln!(
+            "status matrix: {accepted} carried, {sequence_refused} sequence refusals, {overall_refused} overall refusals"
+        );
+        Ok(())
+    }
+
     fn assert_receipt_refused(value: &Value, reason: &str) {
         for head in ["executed-sha", "published-sha"] {
             let status = parse_preflight_receipt(
