@@ -1865,19 +1865,13 @@ fn read_zip_central_external_attributes(
             vsix_path.display()
         ));
     }
-    let Some(attribute_bytes) = header.get(ZIP_CENTRAL_EXTERNAL_ATTRIBUTES_OFFSET..) else {
+    let Some(&[b0, b1, b2, b3]) = header.get(ZIP_CENTRAL_EXTERNAL_ATTRIBUTES_OFFSET..) else {
         return Err(format!(
             "packaged VSIX {} member {VSIX_LICENSE_TXT_ENTRY} central-directory header is truncated",
             vsix_path.display()
         ));
     };
-    let attributes: [u8; 4] = attribute_bytes.try_into().map_err(|_| {
-        format!(
-            "packaged VSIX {} member {VSIX_LICENSE_TXT_ENTRY} central-directory header is truncated",
-            vsix_path.display()
-        )
-    })?;
-    Ok(u32::from_le_bytes(attributes))
+    Ok(u32::from_le_bytes([b0, b1, b2, b3]))
 }
 
 fn require_license_bytes_contain_notices(

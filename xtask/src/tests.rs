@@ -48833,10 +48833,10 @@ fn write_typed_license_txt_vsix(
         else {
             return Err("typed LICENSE.txt fixture is shorter than version-made-by".to_string());
         };
-        let current: [u8; 2] = version_bytes
-            .try_into()
-            .map_err(|_| "typed LICENSE.txt fixture version-made-by is truncated".to_string())?;
-        let patched = (u16::from(system) << 8) | (u16::from_le_bytes(current) & 0x00ff);
+        let [lo, hi] = *version_bytes else {
+            return Err("typed LICENSE.txt fixture version-made-by is truncated".to_string());
+        };
+        let patched = (u16::from(system) << 8) | (u16::from_le_bytes([lo, hi]) & 0x00ff);
         version_bytes.copy_from_slice(&patched.to_le_bytes());
     }
     let Some(attribute_bytes) =
