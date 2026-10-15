@@ -34,7 +34,7 @@ use crate::domain::{Confidence, ProbeFamily, RelationReason, StageEvidence, Stag
 use ra_ap_syntax::ast::{
     HasArgList, HasAttrs, HasGenericArgs, HasGenericParams, HasLoopBody, HasName,
 };
-use ra_ap_syntax::{AstNode, SyntaxNode, ast};
+use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, ast};
 
 pub(super) const QUESTION_MARK_SIDE_FLIP: &str = "Result-side oracle observes the `?` side flip: this `?` is the owner's only source of `Err`, and a test asserts the owner call returns `Err` (RIPR-SPEC-0227 rule 3b)";
 
@@ -472,12 +472,13 @@ fn asserts_owner_err_inner(root: &SyntaxNode, function: &ast::Fn, owner: &str) -
     // A file-level `const owner: fn(..) = ..`, `static`, `struct` or
     // `as owner` rename makes `owner(..)` something other than the owner.
     // A second `fn owner` already fails the unique-function lookups.
+    // Another function's parameter or local binding cannot reach this
+    // test; the test body and helper scans read their own bindings.
     if root.descendants().filter_map(ast::Name::cast).any(|bound| {
         bound.text() == owner
-            && !bound
-                .syntax()
-                .parent()
-                .is_some_and(|parent| ast::Fn::can_cast(parent.kind()))
+            && !bound.syntax().parent().is_some_and(|parent| {
+                ast::Fn::can_cast(parent.kind()) || ast::IdentPat::can_cast(parent.kind())
+            })
     }) {
         return None;
     }
@@ -492,9 +493,9 @@ fn asserts_owner_err_inner(root: &SyntaxNode, function: &ast::Fn, owner: &str) -
         // Any other macro may expand to an early `return` (a skip macro)
         // before the assertion runs.
         if let Some(call) = ast::MacroCall::cast(node.clone())
-            && !call.path().is_some_and(|path| {
+            && (!call.path().is_some_and(|path| {
                 ASSERTION_MACROS.contains(&path.syntax().text().to_string().as_str())
-            })
+            }) || token_tree_may_exit(&call, false))
         {
             return None;
         }
@@ -729,9 +730,9 @@ fn helper_call_observes_err(
             return false;
         }
         if let Some(macro_call) = ast::MacroCall::cast(node.clone())
-            && !macro_call.path().is_some_and(|path| {
+            && (!macro_call.path().is_some_and(|path| {
                 ASSERTION_MACROS.contains(&path.syntax().text().to_string().as_str())
-            })
+            }) || token_tree_may_exit(&macro_call, true))
         {
             return false;
         }
@@ -776,6 +777,23 @@ fn file_binds_name(root: &SyntaxNode, name: &str, except: Option<&ast::Name>) ->
             return bound.text() == name && except.is_none_or(|except| *except != bound);
         }
         binds_name(&node, name)
+    })
+}
+
+/// An assertion macro whose operands hold `return`, `break` or
+/// `continue` (and, in a helper, `?`) can leave before its comparison or a
+/// later one runs: `assert!({ return; true })`. Its operands are a token
+/// tree, so the AST scans above never see them.
+fn token_tree_may_exit(call: &ast::MacroCall, try_exits: bool) -> bool {
+    call.token_tree().is_some_and(|tree| {
+        tree.syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .any(|token| match token.kind() {
+                SyntaxKind::RETURN_KW | SyntaxKind::BREAK_KW | SyntaxKind::CONTINUE_KW => true,
+                SyntaxKind::QUESTION => try_exits,
+                _ => false,
+            })
     })
 }
 
@@ -1013,6 +1031,8 @@ mod tests {
         assert!(test_observes(table, "t", "port"));
         let helper = "fn check(text: &str, want: Option<u16>) {\n    assert_eq!(port(text).ok(), want, \"{text}\");\n}\n#[test]\nfn t() {\n    check(\"80\", Some(80));\n    check(\"http\", None);\n}\n";
         assert!(test_observes(helper, "t", "port"));
+        let unrelated_parameter = "fn display(port: u16) -> u16 {\n    port\n}\n#[test]\nfn t() {\n    assert_eq!(port(\"http\").ok(), None);\n}\n";
+        assert!(test_observes(unrelated_parameter, "t", "port"));
     }
 
     #[test]
@@ -1137,6 +1157,14 @@ mod tests {
             (
                 "a file-level struct named like the owner",
                 "struct port<'a>(&'a str);\n#[test]\nfn t() {\n    assert_eq!(port(\"80\").ok(), None);\n}\n",
+            ),
+            (
+                "a helper whose assertion operand returns",
+                "fn check(text: &str, want: Option<u16>) {\n    assert!({ return; true });\n    assert_eq!(port(text).ok(), want);\n}\n#[test]\nfn t() {\n    check(\"http\", None);\n}\n",
+            ),
+            (
+                "a test whose assertion operand returns",
+                "#[test]\nfn t() {\n    assert!({ return; true });\n    assert_eq!(port(\"http\").ok(), None);\n}\n",
             ),
             (
                 "a helper that may leave through ?",

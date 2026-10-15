@@ -274,7 +274,11 @@ rejected alternative. Any can be reversed later without touching the rest.
    than a `fn` (a `const`, `static`, `struct`, `as` rename, binding) in
    the test file may carry the owner's name, the test body may not
    import it, and the body's top-level statements and tail expression
-   are read. A diverging call before the assertion
+   are read. Assertion-macro operands in the test or helper may not hold
+   `return`, `break` or `continue` (in a helper, `?` either), since
+   `assert!({ return; true })` leaves before a later comparison. A
+   parameter or local binding in another function does not count as
+   rebinding the owner. A diverging call before the assertion
    (`std::process::exit`) is not yet refused (#8015).
    The `None` may also come from two places.
    - A constant-row table, as #5328 defines it: a top-level unlabeled
