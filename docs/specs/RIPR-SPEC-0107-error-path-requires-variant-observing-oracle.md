@@ -387,7 +387,7 @@ sink-alignment branch. This spec's Rust rules do not apply to Python.
   `weak_error_oracle_assert_matches` / `unwrap_err_variant_positive` fixtures
   still report `exposed` (no regression).
 
-#7063 (2026-10-15) narrows Control B to a change the variant shows. When the
+Issue #7063 (2026-10-15) narrows Control B to a change the variant shows. When the
 changed construction carries a payload (`Err(ParseError::TooLong(len))`) and
 its old text builds the same variant, or there is no old text, the change may
 sit only in the payload, which `assert!(matches!(err, ParseError::TooLong(_)))`

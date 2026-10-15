@@ -5377,6 +5377,7 @@ pub(in crate::analysis) fn owner_builds_declared_error_variant(
 fn workspace_enum_declares_variant(qualifier: &str, variant: &str, index: &RustIndex) -> bool {
     index.files().values().any(|facts| {
         facts.source.contains(qualifier)
+            && declares_type(&mask_comments_and_strings(&facts.source), qualifier)
             && local_type_equality(&facts.source, qualifier)
                 .is_some_and(|facts| facts.variants.iter().any(|name| name == variant))
     })
