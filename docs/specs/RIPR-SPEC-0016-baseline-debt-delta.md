@@ -259,7 +259,9 @@ bucket:
 - `invalid_baseline_entry` - a baseline record is malformed or missing required
   identity fields.
 - `missing_current_input` - the report cannot classify current movement because
-  a required current artifact is absent or unreadable.
+  a required current artifact is absent, unreadable, or contains a decision
+  without a usable stable or legacy fallback identity. Such decisions must
+  never be silently dropped to infer resolved debt, even beside valid decisions.
 
 Secondary flags may record `matched_by`, `repair`, `warnings`, and optional
 static movement when receipts are supplied.
@@ -427,7 +429,9 @@ ripr baseline update \
 identities that are absent from current gate-decision evidence, preserves
 malformed or ambiguous entries for manual review, and never adopts new current
 debt. Adopting new debt must require a later explicit flag and reviewed reason
-if it is implemented. Generated CI must not rewrite baselines, run
+if it is implemented. Current decisions without a usable identity make update
+refuse before producing a modified baseline, including migration-only updates.
+Generated CI must not rewrite baselines, run
 `ripr baseline update`, pass `--remove-resolved`, or synthesize an
 `--adopt-new` path.
 

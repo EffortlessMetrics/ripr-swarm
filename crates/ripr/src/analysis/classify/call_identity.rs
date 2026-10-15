@@ -95,6 +95,10 @@ pub(crate) struct CallIdentityMemos {
     /// scope parses then serve every probe and every pin of the run instead
     /// of dying with each construction.
     identities: Mutex<SharedIdentities>,
+    /// RIPR-SPEC-0035: every workspace `const`/`static` by name with its
+    /// file and masked initializer, built once per index on first use by
+    /// the owner-return pin's self-computed expected-value check.
+    constants: std::sync::OnceLock<BTreeMap<String, Vec<(std::path::PathBuf, String)>>>,
 }
 
 impl Clone for CallIdentityMemos {
@@ -189,6 +193,14 @@ impl CallIdentityMemos {
     /// producers never mutate a live index mid-analysis.
     pub(crate) fn clear(&mut self) {
         *self = Self::default();
+    }
+
+    /// The memoized workspace constant table, built by `build` on first use.
+    pub(crate) fn workspace_constants(
+        &self,
+        build: impl FnOnce() -> BTreeMap<String, Vec<(std::path::PathBuf, String)>>,
+    ) -> &BTreeMap<String, Vec<(std::path::PathBuf, String)>> {
+        self.constants.get_or_init(build)
     }
 }
 

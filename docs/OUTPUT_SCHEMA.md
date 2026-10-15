@@ -2607,7 +2607,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `unresolved_pytest_fixture`
 - `unsupported_syntax`
 - `cross_language_oracle_visibility_unresolved` — The changed Rust seam owner is FFI/binding-exposed; whether an external-language (e.g. TypeScript) test oracle discriminates this behavior is not statically known — verify the external oracle rather than adding a Rust test.
-- `rust_transitive_reach_unresolved` — (RIPR-SPEC-0114, additive) A test appears to call public API that may transitively reach the changed Rust owner through a pub->pub(crate) helper chain or similar internal call graph, but ripr cannot fully resolve the path (macros, generics, trait dispatch, or depth>5 stop the walk). Classification stays `no_static_path`, or `weakly_exposed` when every related test only shares the owner's file or a name token (#7071); this is a named limitation, not a coverage claim. The same kind discloses an unsearched dependent caller closure for an eligible finding with a recognized weak direct oracle (#7542), without changing its known direct reach, stages, class or related rows. That over-limit detail names no concrete skipped test or macro witness and withholds canonical gap advice.
+- `rust_transitive_reach_unresolved` — (RIPR-SPEC-0114, additive) A test appears to call public API that may transitively reach the changed Rust owner through a pub->pub(crate) helper chain or similar internal call graph, but ripr cannot fully resolve the path (macros, generics, trait dispatch, or a helper chain longer than its five-hop witness walk, #8047). Classification stays `no_static_path`, or `weakly_exposed` when every related test only shares the owner's file or a name token (#7071); this is a named limitation, not a coverage claim. The same kind discloses an unsearched dependent caller closure for an eligible finding with a recognized weak direct oracle (#7542), without changing its known direct reach, stages, class or related rows. That over-limit detail names no concrete skipped test or macro witness and withholds canonical gap advice.
 
 - `rust_integration_public_api_path_unresolved` -- (RIPR-SPEC-0118, additive) An integration test appears to call crate public API, or a test helper that calls crate public API, along a candidate path toward the changed Rust owner. RIPR cannot fully resolve that integration/public-API path, so classification stays `no_static_path` (or `weakly_exposed` for a proximity-only finding, #7071); this is a named limitation, not a reach, coverage, or oracle claim.
 
@@ -10331,7 +10331,10 @@ Field contract:
 - `delta.invalid_baseline_entry` - malformed baseline records or records
   missing required identity fields.
 - `delta.missing_current_input` - records whose movement cannot be classified
-  because required current artifacts are missing or unreadable.
+  because required current artifacts are missing, unreadable, or contain a
+  decision without a usable stable or legacy fallback identity. Such input
+  must not be interpreted as resolved baseline debt, even when other decisions
+  have valid identities.
 - `items[].bucket` - one primary bucket from the `delta` object.
 - `items[].identity` - stable identity fields. Matching order is
   `canonical_gap_id`, `seam_id`, `source_id`, `id`, `dedupe_key`, then
@@ -17822,7 +17825,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.74",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.77",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -18533,7 +18536,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.74",
+      "schema_version": "1.77",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

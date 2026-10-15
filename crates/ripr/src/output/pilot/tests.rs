@@ -90,6 +90,7 @@ fn pilot_context(artifacts: &PilotArtifacts) -> PilotSummaryContext<'_> {
         config_path: Some(Path::new("ripr.toml")),
         max_seams: 5,
         timeout_ms: 30_000,
+        timeout_extension_ms: 0,
         artifacts,
         python_first_use: None,
         language_routes: None,
@@ -169,6 +170,7 @@ fn pilot_context_with_python<'a>(
         config_path: None,
         max_seams: 5,
         timeout_ms: 30_000,
+        timeout_extension_ms: 0,
         artifacts,
         python_first_use: Some(python_first_use),
         language_routes: None,
@@ -850,6 +852,7 @@ fn pilot_summary_json_contains_config_state_artifacts_and_next_commands() {
         config_path: Some(Path::new("ripr.toml")),
         max_seams: 5,
         timeout_ms: 30_000,
+        timeout_extension_ms: 0,
         artifacts: &artifacts,
         python_first_use: None,
         language_routes: None,
@@ -1072,6 +1075,7 @@ fn timeout_summary_json_is_partial_and_points_to_retry() {
         config_path: None,
         max_seams: 5,
         timeout_ms: 1,
+        timeout_extension_ms: 0,
         artifacts: &artifacts,
         python_first_use: None,
         language_routes: None,
@@ -1118,6 +1122,7 @@ fn pilot_context_without_config<'a>(artifacts: &'a PilotArtifacts) -> PilotSumma
         config_path: None,
         max_seams: 5,
         timeout_ms: 30_000,
+        timeout_extension_ms: 0,
         artifacts,
         python_first_use: None,
         language_routes: None,
@@ -1228,6 +1233,160 @@ fn timeout_terminal_reports_missing_config_branch_when_no_config_loaded() {
     assert!(
         terminal.contains("missing: using built-in defaults"),
         "expected missing-config line in timeout terminal, got:\n{terminal}"
+    );
+}
+
+#[test]
+fn suggested_retry_timeout_ms_floors_doubles_caps_and_never_shrinks() {
+    // Literals are independent of the production constants so a wrong
+    // *4, a cap without the spent floor, or a floor that drops the 120s
+    // minimum still fails (#5443, #7427).
+    assert_eq!(super::commands::suggested_retry_timeout_ms(1), 120_000);
+    assert_eq!(super::commands::suggested_retry_timeout_ms(30_000), 120_000);
+    assert_eq!(
+        super::commands::suggested_retry_timeout_ms(120_000),
+        240_000
+    );
+    assert_eq!(
+        super::commands::suggested_retry_timeout_ms(150_000),
+        300_000
+    );
+    assert_eq!(
+        super::commands::suggested_retry_timeout_ms(270_000),
+        300_000
+    );
+    assert_eq!(
+        super::commands::suggested_retry_timeout_ms(400_000),
+        400_000
+    );
+}
+
+#[test]
+fn timeout_summary_after_default_extension_names_the_default_and_caps_retry() {
+    let artifacts = pilot_artifacts();
+    let context = PilotSummaryContext {
+        timeout_ms: 270_000,
+        timeout_extension_ms: 240_000,
+        ..pilot_context(&artifacts)
+    };
+    let reason = "analysis timed out after 270000 ms total: 30000 default + 240000 automatic extension; pass --timeout-ms to set a hard budget";
+
+    let json = render_pilot_timeout_summary_json(context);
+    assert!(
+        json.contains("\"timeout_ms\": 270000"),
+        "JSON keeps the spent budget; schema 0.3 is unchanged:\n{json}"
+    );
+    assert!(
+        json.contains("--timeout-ms 300000"),
+        "retry must be the interactive cap, not 4x spent:\n{json}"
+    );
+    assert!(
+        !json.contains("1080000"),
+        "default-plus-extension must not suggest 18 minutes:\n{json}"
+    );
+
+    let md = render_pilot_timeout_summary_md(context);
+    assert!(
+        md.contains(&format!("- Reason: {reason}")),
+        "markdown must name the default and the extension separately:\n{md}"
+    );
+    assert!(md.contains("--timeout-ms 300000"), "{md}");
+    assert!(!md.contains("1080000"), "{md}");
+    assert!(
+        md.contains("Rerun with a larger explicit budget:"),
+        "300s is larger than the 270s spent budget:\n{md}"
+    );
+    assert!(
+        md.contains("never smaller than the time already spent"),
+        "capped retry must disclose the interactive bound:\n{md}"
+    );
+
+    let terminal = render_pilot_timeout_terminal(context);
+    assert!(
+        terminal.contains(reason),
+        "terminal must name the default and the extension separately:\n{terminal}"
+    );
+    assert!(terminal.contains("--timeout-ms 300000"), "{terminal}");
+    assert!(!terminal.contains("1080000"), "{terminal}");
+    assert!(
+        terminal.contains("never smaller than the time already spent"),
+        "capped retry must disclose the interactive bound:\n{terminal}"
+    );
+}
+
+#[test]
+fn timeout_summary_explicit_270s_does_not_claim_an_automatic_extension() {
+    // Discriminator: spent == default+extension must not imply the
+    // extension sentence when the user set a hard `--timeout-ms 270000`.
+    let artifacts = pilot_artifacts();
+    let context = PilotSummaryContext {
+        timeout_ms: 270_000,
+        timeout_extension_ms: 0,
+        ..pilot_context(&artifacts)
+    };
+    let md = render_pilot_timeout_summary_md(context);
+    assert!(
+        md.contains("- Reason: analysis timed out after 270000 ms\n"),
+        "explicit 270s is a hard budget, not the default-plus-extension path:\n{md}"
+    );
+    assert!(!md.contains("automatic extension"), "{md}");
+    assert!(md.contains("--timeout-ms 300000"), "{md}");
+}
+
+#[test]
+fn timeout_summary_explicit_large_timeout_never_suggests_a_smaller_retry() {
+    let artifacts = pilot_artifacts();
+    let context = PilotSummaryContext {
+        timeout_ms: 400_000,
+        timeout_extension_ms: 0,
+        ..pilot_context(&artifacts)
+    };
+    let json = render_pilot_timeout_summary_json(context);
+    assert!(
+        json.contains("--timeout-ms 400000"),
+        "retry must not shrink below the time already spent:\n{json}"
+    );
+    assert!(
+        !json.contains("--timeout-ms 300000"),
+        "the interactive cap must not undercut a larger spent budget:\n{json}"
+    );
+    assert!(
+        !json.contains("1600000"),
+        "an already-large spent budget must not be multiplied by four:\n{json}"
+    );
+
+    let md = render_pilot_timeout_summary_md(context);
+    assert!(
+        md.contains("- Reason: analysis timed out after 400000 ms\n"),
+        "{md}"
+    );
+    assert!(!md.contains("automatic extension"), "{md}");
+    assert!(
+        md.contains(
+            "Rerun with an explicit --timeout-ms at least as large as the time already spent:"
+        ),
+        "a retry equal to spent must not promise a larger budget:\n{md}"
+    );
+    assert!(!md.contains("Rerun with a larger explicit budget:"), "{md}");
+    assert!(
+        md.contains("never smaller than the time already spent"),
+        "a retry floored at spent must still disclose the bound:\n{md}"
+    );
+}
+
+#[test]
+fn timeout_summary_short_explicit_timeout_keeps_the_two_minute_floor() {
+    let artifacts = pilot_artifacts();
+    let md = render_pilot_timeout_summary_md(pilot_context(&artifacts));
+    assert!(
+        md.contains("- Reason: analysis timed out after 30000 ms\n"),
+        "{md}"
+    );
+    assert!(md.contains("--timeout-ms 120000"), "{md}");
+    assert!(!md.contains("automatic extension"), "{md}");
+    assert!(
+        !md.contains("never smaller than the time already spent"),
+        "the 120s floor is not the interactive-cap disclosure:\n{md}"
     );
 }
 

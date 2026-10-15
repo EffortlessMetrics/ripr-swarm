@@ -851,6 +851,27 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         ("assert_eq!(r == Err(E::Bad), !!&true);", &err),
         // A module named `eq` is not a comparison call.
         ("assert_eq!(flag ^ helpers::eq::value(), true);", &exact),
+        // #8006 controls: a pattern in a closure or read call keeps its
+        // reading, and a bool value compared with a non-literal pins it.
+        (
+            "assert!(xs.iter().any(|x| { matches!(x, Some(3)) }));",
+            &exact,
+        ),
+        ("assert!(foo(matches!(x, A)).is_ok());", &exact),
+        ("assert_eq!(is_valid(x), expected);", &exact),
+        ("assert_eq!(xs.iter().any(|x| *x == 1), expected);", &exact),
+        // A bitwise `&` over plain values pins a value (review of 49bc452).
+        ("assert_eq!(flags & MASK, 0);", &exact),
+        ("assert_eq!(flags & Flags::A, Flags::A);", &exact),
+        // An integer cast or `From` of a value pins it (#8093), and a
+        // negated literal that keeps a pattern method's polarity asserts
+        // the pattern (#8081).
+        ("assert_eq!(x as u8, 3);", &exact),
+        ("assert_eq!(u32::from(c), 97);", &exact),
+        ("assert_eq!(is_valid(x) as u8, 1);", &exact),
+        ("assert!(matches!(r, Err(E::Bad)).eq(&!false));", &err),
+        // A value compared inside a literal comparison still pins.
+        ("assert_eq!((x as u8 == 3), true);", &exact),
         // A relation-only conjunct beside a pinning `==` lends no kind: the
         // pinning conjunct decides it (#7947).
         (
@@ -1028,6 +1049,49 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!(Result::eq(&r, &Err(E::Bad)) ^ true, true);",
         "assert_eq!(flag | <_ as PartialEq>::ne(&r, &Err(E::Bad)), true);",
         "assert_eq!(matches!(r, Err(E::Bad)).eq(&!true), true);",
+        // #8006: a negation of the whole condition through a tuple, array,
+        // `Option`, block or group; a block under `^` or `|`; and a test
+        // compared with a side that is no boolean literal.
+        "assert!((matches!(r, Err(E::Bad)),).0.eq(&false));",
+        "assert!([matches!(r, Err(E::Bad))][0].eq(&false));",
+        "assert!(Some(matches!(r, Err(E::Bad))).unwrap().not());",
+        "assert!(!{ matches!(r, Err(E::Bad)) });",
+        "assert!(!(flag || matches!(r, Err(E::Bad))));",
+        "assert!(!(flag && matches!(r, Err(E::Bad))));",
+        "assert!(flag ^ { matches!(r, Err(E::Bad)) });",
+        "assert!(flag | { matches!(r, Err(E::Bad)) });",
+        "assert_eq!(matches!(r, Err(E::Bad)).eq(&true), expected);",
+        "assert_eq!(!matches!(r, Err(E::Bad)).eq(&true), expected);",
+        "assert_eq!(r == Err(E::Bad), expected);",
+        "assert!(expected == (r == Err(E::Bad)));",
+        "assert_eq!((r == Err(E::Bad)) ^ flag, expected);",
+        "assert_eq!(flag | (r == Err(E::Bad)), expected);",
+        "assert!((r == Err(E::Bad)) == expected);",
+        "assert_eq!(matches!(r, Err(E::Bad)) & flag, expected);",
+        "assert_eq!(flag & (r == Err(E::Bad)), expected);",
+        // #8093: a test carried as an integer through a cast or `From`,
+        // compared with a non-literal or with `0`.
+        "assert_eq!((r == Err(E::Bad)) as u8, n);",
+        "assert_eq!(u8::from(r == Err(E::Bad)), n);",
+        "assert_eq!((r == Err(E::Bad)) as u8, 0);",
+        "assert_eq!(n, (r == Err(E::Bad)) as i32);",
+        "assert_eq!(i64::from(matches!(r, Err(E::Bad))), expected);",
+        // #8101: a path call to `Not::not` over a whole condition, and a
+        // negated literal that flips a pattern method (#8081).
+        "assert!(Not::not(flag || matches!(r, Err(E::Bad))));",
+        "assert!(std::ops::Not::not(flag && matches!(r, Err(E::Bad))));",
+        "assert!(<bool as Not>::not(flag || matches!(r, Err(E::Bad))));",
+        "assert!(matches!(r, Err(E::Bad)).ne(&!false));",
+        // Review of 7830f13: `Not::not` over a comparison, and a test
+        // compared with a non-literal inside a literal comparison.
+        "assert_eq!(Not::not(r == Err(E::Bad)), true);",
+        "assert_eq!((r == Err(E::Bad)) as u8 == 0, true);",
+        "assert_eq!(u8::from(r == Err(E::Bad)) == 0, true);",
+        "assert_eq!((r == Err(E::Bad)) == flag, true);",
+        "assert!(((r == Err(E::Bad)) == flag) == true);",
+        // Any path call named `not` reads as a negation (review of 1ae0c07).
+        "assert_eq!(MyNot::not(r == Err(E::Bad)), true);",
+        "assert_eq!(bool::not(r == Err(E::Bad)), true);",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
