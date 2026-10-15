@@ -1,13 +1,5 @@
 //! Bounded source contract and real domain-entry tests; no Windows/CI execution.
 
-#[path = "../src/convergence/types/mod.rs"]
-pub mod types;
-mod convergence {
-    pub use crate::types;
-}
-#[path = "../src/convergence/domain/admission/windows_subset.rs"]
-mod windows_subset;
-
 const LEGACY: &str = include_str!("../../.github/workflows/windows-advisory.yml");
 const STAGED: &str = include_str!("../../fixtures/convergence/windows-subset/qualification.yml");
 const PRECHECK: &str =
@@ -32,7 +24,7 @@ fn normalized_job(source: &str) -> Result<String, String> {
         .replace("            target/windows-subset-source.json\n", "")
         .replace("          name: ripr-windows-advisory-subset-${{ inputs.request_id }}\n", "          name: ripr-windows-advisory-subset\n")
         .replace("      # Bind native subset/consumer proof to the immutable PR head; the required\n      # Rust lane separately owns its integration checkout.",
-            "      # Trusted caller admits H/B/T before invoking this inactive template.\n      # Product execution consumes exact T; it has no admission/check-write authority.");
+            "      # Native merge-ready preflight admits H/B/T before invoking this inactive template.\n      # Product execution consumes exact T; it has no admission/check-write authority.");
     Ok(job)
 }
 
@@ -77,7 +69,7 @@ fn staged_source_has_only_call_admission_and_no_write_authority() {
         "base_sha",
         "subject_sha",
         "subject_tree",
-        "controller_generation",
+        "workflow_generation",
     ] {
         assert!(header.contains(&format!(
             "      {field}:\n        type: string\n        required: true"
@@ -109,4 +101,46 @@ fn source_precheck_precedes_candidate_execution_and_keeps_source_receipt() -> Re
         assert!(STAGED.contains(clause), "missing source binding {clause}");
     }
     Ok(())
+}
+
+const NATIVE: &str = include_str!("../../fixtures/convergence/windows-subset/merge-ready.yml");
+const RESULT_NAME: &str = "    name: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
+
+#[test]
+fn native_request_and_nonrequest_names_are_event_bound() {
+    assert!(NATIVE.contains("  pull_request:\n    types: [labeled]"));
+    assert!(!NATIVE.contains("    types: [ready_for_review]"));
+    assert!(NATIVE.contains(RESULT_NAME));
+    assert!(!NATIVE.contains("    name: Ripr Rust Small Result\n"));
+    assert!(NATIVE.contains("  cancel-in-progress: false"));
+    assert!(NATIVE.contains("format('metadata-{0}', github.run_id)"));
+    assert!(NATIVE.contains(
+        "format('qualification-{0}-{1}', github.repository, github.event.pull_request.number)"
+    ));
+    assert!(NATIVE.contains(".run_number < $number"));
+    assert!(NATIVE.contains(".display_title == $key"));
+}
+
+#[test]
+fn static_required_name_mutation_is_rejected() {
+    let bad = NATIVE.replace(RESULT_NAME, "    name: Ripr Rust Small Result");
+    assert_ne!(bad, NATIVE);
+    assert!(!bad.contains(RESULT_NAME));
+}
+
+#[test]
+fn requested_result_evaluates_admission_and_selected_obligations() {
+    assert!(NATIVE.contains("    if: always()"));
+    for fragment in [
+        "[ \"$ADMISSION_RESULT\" = success ]",
+        "[ \"$WINDOWS_RESULT\" = success ]",
+        "[ \"$PRIOR_RESULT\" = success ]",
+        ".head.sha == $head and .base.sha == $base",
+        ".merge_commit_sha == $subject",
+    ] {
+        assert!(
+            NATIVE.contains(fragment),
+            "missing required-result boundary {fragment}"
+        );
+    }
 }

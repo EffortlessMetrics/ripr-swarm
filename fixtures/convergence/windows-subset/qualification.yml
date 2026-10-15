@@ -1,5 +1,5 @@
 # Staged fixture: GitHub does not load this as an active workflow.
-# Promotion requires the exact controller/custody contract in the handoff.
+# Promotion requires the native merge-ready preflight and portfolio wiring.
 name: Admitted Windows subset (staged)
 
 on:
@@ -20,7 +20,7 @@ on:
       subject_tree:
         type: string
         required: true
-      controller_generation:
+      workflow_generation:
         type: string
         required: true
 
@@ -36,7 +36,7 @@ jobs:
       SELECTOR_CONSUMER_ENABLED: "true"
 
     steps:
-      # Trusted caller admits H/B/T before invoking this inactive template.
+      # Native merge-ready preflight admits H/B/T before invoking this inactive template.
       # Product execution consumes exact T; it has no admission/check-write authority.
       - uses: actions/checkout@v6
         with:
@@ -52,14 +52,14 @@ jobs:
           ADMITTED_BASE: ${{ inputs.base_sha }}
           ADMITTED_SUBJECT: ${{ inputs.subject_sha }}
           ADMITTED_TREE: ${{ inputs.subject_tree }}
-          ADMITTED_GENERATION: ${{ inputs.controller_generation }}
+          ADMITTED_GENERATION: ${{ inputs.workflow_generation }}
         run: |
           $ErrorActionPreference = 'Stop'
           foreach ($value in @($env:ADMITTED_HEAD, $env:ADMITTED_BASE, $env:ADMITTED_SUBJECT, $env:ADMITTED_TREE, $env:ADMITTED_GENERATION)) {
             if ($value -cnotmatch '^[0-9a-f]{40}$') { throw 'Missing or malformed admitted object identity' }
           }
-          if ($env:ADMITTED_REQUEST -cnotmatch '^[0-9]+-[0-9]+$') { throw 'Invalid controller run-attempt request identity' }
-          if ($env:GITHUB_WORKFLOW_SHA -cne $env:ADMITTED_GENERATION) { throw 'Wrong controller workflow generation' }
+          if ($env:ADMITTED_REQUEST -cnotmatch '^[0-9]+-[0-9]+$') { throw 'Invalid native run-attempt request identity' }
+          if ($env:GITHUB_WORKFLOW_SHA -cne $env:ADMITTED_GENERATION) { throw 'Wrong admission workflow generation' }
           $actual = git rev-parse HEAD
           if ($LASTEXITCODE -ne 0 -or $actual -cne $env:ADMITTED_SUBJECT) { throw 'Stale or wrong product checkout' }
           $tree = git rev-parse 'HEAD^{tree}'
@@ -68,7 +68,7 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $parents -cne "$($env:ADMITTED_BASE) $($env:ADMITTED_HEAD)") { throw 'Wrong integration parents' }
           New-Item -ItemType Directory -Force -Path target | Out-Null
           @{ request_id = $env:ADMITTED_REQUEST; head = $env:ADMITTED_HEAD; base = $env:ADMITTED_BASE;
-             subject = $actual; tree = $tree; controller_generation = $env:ADMITTED_GENERATION;
+             subject = $actual; tree = $tree; workflow_generation = $env:ADMITTED_GENERATION;
              producer_run = $env:GITHUB_RUN_ID; producer_attempt = $env:GITHUB_RUN_ATTEMPT;
              workflow_ref = $env:GITHUB_WORKFLOW_REF; workflow_sha = $env:GITHUB_WORKFLOW_SHA } |
              ConvertTo-Json | Set-Content -LiteralPath target/windows-subset-source.json

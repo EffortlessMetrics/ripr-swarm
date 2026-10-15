@@ -1,164 +1,167 @@
-# Inactive Windows subset admission handoff
+# Inactive native merge-ready / Windows subset handoff
 
-Owner: #4987 cross-workflow migration; trusted admission remains #4986.
-Candidate base: `9543a9bd733b0921886306abd2c2609fbe73b62e`.
-Scope: the Windows advisory subset only, not the full Windows suite or #8002's
-specification-evidence semantics. No live workflow or setting changes.
+Owner: existing #4987 migration, coordinated with #4986/#4836 and their current
+producer owners. Base: `9543a9bd733b0921886306abd2c2609fbe73b62e`.
+Scope: a native label admission prototype and the existing Windows subset;
+no #8002 specification-evidence changes, workflow activation, PR or settings.
 
-## Governing correction
+## Governing reconciliation
 
-The current user target is settled: **no native merge queue**. Draft, ordinary
-pushes and Ready alone allocate no broad qualification in the activated target.
-An explicit merge-ready request for a reviewed non-Draft H admits proof against
-frozen base B and integration subject T. The final current-state/vision decision
-follows green proof and precedes protected squash. Existing #4986/#4836 bodies
-still describe queue/G profiles; those are historical conflicting interfaces to
-reconcile in the same issues, not authority to introduce queue activation.
+The current selected minimum is **pull_request:labeled**, with `merge-ready`
+as the explicit request. Draft, pushes and Ready alone are not qualification
+requests. No native merge queue, new controller, custody database or admission
+service is needed. This supersedes this branch's first prototype at 9b8c8eb3b,
+which proposed controller-generation/atomic-custody prerequisites and a parallel
+Rust decision model. That model and its module registration are removed.
 
-Current `windows-advisory.yml` still runs its subset on PR events. This candidate
-does not claim zero-launch behavior is activated. Keeping that producer while
-staging a tested replacement avoids silently removing mandatory native evidence.
+Historical #4986/#4836 queue/G prose and the earlier local migration plan's
+controller requirements are not the current implementation direction. Reconcile
+those existing issue/instruction owners before activation; do not create rival
+issues or edit their branches. The parent reports that the active ruleset has no
+native queue. Complete classic protection and strictness remain unknown; this is
+an activation/integration evidence gap, not a reason to add a queue.
 
-## Source delta
+Main-health sampling (both >=1 hour and >=10 merges) is a **separate proposal**,
+not a prerequisite for this slice or justification for an extra full merge run.
 
-`xtask/src/convergence/domain/admission/windows_subset.rs` is the existing
-convergence admission seam extended with a pure decision. A trusted adapter must
-authenticate the explicit request and acquire current PR, review, proof, complete
-selection and Git commit observations. Caller JSON/labels/Ready are not authority.
+## Implemented inactive source
 
-The decision checks open/non-Draft, same trusted repository/main target, exact
-PR/head/base/integration parents+tree, controller generation and current review/
-proof. Missing request and unreadable custody refuse separately. An observed
-absence proposes **Claim**, which is not a launch permission or required success.
-An equivalent persisted request returns its actual producer run/attempt/state,
-including failure, instead of launching again. Conflicting, incomplete or stale
-custody refuses. A new request ID does not evade exact-subject deduplication.
+`fixtures/convergence/windows-subset/merge-ready.yml` is the native event
+prototype, outside `.github/workflows` and therefore unactivated. It retains the
+existing routed Rust/docs producers and fail-closed result owner, adding the
+staged Windows subset evidence child. It is not the completed cross-workflow
+portfolio migration: wheel, minimal/nondefault features, security, installation,
+editor and other independent producers keep their existing active behavior.
 
-`fixtures/convergence/windows-subset/qualification.yml` stages a workflow-call
-producer outside `.github/workflows`. No active caller references it. Its native
-commands, inline test oracles, status/log checks and cleanup are byte-preserved
-against the existing subset by a Rust source-parity test. Deliberate changes:
+The preflight does not check out or execute candidate code. With read-only
+GitHub API capability it verifies the request actor's repository write permission,
+live open/non-Draft/same-repo/main-target PR state, expected H/B and the current
+synthetic integration commit T, request-label presence, current independent
+review and ordered B/H integration parents. Current change-requesting reviews
+refuse. The existing readiness marker `REVIEW_READY` on a current independent
+COMMENT review is supported; a current independent APPROVED review is also
+recognized. Review adequacy remains an owner judgment: a quota notice, cancelled
+provider, wrapper green or absence of findings is not a review receipt. #4985's
+existing readiness consumer/instructions must reconcile this native projection
+with source review during Draft and final review after qualification, without
+imposing a new approval quota or accepting a naked LGTM as substantive proof.
 
-- All six identity inputs are required; checkout is exact T with full history
-  and no persisted credentials.
-- A PowerShell precheck checks canonical object IDs, request run-attempt ID,
-  actual workflow generation, checkout/tree and ordered B/H parents before
-  toolchain/product work.
-- The selector binds its producer to T. Original H/B and controller generation
-  are retained separately in `windows-subset-source.json`, with product run/attempt.
-- PR-event trust guards become unconditional execution only inside this admitted
-  producer: the trusted caller must refuse untrusted input before invocation.
-  No fork/persistent-runner elevation is implemented or authorized here.
-- Artifact name includes the admitted request. Product permission remains
-  contents:read; there is no required-check write or admission authority.
+Native workflow concurrency serializes actual requests for a PR with
+`cancel-in-progress: false`. Each unrelated-label delivery has a separate
+`metadata-{run_id}` group, so label noise cannot displace pending qualification.
+Concurrency is **not sequential deduplication**: preflight independently reads
+paginated native workflow runs and reconciles an earlier request's exact
+workflow/H/B/T run title and completed required result job. Compatible success
+or failure is reused without rerunning producers; unreadable, pending or missing
+result evidence fails closed. A failure is not retried merely by relabeling;
+explicit native attempt rerun or a repaired changed subject has a separate identity.
 
-This staged producer preserves advisory product verdicts and mandatory evidence
-generation. Its green job still does **not** claim every advisory test passed.
-The selected required portfolio's finalizer must inspect native statuses and
-receipt dispositions, not promote wrapper success. Full Windows's intentional
-two-run population is unchanged and not replaced by this focused subset.
+The result job always evaluates actual requests. Its actual expression emits
+`Ripr Rust Small Result` only for the merge-ready labeled event; unrelated
+labels emit `Merge-ready Nonrequest`. A failed preflight, incomplete outputs,
+failed selected Rust/docs route or missing/failed Windows evidence cannot become
+a skipped successful required check. Duplicate success is based on the actual
+prior required result job, not the workflow wrapper's conclusion. Duplicate
+failure remains failure. Final API read rechecks live H/B/T, Draft/open state and
+request label before publication; the protected merge owner still performs the
+final vision/current-state and review decision after green. Nothing auto-merges.
 
-## Proof and limits
+`fixtures/convergence/windows-subset/qualification.yml` is the callable product
+producer staged beside the native caller. All original native subset commands,
+inline oracles, status/log/receipt checks and cleanup are retained. Intentional
+changes: exact integration checkout with full history/no credentials, required
+H/B/T/tree/workflow-generation/run-attempt data, source precheck before product
+work, separate original H/B versus executed T receipt, and request-qualified
+artifact name. Caller and product permissions remain read-only. The native
+caller invokes only after preflight; no privileged candidate execution is added.
+Original full Windows twice-run behavior is unchanged. Advisory product FAIL
+and mandatory evidence-generation FAIL remain separate; green subset wrapper
+is not proof that all advisory tests passed.
 
-The bounded test entry is
-`xtask/tests/windows_subset_admission_contract.rs`. It imports the actual owning
-Rust source and existing convergence DTOs, without compiling the product parser
-stack. Its domain cases exercise the production `decide` function; source tests
-compare the entire old/staged job after the listed identity changes. A restoration
-or removal must differ from the unchanged command-parity oracle.
+## Proof
 
-Prepared normal package command for the implementing owner:
+Seven standalone Rust source-contract tests pass, zero ignored/filtered, with
+Rust 1.95.0 and strict standalone Clippy. They compare the entire old/staged
+subset after the intentional identity deltas and pin the actual event/name/
+concurrency/finalizer declarations; static-required-name and subset-removal
+mutations are rejected. Rustfmt passes.
+
+The actual retained Bash preflight and aggregate bodies were executed in 22
+bounded mocked-GitHub replays: current request, unrelated/missing label,
+stale head/base, Draft/closed/withdrawn request, missing review, wrong parents,
+sequential duplicate success/failure, missing prior result and unreadable run
+lookup, selected/admission failure and nonrequest result. No live API mutation
+or product execution occurs in this replay. Two initial harness setup errors
+(unset summary variables and overwritten label environment) were corrected;
+only the terminal complete replay is passing evidence.
+
+Five cases evaluate the actual YAML result-name, concurrency-group and run-title
+expressions, including case-insensitive merge-ready and unrelated labels. The
+replay implements only the used GitHub expression subset (logical operators,
+case-insensitive equality and format), not a general Actions scheduler.
+Three wrong workflow implementations are rejected by those unchanged replay
+expectations: a static required result name, shared unrelated-label concurrency,
+and removal of sequential deduplication. The unmodified source passes afterward.
+Actionlint 1.7.7 passes with both local staged callers/callees materialized in a
+private lint fixture and the retained existing rust-gates workflow; external
+shellcheck/pyflakes adapters are disabled. Native Windows/PowerShell, hosted
+workflow behavior, standard Cargo/precommit and real API permission/readback
+remain unestablished. No <=20-minute or global-zero-launch claim is made.
+
+Prepared repository test command:
 
 ```text
 cargo test --locked -p xtask --test windows_subset_admission_contract
 ```
 
-The local proof uses pinned Rust 1.95.0 on that same entry: **15 tests pass**, zero
-ignored/filtered. Standalone strict Clippy (`clippy-driver --test -D warnings`)
-also compiles that entry without warnings. Three wrong implementations separately
-compile successfully then exit 101 at unchanged behavioral assertions: stale base
-admission, unreadable custody treated as absence, and duplicate relaunch. The
-unmutated final entry passes. Rustfmt and actionlint 1.7.7 pass; actionlint's
-external shellcheck/pyflakes adapters were disabled, so shell execution is not
-claimed. YAML parsing confirms call-only inputs, exact checkout and read-only
-authority.
-
-This is actual domain/source-contract execution, not a whole-package Cargo check,
-repository policy pass, hosted CI or native Windows qualification. Cargo
-doctor/check-fast, full owning-package compilation/precommit and native PowerShell/
-Windows execution are remaining integration dimensions. No empty filtered Cargo
-run or fabricated Windows receipt is claimed. The package baseline was not run:
-the initial host had no toolchain and the bounded proof deliberately avoids the
-product-dependent xtask build. No baseline package pass is attributed to this
-standalone module result.
-
+The native replay driver, exact responses/logs, expression results, compiled
+witnesses and final patch/bundle are retained in `/workspace/windows-subset-proof`.
 Changelog: `changelog.d/4987-stage-windows-subset-admission.md`, canonical
-Internal / CI marker, bullet and trailing (#4987). No spec lifecycle, traceability,
-support promotion, production analyzer, permissions or required identity change.
+Internal / CI marker and trailing (#4987).
 
 ## Exact rollout prerequisites
 
-1. #4987/#4986 re-read current ownership and reconcile the historical queue prose
-   to the settled no-queue H/B/T/M contract. This slice neither replaces their
-   controller nor claims its deployment. Current all-state finding searches and
-   #4987's latest comments found no competing subset admission migration; preserve
-   #7929 runner, #7915/#7920 review and #8002 spec owners.
-2. The existing trusted default-branch controller authenticates actor/request
-   origin and source generation. Fetch actual PR open/draft/head/base, independent
-   review/findings, applicable proof and complete applicability inputs. Validate
-   commit objects through the existing Git observation port. The pure normalized
-   inputs alone cannot establish these external facts.
-3. Implement controller-native **atomic** custody claim/readback for the exact
-   repository/PR/target/H/B/T/producer+plan generation/profile. `Decision::Claim`
-   needs compare-and-set under serialized custody; two simultaneous absent reads
-   must produce one persisted winner. Persist producer run/attempt and reconcile
-   lost responses. Existing `Reuse` returns unchanged running or failed work;
-   retries require separate explicit disposition, never a new request-ID loophole.
-4. Authenticate the call edge and bind generation to the reviewed selector,
-   producer and policy blobs. The six workflow inputs are data, not an admission
-   capability. Invoke only after claim succeeds; keep controller privilege/cache
-   separate from candidate execution. Re-read/revoke on H/base/findings/Draft
-   movement; stale completion cannot publish current protected success.
-5. Run the standard focused Cargo/workflow/policy checks and a separately admitted
-   native Windows rehearsal on exact T. Preserve the four focused native commands,
-   nonempty test counts, selector controls, captured status/log/receipt agreement,
-   source receipt and producer/staging cleanup. Test wrong SHA/tree/parents before
-   product allocation. This Linux source test does not execute the PowerShell
-precheck or prove filesystem/process behavior on Windows.
-6. Wire the existing selected-portfolio finalizer to authenticated native artifact
-   import and current run/attempt. Missing artifacts, advisory FAIL, malformed or
-   partial evidence, wrong subject/generation, cancellation and stale attempt
-   cannot satisfy mandatory selected proof. Keep `Ripr Rust Small Result` exact
-   on H only after completed compatible integration proof; cheap admission cannot
-   green that context on a no-queue branch.
-7. #4832/#4834 verify actual live protection/app/base semantics and coordinated
-   merge-writer custody. Expected-head merge alone is not expected-base CAS.
-   Base movement requires affected integration disposition, not old T proof.
-   Preserve current protections and obtain authorized settings observation; do
-   not weaken strict checks to meet the one-run target.
-8. Only after separate authorized coherent activation, promote the fixture to a
-   registered reusable workflow, replace the existing subset caller in the same
-   generation, and remove its ordinary PR-event allocation. Keep daily/manual
-   diagnostic purpose and full-suite contract explicit. Run event-level natural
-   canaries for Draft/Ready/push/labels, explicit request, missing/stale/duplicate
-   custody and final proof. No default skipped-workflow forest as the end state.
-9. #7827 qualifies cache continuity before any full main-push producer retirement;
-   #4841 measures normal <=20-minute qualification without reducing proof. Main
-   health is controller-selected only after both >=1 hour and >=10 accepted
-   merges. This subset slice does not implement health or launch per-merge replay.
+1. Refresh #4987/#4986 ownership and reconcile the native label request,
+   source-review/readiness projection and final post-green decision in existing
+   instructions. Preserve #7929 runner and #7915/#7920 review owners and #8002.
+2. Complete current native readiness/findings interpretation and prove pagination,
+   missing permissions and review-state changes against actual repository records.
+   API failure is refusal, never empty review or absence of protection.
+3. Promote caller/callee together as a reviewed source generation, with tests
+   checking actual expressions. Verify native run-title/job identity and
+   sequential deduplication; an unrelated label must not create the required
+   name or share request concurrency. Do not substitute a draft job guard.
+4. Run focused standard workflow/policy checks and separately admitted native
+   Windows rehearsal on exact T. Verify source/attempt receipt, nonempty test
+   counts, native status/log/receipt agreement and both cleanup outcomes.
+5. Wire each applicable existing producer and selected denominator to the
+   existing finalizer before claiming graph-wide migration. Preserve wheel,
+   feature/runtime, security, package/install/editor and PR-evidence obligations;
+   no copied selector or extra default full suite. The staged aggregate here
+   covers the existing routed Rust/docs plus Windows evidence boundary only.
+6. Observe actual required-check/app mapping and strict-base behavior. There is
+   no native queue. Separate head/base reads and an expected-head squash merge
+   are not atomic expected-base CAS. Refresh affected integration proof when B
+   materially changes; retain unaffected review/local evidence. Recheck final
+   readiness/current state after green and read back landed tree M against T.
+7. With separately authorized coherent activation, change the native caller and
+   existing subset event allocation together. Keep independent daily/manual
+   Windows purpose explicit. Observe natural Draft/push/Ready/ordinary labels
+   versus explicit request, refusal, duplicate and protected squash behavior.
+   No settings relaxation or protection bypass is part of this implementation.
 
-Rollback before activation removes these staged additions and the one module
-declaration; active workflow bytes are unchanged. After activation, #4838 restores
-the complete matching caller/producer/controller/result/settings generation,
-retaining original attempts and receipts. No source-only emergency success path.
+Rollback before activation removes the staged fixture/test/docs additions;
+active workflow bytes are unchanged. Later activation needs matching source and
+result-generation rollback through the existing rollout owner. Main-health and
+whole-program economics do not block this source slice.
 
 ## Resource custody
 
-Lane-owned worktree `/workspace/windows-subset-admission`, branch
-`codex/4987-windows-subset-admission`, shared Git common directory owned by the
-original repository, and `/workspace/windows-subset-proof` are retained for parent
-review. The latter holds the workspace-local pinned toolchain, bounded test
-executables/logs and wrong-implementation witnesses. No Cargo target was built.
-Storage admission was 2 GiB additional with an 8 GiB reserve against 30 GiB free;
-no unrelated state is eligible for deletion. The original checkout and earlier
-`plans/late-ci-migration` deliverables remain untouched.
+Isolated branch `codex/4987-windows-subset-admission` and worktree
+`/workspace/windows-subset-admission` remain owned by this lane. The original
+checkout and prior plan files are untouched. `/workspace/windows-subset-proof`
+retains the pinned toolchain, compact source/test/replay evidence and witnesses.
+No Cargo target or CI run was allocated; the 2 GiB additional-storage budget and
+8 GiB reserve remain intact. A transient executor disconnect was checked by a
+simple repository read on the same environment; execution resumed without
+executor substitution or broader access.

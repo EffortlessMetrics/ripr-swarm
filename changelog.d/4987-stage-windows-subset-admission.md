@@ -1,2 +1,2 @@
 <!-- section: Internal / CI -->
-- Stage exact-subject Windows subset admission and producer contracts outside active workflows; preserve current triggers and native evidence while explicit no-queue controller custody awaits rollout (#4987).
+- Stage native merge-ready label admission, request-scoped check naming and sequential run reconciliation with the existing Windows subset outside active workflows; preserve current triggers and native evidence until coordinated rollout (#4987).
