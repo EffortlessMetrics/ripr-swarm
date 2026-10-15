@@ -5322,6 +5322,132 @@ mod tests {
         Ok(())
     }
 
+    /// A read error after acquiring the commit lock must preserve prior evidence
+    /// and remain operational, even when its path contains retry-refusal text.
+    #[test]
+    fn manifest_read_failure_preserves_evidence_without_retry_classification() -> Result<(), String>
+    {
+        let root = test_repo_root(REPAIR_ATTEMPT_CHANGED_UNDERFOOT_TAIL)?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "read-failure")?;
+        let attempt_id = prepared.manifest.repair_attempt_id.clone();
+        let (_, manifest_path, base_bytes, _) = open_attempt_with_bytes(&root, None, &attempt_id)?;
+        let attempt_dir = manifest_path
+            .parent()
+            .ok_or_else(|| "manifest path has no parent".to_string())?;
+        let backup = attempt_dir.join("interrupted-manifest.json");
+        let evidence = prepared
+            .manifest
+            .artifacts
+            .iter()
+            .map(|artifact| {
+                let path = root.join(&artifact.path);
+                std::fs::read(&path)
+                    .map(|bytes| (path.clone(), bytes))
+                    .map_err(|error| format!("capture {} failed: {error}", path.display()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if evidence.len() != 3 {
+            return Err(format!(
+                "expected three captured artifacts, got {}",
+                evidence.len()
+            ));
+        }
+
+        // Preserve the real manifest, then make its leaf unreadable as bytes.
+        // Unlike permission bits, reading a directory fails on Unix and Windows.
+        std::fs::rename(&manifest_path, &backup)
+            .map_err(|error| format!("backup manifest failed: {error}"))?;
+        std::fs::create_dir(&manifest_path)
+            .map_err(|error| format!("inject manifest read failure: {error}"))?;
+        let checked = std::cell::Cell::new(false);
+        let result = commit_manifest_locked(
+            &manifest_path,
+            &attempt_id,
+            &base_bytes,
+            b"must never replace the manifest",
+            |_| {
+                checked.set(true);
+                Ok(())
+            },
+        );
+        let error = result
+            .err()
+            .ok_or_else(|| "manifest read unexpectedly succeeded".to_string())?;
+        if !error.starts_with(&format!("read {} failed:", manifest_path.display()))
+            || !error.contains(REPAIR_ATTEMPT_CHANGED_UNDERFOOT_TAIL)
+        {
+            return Err(format!("did not reach the intended read failure: {error}"));
+        }
+        if repair_attempt_commit_error_is_retry_refusal(&error) {
+            return Err(format!("operational read error became retryable: {error}"));
+        }
+        if checked.get()
+            || !manifest_path.is_dir()
+            || std::fs::read(&backup).map_err(|e| e.to_string())? != base_bytes
+        {
+            return Err(
+                "read failure ran the state check, replaced the destination, or changed the backup"
+                    .to_string(),
+            );
+        }
+        let released = lock_manifest_for_commit(attempt_dir, &attempt_id)?;
+        drop(released);
+        for (path, bytes) in &evidence {
+            if std::fs::read(path).map_err(|error| error.to_string())? != *bytes {
+                return Err(format!(
+                    "read failure changed captured evidence: {}",
+                    path.display()
+                ));
+            }
+        }
+
+        // Recovery is explicit: no finish or state transition happened on error.
+        std::fs::remove_dir(&manifest_path).map_err(|error| error.to_string())?;
+        std::fs::rename(&backup, &manifest_path).map_err(|error| error.to_string())?;
+        let (_, _, resumed) = open_attempt(&root, None, &attempt_id)?;
+        if resumed.state != RepairAttemptState::AwaitingEdit
+            || resumed.after.is_some()
+            || resumed.last_after_refusal.is_some()
+        {
+            return Err(format!("read failure advanced the attempt: {resumed:?}"));
+        }
+        let resolved = resolve_awaiting_repair_attempt(&root, Some(attempt_id.as_str()), None)?;
+        finish_repair_attempt(
+            &root,
+            &attempt_id,
+            &resolved.packet_path,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
+        let (_, _, finished) = open_attempt(&root, None, &attempt_id)?;
+        if finished.state == RepairAttemptState::AwaitingEdit || finished.after.is_none() {
+            return Err("explicit recovery did not finish the attempt".to_string());
+        }
+        let terminal_bytes = std::fs::read(&manifest_path).map_err(|error| error.to_string())?;
+        match finish_repair_attempt(
+            &root,
+            &attempt_id,
+            &resolved.packet_path,
+            HeadMovement::AdmitDescendantCommits,
+        ) {
+            Err(error) if error.contains("already ") => {}
+            other => return Err(format!("finished attempt was not refused: {other:?}")),
+        }
+        if std::fs::read(&manifest_path).map_err(|error| error.to_string())? != terminal_bytes {
+            return Err("repeated finish changed the terminal manifest".to_string());
+        }
+        for (path, bytes) in &evidence {
+            if std::fs::read(path).map_err(|error| error.to_string())? != *bytes {
+                return Err(format!(
+                    "recovery changed captured evidence: {}",
+                    path.display()
+                ));
+            }
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
     /// A commit whose base predates a concurrent manifest change is refused
     /// without overwriting the newer bytes (#5287).
     #[test]
