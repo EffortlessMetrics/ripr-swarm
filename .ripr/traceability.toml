@@ -13952,6 +13952,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::signed_numeric_literal_is_pinned_and_dynamic_unary_stays_excluded",
   "crates/ripr/src/analysis/language/typescript/tests.rs::expected_side_is_live_treats_signed_numeric_literals_as_numbers",
   "crates/ripr/src/analysis/language/typescript/tests.rs::expected_side_is_live_credits_a_signed_live_expected_value",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::expected_side_is_live_does_not_equate_negative_zero_with_zero",
   "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::non_call_owner_reference_is_unresolved",
   "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::non_predicate_change_is_not_applicable",
   "crates/ripr/src/output/typescript_packet_projection.rs::moved_assertion_selection_is_never_agent_packet_eligible",

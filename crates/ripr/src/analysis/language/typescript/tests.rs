@@ -13794,6 +13794,61 @@ fn expected_side_is_live_credits_a_signed_live_expected_value() {
     );
 }
 
+/// Jest `toBe` uses `Object.is`, so `toBe(-0)` does not pass against a
+/// `return 0` branch even though IEEE equality treats the zeros as equal.
+#[test]
+fn expected_side_is_live_does_not_equate_negative_zero_with_zero() {
+    let owner = TypeScriptOwner {
+        name: "gate".to_string(),
+        file: PathBuf::from("src/lib.ts"),
+        start_line: 1,
+        end_line: 6,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        exported_as_default: false,
+        class_default_export: false,
+        module_entries: Vec::new(),
+        imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+        arity: Some(1),
+        params: vec!["n".to_string()],
+        source_text: Some(
+            concat!(
+                "export function gate(n: number): number {\n",
+                "    if (n <= 0) {\n",
+                "        return 0;\n",
+                "    }\n",
+                "    return 1;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    if (n <= 0) {",
+            "n",
+            "0",
+            &["0".to_string()],
+            "-0",
+        ),
+        Some(false)
+    );
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    if (n <= 0) {",
+            "n",
+            "0",
+            &["0".to_string()],
+            "0",
+        ),
+        Some(true)
+    );
+}
+
 /// #4117 review (fail-closed branch scan, end to end): the test pins the
 /// genuine changed value — at input 100 the changed comparison enters the
 /// branch, reassigns `total` to `90`, and returns `81`, while the unchanged

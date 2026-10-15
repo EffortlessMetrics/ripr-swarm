@@ -3342,6 +3342,14 @@ pub(crate) fn expected_side_is_live(
     };
     let new_value = fold_numeric_expression(new_expr, &bindings)?;
     let old_value = fold_numeric_expression(old_expr, &bindings)?;
+    // Jest `toBe` uses `Object.is`, which distinguishes `+0` from `-0`.
+    // Epsilon equality would credit `toBe(-0)` against a `return 0` branch.
+    if expected_value == 0.0 || new_value == 0.0 || old_value == 0.0 {
+        return Some(
+            new_value.to_bits() == expected_value.to_bits()
+                && old_value.to_bits() != expected_value.to_bits(),
+        );
+    }
     let new_epsilon = 1e-9 * new_value.abs().max(1.0);
     let old_epsilon = 1e-9 * old_value.abs().max(1.0);
     Some(
