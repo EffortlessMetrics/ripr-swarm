@@ -138,3 +138,87 @@ carried-forward mutation scope. The parser finding is repaired. This review
 does not establish merge/activation readiness, balance or <=20-minute proof.
 The publication-only receipt update leaves that reviewed Rust source and
 configuration unchanged.
+
+## Task 17 proof extension (2026-10-15 UTC)
+
+Resume candidate `2272722f60549910120bdedc279590bb5cae5d92` on disjoint branch
+`codex/partition-result-controls-task17`. Acceptance: exercise the retained CLI
+argument/file/JSON path with a valid nonempty control, duplicate/absent/failed
+shard results and wrong binary/test subjects. Reject duplicate passed-subject
+rows before collection normalization can erase them. Preserve inactive status,
+existing caller, workflows, doctest obligation and caller-supplied trust boundary.
+The duplicate-row control must fail against the inherited implementation before
+the scoped repair. Existing function-level controls remain useful separately.
+
+Task-owned resources: clone/common Git directory
+`H:\Temp\ripr-task17-partition[\.git]`; proof/temporary outputs
+`H:\Temp\ripr-task17-proof`; reviewer scratch, if needed,
+`H:\Temp\ripr-task17-review`. No shared build directory is writable by this task.
+H: had approximately 2.4 TB free at discovery; conservative additional budget is
+1 GiB for clone, small prototype executables and fixtures, with no full product
+build admitted. Cached dependency artifacts are read-only inputs from
+`H:\Temp\ripr-task5-build\debug\deps`; retain their hashes and compiler identity.
+Queue heavy Cargo baseline/policy gates while existing heavy builds are active;
+direct prototype-only compilation establishes neither those gates nor full
+Cargo dependency qualification. Retain exact baseline/negative/current witnesses
+and logs through review and parent handoff; no unrelated cleanup is authorized.
+
+### Task 17 observed proof
+
+Native Windows PowerShell, `rustc 1.95.0 (59807616e 2026-04-14)`,
+`x86_64-pc-windows-msvc`. Baseline six tests passed (exit 0). After adding the
+CLI controls, the corrected pre-repair suite ran eight tests: seven passed;
+`cli_refuses_duplicate_passed_subject_rows` failed because aggregation returned
+`Ok(())` for a repeated passed-subject row (exit 101). An earlier harness run
+also had an incorrect duplicate-shard diagnostic expectation; that test-oracle
+error was corrected before retaining the isolated red witness.
+
+The repaired source SHA256 is
+`71363f5ccfdf7b0337018436aeee9bb6d323743dac58560dfad7389a9e674b05`.
+All eight tests pass, zero ignored/filtered, exit 0. Independent literal JSON
+receipts exercise three subjects in two binaries, including the same local test
+name; a reordered two-subject shard still passes. Negative cases preserve
+otherwise valid inputs to isolate duplicate receipt IDs, absent receipts,
+nonzero exits 1/100/124/130, incomplete/stale state, absent passed subjects,
+wrong binary, wrong test name and duplicate passed rows. The earlier unit
+control for duplicate receipt IDs now copies the complete first receipt, so
+subject mismatch cannot mask removal of the distinct-shard check.
+
+Six separate native CLI processes also ran: valid input exited 0; duplicate
+passed row, absent shard, duplicate shard, failed shard and wrong subject each
+exited 1 with the expected aggregation diagnostic. This confirms the real
+entry point's status behavior, not only `run(args)` assertions. Rustfmt 1.95.0
+on the changed Rust source and `git diff --check` pass.
+
+Focused compilation deliberately avoided Cargo's product dependency rebuild.
+Reproduction from the repository root (PowerShell; add `--test` and select a
+test-output filename for the eight-test executable):
+
+```powershell
+$deps = 'H:\Temp\ripr-task5-build\debug\deps'
+rustc +1.95.0 --edition=2024 xtask/examples/mandatory_partitions.rs `
+  --crate-name mandatory_partitions -L "dependency=$deps" `
+  --extern "serde=$deps\libserde-721fe3bf8bf6b84c.rlib" `
+  --extern "serde_json=$deps\libserde_json-05e5baa929c68c83.rlib" `
+  --extern "toml=$deps\libtoml-55f65ee380479082.rlib" `
+  -C debuginfo=0 -o H:\Temp\ripr-task17-proof\mandatory_partitions.exe
+```
+
+The three direct rlib SHA256 values, captured before use, respectively are
+`2a5287b983a38cc35cf7e52163132ab51b4e2d61b485f8007f6deeec64d4984c`,
+`1b706340f3618f1050f4247724210ef5d7570d18c4ed4ee8da1c5d874ac7e1f9`,
+`d30ee4c0749df88d481734672c61c4c70545a298f7abff074b1abacfd95474cc`.
+These read-only artifacts were accepted by the pinned compiler; their reuse is
+not a new source/dependency or Cargo qualification. The current test executable
+SHA256 is `42f030bd9f818024655bbdd2860a7ceed9c70bcc8208dce3b10449de0be34780`;
+the isolated pre-repair test executable SHA256 is
+`ebdc802bc30379f510e0d8ac6ecd7290e67af449bae92aa8b700a4cb3beaf020`.
+
+Exact native fixtures, logs, hashes and executables are retained at
+`H:\Temp\ripr-task17-proof`; this committed receipt and test source are the
+portable deliverables. Baseline `worktree doctor`, `check-fast`, narrow Cargo
+compile, precommit and full hosted qualification have not run in this Windows
+lane: multiple existing Cargo/rustc builds remained active, and rebuilding
+xtask's product dependency stack would be expensive. No readiness, balance,
+native product-suite, nextest timing, trusted receipt or activation claim is
+made. Original Linux evidence above keeps its original subjects and epochs.

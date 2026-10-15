@@ -106,7 +106,7 @@ struct Receipt {
     context: String, // caller-bound head/tree/toolchain/features/config/runner/attempt identity
     exit: i32,
     complete: bool,
-    passed: BTreeSet<Subject>,
+    passed: Vec<Subject>, // preserve repeated rows until validation
 }
 
 fn aggregate(
@@ -122,11 +122,13 @@ fn aggregate(
         let Some(subjects) = receipt.shard.checked_sub(1).and_then(|i| expected.get(i)) else {
             return Err("unexpected shard".into());
         };
-        if !seen.insert(receipt.shard)
+        let passed: BTreeSet<_> = receipt.passed.iter().cloned().collect();
+        if passed.len() != receipt.passed.len()
+            || !seen.insert(receipt.shard)
             || receipt.context != context
             || receipt.exit != 0
             || !receipt.complete
-            || receipt.passed != *subjects
+            || passed != *subjects
         {
             return Err(format!(
                 "failed, stale, repeated or incomplete shard {}",
@@ -246,7 +248,7 @@ mod tests {
                 context: "candidate/config/attempt".into(),
                 exit: 0,
                 complete: true,
-                passed,
+                passed: passed.into_iter().collect(),
             })
             .collect())
     }
@@ -321,7 +323,7 @@ mod tests {
         }
         assert!(aggregate(&expected, context, &receipts()?[..1]).is_err());
         let mut bad = receipts()?;
-        bad[1].shard = 1;
+        bad[1] = receipts()?.remove(0);
         assert!(aggregate(&expected, context, &bad).is_err());
         let mut bad = receipts()?;
         bad[1].complete = false;
@@ -335,6 +337,117 @@ mod tests {
         let mut bad = receipts()?;
         bad[1].passed = bad[0].passed.clone();
         assert!(aggregate(&expected, context, &bad).is_err());
+        Ok(())
+    }
+
+    fn cli_receipts(input: Value) -> Result<Result<(), String>, Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-partition-controls-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        fs::create_dir(&root)?;
+        let native = |selected: &str| {
+            let mut suites = serde_json::Map::new();
+            for binary in ["lib", "integration"] {
+                let filter = if selected == "all" || selected == binary {
+                    json!({"status":"matches"})
+                } else {
+                    json!({"status":"mismatch","reason":"partition"})
+                };
+                suites.insert(
+                    binary.into(),
+                    json!({"binary-id":binary,"status":"listed",
+                    "testcases":{"same":{"ignored":false,"filter-match":filter}}}),
+                );
+            }
+            let filter = suites["lib"]["testcases"]["same"]["filter-match"].clone();
+            suites["lib"]["testcases"]["second"] = json!({"ignored":false,"filter-match":filter});
+            json!({"test-count":3,"rust-suites":suites})
+        };
+        fs::write(
+            root.join("plan.toml"),
+            include_str!("../../docs/ci/mandatory-partitions.toml"),
+        )?;
+        for (name, value) in [
+            ("full.json", native("all")),
+            ("one.json", native("lib")),
+            ("two.json", native("integration")),
+            ("receipts.json", input),
+        ] {
+            fs::write(root.join(name), serde_json::to_vec(&value)?)?;
+        }
+        let mut args = vec!["mandatory_partitions".to_owned()];
+        for name in ["plan.toml", "full.json", "one.json", "two.json"] {
+            args.push(root.join(name).to_string_lossy().into_owned());
+        }
+        args.extend([
+            "--receipts".to_owned(),
+            "candidate/config/attempt".to_owned(),
+            root.join("receipts.json").to_string_lossy().into_owned(),
+        ]);
+        let result = run(&args);
+        fs::remove_dir_all(&root)?;
+        Ok(result)
+    }
+
+    fn json_receipts() -> Value {
+        json!([
+            {"shard":1,"context":"candidate/config/attempt","exit":0,"complete":true,
+                "passed":[["lib","same"],["lib","second"]]},
+            {"shard":2,"context":"candidate/config/attempt","exit":0,"complete":true,
+                "passed":[["integration","same"]]}
+        ])
+    }
+
+    #[test]
+    fn cli_refuses_duplicate_absent_failed_and_wrong_subject_results()
+    -> Result<(), Box<dyn std::error::Error>> {
+        cli_receipts(json_receipts())??;
+        let mut reordered = json_receipts();
+        reordered[0]["passed"] = json!([["lib", "second"], ["lib", "same"]]);
+        cli_receipts(reordered)??;
+        let mut absent = json_receipts();
+        absent.as_array_mut().ok_or("receipt array")?.pop();
+        assert_eq!(cli_receipts(absent)?, Err("missing context/shard".into()));
+        let mut duplicate = json_receipts();
+        duplicate[1] = duplicate[0].clone();
+        assert_eq!(
+            cli_receipts(duplicate)?,
+            Err("failed, stale, repeated or incomplete shard 1".into())
+        );
+        for (field, value) in [
+            ("exit", json!(1)),
+            ("exit", json!(100)),
+            ("exit", json!(124)),
+            ("exit", json!(130)),
+            ("complete", json!(false)),
+            ("context", json!("old-head")),
+            ("passed", json!([])),
+            ("passed", json!([["lib", "same"]])),
+            ("passed", json!([["integration", "other"]])),
+        ] {
+            let mut bad = json_receipts();
+            bad[1][field] = value;
+            assert_eq!(
+                cli_receipts(bad)?,
+                Err("failed, stale, repeated or incomplete shard 2".into()),
+                "{field}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cli_refuses_duplicate_passed_subject_rows() -> Result<(), Box<dyn std::error::Error>> {
+        let mut bad = json_receipts();
+        bad[1]["passed"] = json!([["integration", "same"], ["integration", "same"]]);
+        assert_eq!(
+            cli_receipts(bad)?,
+            Err("failed, stale, repeated or incomplete shard 2".into())
+        );
         Ok(())
     }
 }

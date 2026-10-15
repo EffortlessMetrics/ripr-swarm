@@ -102,7 +102,9 @@ normalized input is an array of objects:
 Require exactly N distinct terminal receipts, the caller's exact context,
 native exit zero, complete execution, and exact expected passed subjects per
 shard. Failures, cancellation, timeout, stale/missing/duplicate receipts and
-subject omissions cannot aggregate to success. The future hosted collector
+subject omissions cannot aggregate to success. Repeated passed-subject rows also
+refuse before order-independent subject comparison; normalization must not erase
+duplicate evidence. The future hosted collector
 must run unconditionally after matrix completion, require all job conclusions
 and separate doctest success, and refuse absent artifacts before parsing.
 
@@ -125,8 +127,7 @@ checked with native listings before/after unrelated test insertion, retaining
 the original binary ID, test name, N and runner version.
 
 No workflow/protection/release change, broad hosted CI, or slow-fixture repair
-is authorized by this prototype. Publish the branch without opening a PR that
-would trigger the current broad pull-request suite. Next owner: the campaign
+is authorized by this prototype. The initial prototype was published branch-only to avoid the broad pull-request suite. The task 17 follow-up explicitly authorizes a draft PR for the scoped receipt controls; it does not authorize activation or hosted qualification. Next owner: the campaign
 coordinator supplies the missing report and decides whether the measured
 layout warrants a separately admitted rehearsal. Rollback removes only these
 prototype files and its changelog entry.
