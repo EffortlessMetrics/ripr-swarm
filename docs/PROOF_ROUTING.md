@@ -154,3 +154,31 @@ lanes blocking or blocking lanes advisory by itself, and does not apply to
 release proof at all. Routing decisions are recorded artifacts
 (`target/ripr/reports/proof-route.{json,md}`), reviewable like any other
 evidence.
+
+## Local receipt compatibility
+
+Preflight receipt generation `0.2` retains the execution's original base/head,
+commands, durations and outcomes. Its optional `reuse_binding` records the
+executed clean Git tree, pinned base and merge-base, routed plan, and an observed
+local environment digest. The producer pins revisions before routing, refuses a
+selected head that differs from executing HEAD, and retains a binding only when
+its before/after observations match. Capture failures leave the execution report
+available with `reuse_unavailable_reason`.
+
+The summary can carry results across distinct local or published commit subjects
+whose trees and captured contexts match. It labels them **carried forward** and
+names both the original execution SHA and current subject SHA; it never rewrites
+the receipt or claims another execution occurred. Failure and not-run results
+retain their original meanings. Even an unchanged SHA cannot reuse evidence when
+source, base, environment or required command identity changes. Legacy `0.1`,
+missing bindings and malformed command outcomes are unavailable for reuse.
+
+Environment capture hashes all process variables, root, observed Cargo/rustc
+versions, ancestor toolchain/Cargo configs and explicit Cargo-home config bytes,
+without rendering variable contents. Unset Cargo home, compiler overrides or
+wrappers, dirty/staged/untracked source, hidden index entries and submodules
+conservatively refuse a binding. Incidental environment changes can also refuse
+reuse. This remains advisory observed-context compatibility: it does not
+authenticate SDK/dependency/external-service bytes, bind ignored/generated
+inputs, rule out transient edits reverted between observations, or replace
+protected qualification. An empty route remains zero commands executed.

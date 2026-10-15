@@ -10,19 +10,21 @@
 //! advisory preflight receipt: it does not replace CI, and every CI lane
 //! still runs as configured.
 
+use super::proof_receipt_binding::{PreflightBinding, capture_binding, digest, environment_digest};
 use super::proof_route::{
     ProofRoute, ProofRouteOptions, changed_files, load_ci_lanes, parse_route_options,
     resolve_commit_sha, route_proof,
 };
 use crate::policy::proof_packs::load_proof_packs;
 use crate::run::capture_output_with_timeout;
+use serde::Serialize;
 use serde_json::{Value, json};
 use std::time::Duration;
 
-const PROOF_PREFLIGHT_SCHEMA_VERSION: &str = "0.1";
+pub(super) const PROOF_PREFLIGHT_SCHEMA_VERSION: &str = "0.2";
 const PROOF_PREFLIGHT_JSON: &str = "proof-preflight.json";
 const PROOF_PREFLIGHT_MD: &str = "proof-preflight.md";
-const PROOF_PREFLIGHT_MODE: &str = "advisory-local-preflight";
+pub(super) const PROOF_PREFLIGHT_MODE: &str = "advisory-local-preflight";
 /// Generous per-command ceiling; routed packs can include full workspace
 /// builds and test runs.
 const COMMAND_TIMEOUT: Duration = Duration::from_hours(2);
@@ -43,7 +45,10 @@ pub(super) fn proof_preflight(args: &[String]) -> Result<(), String> {
     let lanes = load_ci_lanes()?;
     let base_sha = resolve_commit_sha(&options.base)?;
     let head_sha = resolve_commit_sha(&options.head)?;
-    let changed = changed_files(&options.base, &options.head)?;
+    if resolve_commit_sha("HEAD")? != head_sha {
+        return Err("proof preflight selected head is not the executing HEAD".to_string());
+    }
+    let changed = changed_files(&base_sha, &head_sha)?;
     let route = route_proof(&packs, &lanes, &changed);
     let plan = preflight_plan(&route);
 
@@ -61,8 +66,11 @@ pub(super) fn proof_preflight(args: &[String]) -> Result<(), String> {
         eprintln!("[{index}/{total}] $ {program} {}", command_args.join(" "));
         process_runner(program, command_args)
     };
+    let before = observe_binding(&base_sha, &head_sha, &route);
     let results = execute_required(&plan.required, &mut runner);
-    let receipt = assemble_receipt(&options, &base_sha, &head_sha, &plan, results);
+    let after = observe_binding(&base_sha, &head_sha, &route);
+    let mut receipt = assemble_receipt(&options, &base_sha, &head_sha, &plan, results);
+    (receipt.reuse_binding, receipt.reuse_unavailable_reason) = retained_binding(before, after);
     write_receipt(&receipt)?;
 
     match first_failure(&receipt.commands) {
@@ -93,7 +101,7 @@ pub(super) fn proof_preflight(args: &[String]) -> Result<(), String> {
 
 /// One deduplicated command in the execution plan, with every routed pack
 /// that names it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 struct PlannedCommand {
     command: String,
     packs: Vec<String>,
@@ -101,7 +109,7 @@ struct PlannedCommand {
 
 /// The route-derived execution plan: required commands in manifest order,
 /// deduplicated across packs, plus the advisory commands that stay unrun.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 struct PreflightPlan {
     routed_pack_ids: Vec<String>,
     full_proof: bool,
@@ -298,6 +306,8 @@ struct PreflightReceipt {
     commands: Vec<CommandResult>,
     advisory_not_run: Vec<PlannedCommand>,
     overall_status: &'static str,
+    reuse_binding: Option<PreflightBinding>,
+    reuse_unavailable_reason: Option<String>,
 }
 
 fn assemble_receipt(
@@ -323,6 +333,42 @@ fn assemble_receipt(
         commands,
         advisory_not_run: plan.advisory_not_run.clone(),
         overall_status,
+        reuse_binding: None,
+        reuse_unavailable_reason: None,
+    }
+}
+
+pub(super) fn observe_binding(
+    base: &str,
+    head: &str,
+    route: &ProofRoute,
+) -> Result<PreflightBinding, String> {
+    let plan_bytes =
+        serde_json::to_vec(&preflight_plan(route)).map_err(|error| error.to_string())?;
+    let root = std::path::Path::new(".");
+    let environment = environment_digest(root)?;
+    capture_binding(root, base, head, &environment, &digest(&plan_bytes))
+}
+
+pub(super) fn expected_commands(route: &ProofRoute) -> Vec<(String, Vec<String>)> {
+    preflight_plan(route)
+        .required
+        .into_iter()
+        .map(|entry| (entry.command, entry.packs))
+        .collect()
+}
+
+fn retained_binding(
+    before: Result<PreflightBinding, String>,
+    after: Result<PreflightBinding, String>,
+) -> (Option<PreflightBinding>, Option<String>) {
+    match (before, after) {
+        (Ok(before), Ok(after)) if before == after => (Some(before), None),
+        (Err(reason), _) | (_, Err(reason)) => (None, Some(reason)),
+        _ => (
+            None,
+            Some("execution boundary observations changed".to_string()),
+        ),
     }
 }
 
@@ -370,6 +416,8 @@ fn preflight_json(receipt: &PreflightReceipt) -> Value {
         "full_proof": receipt.full_proof,
         "release_proof_required": receipt.release_proof_required,
         "overall_status": receipt.overall_status,
+        "reuse_binding": receipt.reuse_binding,
+        "reuse_unavailable_reason": receipt.reuse_unavailable_reason,
         "commands": commands,
         "advisory_not_run": advisory_not_run,
     })
@@ -378,6 +426,16 @@ fn preflight_json(receipt: &PreflightReceipt) -> Value {
 fn preflight_markdown(receipt: &PreflightReceipt) -> String {
     let mut body = String::from("# ripr proof preflight receipt\n\n");
     body.push_str(&format!("Status: {}\n", receipt.overall_status));
+    if let Some(reason) = &receipt.reuse_unavailable_reason {
+        body.push_str(&format!(
+            "Reuse unavailable: {}\n",
+            crate::md_escape(reason)
+        ));
+    } else if receipt.reuse_binding.is_some() {
+        body.push_str(
+            "Reuse binding: observed source, base, plan and local environment; advisory only.\n",
+        );
+    }
     body.push_str(&format!("Mode: {PROOF_PREFLIGHT_MODE}\n"));
     body.push_str(&format!(
         "Release proof required: {}\n\n",
@@ -487,6 +545,47 @@ fn preflight_markdown(receipt: &PreflightReceipt) -> String {
 mod tests {
     use super::super::proof_route::test_support::route_for;
     use super::*;
+
+    #[test]
+    fn reusable_receipt_requires_matching_successful_execution_boundary_observations() {
+        let binding = PreflightBinding {
+            execution_head_sha: "executed-sha".to_string(),
+            source_tree: "source-tree".to_string(),
+            base_sha: "base-sha".to_string(),
+            merge_base_sha: "merge-base-sha".to_string(),
+            environment_digest: "environment-digest".to_string(),
+            plan_digest: "plan-digest".to_string(),
+        };
+        assert_eq!(
+            retained_binding(Ok(binding.clone()), Ok(binding.clone())),
+            (Some(binding.clone()), None)
+        );
+        for before_failed in [true, false] {
+            let (before, after) = if before_failed {
+                (Err("capture failed".to_string()), Ok(binding.clone()))
+            } else {
+                (Ok(binding.clone()), Err("capture failed".to_string()))
+            };
+            assert_eq!(
+                retained_binding(before, after),
+                (None, Some("capture failed".to_string()))
+            );
+        }
+        for field in ["head", "source", "environment"] {
+            let mut changed = binding.clone();
+            match field {
+                "head" => changed.execution_head_sha = "moved-head".to_string(),
+                "source" => changed.source_tree = "changed-source".to_string(),
+                _ => changed.environment_digest = "changed-environment".to_string(),
+            }
+            let (retained, reason) = retained_binding(Ok(binding.clone()), Ok(changed));
+            assert!(retained.is_none());
+            assert_eq!(
+                reason.as_deref(),
+                Some("execution boundary observations changed")
+            );
+        }
+    }
 
     fn plan_for(files: &[&str]) -> Result<PreflightPlan, String> {
         Ok(preflight_plan(&route_for(files)?))
