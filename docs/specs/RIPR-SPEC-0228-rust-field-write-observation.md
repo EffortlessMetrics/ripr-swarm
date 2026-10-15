@@ -383,7 +383,10 @@ changes `self.count += 2` to `self.count += 1`.
   assertion keeps its strength. Known limit: the early-exit flag is
   owner-wide, so a test that provably bypasses the exit and then removes
   the pushed value is capped with the tests that took the exit; the cap
-  cannot read which path one test took.
+  cannot read which path one test took. The shared `may_exit_early` also
+  counts any `else`, since a `let .. else` block may exit through a
+  never-typed call no token catches, so an ordinary `if/else` completed
+  before the push widens the same conservative cap.
 - Keyed reads of a field-map insert are implemented (examples 16-20):
   `field_collection_insert_key` and `assertion_keyed_getter_reads` in
   `propagation_witness.rs`, `keyed_field_read_confirms` and

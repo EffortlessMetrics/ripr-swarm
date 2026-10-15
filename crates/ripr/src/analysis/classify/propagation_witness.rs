@@ -1409,10 +1409,12 @@ pub(in crate::analysis) fn owner_may_exit_before_line(
         .find('\n')
         .map_or(masked.len(), |nl| line_at + nl);
     // #8141 review: a guard on the changed line but before the changed
-    // expression still lets the owner skip it. A string literal inside the
-    // expression is blanked in the masked body, so an expression that does
-    // not appear verbatim keeps the line-start scan.
-    let at = masked[line_at..line_end]
+    // expression still lets the owner skip it. The mask blanks string and
+    // comment bytes in place (one space per byte), so the expression is
+    // located in the owner body itself and its offset reads the same in
+    // `masked`; an expression that does not appear on the line keeps the
+    // line-start scan.
+    let at = owner_body[line_at..line_end]
         .find(expression)
         .map_or(line_at, |at| line_at + at);
     masked
@@ -3352,8 +3354,18 @@ mod tests {
             10,
             "self.log.push(1)"
         ));
-        // A string literal inside the expression is blanked in the masked
-        // body, so the unmatched expression keeps the line-start scan.
+        // A string literal is blanked in the masked body, so the expression
+        // is located in the owner body itself: a same-line guard before a
+        // quoted-argument push is still found.
+        let quoted_inline =
+            "fn tag(&mut self) { if self.locked { return; } self.log.push(\"x\"); }";
+        assert!(owner_may_exit_before_line(
+            quoted_inline,
+            10,
+            10,
+            "self.log.push(\"x\")"
+        ));
+        // A quoted argument without an earlier exit keeps the rule off.
         let quoted = "fn tag(&mut self) {\n    self.log.push(\"x\");\n}";
         assert!(!owner_may_exit_before_line(
             quoted,
