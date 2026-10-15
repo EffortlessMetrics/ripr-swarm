@@ -172,6 +172,11 @@ the receipt or claims another execution occurred. Failure and not-run results
 retain their original meanings. Even an unchanged SHA cannot reuse evidence when
 source, base, environment or required command identity changes. Legacy `0.1`,
 missing bindings and malformed command outcomes are unavailable for reuse.
+Reuse also requires an explicit null `reuse_unavailable_reason` and each
+command's recorded exit code. A pass requires code zero; a not-run command
+requires null. Failure may retain any integer code or null, including code zero
+when a timeout made the execution fail. Contradictory or missing execution
+evidence is unavailable even when source and context match.
 
 Environment capture hashes all process variables, root, observed Cargo/rustc
 versions, ancestor toolchain/Cargo configs and explicit Cargo-home config bytes,
