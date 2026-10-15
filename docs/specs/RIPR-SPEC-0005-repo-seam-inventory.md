@@ -273,7 +273,10 @@ Repository direct inherent calls use the same complete owner refusal as diff
 calls and helper last hops, including module-local type shadows. A nominal
 receiver alone cannot override that refusal. Calls inside a nested item,
 closure or async body are not calls executed by the enclosing test merely
-because its syntax contains them. Invoked nested functions remain conservatively
+because its syntax contains them. This execution boundary also applies inside
+supported standard assertion operands: constructing and discarding an unpolled
+future grants no direct or free-helper owner-call evidence. An executable outer
+call beside that future retains its existing bounded identity. Invoked nested functions remain conservatively
 unresolved by this bounded walk; their native mutation controls can discriminate
 without receiving direct static credit.
 

@@ -130,5 +130,77 @@
     "name": "actual",
     "relation": "helper_owner_call",
     "native_reaches": true
+  },
+  {
+    "path": "inherent_receiver_async_operand/input/src/lib.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "inherent_receiver_async_operand/controls/direct-async-move.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "inherent_receiver_async_operand/controls/direct-closure.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "inherent_receiver_async_operand/controls/direct-item.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "inherent_receiver_async_operand/controls/direct-outer.rs",
+    "name": "actual",
+    "relation": "direct_owner_call",
+    "native_reaches": true
+  },
+  {
+    "path": "inherent_receiver_async_operand/controls/direct-mixed-async.rs",
+    "name": "actual",
+    "relation": "direct_owner_call",
+    "native_reaches": true
+  },
+  {
+    "path": "inherent_receiver_async_operand_helper/input/src/lib.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "inherent_receiver_async_operand_helper/controls/helper-async-move.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "inherent_receiver_async_operand_helper/controls/helper-closure.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "inherent_receiver_async_operand_helper/controls/helper-item.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "inherent_receiver_async_operand_helper/controls/helper-outer.rs",
+    "name": "actual",
+    "relation": "helper_owner_call",
+    "native_reaches": true
+  },
+  {
+    "path": "inherent_receiver_async_operand_helper/controls/helper-mixed-async.rs",
+    "name": "actual",
+    "relation": "helper_owner_call",
+    "native_reaches": true
   }
 ]

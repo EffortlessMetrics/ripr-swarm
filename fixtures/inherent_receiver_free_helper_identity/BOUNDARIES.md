@@ -1,6 +1,6 @@
 # Executable owner identity boundaries
 
-The 22 entries in `cases.json` bind complete native sources to expected repository
+The 34 entries in `cases.json` bind complete native sources to expected repository
 relations. `native_reaches` records the independent one-arm mutation result;
 `relation` records bounded static admission. Neither rewrites the other.
 
@@ -67,3 +67,10 @@ module-qualified helper through an unrelated type parameter. This compares
 names in the parser's declaration scope; no argument type, trait dispatch,
 factory return or parameter/field value is followed. The two negative native
 subjects survive the owner mutant and the genuine-module positive rejects it.
+
+The twelve assertion-operand controls pair direct and free-helper calls inside
+unpolled async/async-move bodies, dormant closures and nested item bodies with
+actual outer calls and outer calls beside a discarded future. They use the same
+executable-node boundary in the original function and the synthetic operand
+parser. Native originals all pass; four genuine outer/mixed mutants fail while
+eight dormant mutants survive. No existing golden is re-blessed.

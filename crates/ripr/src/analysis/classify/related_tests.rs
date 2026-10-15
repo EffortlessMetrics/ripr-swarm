@@ -3130,16 +3130,7 @@ fn executable_call_resolves(
     let Some(function) = syntax.children().find_map(ast::Fn::cast) else {
         return false;
     };
-    let executable = |node: &SyntaxNode| {
-        node.ancestors()
-            .skip(1)
-            .take_while(|scope| scope != function.syntax())
-            .all(|scope| {
-                !ast::Item::can_cast(scope.kind())
-                    && !ast::ClosureExpr::can_cast(scope.kind())
-                    && ast::BlockExpr::cast(scope).is_none_or(|block| block.async_token().is_none())
-            })
-    };
+    let executable = |node: &SyntaxNode| node_executes_in(node, function.syntax());
     syntax
         .descendants()
         .filter(executable)
@@ -3167,6 +3158,19 @@ fn executable_call_resolves(
                 });
                 binding_admitted && assertion_arguments_resolve(&call, resolves)
             })
+}
+
+/// Both source and synthetic assertion trees obey the same execution boundary.
+/// Constructing an unpolled future does not execute calls in its body.
+fn node_executes_in(node: &SyntaxNode, function: &SyntaxNode) -> bool {
+    node.ancestors()
+        .skip(1)
+        .take_while(|scope| scope != function)
+        .all(|scope| {
+            !ast::Item::can_cast(scope.kind())
+                && !ast::ClosureExpr::can_cast(scope.kind())
+                && ast::BlockExpr::cast(scope).is_none_or(|block| block.async_token().is_none())
+        })
 }
 
 fn inherent_call_node_resolves(
@@ -3289,6 +3293,7 @@ fn assertion_arguments_resolve(
         }
         syntax
             .descendants()
+            .filter(|node| node_executes_in(node, wrapper.syntax()))
             .any(|node| resolves(node, Some(call.syntax())))
     })
 }

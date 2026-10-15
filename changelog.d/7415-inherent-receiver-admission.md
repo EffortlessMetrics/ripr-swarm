@@ -14,3 +14,5 @@
   executed receiver calls; free-helper entries and intermediate hops bind to
   their actual module/function identity instead of a shared name. Function type
   parameters cannot borrow same-spelled module or owner-type credit (#7415, #8004).
+- Standard assertion operands also exclude unpolled async bodies from direct
+  and free-helper owner credit, while preserving genuine outer calls (#8004).
