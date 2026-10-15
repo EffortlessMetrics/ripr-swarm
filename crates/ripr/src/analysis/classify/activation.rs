@@ -2166,14 +2166,22 @@ fn missing_field_value_discriminator(
                                         == super::call_identity::CallTarget::Owner
                                 }
                                 // No identity: only a bare or crate-relative
-                                // call, and only when no other production
-                                // function shares the owner's name (the
-                                // identity is also absent for layouts it
-                                // cannot classify); `other::owner(..)` may
-                                // name a foreign namesake.
+                                // call the test file does not import from
+                                // another crate, and only when no other
+                                // production function shares the owner's
+                                // name (the identity is also absent for
+                                // layouts it cannot classify);
+                                // `other::owner(..)` may name a foreign
+                                // namesake.
                                 None => {
                                     qualifier.iter().all(|segment| {
                                         matches!(segment.as_str(), "crate" | "self" | "super")
+                                    }) && !index.files().get(&test.file).is_some_and(|facts| {
+                                        super::reveal::file_imports_foreign_callee_name(
+                                            &facts.data().source,
+                                            &owner.name,
+                                            &index.package_names,
+                                        )
                                     }) && index
                                         .functions()
                                         .iter()

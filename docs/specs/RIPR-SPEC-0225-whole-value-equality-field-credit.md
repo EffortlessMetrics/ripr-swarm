@@ -273,8 +273,9 @@ rejected alternative. Any can be reversed later without touching the rest.
    optionally borrowed) whose arguments are all literals, so the test
    cannot hand the owner a variant value it built, and that settles on the
    owner under the RIPR-SPEC-0197 same-name call-identity rule (when that
-   rule builds no identity, only a bare or `crate`/`self`/`super` path, and
-   only when no other production function shares the owner's name, since
+   rule builds no identity, only a bare or `crate`/`self`/`super` path that
+   the test file does not import from another crate, and only when no
+   other production function shares the owner's name, since
    `other::owner(..)` may name a foreign namesake and the identity is also
    absent for layouts it cannot classify); its pattern names the variant of the
    struct literal holding the changed initializer, with the same last path

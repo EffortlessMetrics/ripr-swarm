@@ -151,6 +151,11 @@ fn a_test_side_build_or_input_stays_unconfirmed() -> Result<(), String> {
             "let input = \"x1\";\n        assert_matches!(parse_num(input), Err(ParseError::BadDigit { pos: 0 }));",
             "",
         ),
+        // The bare call names a namesake imported from another crate.
+        (
+            "assert_matches!(parse_num(\"x1\"), Err(ParseError::BadDigit { pos: 0 }));",
+            "\n    use foreign_parser::parse_num;\n",
+        ),
         // A `#[should_panic]` test passes when the pattern fails.
         (
             "let _ = 0;",
