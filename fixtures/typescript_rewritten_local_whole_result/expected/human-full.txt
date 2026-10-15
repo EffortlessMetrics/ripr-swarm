@@ -5,10 +5,10 @@ config: <cwd>/fixtures/typescript_rewritten_local_whole_result/input/ripr.toml
 
 Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
 
-Changed file(s) by language: typescript: 1.
+Changed file(s) by language: typescript = 1
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
 
 WARNING src/profile.ts:4
   id: probe:src_profile.ts:typescript_preview:d4b164f6
@@ -42,15 +42,15 @@ Static exposure
 
 Evidence
   - reach yes: 1 related test(s) found for owner `buildProfile`
-  - infection unknown: TypeScript preview adapter does not yet model infection.
-  - propagation unknown: TypeScript preview adapter does not yet model propagation.
+  - infection unknown: TypeScript preview adapter does not yet model infection
+  - propagation unknown: TypeScript preview adapter does not yet model propagation
   - observation weak: Strongest extracted oracle kind: `relational_check` (rank 3)
-  - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `adult == age > 18`.
+  - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `adult == age > 18`
   - local flow reaches constructed field: adult: age > 18, (line 4)
   - related test tests/profile.test.ts:4 profile records adulthood uses weak relational check oracle: expect(...).toMatchObject(...)
 
 Weakness
-  - Related test reaches `buildProfile` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference).
+  - Related test reaches `buildProfile` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference)
   - missing discriminator adult == age > 18: changed TypeScript field/object value at line 4 lacks a concrete preview discriminator
 
 TypeScript preview card (advisory)
@@ -77,7 +77,7 @@ TypeScript repair packet (advisory)
   next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
 
 Next step
-  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `adult == age > 18`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.
+  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `adult == age > 18`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
 Drill in:
   ripr explain --root <cwd>/fixtures/typescript_rewritten_local_whole_result/input --diff <cwd>/fixtures/typescript_rewritten_local_whole_result/diff.patch --mode fast probe:src_profile.ts:typescript_preview:d4b164f6
   ripr context --root <cwd>/fixtures/typescript_rewritten_local_whole_result/input --diff <cwd>/fixtures/typescript_rewritten_local_whole_result/diff.patch --mode fast --at probe:src_profile.ts:typescript_preview:d4b164f6

@@ -518,9 +518,12 @@ pub(crate) fn build_gap_decision_ledger_report(
         let input_items = input_findings_total_from_source_value(source_value_snapshot.as_ref());
         if input_items > 0 {
             warnings.push(format!(
-                "check output contained {input_items} findings, but the --check-output route \
+                // #7753: count-aware noun — "1 finding", never "1 findings".
+                "check output contained {findings}, but the --check-output route \
                  projects Python/TypeScript/Perl findings only; no gap records were derived \
-                 from them"
+                 from them",
+                findings =
+                    crate::output::count_noun::count_noun(input_items, "finding", "findings"),
             ));
         }
     }

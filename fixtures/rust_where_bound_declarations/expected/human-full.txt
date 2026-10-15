@@ -4,8 +4,8 @@ root: fixtures/rust_where_bound_declarations/input
 
 Summary: 2 probe(s), 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
 
 NOTE ./src/lib.rs:7
   id: probe:src_lib.rs:static_unknown:78296eca
@@ -42,7 +42,7 @@ Stop reasons:
   - static_probe_unknown — ripr could not model this change well enough to classify it
 
 Next step
-  Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.
+  Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 Drill in:
   ripr explain --root <cwd>/fixtures/rust_where_bound_declarations/input --diff <cwd>/fixtures/rust_where_bound_declarations/diff.patch --mode fast probe:src_lib.rs:static_unknown:78296eca
   ripr context --root <cwd>/fixtures/rust_where_bound_declarations/input --diff <cwd>/fixtures/rust_where_bound_declarations/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:78296eca

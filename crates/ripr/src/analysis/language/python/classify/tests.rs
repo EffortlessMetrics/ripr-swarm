@@ -816,7 +816,7 @@ fn assert_strong_oracle_is_not_discrimination(finding: &Finding) {
     assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Weak);
     assert_eq!(
         finding.ripr.reveal.discriminate.summary,
-        "Related Python test uses a `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."
+        "Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."
     );
 }
 
@@ -863,7 +863,7 @@ fn exercised_default_retains_its_positive_discriminator_summary() -> Result<(), 
     assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Yes);
     assert_eq!(
         finding.ripr.reveal.discriminate.summary,
-        "Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated."
+        "Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."
     );
     Ok(())
 }

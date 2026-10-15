@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Count nouns are singular at one across user-facing surfaces: the verbose completion line says "1 probe, 1 finding", `ripr cache` reports "1 entry", the next-action selector says "one of 1 attempt", and artifact summaries, gap-ledger warnings and publish-plan blockers no longer render "1 warnings" / "1 findings" / "1 items blocked". One shared `count_noun(count, singular, plural)` helper in the output layer owns the singular/plural decision; the cache dry-run regression pin now asserts the correct "1 entry" form (#7753).
