@@ -662,6 +662,7 @@ mod tests {
         assert!(CHECK_HELP.contains("Do not build a CI gate on"));
     }
 
+    #[test]
     fn gate_help_splits_blocked_exit_3_from_config_error_exit_2() {
         // #5065: monitors page on 2 (could not complete), not on 3 (blocked).
         assert!(GATE_HELP.contains("exit 3 for a completed `blocked` decision"));
@@ -669,6 +670,7 @@ mod tests {
         assert!(!GATE_HELP.contains("non-zero exit for `blocked` or"));
     }
 
+    #[test]
     fn agent_verify_help_names_the_empty_stdout_refusal_contract() {
         // #5065: standalone verify is the exit-3 path whose stdout stays empty.
         assert!(AGENT_VERIFY_HELP.contains("exits `3`"));
@@ -678,6 +680,7 @@ mod tests {
         assert!(AGENT_VERIFY_HELP.contains("stderr"));
     }
 
+    #[test]
     fn check_help_names_the_latency_trace_env_and_mode_cost_class() {
         // #4946(d): every repo-exposure env var a check user can set is
         // documented on the same "Environment variables:" surface; this one
