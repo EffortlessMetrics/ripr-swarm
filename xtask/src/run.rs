@@ -1448,12 +1448,12 @@ fn process_group_live_members(pgid: u32) -> Result<Vec<u32>, String> {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        members_from_group_scan(pgid, None, probe_process_group_alive(pgid))
+        members_from_group_probe(pgid, probe_process_group_alive(pgid))
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg(any(unix, test))]
+#[cfg(any(target_os = "linux", test))]
 enum ProcGroupScan {
     Complete { live: Vec<u32> },
     Incomplete,
@@ -1467,7 +1467,7 @@ enum GroupProbe {
     Inaccessible,
 }
 
-#[cfg(any(unix, test))]
+#[cfg(any(target_os = "linux", test))]
 fn members_from_group_scan(
     pgid: u32,
     scan: Option<ProcGroupScan>,
@@ -1480,11 +1480,21 @@ fn members_from_group_scan(
             Ok(GroupProbe::Inaccessible) => Ok(vec![pgid]),
             Err(err) => Err(err),
         },
-        Some(ProcGroupScan::Incomplete) | None => match probe {
-            Ok(GroupProbe::Gone) => Ok(Vec::new()),
-            Ok(GroupProbe::SignaledAlive | GroupProbe::Inaccessible) => Ok(vec![pgid]),
-            Err(err) => Err(err),
-        },
+        Some(ProcGroupScan::Incomplete) | None => members_from_group_probe(pgid, probe),
+    }
+}
+
+/// Without a complete `/proc` scan, only ESRCH can confirm the group is gone.
+/// This is also the production decision on Unix hosts without Linux `/proc`.
+#[cfg(any(unix, test))]
+fn members_from_group_probe(
+    pgid: u32,
+    probe: Result<GroupProbe, String>,
+) -> Result<Vec<u32>, String> {
+    match probe {
+        Ok(GroupProbe::Gone) => Ok(Vec::new()),
+        Ok(GroupProbe::SignaledAlive | GroupProbe::Inaccessible) => Ok(vec![pgid]),
+        Err(err) => Err(err),
     }
 }
 
@@ -2989,6 +2999,31 @@ if [ "$RIPR_CAPTURE_WAIT" = yes ]; then wait; fi
             return Err("incomplete scan plus probe failure must fail closed".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn members_from_group_probe_requires_esrch_to_confirm_gone() {
+        // #8055: the non-Linux Unix production path and Linux's incomplete
+        // or unavailable scan must share this fail-closed decision.
+        for (probe, expected) in [
+            (Ok(super::GroupProbe::Gone), Ok(Vec::new())),
+            (Ok(super::GroupProbe::SignaledAlive), Ok(vec![7])),
+            (Ok(super::GroupProbe::Inaccessible), Ok(vec![7])),
+            (
+                Err("probe failed".to_string()),
+                Err("probe failed".to_string()),
+            ),
+        ] {
+            assert_eq!(super::members_from_group_probe(7, probe.clone()), expected);
+            assert_eq!(
+                super::members_from_group_scan(7, None, probe.clone()),
+                expected
+            );
+            assert_eq!(
+                super::members_from_group_scan(7, Some(super::ProcGroupScan::Incomplete), probe),
+                expected
+            );
+        }
     }
 
     #[test]

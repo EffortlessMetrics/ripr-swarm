@@ -110,15 +110,26 @@ a whole top-level statement of the body:
   body, so a one-line method shorthand on the changed line refuses;
 - it sits outside every brace, parenthesis and bracket of the body, and
   no closer before it lacks its opener;
-- the text before it ends at the start of the body, a `;` or a `}`;
+- the text before it ends at the start of the body, a `;`, a `}`, or
+  (amended 2026-10-15) the head of a braceless branch: `if (...)` whose
+  `if` follows the start of the body, a `;` or a `}`, or `else` that
+  follows a `;` or a `}`, neither word ending a property access
+  (`cfg.if (x)`, `cfg.else`); the condition may span lines or hold its own
+  arrow, since it runs once before the branch;
 - it opens with an identifier other than `in`, `instanceof`, `as`,
   `satisfies`, `of`, `else`, `catch`, `finally` or `while`, so it cannot
   continue the expression before it (`const each = (id) => id < 0 ? {}`
   then `: p.m(id);`, where the `}` closes an object literal inside an
   arrow, not a block).
 
-So the line cannot be a callback body, the body of an expression-bodied
-arrow on the line before, or the branch of a braceless `if` / `else`.
+So the line cannot be a callback body or the body of an expression-bodied
+arrow on the line before. Because the line sits outside every brace,
+parenthesis and bracket of the body, a braceless `if` / `else` before it is a
+statement of the owner body itself, not of a nested function, and its one
+branch runs at most once per owner call. A nested `if (a) if (b)`, an
+`else if (...)`, a labelled `if` (`done: if (x)`), an `else` right after a
+`)` (an automatic semicolon), and any other word before `(...)` still refuse
+(under-credit).
 
 **Both paths: the test's one owner call runs once.** For RIPR-SPEC-0247
 rule 1's direct mock and for rule 2 below, the test's single owner call
@@ -172,6 +183,8 @@ the literal (`{ send }.self`) and any further mention of the mock refuse.
 
 - A changed line inside a braced `if`, `switch` or `try` block of an owner
   with a nested function refuses (under-credit).
+- A braceless branch under a nested or labelled `if`, under `else if`, or
+  under an `else` that follows a `)` refuses (under-credit).
 - A changed call that spans several lines refuses when the changed line is
   not its first line.
 - A block-bodied arrow owner, or an owner whose return type holds `{` or
@@ -202,7 +215,9 @@ the literal (`{ send }.self`) and any further mention of the mock refuse.
    whose changed line follows a braced `if`, or comes first with a
    callback after it: `exposed`.
 4. Rule 1 refuses the changed line inside a callback block, after
-   `() =>` on the line before, under a braceless `if` or `else`, with a
+   `() =>` on the line before, under a braceless `if` that is nested,
+   labelled, an `else if` or a property (`cfg.if (x)`), under an `else`
+   that follows a `)` or is a property, after any other `name(...)`, with a
    `for` loop or a recursive call elsewhere in the owner, when it appears
    twice, when it holds an arrow, a `function` or a one-line method
    itself, or inside a method shorthand, typed method (including a return
@@ -210,7 +225,10 @@ the literal (`{ send }.self`) and any further mention of the mock refuse.
    twice, or a line that opens with `:` or `||` and continues an arrow
    expression ending in `{}` on the line before. A line inside an `if`
    block of an owner with only control blocks and object literals is
-   still credited.
+   still credited. Amended 2026-10-15: the changed line as the branch of a
+   braceless `if (...)` (one-line, multi-line or arrow-holding condition)
+   or `else` that sits directly in the owner body is credited, as in the
+   corpus case `jest-spec0256-ex04-braceless-if`, which reads `credited`.
 5. Rule 2 refuses a spread, a second `send` key, a quoted key, a method
    entry, the mock under `post`, a duplicate `send` key on either side of
    a renamed mock, an object built earlier, the object at another
@@ -225,20 +243,23 @@ the literal (`{ send }.self`) and any further mention of the mock refuse.
 
 - `crates/ripr/src/analysis/language/typescript/tests/mock_object_argument_tests.rs`:
   `mock_in_an_inline_object_is_credited` pins examples 1 to 3;
-  `changed_call_a_nested_function_may_run_is_not_credited` pins example 4;
+  `changed_call_a_nested_function_may_run_is_not_credited` and
+  `changed_call_under_a_top_level_braceless_branch` pin example 4;
   `mock_the_object_may_not_carry_is_not_credited` pins examples 5 and 6.
 - `crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs`:
   `mock_payload_another_call_could_satisfy_is_not_credited` pins the
   one-call rule on RIPR-SPEC-0247's direct-mock path.
 - `fixtures/typescript-verdict-corpus` pins example 1:
-  `ts-vitest-checkout-notify` reads `credited`.
+  `ts-vitest-checkout-notify` reads `credited`; and example 4's braceless
+  branch: `jest-spec0256-ex04-braceless-if` reads `credited`.
 
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs`:
   `runs_changed_line_once`, `has_method_like_block`, `control_keyword_at`,
   `brace_context`,
-  `changed_line_is_top_level_statement` and `starts_new_statement` (rule 1);
+  `changed_line_is_top_level_statement`, `follows_braceless_if_or_else`
+  (amended 2026-10-15) and `starts_new_statement` (rule 1);
   `owner_call_argument_at`, `opens_function_before_call`,
   `inside_parameter_list` and `without_closed_mock_factories` (the one-call
   rule); `MockCallFacts::credits_object_argument` and
