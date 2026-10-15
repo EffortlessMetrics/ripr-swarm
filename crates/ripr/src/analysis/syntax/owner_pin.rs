@@ -1427,7 +1427,7 @@ fn admitted_assertions(
 ///   nested item or `use` item anywhere in its body;
 /// - the helper is a plain function: no attributes other than
 ///   `#[track_caller]`, no generics or `where` clause, not `async`, `const`
-///   or `unsafe`, no `self` parameter, no return type, and no `return` or `?`
+///   or `unsafe`, no `self` parameter, and no `return` or `?`
 ///   in its body, so the assertion cannot be skipped by an early exit;
 /// - the helper passes the test's own escape gate (only trusted macros, no
 ///   closure exits or `yield`) and its supported item context.
@@ -1601,8 +1601,10 @@ fn plain_parameter_names(helper: &ast::Fn) -> Vec<String> {
     if rebound { Vec::new() } else { names }
 }
 
-/// A helper whose body runs to its end on every call: see
-/// [`local_helper_assertions`].
+/// A synchronous helper with no early exit: see [`local_helper_assertions`].
+/// Its return type does not swallow a panic from the borrowed `assert_eq!`,
+/// even if the caller discards a returned `Result`. Fallible macros and `?`
+/// remain refused; their errors could otherwise skip the assertion unnoticed.
 fn plain_check_helper(
     helper: &ast::Fn,
     trusted: &[&str],
@@ -1619,7 +1621,6 @@ fn plain_check_helper(
         && helper.async_token().is_none()
         && helper.const_token().is_none()
         && helper.unsafe_token().is_none()
-        && helper.ret_type().is_none()
         && helper
             .param_list()
             .is_some_and(|params| params.self_param().is_none())

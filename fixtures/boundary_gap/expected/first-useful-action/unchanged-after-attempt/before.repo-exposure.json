@@ -402,7 +402,7 @@
   ],
   "source_subject": {
     "corpus": {
-      "cache_schema_version": "1.76",
+      "cache_schema_version": "1.77",
       "files_content_hash": "16ab297ea99e68bf",
       "scope": "rust_workspace"
     },

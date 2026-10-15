@@ -42,6 +42,7 @@ mod public_proof;
 // ripr crate's LSP validator without widening ripr's public API.
 #[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
 mod gap_source_subject_shared;
+mod gh_pr_status_snapshot;
 mod identity_registry;
 mod issue_lifecycle_attempt;
 mod issue_lifecycle_contract_plan;
@@ -3102,18 +3103,15 @@ pub(crate) fn pr_triage_report_impl() -> Result<(), String> {
 
 pub(crate) fn gh_pr_status_impl(args: &[String]) -> Result<(), String> {
     let number = parse_gh_pr_status_args(args)?;
-    let pr = collect_gh_pr_status(number)?;
-    let mut warnings = Vec::new();
-    let (required_contexts, required_contexts_available) =
-        match collect_required_status_contexts(&pr.base_ref_name) {
-            Ok(contexts) => (contexts, true),
-            Err(err) => {
-                warnings.push(format!(
-                    "required status context lookup failed; using status rollup only: {err}"
-                ));
-                (Vec::new(), false)
-            }
-        };
+    let observation = gh_pr_status_snapshot::collect_current(
+        number,
+        || collect_gh_pr_status(number),
+        collect_required_status_contexts,
+    )?;
+    let pr = parse_gh_pr_status_pull_request(&observation.pr.to_string())?;
+    let required_contexts = observation.contexts;
+    let required_contexts_available = observation.contexts_available;
+    let warnings = observation.warnings;
     let readiness = gh_pr_status_readiness(
         &pr,
         &required_contexts,
@@ -3171,41 +3169,25 @@ fn parse_positive_u64(value: &str, label: &str) -> Result<u64, String> {
     Ok(parsed)
 }
 
-fn collect_gh_pr_status(number: u64) -> Result<GhPrStatusPullRequest, String> {
-    collect_gh_pr_status_with(number, run_output_owned)
+fn collect_gh_pr_status(number: u64) -> Result<Value, String> {
+    collect_gh_pr_status_json_with(number, run_output_owned)
 }
 
+fn collect_gh_pr_status_json_with(
+    number: u64,
+    run: impl FnMut(&str, &[String]) -> Result<String, String>,
+) -> Result<Value, String> {
+    gh_pr_status_snapshot::collect_snapshot(number, run)
+}
+
+#[cfg(test)]
 fn collect_gh_pr_status_with(
     number: u64,
-    run: impl FnOnce(&str, &[String]) -> Result<String, String>,
+    run: impl FnMut(&str, &[String]) -> Result<String, String>,
 ) -> Result<GhPrStatusPullRequest, String> {
-    let fields = [
-        "number",
-        "title",
-        "isDraft",
-        "mergeStateStatus",
-        "headRefName",
-        "headRefOid",
-        "baseRefName",
-        "reviewDecision",
-        "latestReviews",
-        "comments",
-        "statusCheckRollup",
-    ]
-    .join(",");
-    let output = run(
-        "gh",
-        &[
-            "pr".to_string(),
-            "view".to_string(),
-            number.to_string(),
-            "--json".to_string(),
-            fields,
-        ],
-    )?;
-    parse_gh_pr_status_pull_request(&output)
+    let value = collect_gh_pr_status_json_with(number, run)?;
+    parse_gh_pr_status_pull_request(&value.to_string())
 }
-
 fn collect_required_status_contexts(base_ref_name: &str) -> Result<Vec<String>, String> {
     let repo_output = run_output("gh", &["repo", "view", "--json", "owner,name"])?;
     let repo_value: Value = serde_json::from_str(&repo_output)

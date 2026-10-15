@@ -55,6 +55,21 @@ const BUILD_ROOT: &str = r#"{
 }"#;
 
 #[test]
+fn jsonc_line_comment_endings_preserve_out_dir_resolution() -> Result<(), String> {
+    for (label, ending) in [("lf", "\n"), ("crlf", "\r\n"), ("cr", "\r")] {
+        let config = "{ // config\n\"compilerOptions\": {\"rootDir\": \"src\",\"outDir\": \"dist\", // output\n}, // options\n} // eof".replace('\n', ending);
+        let resolved = resolve_in(
+            label,
+            &[("tsconfig.json", &config), ("src/cart.ts", "")],
+            "test/cart.test.js",
+            "../dist/cart.js",
+        )?;
+        assert_eq!(resolved.as_deref(), Some("src/cart"), "{label}");
+    }
+    Ok(())
+}
+
+#[test]
 fn build_js_import_maps_to_ts_source() -> Result<(), String> {
     let resolved = resolve_in(
         "js",

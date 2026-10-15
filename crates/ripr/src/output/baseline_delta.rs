@@ -861,11 +861,24 @@ fn parse_current_decisions(path: &str, json_text: Result<String, String>) -> Cur
         };
     };
 
+    // Dropping an unidentifiable decision would turn an incomplete current
+    // denominator into apparent resolution of reviewed baseline debt.
+    let Some(decisions) = decisions
+        .iter()
+        .map(current_decision_from_value)
+        .collect::<Option<Vec<_>>>()
+    else {
+        return CurrentParse {
+            unavailable: true,
+            warnings: vec![format!(
+                "required current gate-decision input {path} contains a decision without stable identity"
+            )],
+            ..CurrentParse::default()
+        };
+    };
+
     CurrentParse {
-        decisions: decisions
-            .iter()
-            .filter_map(current_decision_from_value)
-            .collect(),
+        decisions,
         warnings: Vec::new(),
         unavailable: false,
         root: string_field(value.get("root")),
@@ -1749,6 +1762,78 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     #[test]
+    fn baseline_delta_rejects_identityless_current_decisions() -> Result<(), String> {
+        use crate::output::baseline::{
+            baseline_create_report_from_gate_decision_json, render_baseline_create_json,
+        };
+        use crate::output::baseline_update::{
+            BaselineUpdateInput, build_baseline_update_remove_resolved,
+        };
+        use serde_json::json;
+
+        let source = json!({
+            "schema_version": "0.1",
+            "decisions": [{"seam_id": "reviewed", "decision": "advisory"}]
+        });
+        let created = baseline_create_report_from_gate_decision_json(
+            "gate.json",
+            "unix_ms:1",
+            &source.to_string(),
+        )?;
+        let baseline = render_baseline_create_json(&created)?;
+        let baseline_value: Value = serde_json::from_str(&baseline).map_err(|e| e.to_string())?;
+        assert_eq!(baseline_value["entries"].as_array().map(Vec::len), Some(1));
+        let warning = "required current gate-decision input current.json contains a decision without stable identity";
+
+        for malformed in [Value::Null, json!(42), json!({}), json!({"seam_id": "  "})] {
+            // A valid sibling must not hide a corrupt record in a partial denominator.
+            for decisions in [
+                json!([malformed]),
+                json!([source["decisions"][0], malformed]),
+            ] {
+                let current = json!({"schema_version": "0.1", "decisions": decisions});
+                let report = build_baseline_delta_report(BaselineDeltaInput {
+                    root: ".".to_string(),
+                    baseline_path: "baseline.json".to_string(),
+                    current_gate_decision_path: "current.json".to_string(),
+                    baseline_json: Ok(baseline.clone()),
+                    current_gate_decision_json: Ok(current.to_string()),
+                });
+                let rendered: Value = serde_json::from_str(&render_baseline_delta_json(&report)?)
+                    .map_err(|e| e.to_string())?;
+                assert_eq!(rendered["delta"]["resolved"], 0, "{rendered}");
+                assert_eq!(rendered["delta"]["still_present"], 0, "{rendered}");
+                assert_eq!(rendered["delta"]["missing_current_input"], 1, "{rendered}");
+                assert_eq!(rendered["items"][0]["identity"]["seam_id"], "reviewed");
+                assert!(
+                    rendered["warnings"]
+                        .as_array()
+                        .is_some_and(|warnings| warnings.contains(&json!(warning))),
+                    "{rendered}"
+                );
+                let markdown = render_baseline_delta_markdown(&report);
+                assert!(markdown.contains("Missing current input"));
+                assert!(markdown.contains(warning), "{markdown}");
+
+                for (remove_resolved, migrate_legacy_identities) in [(true, false), (false, true)] {
+                    let update = build_baseline_update_remove_resolved(BaselineUpdateInput {
+                        baseline_path: "baseline.json".to_string(),
+                        current_gate_decision_path: "current.json".to_string(),
+                        baseline_json: baseline.clone(),
+                        current_gate_decision_json: current.to_string(),
+                        remove_resolved,
+                        migrate_legacy_identities,
+                    });
+                    assert!(
+                        matches!(update, Err(error) if error.contains("without stable identity"))
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn baseline_delta_reports_all_primary_buckets() -> Result<(), String> {
         let baseline = r#"{
           "schema_version": "0.1",
@@ -2158,7 +2243,7 @@ mod tests {
             {"decision": "not_applicable", "seam_id": "suppressed-match", "gate_reason": "configured off", "evidence": {"configured_off": true}},
             {"seam_id": "unknown-decision", "evidence": {}},
             {"decision": "advisory", "seam_id": "duplicate", "evidence": {}},
-            {"decision": "advisory", "evidence": {}}
+            {"decision": "advisory", "source_id": "new-source", "evidence": {}}
           ]
         }"#;
 
@@ -2177,6 +2262,7 @@ mod tests {
         assert!(rendered.contains("\"acknowledged\": 1"));
         assert!(rendered.contains("\"suppressed\": 1"));
         assert!(rendered.contains("\"stale_baseline_entry\": 1"));
+        assert!(rendered.contains("\"new_policy_eligible\": 1"));
         assert!(rendered.contains("already joined by another baseline entry"));
         assert!(rendered.contains("waived by ripr-waive"));
         assert!(rendered.contains("configured off"));

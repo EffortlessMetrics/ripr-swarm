@@ -13,6 +13,8 @@ tests = [
   "crates/ripr/tests/cli_smoke/diff_pairing.rs",
   "crates/ripr/tests/cli_smoke/sample_output.rs::retained_oracles_reject_wrong_contract_shape_count_and_refusal",
   "crates/ripr/tests/cli_smoke/sample_output.rs::parallel_fixture_state_and_cleanup_are_independent",
+  "crates/ripr/tests/cli_smoke.rs::check_no_unchanged_tests_restates_the_recall_tradeoff_on_stderr",
+  "crates/ripr/tests/cli_smoke/recall_tradeoff.rs::retained_recall_warning_oracles_reject_wrong_output",
   "crates/ripr/tests/cli_smoke.rs::check_human_output_reports_sample_findings",
   "crates/ripr/tests/cli_smoke.rs::check_json_output_has_stable_contract_fields",
   "crates/ripr/tests/cli_smoke.rs::check_badge_json_output_has_native_badge_shape",
@@ -942,6 +944,9 @@ tests = [
   "crates/ripr/src/config.rs::tests::config_load_parse_error_strips_windows_verbatim_prefix",
   "crates/ripr/src/config.rs::tests::load_for_root_parse_error_uses_the_human_path_and_keeps_canonical_source_path",
   "crates/ripr/src/config.rs::tests::config_rejects_unsafe_suppression_paths",
+  "crates/ripr/src/config.rs::tests::relative_config_paths_reject_nul_before_filesystem_use",
+  "crates/ripr/src/config.rs::tests::relative_config_paths_preserve_normalization_spaces_and_unicode",
+  "crates/ripr/src/cli/commands/config.rs::tests::validate_rejects_a_nul_path_in_valid_toml",
   "crates/ripr/src/config.rs::tests::oracle_policy_rewrites_configurable_oracle_strengths",
   "crates/ripr/src/lsp/config.rs::tests::repo_config_sets_defaults_when_initialization_options_are_missing",
   "crates/ripr/src/lsp/config.rs::tests::initialization_options_override_repo_config_defaults",
@@ -1078,6 +1083,9 @@ tests = [
   "crates/ripr/src/output/sarif.rs::tests::sarif_location_and_fingerprints_ignore_root_spelling",
   "crates/ripr/src/output/sarif.rs::tests::sarif_caps_observed_values_and_discloses_the_total",
   "crates/ripr/src/output/sarif.rs::tests::sarif_omits_observed_values_total_under_the_cap",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_run_with_only_not_current_findings_records_omitted_property",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_empty_findings_run_omits_omitted_not_current_property",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_mixed_current_and_not_current_records_omitted_count_beside_results",
   "xtask/src/main.rs::tests::sarif_policy_passes_when_no_new_results",
   "xtask/src/main.rs::tests::sarif_policy_flags_new_warning_result",
   "xtask/src/main.rs::tests::sarif_policy_ignores_note_when_threshold_warning",
@@ -1444,6 +1452,9 @@ id = "RIPR-SPEC-0011"
 name = "LLM work loop"
 spec = "docs/specs/RIPR-SPEC-0011-llm-work-loop.md"
 tests = [
+  "crates/ripr/src/app/repair_attempt/mod.rs::tests::commit_retry_refusal_rejects_embedded_messages_and_invalid_ids",
+  "crates/ripr/src/app/repair_attempt/mod.rs::tests::manifest_read_failure_preserves_evidence_without_retry_classification",
+  "crates/ripr/src/app/repair_attempt/mod.rs::tests::rejected_manifest_commit_releases_lock_for_retry",
   "crates/ripr/tests/cli_smoke/workflow_directory.rs::relative_custom_workflow_directory_keeps_native_producer_and_receipt_identity",
   "crates/ripr/tests/cli_smoke/workflow_directory.rs::absolute_custom_workflow_directory_keeps_native_producer_and_receipt_identity",
   "crates/ripr/tests/cli_smoke/receipt_recovery_root.rs::missing_relative_workflow_verify_hint_runs_in_native_root_from_foreign_cwd",
@@ -2013,6 +2024,7 @@ tests = [
   "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_matches_by_fallback_and_warns",
   "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_marks_ambiguous_fallback_as_stale",
   "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_reports_missing_current_input",
+  "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_rejects_identityless_current_decisions",
   "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_treats_non_object_review_metadata_as_absent",
   "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_matches_mixed_fixture_contract",
   "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_propagates_current_run_limitations",
@@ -4951,6 +4963,7 @@ tests = [
   "crates/ripr/tests/printed_command_paste.rs::extract_text_pairs_empty_rest_powershell_label_with_the_next_line",
   "crates/ripr/tests/printed_command_paste.rs::extract_text_empty_rest_guard_does_not_consume_the_next_bash_command",
   "crates/ripr/tests/printed_command_paste.rs::extract_text_does_not_pair_powershell_text_inside_a_bash_code_span",
+  "crates/ripr/tests/printed_command_paste.rs::extract_text_marks_unavailable_powershell_disclosure_and_does_not_paste_it",
   "crates/ripr/tests/generated_review_workflow.rs::recovery_ref_quoting_accepts_adjacent_and_refspec_forms",
   "crates/ripr/tests/generated_review_workflow.rs::odd_unterminated_quote_before_unquoted_hostile_ref_is_not_quoted",
   "crates/ripr/src/output/first_pr/rendering.rs::tests::preflight_recovery_preserves_markdown_backticks_and_discloses_unsupported_forms",
@@ -7643,6 +7656,8 @@ id = "RIPR-SPEC-0099"
 name = "TypeScript tsconfig.json path-alias resolution"
 spec = "docs/specs/RIPR-SPEC-0099-typescript-tsconfig-path-aliases.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::jsonc_line_comment_endings_preserve_alias_resolution",
+  "crates/ripr/src/analysis/language/typescript/tsconfig/out_dir_tests.rs::jsonc_line_comment_endings_preserve_out_dir_resolution",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::tsconfig_alias_resolution_flag_on_credits_test_as_exposed",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::tsconfig_alias_resolution_multi_entry_value_fails_closed",
@@ -8320,6 +8335,30 @@ code = [
 outputs = [
   "docs/BACK_SYNC_VERIFIER.md",
   "docs/specs/RIPR-SPEC-0149-back-sync-verifier.md",
+]
+metrics = ["unit_test_pass_rate"]
+
+[[behavior]]
+id = "RIPR-SPEC-0266"
+name = "bounded coverage binary-ID diagnostics"
+spec = "docs/specs/RIPR-SPEC-0266-coverage-binary-id-diagnostics.md"
+tests = [
+  "tools/repo-policy/src/coverage_diagnostics/binary_ids_tests.rs::retained_october_14_header_maps_only_instrumented_exact_id_and_preserves_failure",
+  "tools/repo-policy/src/coverage_diagnostics/binary_ids_tests.rs::profile_id_count_limit_keeps_the_valid_prefix_and_marks_mapping_partial",
+  "tools/repo-policy/src/coverage_diagnostics/binary_ids_tests.rs::unavailable_profile_id_input_prevents_a_definitive_negative_mapping",
+  "tools/repo-policy/src/coverage_diagnostics/binary_ids_tests.rs::wrong_id_and_same_id_without_instrumentation_do_not_match",
+  "tools/repo-policy/src/coverage_diagnostics/binary_ids_tests.rs::malformed_and_platform_elf_headers_and_notes_are_bounded",
+  "tools/repo-policy/src/coverage_diagnostics/binary_ids_tests.rs::mapping_failure_cannot_abort_the_original_profile_manifest",
+]
+fixtures = []
+code = [
+  "tools/repo-policy/src/coverage_diagnostics/binary_ids.rs",
+  "tools/repo-policy/src/coverage_diagnostics/binary_ids_tests.rs",
+  "tools/repo-policy/src/coverage_diagnostics.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0266-coverage-binary-id-diagnostics.md",
+  "docs/ci/coverage.md",
 ]
 metrics = ["unit_test_pass_rate"]
 
@@ -10404,6 +10443,9 @@ tests = [
   "crates/ripr/src/output/gap_decision_ledger.rs::source_currentness_authority_tests::authority_projections_require_proven_candidate_currentness",
   "crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::actionable_profile_excludes_base_side_evidence",
   "crates/ripr/src/output/sarif.rs::tests::base_deleted_findings_emit_no_sarif_results",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_run_with_only_not_current_findings_records_omitted_property",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_empty_findings_run_omits_omitted_not_current_property",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_mixed_current_and_not_current_records_omitted_count_beside_results",
   "crates/ripr/src/output/github.rs::tests::base_deleted_findings_emit_no_github_annotations",
 ]
 fixtures = []
@@ -12487,9 +12529,15 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::short_circuit_owner_tail_completes_only_an_admitted_chain",
+  "crates/ripr/tests/short_circuit_or_tail.rs::an_or_tail_run_to_its_end_by_a_table_is_exposed",
+  "crates/ripr/tests/short_circuit_or_tail.rs::an_or_tail_whose_changed_operand_never_runs_stays_below_exposed",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_short_circuit_tail_pins_only_on_a_call_that_runs_every_operand",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_short_circuit_tail_refuses_impure_or_mixed_chains",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_short_circuit_tail_refuses_a_body_with_earlier_statements",
+  "crates/ripr/tests/assertion_helper_credit.rs::returned_helper_panic_assertion_exposes_even_when_result_is_discarded",
+  "crates/ripr/tests/assertion_helper_credit.rs::returned_helper_keeps_execution_binding_and_value_refusals",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::returned_helpers_lend_the_indexed_panic_assertion_and_exact_loan",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_short_circuit_table_column_counts_only_inside_its_loop",
   "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::a_short_circuit_tail_reads_helper_calls_by_parameter",
   "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::reads_homogeneous_comparison_chains_over_parameters",
@@ -14713,6 +14761,7 @@ fixtures = [
   "fixtures/inequality_assertion_not_exact",
   "fixtures/inequality_struct_assertion_not_exact",
   "fixtures/bool_compared_inequality_not_exact",
+  "fixtures/test_compared_with_non_literal_not_exact",
 ]
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
