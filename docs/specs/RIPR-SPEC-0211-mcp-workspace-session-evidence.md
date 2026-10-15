@@ -411,7 +411,8 @@ is not evidence that a resource with a particular identity exists.
   budget excludes every page (typed `result_too_large` on the real stdio
   wire where the envelope-only bound shipped a correlated `-32603`
   fallback), a second id one notch smaller whose call still ships a
-  structured page, and same-session recovery after both.
+  structured page, the same refusal/fit pair for the status resource read,
+  and same-session recovery after all of them.
 
 - `crates/ripr/src/mcp/workspace.rs::tests` — session lifecycle, typed
   failures, identity portability, boundedness, last-known-good retention;

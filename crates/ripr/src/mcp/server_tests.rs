@@ -185,8 +185,15 @@ async fn long_request_id_refuses_typed_at_the_id_aware_boundary() -> Result<(), 
             budget,
         )
         .map_err(|error| error.to_string())?;
-    let shipped = format!("{shipping:?}");
-    if !shipped.contains("structured_content") || shipped.contains("result_too_large") {
+    // Assert on the wire shape, not the Debug rendering: the Debug output
+    // names the `structured_content` field even when it is None, so only
+    // the serialized value distinguishes a structured result from the
+    // text-only fallback.
+    let rmcp::model::CallToolResponse::Complete(shipped_result) = shipping else {
+        return Err("boundary fixture did not complete".into());
+    };
+    let shipped = serde_json::to_value(&shipped_result).map_err(|error| error.to_string())?;
+    if shipped.get("structuredContent").is_none() || shipped["isError"] == serde_json::json!(true) {
         return Err(format!(
             "an envelope exactly at the id-aware budget must ship structured: {shipped}"
         ));

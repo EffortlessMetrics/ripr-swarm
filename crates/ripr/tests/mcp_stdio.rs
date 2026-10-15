@@ -2230,6 +2230,89 @@ fn long_request_ids_refuse_typed_before_the_wire_cap() -> Result<(), String> {
         return Err("the fitting page exceeded the wire cap".into());
     }
 
+    // Resource reads answer one request whose echoed id rides the same wire
+    // cap. Size the id-aware budget against the status resource's actually
+    // measured envelope: one id excludes it (typed resource refusal where
+    // the envelope-only bound shipped the generic fallback), one sits below
+    // so the same read still serves.
+    let status_reply = session.call(
+        "outer-status-short",
+        "resources/read",
+        json!({ "uri": "ripr://workspace/status" }),
+        timeout,
+    )?;
+    let mut status_result = status_reply
+        .get("result")
+        .cloned()
+        .ok_or("status resource read lost its result")?;
+    if let Some(object) = status_result.as_object_mut() {
+        object.remove("resultType");
+    }
+    let status_bytes = serde_json::to_vec(&status_result)
+        .map(|bytes| bytes.len())
+        .map_err(|error| error.to_string())?;
+    if status_bytes < 1_400 {
+        return Err(format!(
+            "status resource measurement interval drifted: {status_bytes}"
+        ));
+    }
+    let resource_quotes = (RESPONSE_BOUND - OUTER_RESERVE - status_bytes + 256) / 2;
+    let resource_refusal_id = "\"".repeat(resource_quotes);
+    if status_bytes
+        + overhead_without_id
+        + serde_json::to_vec(&json!(resource_refusal_id))
+            .map(|bytes| bytes.len())
+            .map_err(|error| error.to_string())?
+        <= RESPONSE_BOUND
+    {
+        return Err("resource refusal stimulus missed the old-code wire overflow".into());
+    }
+    let refused_resource = session.call(
+        &resource_refusal_id,
+        "resources/read",
+        json!({ "uri": "ripr://workspace/status" }),
+        timeout,
+    )?;
+    if refused_resource.pointer("/error/data/code") != Some(&json!("result_too_large"))
+        || refused_resource.pointer("/error/data/recovery").is_none()
+        || refused_resource.get("result").is_some()
+    {
+        return Err(format!(
+            "a long request id must refuse a resource read typed before the wire cap: error={:?}, has_result={}",
+            refused_resource.get("error"),
+            refused_resource.get("result").is_some()
+        ));
+    }
+    if frame_bytes(&refused_resource, "resource refusal")? > RESPONSE_BOUND {
+        return Err("the typed resource refusal itself must fit the wire cap".into());
+    }
+    let resource_fit_quotes = (RESPONSE_BOUND - OUTER_RESERVE - status_bytes - 512) / 2;
+    let fitted_resource = session.call(
+        &"\"".repeat(resource_fit_quotes),
+        "resources/read",
+        json!({ "uri": "ripr://workspace/status" }),
+        timeout,
+    )?;
+    if fitted_resource.get("result").is_none()
+        || fitted_resource.get("error").is_some()
+        || fitted_resource
+            .pointer("/result/contents/0/text")
+            .and_then(Value::as_str)
+            .and_then(|text| serde_json::from_str::<Value>(text).ok())
+            .is_none()
+    {
+        return Err(format!(
+            "a fitting resource read to a long request id must still serve: {}",
+            fitted_resource
+                .get("error")
+                .map(|error| error.to_string())
+                .unwrap_or_default()
+        ));
+    }
+    if frame_bytes(&fitted_resource, "fitting resource")? > RESPONSE_BOUND {
+        return Err("the fitting resource read exceeded the wire cap".into());
+    }
+
     let recovered = session.call_tool("outer-recovered", "ripr_list_gaps", json!({}), timeout)?;
     if structured_tool_success(&recovered, "outer-budget recovery")? != full {
         return Err("outer-budget refusals changed the completed snapshot or selection".into());
