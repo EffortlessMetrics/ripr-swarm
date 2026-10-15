@@ -216,6 +216,36 @@ fn detect_python_test_frameworks_reports_both_when_config_and_unittest_coexist()
 }
 
 #[test]
+fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<(), String> {
+    // #7664 review: pytest.ini + unittest.mock is not a mixed test surface.
+    let root = unique_test_root("mock-only");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+        .map_err(|err| format!("write pytest.ini: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import mock\n\ndef test_api():\n    assert True\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("mock-and-testcase");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import mock, TestCase\n\nclass ApiTest(TestCase):\n    pass\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
 fn detect_python_test_frameworks_reads_only_the_file_prefix() -> Result<(), String> {
     // Prefix contract (#7664 review): an import after 4096 bytes is ignored,
     // and an import at the start of a larger file still counts.

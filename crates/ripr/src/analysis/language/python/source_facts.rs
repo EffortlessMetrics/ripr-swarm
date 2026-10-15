@@ -202,9 +202,44 @@ fn is_pytest_import_line(line: &str) -> bool {
 /// Whether a line is a real unittest import statement — `import unittest`,
 /// `import unittest as ...`, or `from unittest import ...` — at a token
 /// boundary. Comment lines and lookalike identifiers (`import unittesting`)
-/// do not count (#2106 review).
+/// do not count (#2106 review). `from unittest import mock` is the mock
+/// library, not unittest-framework evidence (#7664 review).
 fn is_unittest_import_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.starts_with('#') {
+        return false;
+    }
+    if let Some(rest) = trimmed.strip_prefix("from ") {
+        let Some(after_module) = rest.strip_prefix("unittest") else {
+            return false;
+        };
+        let Some(imported) = after_module.strip_prefix(" import") else {
+            return false;
+        };
+        return !unittest_from_import_is_mock_only(imported);
+    }
     is_top_level_module_import_line(line, "unittest")
+}
+
+/// `from unittest import mock` / `from unittest import mock as umock` is not
+/// a test runner. A mixed pytest repo that only mocks through unittest must
+/// not grow a `python: unittest` doctor surface.
+fn unittest_from_import_is_mock_only(imported: &str) -> bool {
+    let mut saw_name = false;
+    for name in imported
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        saw_name = true;
+        let Some(ident) = name.split_whitespace().next() else {
+            return false;
+        };
+        if ident != "mock" {
+            return false;
+        }
+    }
+    saw_name
 }
 
 /// Token-boundary `import <module>` / `from <module> import ...` matcher.

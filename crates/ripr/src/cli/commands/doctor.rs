@@ -3742,6 +3742,29 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-python")]
+    fn doctor_does_not_treat_unittest_mock_as_a_second_surface() -> Result<(), String> {
+        // #7664 review: pytest.ini + `from unittest import mock` is pytest-only.
+        let root = unique_command_test_dir("doctor-unittest-mock");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+            .map_err(|err| format!("write pytest.ini: {err}"))?;
+        std::fs::write(
+            root.join("test_api.py"),
+            "from unittest import mock\n\ndef test_api():\n    assert True\n",
+        )
+        .map_err(|err| format!("write test file: {err}"))?;
+        let surfaces = detect_test_surfaces(&root, &detect_languages(&root));
+        assert_eq!(
+            python_surface_evidence(&surfaces),
+            vec!["python: pytest"],
+            "unittest.mock must not mint a unittest surface, got {surfaces:?}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn doctor_requires_root_value() {
         assert_eq!(
             doctor(&args(&["--root"])),
