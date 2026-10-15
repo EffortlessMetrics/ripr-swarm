@@ -75,7 +75,10 @@ names the field, repeated declaration line, and original declaration line;
 third declarations still cite the first line. Later declarations do not overwrite the
 first parsed value or declaration identity. Both loaders reject the manifest
 when violations are present.
-The explicit loader names the supplied policy path in its error.
+Both loaders name the supplied policy path in every parser diagnostic. The
+implicit loader uses the configured root-relative path; duplicate diagnostics
+retain the original and repeated declaration lines. Diagnostic values and
+terminal escaping are preserved.
 
 Declaration tracking resets for each entry, so field names may be reused in
 separate entries. This is distinct from the existing duplicate exact-selector
@@ -128,6 +131,10 @@ Repository configuration evidence should cover:
 - `ripr config validate` accepting valid config, following the existing
   missing-config defaults path, and returning path-qualified errors for
   malformed or policy-invalid config;
+- `ripr config validate --root --root` reporting a missing path even when a
+  directory named `--root` exists; `--root ./--root` still selects that directory;
+- this option-token rule remaining local to `config validate`; other dash-prefixed
+  directory paths remain accepted, and shared value parsing is unchanged;
 - output schemas remaining unchanged when severity or report caps come from
   config;
 - docs and example config staying aligned with supported keys.
@@ -327,6 +334,7 @@ cargo-only).
 
 Current tests:
 
+- `crates/ripr/tests/cli_smoke.rs::config_validate_does_not_consume_root_flag_as_a_path`
 - `crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_owner`
 - `crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_expiry`
 - `crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_header`

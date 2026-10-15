@@ -201,11 +201,17 @@ fn d1(x: i64) -> i64 { inner_rate(x) }
         "{:?}",
         finding.evidence
     );
-    assert!(
+    // Pin the full inspect pointer, not a substring of the test name: a
+    // wording or location regression must fail (#8106).
+    assert_eq!(
         finding
             .evidence
             .iter()
-            .any(|line| line.contains("deep_triples")),
+            .find(|line| line.starts_with("For example, the test "))
+            .map(String::as_str),
+        Some(
+            "For example, the test `deep_triples` (src/lib.rs:20) calls `d7`, an entry point that may lead here. Inspect it to judge whether this change is observed."
+        ),
         "{:?}",
         finding.evidence
     );
@@ -269,11 +275,17 @@ fn d1(x: i64) -> i64 { inner_rate(x) }
         "{:?}",
         finding.evidence
     );
-    assert!(
+    // Pin the full inspect pointer, not a substring of the test name: a
+    // wording or location regression must fail (#8106).
+    assert_eq!(
         finding
             .evidence
             .iter()
-            .any(|line| line.contains("deep_path")),
+            .find(|line| line.starts_with("For example, the test "))
+            .map(String::as_str),
+        Some(
+            "For example, the test `deep_path` (tests/paths.rs:6) calls `d7`, an entry point that may lead here. Inspect it to judge whether this change is observed."
+        ),
         "{:?}",
         finding.evidence
     );

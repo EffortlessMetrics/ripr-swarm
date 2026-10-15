@@ -929,8 +929,10 @@ id = "RIPR-SPEC-0007"
 name = "repository configuration"
 spec = "docs/specs/RIPR-SPEC-0007-repository-configuration.md"
 tests = [
+  "crates/ripr/tests/cli_smoke.rs::config_validate_does_not_consume_root_flag_as_a_path",
   "crates/ripr/tests/cli_smoke.rs::check_github_over_broad_suppression_policy_emits_denominator_notice",
   "crates/ripr/tests/cli_smoke/suppression_notice.rs::retained_oracle_rejects_silence_wrong_counts_and_leaked_annotations",
+  "crates/ripr/tests/cli_smoke.rs::check_configured_suppression_diagnostics_preserve_locations_and_escaping",
   "crates/ripr/tests/default_suppression_disclosure.rs",
   "crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_owner",
   "crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_expiry",
@@ -1163,6 +1165,9 @@ tests = [
   "crates/ripr/src/output/pilot/tests.rs::pilot_current_change_preserves_absent_file_coverage_through_empty_and_mixed_supplements",
   "crates/ripr/src/output/pilot/tests.rs::pilot_renderers_disclose_absent_changed_files_independently_of_top_recommendation",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::invalid_ancestor_git_markers_preserve_python_and_cache_context",
+  "crates/ripr/tests/cli_smoke/structural_workspace_markers.rs::scalar_workspaces_do_not_select_a_nested_cli_root",
+  "crates/ripr/tests/cli_smoke/structural_workspace_markers.rs::package_workspace_arrays_and_yarn_objects_keep_their_root",
+  "crates/ripr/tests/cli_smoke/structural_workspace_markers.rs::scalar_marker_preserves_cargo_uv_git_and_unmarked_root_boundaries",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::broken_git_links_keep_implicit_check_and_cache_inside_the_project",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::inherited_git_selectors_cannot_certify_an_inert_ancestor",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::gitless_saved_diff_does_not_cross_a_nested_repository_boundary",
@@ -6851,6 +6856,7 @@ id = "RIPR-SPEC-0085"
 name = "TypeScript evidence adapter contract"
 spec = "docs/specs/RIPR-SPEC-0085-typescript-evidence-adapter-contract.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/structural_workspace_markers.rs::typescript_workspace_evidence_uses_structural_markers_and_package_fallback",
   "crates/ripr/src/analysis/language/typescript/bounded_read.rs::tests::capped_workspace_read_reports_every_budget_refusal",
   "crates/ripr/src/analysis/language/typescript/bounded_read.rs::tests::workspace_budget_refusals_preserve_later_fitting_sources",
   "crates/ripr/src/analysis/language/typescript/tests.rs::analyze_diff_bounds_workspace_budget_disclosure_with_true_total",
@@ -6944,6 +6950,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/bounded_read.rs",
+  "crates/ripr/src/config.rs",
   "crates/ripr/src/analysis/language/typescript/package.rs",
   "crates/ripr/src/analysis/language/typescript/static_limit.rs",
   "crates/ripr/src/analysis/language/typescript/classifier.rs",
@@ -12635,6 +12642,9 @@ tests = [
   "crates/ripr/tests/expect_test_owner_pins.rs::every_parsed_inline_expect_spelling_pins_the_owner",
   "crates/ripr/tests/expect_test_owner_pins.rs::other_expect_test_and_snapshot_shapes_keep_their_medium_grade",
   "crates/ripr/tests/expect_test_owner_pins.rs::a_captured_identifier_format_tail_propagates",
+  "crates/ripr/tests/expect_test_owner_pins.rs::a_verified_golden_file_comparison_pins_the_owner",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/expect_test_pins.rs::a_test_that_may_write_files_lends_no_golden_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/expect_test_pins.rs::a_golden_path_stays_in_tree_and_fs_renames_refuse",
   "crates/ripr/src/analysis/classify/changed_span.rs::the_span_is_the_smallest_node_around_the_differing_text",
   "crates/ripr/src/analysis/classify/changed_span.rs::a_closure_is_seen_only_around_or_inside_the_change",
   "crates/ripr/src/analysis/classify/changed_span.rs::no_span_without_an_old_text_or_one_tail_expression",
@@ -14835,6 +14845,7 @@ fixtures = [
   "fixtures/bool_compared_inequality_not_exact",
   "fixtures/test_compared_with_non_literal_not_exact",
   "fixtures/test_cast_to_integer_not_exact",
+  "fixtures/test_from_trait_conversion_not_exact",
 ]
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
@@ -15116,6 +15127,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_facts_read_field_construction_changes_only",
   "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_refused_readings_keep_their_parsed_subject",
   "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_pin_looks_through_a_test_local_identity_helper",
+  "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_pin_reads_a_test_body_object_const",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",
@@ -15125,6 +15137,7 @@ code = [
   "crates/ripr/src/analysis/language/typescript/instance_class_guard.rs",
   "crates/ripr/src/analysis/language/typescript/match_object_guard.rs",
   "crates/ripr/src/analysis/language/typescript/oracle.rs",
+  "crates/ripr/src/analysis/language/typescript/static_limit.rs",
   "crates/ripr/src/analysis/language/typescript/tests_extract.rs",
 ]
 outputs = [
@@ -15196,6 +15209,7 @@ name = "TypeScript literal matcher strength"
 spec = "docs/specs/RIPR-SPEC-0247-typescript-literal-matcher-strength.md"
 tests = [
   "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_on_the_parameters_own_mock_is_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_on_a_test_file_factory_mock_is_credited",
   "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_another_call_could_satisfy_is_not_credited",
   "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_on_another_target_is_not_credited",
   "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::loose_equality_with_a_coercion_safe_literal_reads_exact",
@@ -15218,6 +15232,7 @@ code = [
   "crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs",
   "crates/ripr/src/analysis/language/typescript/oracle.rs",
   "crates/ripr/src/analysis/language/typescript/static_limit.rs",
+  "crates/ripr/src/analysis/language/typescript/tests_extract.rs",
   "crates/ripr/src/analysis/language/typescript/typed_loose_equality_guard.rs",
 ]
 outputs = [
@@ -15461,6 +15476,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_return_guard_that_spares_the_expected_value_is_an_analyzer_limit",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_direct_call_name_is_one_bare_call_ending_the_subject",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_relations_stop_crediting_beside_a_reach_bearing_one",
   "crates/ripr/src/analysis/classifier/evidence.rs::tests::preferred_refusal_note_puts_a_non_limit_owner_call_first",

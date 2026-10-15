@@ -2051,7 +2051,7 @@ fn excludes_only_sibling_variant(
 /// The trimmed top-level comma-separated arguments of a macro call whose
 /// parenthesised arguments are all of `rest` (`(a, f(b, c))`), or nothing
 /// when `rest` is not exactly one balanced group.
-fn macro_arguments(rest: &str) -> Vec<&str> {
+pub(super) fn macro_arguments(rest: &str) -> Vec<&str> {
     let rest = rest.trim();
     if !rest.starts_with('(') || group_end(rest, 0) != Some(rest.len() - 1) {
         return Vec::new();
@@ -4414,9 +4414,10 @@ fn pin_strength_admits(assertion: &OracleFact) -> bool {
 }
 
 /// #6578: a `snapshot` oracle the owner pin may raise is only the inline
-/// `expect![[..]].assert_eq(..)` comparison it reads like `assert_eq!`; an
-/// `insta` macro, `expect_file!`, `assert_debug_eq` or any other text the
-/// classifier grades `snapshot` keeps its medium strength.
+/// `expect![[..]].assert_eq(..)` or golden-file `expect_file![..].assert_eq(..)`
+/// comparison it reads like `assert_eq!`; an `insta` macro, `assert_debug_eq`
+/// or any other text the classifier grades `snapshot` keeps its medium
+/// strength.
 fn is_inline_expect_snapshot(assertion: &OracleFact) -> bool {
     matches!(assertion.kind, OracleKind::Snapshot)
         && super::owner_pin::inline_expect_operands(&assertion.text).is_some()
@@ -6712,17 +6713,21 @@ return Err(\"typed pin\".into());
             OracleKind::RelationalCheck,
             OracleStrength::Weak,
         )));
-        // #6578: of the medium snapshots, only the inline expect-test
-        // comparison the owner pin reads like `assert_eq!`.
-        assert!(pin_strength_admits(&oracle(
+        // #6578: of the medium snapshots, only the inline and golden-file
+        // expect-test comparisons the owner pin reads like `assert_eq!`.
+        for text in [
             "expect![[\"w12\"]].assert_eq(&render(4));",
-            OracleKind::Snapshot,
-            OracleStrength::Medium,
-        )));
+            "expect_file![\"w.txt\"].assert_eq(&render(4));",
+        ] {
+            assert!(
+                pin_strength_admits(&oracle(text, OracleKind::Snapshot, OracleStrength::Medium)),
+                "{text}"
+            );
+        }
         for text in [
             "insta::assert_snapshot!(render(4));",
             "expect![[\"w12\"]].assert_debug_eq(&render(4));",
-            "expect_file![\"w.txt\"].assert_eq(&render(4));",
+            "expect_file![\"w.txt\"].assert_debug_eq(&render(4));",
         ] {
             assert!(
                 !pin_strength_admits(&oracle(text, OracleKind::Snapshot, OracleStrength::Medium)),

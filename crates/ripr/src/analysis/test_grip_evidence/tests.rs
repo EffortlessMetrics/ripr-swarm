@@ -17863,12 +17863,11 @@ fn seam_behind_a_helper_chain_past_five_hops_is_opaque_not_ungripped() -> Result
         ),
     ])?;
     assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
-    assert!(
-        reach
-            .summary
-            .contains("`checks_out` (tests/checkout.rs:1) calls `checkout`"),
-        "the witness past the bound is named: {}",
-        reach.summary
+    // Pin the full seam summary, not a substring of the witness: a wording
+    // or location regression must fail (#8106).
+    assert_eq!(
+        reach.summary,
+        "Reach unresolved (rust_integration_public_api_path_unresolved): `checks_out` (tests/checkout.rs:1) calls `checkout`, which may lead to `surcharge` through a call path ripr does not fully trace; no gap is reported"
     );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())

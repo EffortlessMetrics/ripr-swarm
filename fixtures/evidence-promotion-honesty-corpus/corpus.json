@@ -1,8 +1,8 @@
 {
-  "schema_version": "0.1",
   "kind": "evidence_promotion_honesty_corpus",
   "spec": "RIPR-SPEC-0108",
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
+  "schema_version": "0.1",
   "cases": [
     {
       "id": "rust_inherent_receiver_operand_item_shadow",
@@ -12,10 +12,20 @@
       "vector": "operand_local_constructor_cannot_borrow_outer_receiver_identity",
       "probe_family": "match_arm",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
         {
           "type": "expected_related_test",
           "name": "operand_constructor_is_not_the_outer_receiver",
@@ -25,7 +35,10 @@
           "strength": "strong",
           "relation_reason": "weak_token_substring"
         },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -9644,6 +9657,47 @@
         },
         {
           "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_test_from_trait_conversion_not_exact",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/test_from_trait_conversion_not_exact",
+      "vector": "comparison_carried_as_integer_is_never_an_exact_oracle",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "relational_check",
+          "strength": "weak"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "score_is_zero_only_for_zero_points",
+          "file": "src/lib.rs",
+          "line": 10,
+          "kind": "relational_check",
+          "strength": "weak"
         },
         {
           "type": "maximum_class",
