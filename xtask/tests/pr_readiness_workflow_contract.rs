@@ -9,10 +9,17 @@ use std::fs;
 use std::path::Path;
 
 const WORKFLOW: &str = ".github/workflows/routed-rust.yml";
-const EXPECTED_EVENT_DECLARATIONS: &[&str] = &["on:", "  pull_request:", "    types: [labeled]"];
-const EXPECTED_CONCURRENCY_GROUP: &str = "  group: ${{ github.event.label.name == 'merge-ready' && format('qualification-{0}-{1}', github.repository, github.event.pull_request.number) || format('metadata-{0}', github.run_id) }}";
+const EXPECTED_EVENT_DECLARATIONS: &[&str] = &[
+    "on:",
+    "  pull_request:",
+    "    types: [labeled]",
+    "  push:",
+    "    branches: [main, master]",
+    "  workflow_dispatch:",
+];
+const EXPECTED_CONCURRENCY_GROUP: &str = "  group: ${{ github.event_name != 'pull_request' && format('{0}-{1}-{2}', github.workflow, github.ref, github.event_name) || (github.event.label.name == 'merge-ready' && format('qualification-{0}-{1}', github.repository, github.event.pull_request.number) || format('metadata-{0}', github.run_id)) }}";
 const EXPECTED_CANCEL_IN_PROGRESS: &str = "  cancel-in-progress: false";
-const REQUIRED_CONTEXT: &str = "${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
+const REQUIRED_CONTEXT: &str = "${{ ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
 const WATCHDOG: &str = ".github/workflows/pr-staleness-watchdog.yml";
 /// Executable (non-comment) fragments that would let the watchdog start or
 /// authorize a workflow run.

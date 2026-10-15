@@ -831,6 +831,35 @@ pub fn routed_rust_job_block_any(
     false
 }
 
+// Fold only the named job's own condition, never a step or run-block decoy.
+fn routed_rust_job_condition(workflow: &str, job: &str) -> Option<String> {
+    let mut condition = None;
+    let mut folded = false;
+    routed_rust_job_block_any(workflow, job, |line| {
+        if let Some(value) = line.strip_prefix("    if: ") {
+            folded = value == ">-";
+            condition = Some(if folded {
+                String::new()
+            } else {
+                value.to_owned()
+            });
+        } else if folded {
+            if line.starts_with("      ") {
+                if let Some(value) = condition.as_mut() {
+                    if !value.is_empty() {
+                        value.push(' ');
+                    }
+                    value.push_str(line.trim());
+                }
+            } else if !line.trim().is_empty() {
+                folded = false;
+            }
+        }
+        false
+    });
+    condition
+}
+
 pub fn routed_rust_job_block_has_deadline(workflow: &str, job: &str) -> bool {
     routed_rust_job_block_any(workflow, job, |line| {
         !line.trim_start().starts_with('#') && line.contains("timeout-minutes:")
@@ -888,11 +917,12 @@ pub fn routed_rust_workflow_contract_violations(
     routed_rust_workflow_contract_violations_with_reusable(workflow, None, settings, lane_whitelist)
 }
 
-/// How Routed Rust Small treats one GitHub event after reading the workflow YAML.
+/// How the PR admission profile treats one event after reading workflow YAML.
 ///
 /// The workflow file is the authority. This classifier inspects `on.pull_request.types`
-/// so a re-added Draft or label event cannot be hidden behind a hardcoded
-/// desired policy (#4380, #4986).
+/// so re-added ordinary PR activity cannot be hidden behind a hardcoded
+/// desired policy (#4380, #4986). Legacy main/manual execution is a separate
+/// preserved profile; non-PR input is not triggered through this PR classifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoutedRustEventRoute {
     BookkeepingOnly,
@@ -902,9 +932,9 @@ pub enum RoutedRustEventRoute {
 
 pub const ROUTED_RUST_READY_EVENT: &str = "labeled";
 
-pub const ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET: &str = "group: ${{ github.event.label.name == 'merge-ready' && format('qualification-{0}-{1}', github.repository, github.event.pull_request.number) || format('metadata-{0}', github.run_id) }}";
+pub const ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET: &str = "group: ${{ github.event_name != 'pull_request' && format('{0}-{1}-{2}', github.workflow, github.ref, github.event_name) || (github.event.label.name == 'merge-ready' && format('qualification-{0}-{1}', github.repository, github.event.pull_request.number) || format('metadata-{0}', github.run_id)) }}";
 pub const ROUTED_RUST_READY_CANCEL_SNIPPET: &str = "cancel-in-progress: false";
-pub const ROUTED_RUST_RESULT_NAME: &str = "${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
+pub const ROUTED_RUST_RESULT_NAME: &str = "${{ ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
 
 pub const ROUTED_RUST_IGNORED_LABEL_RESULT_NAME: &str = "Ripr Rust Small Ignored Label Event";
 
@@ -1013,7 +1043,7 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
         .collect();
     if !unexpected.is_empty() || types.len() != request_only.len() {
         violations.push(format!(
-            ".github/workflows/routed-rust.yml pull_request types must be exactly `[{ROUTED_RUST_READY_EVENT}]`; unexpected activity types: {unexpected:?}. Only the explicit merge-ready label event is a request; Ready and push activity stay withheld (#4986)"
+            ".github/workflows/routed-rust.yml pull_request types must be exactly `[{ROUTED_RUST_READY_EVENT}]`; unexpected activity types: {unexpected:?}. Only the explicit merge-ready label event is a request; ordinary PR updates stay withheld; preserved main/manual profiles remain separate (#4986)"
         ));
     }
     if !workflow.contains(ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET) {
@@ -1140,18 +1170,6 @@ pub fn routed_rust_workflow_contract_violations_with_reusable(
         ("CX53 capacity label", "rust-large"),
         ("normalized result job", "Ripr Rust Small Result"),
         (
-            "CX43 conditional implementation job",
-            "if: needs.route.outputs.router_target == 'cx43'",
-        ),
-        (
-            "CPX42 conditional implementation job",
-            "if: needs.route.outputs.router_target == 'cpx42'",
-        ),
-        (
-            "CX53 conditional implementation job",
-            "if: needs.route.outputs.router_target == 'cx53'",
-        ),
-        (
             "hosted fallback conditional job",
             "needs.route.outputs.router_target == 'github'",
         ),
@@ -1186,6 +1204,23 @@ pub fn routed_rust_workflow_contract_violations_with_reusable(
             violations.push(format!(
                 ".github/workflows/routed-rust.yml is missing {label}: `{snippet}`"
             ));
+        }
+    }
+
+    for (job, target) in [
+        ("rust-cx43", "cx43"),
+        ("rust-cpx42", "cpx42"),
+        ("rust-cx53", "cx53"),
+    ] {
+        let legacy = format!("needs.route.outputs.router_target == '{target}'");
+        let legacy_docs = format!("{legacy} && needs.detect-docs-only.outputs.docs_only != 'true'");
+        let staged = format!(
+            "!cancelled() && needs.route.result == 'success' && needs.detect-docs-only.result == 'success' && {legacy_docs}"
+        );
+        let condition = routed_rust_job_condition(workflow, job);
+        if !matches!(condition.as_deref(), Some(value) if value == legacy || value == legacy_docs || value == staged)
+        {
+            violations.push(format!("routed Rust job `{job}` must retain its selected target and reviewed legacy or cancellation-aware staging condition"));
         }
     }
 

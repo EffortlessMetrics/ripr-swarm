@@ -146,7 +146,7 @@ fn source_precheck_precedes_candidate_execution_and_keeps_source_receipt() -> Re
 }
 
 const NATIVE: &str = include_str!("../../.github/workflows/routed-rust.yml");
-const RESULT_NAME: &str = "    name: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
+const RESULT_NAME: &str = "    name: ${{ ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
 
 #[test]
 fn native_request_and_nonrequest_names_are_event_bound() {

@@ -38,8 +38,15 @@ Other labels emit `Merge-ready Nonrequest`, not a skipped required success.
 No main-push routed full run or branch dispatch can impersonate PR qualification.
 Existing unrelated feature, wheel, security, full-Windows and editor workflows
 remain separately owned: this bounded candidate does not claim graph-wide zero
-launches. Retiring routed's old main cache writer may cause cold/stale acceleration;
-proof still executes. No warm-cache or <=20-minute saving is assumed.
+launches. During source staging, routed main/master pushes and manual runs retain
+the existing full Rust qualification profile; PR admission and its four new leaves
+are skipped, and the result still requires actual detector/router/selected Rust
+success. Explicit status predicates preserve execution after skipped admission
+and reject cancellation. Main/manual concurrency is separate from PR requests.
+This preserves production qualification pending #4838 cutover, not a cache-warmer
+suite. Retiring those legacy entrypoints requires #7827's reviewed replacement
+lifecycle and matching desired/rollback generation. No warm-cache or <=20-minute
+saving is assumed.
 
 Admission is read-only native API bookkeeping, with no candidate checkout:
 actor permission, current repository/target/open/Draft/label, H/B/T and parents,

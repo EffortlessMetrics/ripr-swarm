@@ -1084,3 +1084,49 @@ jobs:
         "a job that kept its deadline must not be flagged: {violations:?}"
     );
 }
+#[test]
+fn staged_self_hosted_conditions_reject_missing_status_and_header_decoys() {
+    let workflow = include_str!("../../../.github/workflows/routed-rust.yml");
+    let reusable = include_str!("../../../.github/workflows/rust-gates.yml");
+    let findings = |source: &str| {
+        routed_rust_workflow_contract_violations_with_reusable(source, Some(reusable), None, None)
+    };
+    for target in ["cx43", "cpx42", "cx53"] {
+        let job = format!("rust-{target}");
+        let condition = routed_rust_job_condition(workflow, &job).expect("real job condition");
+        assert!(condition.starts_with("!cancelled() &&"));
+        assert!(
+            !findings(workflow)
+                .iter()
+                .any(|value| value.contains(&format!("job `{job}` must retain")))
+        );
+        let (_, block) = workflow
+            .split_once(&format!("  {job}:\n"))
+            .expect("real job");
+        let block = block
+            .lines()
+            .take_while(|line| !line.starts_with("  ") || line.starts_with("   "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for (old, new) in [
+            ("!cancelled()", "success()"),
+            ("needs.route.result == 'success'", "true"),
+            ("needs.detect-docs-only.result == 'success'", "true"),
+        ] {
+            let changed = block.replace(old, new);
+            assert_ne!(changed, block, "mutation engages");
+            let wrong = workflow.replace(&block, &changed);
+            assert!(
+                findings(&wrong)
+                    .iter()
+                    .any(|value| value.contains(&format!("job `{job}` must retain"))),
+                "{job}/{old}"
+            );
+        }
+    }
+    let decoy = "jobs:\n  rust-cx43:\n    if: false\n    steps:\n      - run: |\n          if: needs.route.outputs.router_target == 'cx43'\n";
+    assert_eq!(
+        routed_rust_job_condition(decoy, "rust-cx43").as_deref(),
+        Some("false")
+    );
+}

@@ -122,6 +122,7 @@ fn execute_review_stream(
         "CX53_ONLINE",
         "CX53_IDLE_READY",
         "EVENT_NAME",
+        "REF",
         "DOCS_DETECT_RESULT",
         "DOCS_ONLY",
         "DOCS_GATE_RESULT",
@@ -842,5 +843,111 @@ fn wheel_call_binds_every_identity_and_native_result() -> Result<(), String> {
         .ok_or("needs missing")?;
     assert!(dependency.contains(", python-wheel,"));
     assert!(result.contains("WHEEL_RESULT: ${{ needs.python-wheel.result }}"));
+    Ok(())
+}
+
+#[test]
+fn legacy_profiles_require_actual_product_results_and_no_pr_admission() -> Result<(), String> {
+    let script = body("Summarize routed result")?;
+    for (event, reference) in [
+        ("push", "refs/heads/main"),
+        ("push", "refs/heads/master"),
+        ("workflow_dispatch", "refs/heads/main"),
+        ("workflow_dispatch", "refs/heads/rehearsal"),
+    ] {
+        let mut env = json!({"EVENT_NAME":event,"REF":reference,"LABEL":"",
+            "ADMISSION_RESULT":"skipped","EXECUTE":"","PRIOR_RESULT":"",
+            "WINDOWS_RESULT":"skipped","PASTE_RESULT":"skipped","CI_RESULT":"skipped","WHEEL_RESULT":"skipped",
+            "DOCS_DETECT_RESULT":"success","DOCS_ONLY":"false","DOCS_GATE_RESULT":"skipped",
+            "ROUTE_RESULT":"success","TARGET":"github","GITHUB_RESULT":"success"});
+        assert!(
+            execute(&script, &json!({}), &json!([]), &env)?,
+            "{event}/{reference}"
+        );
+        for key in ["DOCS_DETECT_RESULT", "ROUTE_RESULT", "GITHUB_RESULT"] {
+            for state in [
+                "failure",
+                "cancelled",
+                "skipped",
+                "neutral",
+                "timed_out",
+                "",
+            ] {
+                let mut negative = env.clone();
+                negative[key] = json!(state);
+                assert!(
+                    !execute(&script, &json!({}), &json!([]), &negative)?,
+                    "{event} {key}={state}"
+                );
+            }
+        }
+        for key in [
+            "ADMISSION_RESULT",
+            "WINDOWS_RESULT",
+            "PASTE_RESULT",
+            "CI_RESULT",
+            "WHEEL_RESULT",
+        ] {
+            for state in ["success", "failure", "cancelled", ""] {
+                let mut negative = env.clone();
+                negative[key] = json!(state);
+                assert!(
+                    !execute(&script, &json!({}), &json!([]), &negative)?,
+                    "{event} {key}={state}"
+                );
+            }
+        }
+        // A legacy full run cannot accept a docs-only shortcut or unknown route.
+        env["DOCS_ONLY"] = json!("true");
+        env["DOCS_GATE_RESULT"] = json!("success");
+        env["GITHUB_RESULT"] = json!("failure");
+        assert!(!execute(&script, &json!({}), &json!([]), &env)?);
+        env["GITHUB_RESULT"] = json!("success");
+        env["TARGET"] = json!("unknown");
+        assert!(!execute(&script, &json!({}), &json!([]), &env)?);
+    }
+    Ok(())
+}
+
+#[test]
+fn legacy_profiles_retain_selected_runner_failure_and_declared_fallback() -> Result<(), String> {
+    let script = body("Summarize routed result")?;
+    for (target, result_key, scratch_key) in [
+        ("cx43", "CX43_RESULT", "CX43_SCRATCH_STATUS"),
+        ("cpx42", "CPX42_RESULT", "CPX42_SCRATCH_STATUS"),
+        ("cx53", "CX53_RESULT", "CX53_SCRATCH_STATUS"),
+    ] {
+        let mut env = json!({"EVENT_NAME":"push","REF":"refs/heads/main","LABEL":"",
+            "ADMISSION_RESULT":"skipped","WINDOWS_RESULT":"skipped","PASTE_RESULT":"skipped","CI_RESULT":"skipped","WHEEL_RESULT":"skipped",
+            "DOCS_DETECT_RESULT":"success","DOCS_ONLY":"false","ROUTE_RESULT":"success",
+            "TARGET":target,"GITHUB_RESULT":"skipped"});
+        env[result_key] = json!("success");
+        assert!(execute(&script, &json!({}), &json!([]), &env)?);
+        for native in ["failure", "cancelled", "skipped", ""] {
+            env[result_key] = json!(native);
+            env[scratch_key] = json!("");
+            env["GITHUB_RESULT"] = json!("success");
+            assert!(
+                !execute(&script, &json!({}), &json!([]), &env)?,
+                "{target}/{native}"
+            );
+        }
+        env[scratch_key] = json!("tempfail");
+        assert!(execute(&script, &json!({}), &json!([]), &env)?);
+        env["GITHUB_RESULT"] = json!("failure");
+        assert!(!execute(&script, &json!({}), &json!([]), &env)?);
+    }
+    for (event, reference) in [
+        ("push", "refs/heads/feature"),
+        ("schedule", "refs/heads/main"),
+        ("", ""),
+    ] {
+        assert!(!execute(
+            &script,
+            &json!({}),
+            &json!([]),
+            &json!({"EVENT_NAME":event,"REF":reference,"LABEL":""})
+        )?);
+    }
     Ok(())
 }

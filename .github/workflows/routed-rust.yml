@@ -4,6 +4,9 @@ run-name: ${{ github.event.label.name == 'merge-ready' && format('Merge-ready {0
 on:
   pull_request:
     types: [labeled]
+  push:
+    branches: [main, master]
+  workflow_dispatch:
 
 permissions:
   actions: read
@@ -11,7 +14,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ${{ github.event.label.name == 'merge-ready' && format('qualification-{0}-{1}', github.repository, github.event.pull_request.number) || format('metadata-{0}', github.run_id) }}
+  group: ${{ github.event_name != 'pull_request' && format('{0}-{1}-{2}', github.workflow, github.ref, github.event_name) || (github.event.label.name == 'merge-ready' && format('qualification-{0}-{1}', github.repository, github.event.pull_request.number) || format('metadata-{0}', github.run_id)) }}
   cancel-in-progress: false
 
 env:
@@ -19,6 +22,7 @@ env:
 
 jobs:
   admission:
+    if: github.event_name == 'pull_request'
     name: Live merge-ready preflight
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -100,7 +104,14 @@ jobs:
 
   route:
     needs: [admission]
-    if: needs.admission.outputs.execute == 'true'
+    if: >-
+      !cancelled() &&
+      ((github.event_name == 'push' &&
+        (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) ||
+       github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request' &&
+        needs.admission.result == 'success' &&
+        needs.admission.outputs.execute == 'true'))
     name: Route Ripr Rust Small
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -157,7 +168,14 @@ jobs:
 
   detect-docs-only:
     needs: [admission]
-    if: needs.admission.outputs.execute == 'true'
+    if: >-
+      !cancelled() &&
+      ((github.event_name == 'push' &&
+        (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) ||
+       github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request' &&
+        needs.admission.result == 'success' &&
+        needs.admission.outputs.execute == 'true'))
     name: Detect Docs-Only Surface
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -219,7 +237,12 @@ jobs:
   rust-cx43:
     name: Ripr Rust Small on CX43
     needs: [route, detect-docs-only]
-    if: needs.route.outputs.router_target == 'cx43' && needs.detect-docs-only.outputs.docs_only != 'true'
+    if: >-
+      !cancelled() &&
+      needs.route.result == 'success' &&
+      needs.detect-docs-only.result == 'success' &&
+      needs.route.outputs.router_target == 'cx43' &&
+      needs.detect-docs-only.outputs.docs_only != 'true'
     uses: ./.github/workflows/rust-gates.yml
     with:
       runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cx43","rust-medium","trusted-pr"]}'
@@ -236,7 +259,12 @@ jobs:
   rust-cpx42:
     name: Ripr Rust Small on CPX42
     needs: [route, detect-docs-only]
-    if: needs.route.outputs.router_target == 'cpx42' && needs.detect-docs-only.outputs.docs_only != 'true'
+    if: >-
+      !cancelled() &&
+      needs.route.result == 'success' &&
+      needs.detect-docs-only.result == 'success' &&
+      needs.route.outputs.router_target == 'cpx42' &&
+      needs.detect-docs-only.outputs.docs_only != 'true'
     uses: ./.github/workflows/rust-gates.yml
     with:
       runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cpx42","rust-medium","rust-16gb","trusted-pr"]}'
@@ -253,7 +281,12 @@ jobs:
   rust-cx53:
     name: Ripr Rust Small on CX53
     needs: [route, detect-docs-only]
-    if: needs.route.outputs.router_target == 'cx53' && needs.detect-docs-only.outputs.docs_only != 'true'
+    if: >-
+      !cancelled() &&
+      needs.route.result == 'success' &&
+      needs.detect-docs-only.result == 'success' &&
+      needs.route.outputs.router_target == 'cx53' &&
+      needs.detect-docs-only.outputs.docs_only != 'true'
     uses: ./.github/workflows/rust-gates.yml
     with:
       runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cx53","rust-large","trusted-pr"]}'
@@ -277,6 +310,7 @@ jobs:
     # new head's run behind it (#6729).
     if: >-
       !cancelled() &&
+      needs.route.result == 'success' &&
       needs.detect-docs-only.result == 'success' &&
       needs.detect-docs-only.outputs.docs_only != 'true' &&
       (needs.route.outputs.router_target == 'github' ||
@@ -299,7 +333,10 @@ jobs:
   docs-gate:
     name: Ripr Docs Gate
     needs: [detect-docs-only]
-    if: github.event_name == 'pull_request' && needs.detect-docs-only.outputs.docs_only == 'true'
+    if: >-
+      !cancelled() && github.event_name == 'pull_request' &&
+      needs.detect-docs-only.result == 'success' &&
+      needs.detect-docs-only.outputs.docs_only == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -386,13 +423,14 @@ jobs:
       workflow_generation: ${{ github.workflow_sha }}
 
   result:
-    name: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}
+    name: ${{ ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}
     needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, docs-gate, windows-subset, python-wheel, ci-feature, printed-command]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Recheck current head and base before result publication
+        if: github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -430,6 +468,7 @@ jobs:
           done
       - name: Summarize routed result
         env:
+          REF: ${{ github.ref }}
           LABEL: ${{ github.event.label.name }}
           ADMISSION_RESULT: ${{ needs.admission.result }}
           EXECUTE: ${{ needs.admission.outputs.execute }}
@@ -464,17 +503,28 @@ jobs:
           DOCS_ONLY: ${{ needs.detect-docs-only.outputs.docs_only }}
           DOCS_GATE_RESULT: ${{ needs.docs-gate.result }}
         run: |
-          [ "${LABEL,,}" = merge-ready ] || exit 0
-          [ "$ADMISSION_RESULT" = success ] || { echo 'Admission missing/failed' >&2; exit 1; }
-          if [ "$EXECUTE" = false ]; then
-            [ "$PRIOR_RESULT" = success ] || { echo 'Prior required result failed; no implicit retry' >&2; exit 1; }
-            exit 0
-          fi
-          [ "$EXECUTE" = true ] || { echo 'Incomplete native request' >&2; exit 1; }
-          [ "$WINDOWS_RESULT" = success ] || { echo 'Selected Windows evidence missing/failed' >&2; exit 1; }
-          [ "$PASTE_RESULT" = success ] || { echo 'Selected printed-command evidence missing/failed' >&2; exit 1; }
-          [ "$CI_RESULT" = success ] || { echo 'Selected CI evidence missing/failed' >&2; exit 1; }
-          [ "$WHEEL_RESULT" = success ] || { echo 'Selected wheel evidence missing/failed' >&2; exit 1; }
+          case "$EVENT_NAME:$REF" in
+            push:refs/heads/main|push:refs/heads/master|workflow_dispatch:*)
+              [ "$ADMISSION_RESULT" = skipped ] || { echo 'Legacy profile must skip PR admission' >&2; exit 1; }
+              for result in "$WINDOWS_RESULT" "$PASTE_RESULT" "$CI_RESULT" "$WHEEL_RESULT"; do
+                [ "$result" = skipped ] || { echo 'Legacy profile must skip PR-only leaves' >&2; exit 1; }
+              done
+              ;;
+            pull_request:*)
+              [ "${LABEL,,}" = merge-ready ] || exit 0
+              [ "$ADMISSION_RESULT" = success ] || { echo 'Admission missing/failed' >&2; exit 1; }
+              if [ "$EXECUTE" = false ]; then
+                [ "$PRIOR_RESULT" = success ] || { echo 'Prior required result failed; no implicit retry' >&2; exit 1; }
+                exit 0
+              fi
+              [ "$EXECUTE" = true ] || { echo 'Incomplete native request' >&2; exit 1; }
+              [ "$WINDOWS_RESULT" = success ] || { echo 'Selected Windows evidence missing/failed' >&2; exit 1; }
+              [ "$PASTE_RESULT" = success ] || { echo 'Selected printed-command evidence missing/failed' >&2; exit 1; }
+              [ "$CI_RESULT" = success ] || { echo 'Selected CI evidence missing/failed' >&2; exit 1; }
+              [ "$WHEEL_RESULT" = success ] || { echo 'Selected wheel evidence missing/failed' >&2; exit 1; }
+              ;;
+            *) echo 'Unsupported qualification event profile' >&2; exit 1 ;;
+          esac
           status=pass
           message="selected implementation job succeeded"
           if [ "$DOCS_DETECT_RESULT" != "success" ]; then

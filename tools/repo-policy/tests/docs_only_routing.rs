@@ -520,15 +520,26 @@ fn routed_result(
         })
         .collect::<Vec<_>>();
     assert!(env.len() >= 20, "actual result env is initialized");
+    let pr_result = if event == "pull_request" {
+        "success"
+    } else {
+        "skipped"
+    };
+    let label = if event == "pull_request" {
+        "merge-ready"
+    } else {
+        ""
+    };
     env.extend([
-        ("LABEL", "merge-ready"),
-        ("ADMISSION_RESULT", "success"),
+        ("REF", "refs/heads/main"),
+        ("LABEL", label),
+        ("ADMISSION_RESULT", pr_result),
         ("EXECUTE", "true"),
         ("PRIOR_RESULT", "none"),
-        ("WINDOWS_RESULT", "success"),
-        ("PASTE_RESULT", "success"),
-        ("CI_RESULT", "success"),
-        ("WHEEL_RESULT", "success"),
+        ("WINDOWS_RESULT", pr_result),
+        ("PASTE_RESULT", pr_result),
+        ("CI_RESULT", pr_result),
+        ("WHEEL_RESULT", pr_result),
         ("EVENT_NAME", event),
         ("DOCS_DETECT_RESULT", detector),
         ("DOCS_ONLY", docs),
@@ -580,8 +591,8 @@ fn actual_result_block_requires_successful_detection_and_selected_proof() -> Tes
             "success"
         )?);
     }
-    // Branch-isolation controls for the aggregate body, not admission events.
-    // Native admission separately refuses these as qualification requests.
+    // Main/manual skip PR admission and leaves, but still require full Rust.
+    // Even an injected docs-only output cannot substitute the docs gate.
     for event in ["push", "workflow_dispatch"] {
         for docs in ["false", "true"] {
             assert!(!routed_result(
