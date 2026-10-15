@@ -24995,7 +24995,7 @@ owner = "repo-infra"
 }
 
 #[test]
-fn reverse_direction_violation_names_unregistered_spec_ids_and_paths() {
+fn reverse_direction_violation_names_unregistered_spec_ids_and_paths() -> Result<(), String> {
     let unregistered = [
         (
             "RIPR-SPEC-1234".to_string(),
@@ -25007,23 +25007,26 @@ fn reverse_direction_violation_names_unregistered_spec_ids_and_paths() {
         ),
     ];
     let message = reverse_direction_unregistered_violation(&unregistered, 1, DOC_ARTIFACT_LEDGER)
-        .expect("two unregistered specs exceed baseline 1");
-    assert!(
-        message.contains("RIPR-SPEC-1234 (docs/specs/RIPR-SPEC-1234-alpha.md)"),
-        "must name the first unregistered id and path, got {message}"
-    );
-    assert!(
-        message.contains("RIPR-SPEC-1235 (docs/specs/RIPR-SPEC-1235-beta.md)"),
-        "must name the second unregistered id and path, got {message}"
-    );
-    assert!(
-        message.contains("unregistered:"),
-        "must label the named ids, not only the excess count, got {message}"
-    );
-    assert!(
-        message.contains("baseline: 1") && message.contains("current: 2"),
-        "must retain the ratchet counts, got {message}"
-    );
+        .ok_or_else(|| "two unregistered specs exceed baseline 1".to_string())?;
+    if !message.contains("RIPR-SPEC-1234 (docs/specs/RIPR-SPEC-1234-alpha.md)") {
+        return Err(format!(
+            "must name the first unregistered id and path, got {message}"
+        ));
+    }
+    if !message.contains("RIPR-SPEC-1235 (docs/specs/RIPR-SPEC-1235-beta.md)") {
+        return Err(format!(
+            "must name the second unregistered id and path, got {message}"
+        ));
+    }
+    if !message.contains("unregistered:") {
+        return Err(format!(
+            "must label the named ids, not only the excess count, got {message}"
+        ));
+    }
+    if !(message.contains("baseline: 1") && message.contains("current: 2")) {
+        return Err(format!("must retain the ratchet counts, got {message}"));
+    }
+    Ok(())
 }
 
 #[test]
@@ -25040,7 +25043,7 @@ fn reverse_direction_violation_is_silent_at_baseline() {
 }
 
 #[test]
-fn reverse_direction_violation_names_newest_ids_before_truncating() {
+fn reverse_direction_violation_names_newest_ids_before_truncating() -> Result<(), String> {
     let unregistered: Vec<(String, String)> = (1..=UNREGISTERED_SPEC_MESSAGE_LIMIT + 2)
         .map(|n| {
             let id = format!("RIPR-SPEC-{n:04}");
@@ -25049,21 +25052,23 @@ fn reverse_direction_violation_names_newest_ids_before_truncating() {
         })
         .collect();
     let message = reverse_direction_unregistered_violation(&unregistered, 0, DOC_ARTIFACT_LEDGER)
-        .expect("any unregistered spec exceeds baseline 0");
+        .ok_or_else(|| "any unregistered spec exceeds baseline 0".to_string())?;
     let newest = format!("RIPR-SPEC-{:04}", UNREGISTERED_SPEC_MESSAGE_LIMIT + 2);
-    assert!(
-        message.contains(&newest),
-        "truncation must keep the newest spec id visible, got {message}"
-    );
-    assert!(
-        !message.contains("RIPR-SPEC-0001 ("),
-        "oldest spec ids should fall into the truncation remainder, got {message}"
-    );
+    if !message.contains(&newest) {
+        return Err(format!(
+            "truncation must keep the newest spec id visible, got {message}"
+        ));
+    }
+    if message.contains("RIPR-SPEC-0001 (") {
+        return Err(format!(
+            "oldest spec ids should fall into the truncation remainder, got {message}"
+        ));
+    }
     let remaining = 2;
-    assert!(
-        message.contains(&format!("and {remaining} more")),
-        "must mark truncated remainder, got {message}"
-    );
+    if !message.contains(&format!("and {remaining} more")) {
+        return Err(format!("must mark truncated remainder, got {message}"));
+    }
+    Ok(())
 }
 
 #[test]
