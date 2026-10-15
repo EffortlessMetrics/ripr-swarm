@@ -34,6 +34,41 @@ fn body(name: &str) -> Result<String, String> {
         .join("\n"))
 }
 
+fn bash_path(
+    configured: Option<std::ffi::OsString>,
+    program_files: Option<std::ffi::OsString>,
+    windows: bool,
+) -> Result<PathBuf, String> {
+    if let Some(path) = configured {
+        return Ok(PathBuf::from(path));
+    }
+    if windows {
+        let root = program_files.filter(|path| !path.is_empty()).ok_or(
+            "ProgramFiles is unavailable; set RIPR_TEST_BASH to the Git for Windows Bash executable",
+        )?;
+        return Ok(PathBuf::from(root).join("Git/bin/bash.exe"));
+    }
+    Ok(PathBuf::from("bash"))
+}
+
+#[test]
+fn bash_resolution_preserves_override_and_standard_install_root() -> Result<(), String> {
+    let configured = PathBuf::from("configured-bash");
+    let root = PathBuf::from("relocated-program-files");
+    assert_eq!(
+        bash_path(Some(configured.clone().into_os_string()), None, true)?,
+        configured
+    );
+    assert_eq!(
+        bash_path(None, Some(root.clone().into_os_string()), true)?,
+        root.join("Git/bin/bash.exe")
+    );
+    assert!(bash_path(None, None, true).is_err());
+    assert!(bash_path(None, Some(std::ffi::OsString::new()), true).is_err());
+    assert_eq!(bash_path(None, None, false)?, PathBuf::from("bash"));
+    Ok(())
+}
+
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Result<Self, String> {
@@ -60,15 +95,11 @@ impl Scratch {
     fn run(&self, script: &str) -> Result<bool, String> {
         let path = self.0.join("replay.sh");
         fs::write(&path, script).map_err(|e| e.to_string())?;
-        let bash = std::env::var_os("RIPR_TEST_BASH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                if cfg!(windows) {
-                    PathBuf::from("C:/Program Files/Git/bin/bash.exe")
-                } else {
-                    PathBuf::from("bash")
-                }
-            });
+        let bash = bash_path(
+            std::env::var_os("RIPR_TEST_BASH"),
+            std::env::var_os("ProgramFiles"),
+            cfg!(windows),
+        )?;
         let output = Command::new(bash)
             .args(["--noprofile", "--norc", "-eo", "pipefail", "replay.sh"])
             .current_dir(&self.0)
