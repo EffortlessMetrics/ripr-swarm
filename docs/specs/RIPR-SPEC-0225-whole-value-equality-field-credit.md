@@ -265,6 +265,43 @@ rejected alternative. Any can be reversed later without touching the rest.
    `weakly_exposed`, which reported a missing discriminator for tests that
    kill both runtime mutants (spec0225-wv-expected-helper,
    spec0225-wv-functional-update-default).
+8. **Literal variant-field patterns (#6578, 2026-10-15).** A pattern
+   assertion (`assert_matches!`, `debug_assert_matches!`, or
+   `assert!(matches!(..))` whose whole condition is the `matches!` call) in
+   a test without `#[should_panic]` also clears `FieldValue` for `f` when its
+   scrutinee is exactly a direct call of the owner (bare or path-qualified,
+   optionally borrowed) whose arguments are all literals, so the test
+   cannot hand the owner a variant value it built, and that settles on the
+   owner under the RIPR-SPEC-0197 same-name call-identity rule (when that
+   rule builds no identity, only a bare or `crate`/`self`/`super` path that
+   the test file does not import from another crate, and only when no
+   other production function shares the owner's name, since
+   `other::owner(..)` may name a foreign namesake and the identity is also
+   absent for layouts it cannot classify); its pattern names the variant of the
+   struct literal holding the changed initializer, with the same last path
+   segment and, when both spell one, the same enclosing segment, exactly
+   once; that group binds `f` to a literal (integer, float, `bool`, `char`
+   or string, never a range); the pattern holds no `|` alternative and no
+   `if` guard; the test body spells no `Name {` head outside its pattern
+   assertions; and the owner's literal is the only `Name {` (or
+   `Name::<`) head for that variant name in the indexed source outside
+   executable test bodies and enum declarations, so the pattern cannot
+   observe a value a helper (test-module helpers included), a `From` impl,
+   a `const` or `static`, a `macro_rules!` body or a same-named variant of
+   another enum built. A production match
+   arm or `if let` spelling the head also counts and refuses (fail-closed);
+   code the index never reads (`include!`, derive or build-script output)
+   and a macro that takes the variant name as a fragment (`$v { .. }`) are
+   outside this rule's evidence. A literal pattern compares by value
+   without `PartialEq`, so rules 3 and 4 do not apply. A wildcard
+   (`f: _`), a binding (`f: p`), a range (`f: 0..5`), `..` without `f`, a
+   guard, an alternative,
+   another variant, a same-named variant of another enum, a scrutinee that
+   is not the owner call (`r`, `owner(..).map(..)`), and `assert_eq!`
+   (governed by rules 1-4) give no pattern credit. Rejected: crediting a
+   pattern that names `f` in any form, which would credit `f: _`
+   (lib-assert-matches-variant-field-pinned moves gap to credited; the
+   `{ .. }`, `pos: _`, guarded and alternative controls stay unconfirmed).
 
 ## Required Evidence
 
@@ -340,6 +377,13 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
 - Public API/runtime: `crates/ripr/tests/whole_value_expected_binding.rs`
   checks exact field/owner identity, independent literal controls, compiling
   field mutations and dependent/shadowed/overwritten expectations.
+- Decision 8: `crates/ripr/tests/variant_field_pattern.rs` (public API:
+  the literal pattern reads `exposed`; open, wildcard, guarded,
+  alternative and range patterns, a variant a helper, `const` or macro
+  also builds, a test-module helper building it, a non-literal call
+  argument and a `#[should_panic]` test do not) and the unit tests in
+  `crates/ripr/src/analysis/classify/variant_field_pattern.rs`; verdict
+  corpus `lib-assert-matches-variant-field-pinned`.
 
 - Existing: `fixtures/observation_verified_field_construction`,
   `fixtures/observation_unverified_field_construction`,
@@ -361,6 +405,8 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
   parser-backed `whole_object_equality`.
 - `crates/ripr/src/analysis/classify/activation.rs`: clear `FieldValue` for a
   named field in an admitted whole-value literal.
+- `crates/ripr/src/analysis/classify/variant_field_pattern.rs`: decision 8's
+  literal variant-field pattern, consumed by `activation.rs`.
 - `crates/ripr/src/analysis/classify/owner_pin/expected_binding.rs`: bounded
   adjacent expected binding admission before the existing literal gates.
 - `crates/ripr/src/analysis/classify/owner_pin.rs`: reuse call identity and

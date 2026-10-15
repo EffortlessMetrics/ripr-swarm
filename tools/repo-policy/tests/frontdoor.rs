@@ -764,3 +764,77 @@ fn executable_frontdoor_rejects_modified_implementation_and_wrong_source() -> Re
     }
     Ok(())
 }
+
+#[test]
+fn workflow_input_reuse_keeps_unbudgeted_nested_yaml_in_scratch_checks() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let baseline = fixture.run("check-workflows")?;
+    assert!(
+        baseline.status.success(),
+        "{}",
+        String::from_utf8_lossy(&baseline.stderr)
+    );
+    let report = fixture.0.join("target/ripr/reports/workflows.md");
+    let original_report = std::fs::read(&report).map_err(|e| e.to_string())?;
+    let nested = fixture.0.join(".github/workflows/nested");
+    std::fs::create_dir(&nested).map_err(|e| e.to_string())?;
+    let path = nested.join("unbudgeted.yaml");
+    std::fs::write(
+        &path,
+        "jobs:\n  bad:\n    steps:\n      - run: find /mnt/ci-scratch -mtime +3 -delete\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let failed = fixture.run("check-workflows")?;
+    assert!(!failed.status.success());
+    let error = String::from_utf8_lossy(&failed.stderr);
+    assert!(
+        error.contains("missing workflow budget for .github/workflows/nested/unbudgeted.yaml"),
+        "{error}"
+    );
+    assert!(
+        error.contains(
+            ".github/workflows/nested/unbudgeted.yaml:4: selects /mnt/ci-scratch entries by age"
+        ),
+        "{error}"
+    );
+    // A non-YAML file must not enter either workflow denominator.
+    std::fs::rename(&path, nested.join("unbudgeted.txt")).map_err(|e| e.to_string())?;
+    let restored = fixture.run("check-workflows")?;
+    assert!(
+        restored.status.success(),
+        "{}",
+        String::from_utf8_lossy(&restored.stderr)
+    );
+    assert_eq!(
+        std::fs::read(report).map_err(|e| e.to_string())?,
+        original_report
+    );
+    Ok(())
+}
+
+#[test]
+fn workflow_input_reuse_propagates_discovery_and_action_read_errors() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let workflows = fixture.0.join(".github/workflows");
+    let saved = fixture.0.join(".github/saved-workflows");
+    std::fs::rename(&workflows, &saved).map_err(|e| e.to_string())?;
+    let output = fixture.run("check-workflows")?;
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("failed to inspect .github/workflows")
+    );
+    std::fs::rename(saved, workflows).map_err(|e| e.to_string())?;
+    let action = fixture
+        .0
+        .join(repo_policy::ci_scratch::SCRATCH_LEASE_ACTION_PATH);
+    let saved = action.with_extension("saved");
+    std::fs::rename(&action, &saved).map_err(|e| e.to_string())?;
+    std::fs::create_dir(&action).map_err(|e| e.to_string())?;
+    let output = fixture.run("check-workflows")?;
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("failed to read .github/actions/ci-scratch-lease/action.yml")
+    );
+    Ok(())
+}

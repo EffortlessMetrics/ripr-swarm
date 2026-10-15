@@ -841,6 +841,16 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             &err,
         ),
         ("assert_eq!(flag.eq(&false), true);", &exact),
+        // #7993 controls: a qualified path call asserted true pins like
+        // `==`, and a doubly negated literal is the literal.
+        (
+            "assert_eq!(<_ as PartialEq>::eq(&r, &Err(E::Bad)), true);",
+            &err,
+        ),
+        ("assert_eq!(Result::eq(&r, &Err(E::Bad)), !&false);", &err),
+        ("assert_eq!(r == Err(E::Bad), !!&true);", &err),
+        // A module named `eq` is not a comparison call.
+        ("assert_eq!(flag ^ helpers::eq::value(), true);", &exact),
         // A relation-only conjunct beside a pinning `==` lends no kind: the
         // pinning conjunct decides it (#7947).
         (
@@ -999,6 +1009,25 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!(matches!(r, Err(E::Bad)) /* c */ .eq(&true), false);",
         "assert_eq!((matches!(r, Err(E::Bad)) /* c */).eq(&true), false);",
         "assert_eq!(matches!(matches!(r, Err(E::Bad)), true).eq(&true), false);",
+        // #7993: qualified-self and type-path calls, and a negated literal
+        // spelling.
+        "assert_eq!(<_ as PartialEq>::eq(&r, &Err(E::Bad)), false);",
+        "assert_eq!(Result::eq(&r, &Err(E::Bad)), false);",
+        "assert_eq!(Result::<u8, E>::eq(&r, &Err(E::Bad)), false);",
+        "assert_eq!(<Result<u8, E> as PartialEq>::ne(&r, &Err(E::Bad)), true);",
+        "assert_eq!(i32::lt(&score(2), &3), true);",
+        "assert_eq!(r == Err(E::Bad), !&true);",
+        "assert_eq!(r == Err(E::Bad), &!true);",
+        "assert_eq!(r == Err(E::Bad), !{ true });",
+        "assert_eq!(!&true, Result::eq(&r, &Err(E::Bad)));",
+        "assert_eq!(flag ^ Result::ne(&r, &Err(E::Bad)), true);",
+        "assert_eq!(Result ::ne(&r, &Err(E::Bad)), true);",
+        "assert_eq!(<_ as PartialEq> :: eq(&r, &Err(E::Bad)), false);",
+        "assert_eq!(C::<{ 2 }>::ne(&r, &Err(E::Bad)), true);",
+        "assert_eq!(C::<{ A > B }>::eq(&r, &Err(E::Bad)), false);",
+        "assert_eq!(Result::eq(&r, &Err(E::Bad)) ^ true, true);",
+        "assert_eq!(flag | <_ as PartialEq>::ne(&r, &Err(E::Bad)), true);",
+        "assert_eq!(matches!(r, Err(E::Bad)).eq(&!true), true);",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
