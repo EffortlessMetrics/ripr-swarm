@@ -58,7 +58,11 @@ mod article_tests {
         // so the narrative templates below stay grammatical. "unknown" starts
         // with a vowel letter; "whole_object_equality" is spelled with a vowel
         // letter but pronounced with a consonant 'w' and takes "a".
-        for kind in [OracleKind::ExactValue, OracleKind::ExactErrorVariant, OracleKind::Unknown] {
+        for kind in [
+            OracleKind::ExactValue,
+            OracleKind::ExactErrorVariant,
+            OracleKind::Unknown,
+        ] {
             assert_eq!(indefinite_article(kind.as_str()), "an", "{kind:?}");
         }
     }
