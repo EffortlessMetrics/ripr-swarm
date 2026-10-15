@@ -936,6 +936,8 @@ tests = [
   "crates/ripr/src/config.rs::tests::config_discovery_stops_at_unresolvable_git_entries",
   "crates/ripr/src/config.rs::tests::config_mode_applies_when_cli_mode_is_not_explicit",
   "crates/ripr/src/config.rs::tests::malformed_or_unknown_config_is_actionable",
+  "crates/ripr/src/config.rs::tests::config_load_parse_error_strips_windows_verbatim_prefix",
+  "crates/ripr/src/config.rs::tests::load_for_root_parse_error_uses_the_human_path_and_keeps_canonical_source_path",
   "crates/ripr/src/config.rs::tests::config_rejects_unsafe_suppression_paths",
   "crates/ripr/src/config.rs::tests::oracle_policy_rewrites_configurable_oracle_strengths",
   "crates/ripr/src/lsp/config.rs::tests::repo_config_sets_defaults_when_initialization_options_are_missing",
