@@ -413,6 +413,19 @@ fn collect_nested_callback_assertions(
             }
             let mut rows = Vec::new();
             for element in &array.elements {
+                // An element naming a top-level primitive `const` declared
+                // before the call reads as that literal.
+                if let Some(Expression::Identifier(ident)) = element
+                    .as_expression()
+                    .map(Expression::get_inner_expression)
+                    && let Some(cell) = context
+                        .literal_consts
+                        .iter()
+                        .find_map(|known| known.row_cell(&ident.name, call.span.start))
+                {
+                    rows.push(vec![cell.to_string()]);
+                    continue;
+                }
                 let Some(cell) = element.as_expression().filter(|cell| is_literal_cell(cell))
                 else {
                     return;

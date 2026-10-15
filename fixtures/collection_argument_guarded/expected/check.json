@@ -1,0 +1,243 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/collection_argument_guarded/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:ec2368d6834347dbc06cad0a87fc37932853b6f1d710514ef0d1f830eca137a4","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:call_deletion:1f64eda5",
+      "canonical_gap_id": "gap:rust:src/lib.rs:add:call_deletion:call_deletion:v.push_x*1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:add:call_deletion:call_deletion:v.push_x*1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "add",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "v.push_x*1"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.84,
+      "probe": {
+        "id": "probe:src_lib.rs:call_deletion:1f64eda5",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 4,
+        "expression": "v.push(x * 1)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach add: records_into_the_bag"},
+        "infect": {"state":"weak","confidence":"medium","summary":"No related test call enters guard `if x > 10`; observed `x` values: `4`"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches state write: v.push(x * 1)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach add: records_into_the_bag", "infection weak: No related test call enters guard `if x > 10`; observed `x` values: `4`", "propagation yes: Complete propagation witness reaches state write: v.push(x * 1)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches state write: v.push(x * 1) (line 4)", "related test src/lib.rs:12 records_into_the_bag uses strong exact value oracle: assert_eq!(b.0, vec![]);", "source function argument value v = 0 at line 14", "source function argument value x = 4 at line 14", "source assertion argument value 0 at line 15", "missing discriminator if x > 10: No related test call enters guard `if x > 10`; observed `x` values: `4`"],
+      "flow_sinks": [
+        {"kind":"state_write","text":"v.push(x * 1)","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches state write: v.push(x * 1)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No related test call enters guard `if x > 10`; observed `x` values: `4`", "Related tests appear to reach add: records_into_the_bag"],
+      "missing": ["Missing discriminator value: if x > 10", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "14": "add(&mut b.0, 4);",
+        "15": "assert_eq!(b.0, vec![]);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 14,
+            "value": "v = 0",
+            "context": "function_argument"
+          },
+          {
+            "line": 14,
+            "value": "x = 4",
+            "context": "function_argument"
+          },
+          {
+            "line": 15,
+            "value": "0",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "if x > 10",
+            "reason": "No related test call enters guard `if x > 10`; observed `x` values: `4`",
+            "flow_sink": {"kind":"state_write","text":"v.push(x * 1)","line":4}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 14,
+          "value": "v = 0",
+          "context": "function_argument"
+        },
+        {
+          "line": 14,
+          "value": "x = 4",
+          "context": "function_argument"
+        },
+        {
+          "line": 15,
+          "value": "0",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "if x > 10",
+          "reason": "No related test call enters guard `if x > 10`; observed `x` values: `4`",
+          "flow_sink": {"kind":"state_write","text":"v.push(x * 1)","line":4}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "records_into_the_bag",
+          "file": "src/lib.rs",
+          "line": 12,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(b.0, vec![]);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "missing_input",
+          "why": "no test input enters `if x > 10`"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Add a related test input that enters `if x > 10`; no related test call runs the changed line, so no assertion can observe it yet.",
+      "suggested_next_action": "Add a related test input that enters `if x > 10`; no related test call runs the changed line, so no assertion can observe it yet.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:side_effect:3ceb2918",
+      "canonical_gap_id": "gap:rust:src/lib.rs:add:side_effect:side_effect:v.push_x*1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:add:side_effect:side_effect:v.push_x*1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "add",
+        "behavior_kind": "side_effect",
+        "probe_kind": "side_effect",
+        "normalized_discriminator": "v.push_x*1"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.84,
+      "probe": {
+        "id": "probe:src_lib.rs:side_effect:3ceb2918",
+        "family": "side_effect",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 4,
+        "expression": "v.push(x * 1)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach add: records_into_the_bag"},
+        "infect": {"state":"weak","confidence":"medium","summary":"No related test call enters guard `if x > 10`; observed `x` values: `4`"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches state write: v.push(x * 1)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach add: records_into_the_bag", "infection weak: No related test call enters guard `if x > 10`; observed `x` values: `4`", "propagation yes: Complete propagation witness reaches state write: v.push(x * 1)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches state write: v.push(x * 1) (line 4)", "related test src/lib.rs:12 records_into_the_bag uses strong exact value oracle: assert_eq!(b.0, vec![]);", "source function argument value v = 0 at line 14", "source function argument value x = 4 at line 14", "source assertion argument value 0 at line 15", "missing discriminator if x > 10: No related test call enters guard `if x > 10`; observed `x` values: `4`"],
+      "flow_sinks": [
+        {"kind":"state_write","text":"v.push(x * 1)","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches state write: v.push(x * 1)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No related test call enters guard `if x > 10`; observed `x` values: `4`", "Related tests appear to reach add: records_into_the_bag"],
+      "missing": ["Missing discriminator value: if x > 10", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "14": "add(&mut b.0, 4);",
+        "15": "assert_eq!(b.0, vec![]);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 14,
+            "value": "v = 0",
+            "context": "function_argument"
+          },
+          {
+            "line": 14,
+            "value": "x = 4",
+            "context": "function_argument"
+          },
+          {
+            "line": 15,
+            "value": "0",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "if x > 10",
+            "reason": "No related test call enters guard `if x > 10`; observed `x` values: `4`",
+            "flow_sink": {"kind":"state_write","text":"v.push(x * 1)","line":4}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 14,
+          "value": "v = 0",
+          "context": "function_argument"
+        },
+        {
+          "line": 14,
+          "value": "x = 4",
+          "context": "function_argument"
+        },
+        {
+          "line": 15,
+          "value": "0",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "if x > 10",
+          "reason": "No related test call enters guard `if x > 10`; observed `x` values: `4`",
+          "flow_sink": {"kind":"state_write","text":"v.push(x * 1)","line":4}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "records_into_the_bag",
+          "file": "src/lib.rs",
+          "line": 12,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(b.0, vec![]);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "missing_input",
+          "why": "no test input enters `if x > 10`"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Add a related test input that enters `if x > 10`; no related test call runs the changed line, so no assertion can observe it yet.",
+      "suggested_next_action": "Add a related test input that enters `if x > 10`; no related test call runs the changed line, so no assertion can observe it yet.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

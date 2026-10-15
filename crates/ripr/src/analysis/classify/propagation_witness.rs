@@ -10,6 +10,9 @@ use crate::domain::{FlowSinkFact, FlowSinkKind, Probe, ProbeFamily, SymbolId};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod collection_argument;
+pub(in crate::analysis) use collection_argument::assertion_observes_collection_argument;
+
 const SCHEMA_VERSION: u16 = 1;
 
 /// A versioned internal witness.  This type is intentionally scoped to the

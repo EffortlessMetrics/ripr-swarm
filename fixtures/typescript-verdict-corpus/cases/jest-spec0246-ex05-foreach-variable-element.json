@@ -9,7 +9,7 @@
   "edit_kind": "behavior_change",
   "behavior_family": "arithmetic_constant",
   "test_shape": "jest_foreach_array_with_variable_element",
-  "hard_case": "the inline array holds the variable `n`, so the rule-2 reader collects no assertion although the callback runs and fails",
+  "hard_case": "the inline array holds the variable `n`, a top-level primitive `const` the rule-2 reader must resolve to its literal to read both cases",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "`return amount - 10` becomes `return amount - 20`. The test declares `const n = 150` and runs `[150, n].forEach((v) => { expect(capPriceVar(v)).toBe(140); })`; the callback runs for both elements and `capPriceVar(150)` returns 130, so the test fails. RIPR-SPEC-0246 example 5: an array holding a non-literal element collects no assertion. ripr reads no oracle in the test (`unknown`) and reports `weakly_exposed`, as the spec states; against the discriminated truth that is a false actionable gap the spec accepts.",
+  "reasoning": "`return amount - 10` becomes `return amount - 20`. The test declares `const n = 150` and runs `[150, n].forEach((v) => { expect(capPriceVar(v)).toBe(140); })`; the callback runs for both elements and `capPriceVar(150)` returns 130, so the test fails. RIPR-SPEC-0246 example 5 (amended 2026-10-14): an element naming a top-level primitive `const` declared before the call reads as its literal, so both cases are collected and ripr reports `exposed`.",
   "labeling_observation": {
     "ripr_commit": "3480fb2",
     "full_checkout_verdict": "gap",

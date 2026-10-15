@@ -19435,3 +19435,76 @@ fn asserted_token_affinity_alone_does_not_reach_a_function_owner() -> Result<(),
     assert_eq!(class, SeamGripClass::Ungripped);
     Ok(())
 }
+
+/// #7966: the real fixture's manifest/source authority survives observation
+/// binding, and both detailed and compact producers keep the same decision.
+#[test]
+fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), String> {
+    for (case, expected) in [
+        ("tuple", StageState::Yes),
+        ("named", StageState::Yes),
+        ("plain", StageState::Yes),
+        ("wrong_field", StageState::Weak),
+        ("wrong_receiver", StageState::Weak),
+        ("rebound", StageState::Weak),
+        ("mutated", StageState::Weak),
+        ("raw_mutated", StageState::Weak),
+        ("raw_rebound", StageState::Weak),
+        ("alias", StageState::Weak),
+        ("ambiguous", StageState::Weak),
+        ("guarded", StageState::Weak),
+        ("unrelated", StageState::Weak),
+        ("computed_expected", StageState::Weak),
+        ("custom_equality", StageState::Weak),
+        ("coerced_equality", StageState::Weak),
+        ("constructor_shadow", StageState::Weak),
+        ("qualified_vec", StageState::Yes),
+        ("root_shadow", StageState::Weak),
+        ("raw_type_alias", StageState::Weak),
+        ("raw_imported_vec", StageState::Weak),
+        ("imported_constructor", StageState::Weak),
+        ("macro_constructor", StageState::Weak),
+        ("proc_constructor", StageState::Weak),
+    ] {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../fixtures/collection_argument_{case}/input"));
+        let file = PathBuf::from("src/lib.rs");
+        let index = build_index(&root, std::slice::from_ref(&file))?;
+        let seams = inventory_seams_from_index(std::slice::from_ref(&file), &index);
+        let seam = seams
+            .iter()
+            .find(|seam| {
+                seam.kind() == SeamKind::SideEffect
+                    && seam.expression().trim().trim_end_matches(';') == "v.push(x * 1)"
+            })
+            .ok_or_else(|| format!("{case}: missing actual push seam"))?;
+        let evidence = evidence_for_seam(seam, &index);
+        // Negative fixtures still contain a strong literal equality. It must
+        // never become a matching collection oracle through another projection.
+        assert_eq!(
+            evidence.discriminate.state, expected,
+            "{case}: {evidence:?}"
+        );
+        assert_eq!(evidence.related_tests.len(), 1, "{case}");
+        let related = &evidence.related_tests[0];
+        let target = related
+            .test_target
+            .as_ref()
+            .ok_or_else(|| format!("{case}: indexed test target was lost"))?;
+        assert_eq!(
+            target.symbol_id().0,
+            "src/lib.rs::tests::records_into_the_bag",
+            "{case}"
+        );
+        assert_eq!(target.file(), Path::new("src/lib.rs"), "{case}");
+        assert_eq!(target.test_kind(), TestKind::InlineUnit, "{case}");
+        assert_eq!(target.relation(), RelationReason::DirectOwnerCall, "{case}");
+        let context = CompactGripContext::new(&index);
+        let compact = compact_evidence_for_seam(seam, &context);
+        assert_eq!(
+            compact.discriminate.state, expected,
+            "{case}: compact consumer"
+        );
+    }
+    Ok(())
+}

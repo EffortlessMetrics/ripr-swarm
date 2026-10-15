@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-bool-method-inequality",
+  "origin": "authored",
+  "version_label": "authored 2026-10-14 for #7931 (RIPR-SPEC-0231 rule 1: a comparison spelled as a method reads like its operator)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "2ec0204091b53d2b27878f0e16f4e3fbb2923358ef85a0648cdcbc30099b92b6"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "44accef1b347cb8914ef1869b33f1528af4a8278eeb15e356d953cfe025948b7"
+    }
+  ]
+}

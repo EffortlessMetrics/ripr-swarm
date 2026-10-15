@@ -105,7 +105,16 @@ assertions are collected as the test's own:
   literals (the RIPR-SPEC-0243 rule 11 literal set), each on one line,
   and a callback that is neither `async` nor a generator, with exactly
   one plain parameter. Each element reads as one case, the body with `v`
-  replaced by the element, exactly as a rule 11 table row. A synchronous
+  replaced by the element, exactly as a rule 11 table row. An element may
+  instead name a `const` that the enclosing test or callback body declares
+  once at its own top level, before the call, as one of the RIPR-SPEC-0247
+  rule 2 literal `const`s whose literal is also a rule 11 cell on one line;
+  it reads as that literal. That excludes `0`, `1`, booleans, `null`,
+  `undefined`, bigints and numeric or empty strings, which rule 2 does not
+  pin, and templates, which are no cell. A `let` or `var`, an object or
+  call value, a later declaration, or a name redeclared in a nested block
+  reads as a non-literal element.
+  (Added 2026-10-14.) A synchronous
   `return expect(...)` still runs and is collected, but a promise returned
   from the body does not reach the runner, because `forEach` discards it,
   so a `.then` returned there is not collected.
@@ -265,8 +274,11 @@ and the rejected alternative.
    before rule 3).
 4. `[150, 200].forEach((v) => { expect(price(v)).toBe(140); })`: two
    assertions, observing `price(150)` and `price(200)`.
-5. `cases.forEach(...)`, `[150, n].forEach(...)` or `[].forEach(...)`: no
-   assertion.
+5. `cases.forEach(...)`, `[].forEach(...)`, or `[150, n].forEach(...)`
+   where `n` is a `let`, a non-literal, or not declared before the call at
+   the test's top level: no assertion. With `const n = 200;` earlier at the
+   top level, `[150, n].forEach(...)` reads two assertions, observing
+   `price(150)` and `price(200)`.
 6. `return total([10, 20]).then((sum) => { expect(sum).toBe(30); })`: one
    assertion observing `(total([10, 20]))`.
 7. `total([10, 20]).then(...)` as a bare statement, with a rejection
@@ -324,6 +336,9 @@ and the rejected alternative.
   `ts_owner_call_member_arguments` (rule 3).
 - `crates/ripr/src/analysis/language/typescript/table_rows.rs`:
   `callback_case_assertions`, shared with RIPR-SPEC-0243 rule 11.
+- `crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs`:
+  `LooseLiteralConst::row_cell` (rule 2, a `forEach` element naming a
+  literal `const`).
 
 ## Metrics
 

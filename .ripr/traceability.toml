@@ -891,6 +891,7 @@ id = "RIPR-SPEC-0007"
 name = "repository configuration"
 spec = "docs/specs/RIPR-SPEC-0007-repository-configuration.md"
 tests = [
+  "crates/ripr/tests/default_suppression_disclosure.rs",
   "crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_owner",
   "crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_expiry",
   "crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_header",
@@ -7305,6 +7306,11 @@ id = "RIPR-SPEC-0094"
 name = "observation_unverified guard generalization"
 spec = "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md"
 tests = [
+  "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs::plain_test_gate_excludes_conditional_attribute_expansion",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::field_projected_collection_repo_seam_retains_indexed_target",
+  "crates/ripr/src/analysis/classify/propagation_witness/collection_argument.rs::tests::field_argument_observer_retains_withheld_macro_authority",
+  "crates/ripr/tests/owner_pin_execution/field_projected_collection.rs::field_projected_collection_public_check_pins_exact_observation",
+  "crates/ripr/tests/owner_pin_execution/field_projected_collection.rs::field_projected_collection_compiling_behavioral_mutants",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::strongest_oracle_cannot_borrow_weaker_assertion_confirmation",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::equally_strong_confirmed_oracle_preserves_discrimination_in_either_order",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::return_value_family_match_only_without_token_downgrades_discriminate_to_weak",
@@ -7356,6 +7362,30 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::a_refused_effect_carrier_withholds_only_the_whole_object_observer"
 ]
 fixtures = [
+  "fixtures/collection_argument_imported_constructor",
+  "fixtures/collection_argument_macro_constructor",
+  "fixtures/collection_argument_proc_constructor",
+  "fixtures/collection_argument_raw_imported_vec",
+  "fixtures/collection_argument_raw_type_alias",
+  "fixtures/collection_argument_root_shadow",
+  "fixtures/collection_argument_alias",
+  "fixtures/collection_argument_ambiguous",
+  "fixtures/collection_argument_coerced_equality",
+  "fixtures/collection_argument_computed_expected",
+  "fixtures/collection_argument_constructor_shadow",
+  "fixtures/collection_argument_custom_equality",
+  "fixtures/collection_argument_guarded",
+  "fixtures/collection_argument_mutated",
+  "fixtures/collection_argument_named",
+  "fixtures/collection_argument_plain",
+  "fixtures/collection_argument_qualified_vec",
+  "fixtures/collection_argument_raw_mutated",
+  "fixtures/collection_argument_raw_rebound",
+  "fixtures/collection_argument_rebound",
+  "fixtures/collection_argument_tuple",
+  "fixtures/collection_argument_unrelated",
+  "fixtures/collection_argument_wrong_field",
+  "fixtures/collection_argument_wrong_receiver",
   "fixtures/benches_harness_evidence",
   "fixtures/oracle_confirmation_mixed",
   "fixtures/owner_parameter_token_coincidence",
@@ -7376,6 +7406,8 @@ fixtures = [
   "fixtures/match_arm_type_token_blind"
 ]
 code = [
+  "crates/ripr/src/analysis/classify/propagation_witness/collection_argument.rs",
+  "crates/ripr/src/analysis/facts/cfg_predicates.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classifier.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",
@@ -10385,6 +10417,7 @@ id = "RIPR-SPEC-0153"
 name = "Rust producer-owned source role"
 spec = "docs/specs/RIPR-SPEC-0153-rust-source-role.md"
 tests = [
+  "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs::plain_test_gate_excludes_conditional_attribute_expansion",
   "crates/ripr/tests/cache_clear_safety.rs::classified_cache_cargo_config_edit_revert_rename_delete_matches_cold",
   "crates/ripr/tests/cache_clear_safety.rs::classified_cache_saved_test_edit_revert_rename_delete_matches_cold",
   "crates/ripr/tests/cache_clear_safety.rs::compact_classified_cache_cargo_config_change_matches_cold_and_preserves_revert_hit",
