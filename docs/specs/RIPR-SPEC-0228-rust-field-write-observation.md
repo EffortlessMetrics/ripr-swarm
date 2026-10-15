@@ -63,7 +63,10 @@ fn bumps() {
 The parser emits no shape for assignments or compound assignments: a binary
 expression counts only for predicate operators (`analysis/syntax/ra.rs`). The
 lexical fallback needs a `:` without `::` to call a line a field
-(`analysis/probes/lexical.rs`, `has_field_shape`); it reads that colon outside strings and comments only. So the line becomes a
+(`analysis/probes/lexical.rs`, `has_field_shape`). It masks strings and
+comments on the changed line's own text first; masking is per line, so a
+line inside a multi-line string or block comment, or one that starts
+inside a string, is still read as code (#8013). So the line becomes a
 `static_unknown` probe and the finding reads `static_unknown` with stop
 reason `static_probe_unknown` and no `static_limit_kind`
 (`analysis/classify/decision.rs`).

@@ -1,4 +1,4 @@
-use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::extract::{mask_comments_and_strings, mask_with_string_delimiter_quotes};
 use crate::domain::ProbeFamily;
 
 pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
@@ -592,9 +592,17 @@ fn has_field_shape(text: &str) -> bool {
         return initializer.is_some_and(|scan| scan.contains(':') && !scan.contains("::"));
     }
     // #6578: a colon inside a string or comment is data, not a field
-    // (`out += &format!("{:<8}{:>6}\n", ..)` constructs nothing).
-    let masked = mask_comments_and_strings(text);
-    masked.contains(':') && !masked.contains("::") && !is_function_signature(text)
+    // (`out += &format!("{:<8}{:>6}\n", ..)` constructs nothing). A line
+    // with an odd number of string delimiters may start inside a string
+    // (`tail", count: 3 }`), where masking would hide a real field, so it
+    // keeps the raw reading (#8013).
+    let (masked, quotes) = mask_with_string_delimiter_quotes(text);
+    let scan = if quotes % 2 == 0 {
+        masked.as_str()
+    } else {
+        text
+    };
+    scan.contains(':') && !scan.contains("::") && !is_function_signature(text)
 }
 
 /// For a `let` statement line, the comment/string-masked initializer after
@@ -832,6 +840,10 @@ mod tests {
         for text in [
             "Line { label: \"tea: green\".into(), cents }",
             "total: format!(\"{:>6}\", cents),",
+            // A fragment that starts inside a multi-line string (#8013).
+            "tail\", count: 3 }",
+            // A `::` inside a string no longer hides a real field.
+            "Route { path: \"a::b\" }",
         ] {
             let families = classify_changed_line(text);
             assert!(
