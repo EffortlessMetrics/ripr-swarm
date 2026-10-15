@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The human render no longer stacks two colons on labelled lines: the per-language changed-file breakdown uses `=` for its key/value pairs ("Changed file(s) by language: javascript = 1."), and a finding next-step value that carries its own leading label ("TypeScript preview advisory: ...", "Static limit ...") renders under a dash instead of a second colon ("Next step — TypeScript preview advisory: ...") (#7755).

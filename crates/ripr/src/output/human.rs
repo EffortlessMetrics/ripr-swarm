@@ -467,7 +467,9 @@ fn render_language_file_breakdown(out: &mut String, output: &CheckOutput) {
     let parts = counts
         .iter()
         .filter(|count| count.files > 0)
-        .map(|count| format!("{}: {}", count.language, count.files))
+        // #7755: `=` keeps the key/value boundary readable without a second
+        // colon under the "Changed file(s) by language:" field label.
+        .map(|count| format!("{} = {}", count.language, count.files))
         .collect::<Vec<_>>()
         .join(", ");
     out.push_str(&format!("Changed file(s) by language: {parts}.\n\n"));
@@ -2448,7 +2450,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("Changed file(s) by language: python: 5, rust: 1."),
+            rendered.contains("Changed file(s) by language: python = 5, rust = 1."),
             "expected per-language breakdown line; got:\n{rendered}"
         );
 
@@ -2457,7 +2459,7 @@ mod tests {
         python_only.summary.changed_files_by_language[1].files = 0;
         let rendered = render(&python_only);
         assert!(
-            rendered.contains("Changed file(s) by language: python: 5.\n"),
+            rendered.contains("Changed file(s) by language: python = 5.\n"),
             "zero-count languages are omitted; got:\n{rendered}"
         );
     }

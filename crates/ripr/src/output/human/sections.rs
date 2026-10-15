@@ -26,6 +26,24 @@ use unicode_width::UnicodeWidthStr;
 use super::evidence_lines::{JsonPointerWording, evidence_path_lines, weakness_lines};
 use super::{is_wrappable_advisory_prose, wrap_human_prose};
 
+/// #7755: field label for the finding's next-step line. Producer text that
+/// opens with its own "Label:" prefix stacked under "Next step: " reads as a
+/// parse error ("Next step: TypeScript preview advisory: ..."), so a value
+/// carrying a short leading label renders with a dash; plain text keeps the
+/// colon.
+fn next_step_prefix(step: &str) -> &'static str {
+    const NEXT_STEP_PREFIX: &str = "  Next step: ";
+    const NEXT_STEP_NESTED_PREFIX: &str = "  Next step — ";
+    // A leading producer label never runs past ~40 characters
+    // ("TypeScript preview advisory", "Static limit `unsupported_syntax`");
+    // a later sentence colon is prose, not a label, and keeps the colon form.
+    const NESTED_LABEL_MAX: usize = 45;
+    match step.find(": ") {
+        Some(idx) if idx <= NESTED_LABEL_MAX => NEXT_STEP_NESTED_PREFIX,
+        _ => NEXT_STEP_PREFIX,
+    }
+}
+
 pub(crate) fn render_finding_digest_with_config(
     finding: &Finding,
     config: &RiprConfig,
@@ -169,12 +187,12 @@ pub(crate) fn render_finding_digest_with_config(
         // ends with the imperative, so a hard cut deletes the remedy. Text
         // that fits the line budget keeps its single line.
         let next_step = reconcile_next_step(finding);
-        const NEXT_STEP_PREFIX: &str = "  Next step: ";
+        let prefix = next_step_prefix(&next_step);
         let collapsed = next_step.split_whitespace().collect::<Vec<_>>().join(" ");
-        if NEXT_STEP_PREFIX.chars().count() + collapsed.chars().count() <= LINE_BUDGET {
-            out.push_str(&format!("{NEXT_STEP_PREFIX}{collapsed}\n"));
+        if prefix.chars().count() + collapsed.chars().count() <= LINE_BUDGET {
+            out.push_str(&format!("{prefix}{collapsed}\n"));
         } else {
-            out.push_str(&wrap_human_prose(&collapsed, NEXT_STEP_PREFIX, "    "));
+            out.push_str(&wrap_human_prose(&collapsed, prefix, "    "));
             out.push('\n');
         }
     }
@@ -1434,6 +1452,38 @@ mod classification_hint_tests {
             hint.as_deref(),
             Some(crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_SENTENCE)
         );
+    }
+}
+
+#[cfg(test)]
+mod next_step_prefix_tests {
+    use super::next_step_prefix;
+
+    #[test]
+    fn nested_producer_label_renders_with_dash() {
+        // #7755: "Next step: TypeScript preview advisory: ..." stacks two colons.
+        assert_eq!(
+            next_step_prefix("TypeScript preview advisory: changed behavior is observed"),
+            "  Next step — "
+        );
+        assert_eq!(
+            next_step_prefix("Static limit `unsupported_syntax`: malformed input"),
+            "  Next step — "
+        );
+    }
+
+    #[test]
+    fn plain_prose_and_late_colon_keep_the_colon_form() {
+        assert_eq!(
+            next_step_prefix("add a co-located test that reaches the changed behavior"),
+            "  Next step: "
+        );
+        // A colon deep in the sentence is prose, not a leading label.
+        let late = format!(
+            "verify the assertion observes the boundary: {}",
+            "word ".repeat(12)
+        );
+        assert_eq!(next_step_prefix(&late), "  Next step: ");
     }
 }
 
