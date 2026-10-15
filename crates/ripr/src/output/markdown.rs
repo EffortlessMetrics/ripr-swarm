@@ -244,9 +244,10 @@ pub(crate) enum PowershellForm {
     Unavailable,
 }
 
-/// Classify [`powershell_command`]'s result for one Bash command. Every
-/// generated-command surface prints a PowerShell form only for
-/// `Translated`, so the choice is made here once.
+/// Classify [`powershell_command`]'s result for one Bash command. Fenced
+/// surfaces and plain-text [`powershell_text_variant`] both consume this
+/// tri-state: a translated line, silence when the command is identical, and
+/// [`POWERSHELL_UNAVAILABLE_DISCLOSURE`] when no honest translation exists.
 pub(crate) fn powershell_form(command: &str) -> PowershellForm {
     match powershell_command(command) {
         None => PowershellForm::Unavailable,
@@ -892,15 +893,21 @@ fn powershell_literal(value: &str) -> String {
 }
 
 /// The PowerShell form of one generated command for plain-text surfaces, which
-/// print a bash command with no fenced PowerShell block. `Some` only when
-/// PowerShell needs a different line (an apostrophe or typographic quote in a
-/// path or ref, a `>` redirect); a command that runs unchanged, or has no
-/// honest translation, prints nothing extra. Same translation as the fenced
-/// surfaces ([`powershell_form`]); no second quoting implementation.
+/// print a bash command with no fenced PowerShell block. Same translation as
+/// the fenced surfaces ([`powershell_form`]); no second quoting implementation.
+///
+/// - `Some(translated)` when PowerShell needs a different line (an apostrophe
+///   or typographic single quote in a path or ref, a `>` redirect).
+/// - `None` when the command runs unchanged (`SameAsBash`): print nothing extra
+///   so ordinary output stays byte-identical.
+/// - `Some(POWERSHELL_UNAVAILABLE_DISCLOSURE)` when no honest translation
+///   exists. Callers prefix `(PowerShell)` the same way they prefix a
+///   translated line, so a PowerShell reader is not left with silent Bash.
 pub(crate) fn powershell_text_variant(command: &str) -> Option<String> {
     match powershell_form(command) {
         PowershellForm::Translated(line) => Some(line),
-        PowershellForm::SameAsBash | PowershellForm::Unavailable => None,
+        PowershellForm::Unavailable => Some(POWERSHELL_UNAVAILABLE_DISCLOSURE.to_string()),
+        PowershellForm::SameAsBash => None,
     }
 }
 
@@ -1977,15 +1984,25 @@ fn main() -> ExitCode {
         assert_eq!(powershell_command("echo ’ab"), None);
     }
 
-    /// Plain-text surfaces print the PowerShell form only when it differs.
+    /// Plain-text surfaces print a translated line, stay silent when the
+    /// command is the same, and print the shared disclosure when no honest
+    /// translation exists. Collapsing the last two into `None` is the #5422
+    /// defect: a PowerShell reader then gets Bash with no warning.
     #[test]
-    fn powershell_text_variant_prints_only_a_different_form() {
+    fn powershell_text_variant_distinguishes_translated_same_and_unavailable() {
         assert_eq!(powershell_text_variant("ripr check --root 'a b'"), None);
         assert_eq!(
             powershell_text_variant("ripr check --root 'it'\\''s'").as_deref(),
             Some("ripr check --root 'it''s'")
         );
-        assert_eq!(powershell_text_variant("a && b"), None);
+        assert_eq!(
+            powershell_text_variant("a && b").as_deref(),
+            Some(POWERSHELL_UNAVAILABLE_DISCLOSURE)
+        );
+        assert_eq!(
+            powershell_text_variant("echo \"a\u{201c}b\"").as_deref(),
+            Some(POWERSHELL_UNAVAILABLE_DISCLOSURE)
+        );
     }
 
     /// Run `line` in a real `pwsh` with a `ripr` function that records its

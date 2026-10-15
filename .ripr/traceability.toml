@@ -4963,6 +4963,7 @@ tests = [
   "crates/ripr/tests/printed_command_paste.rs::extract_text_pairs_empty_rest_powershell_label_with_the_next_line",
   "crates/ripr/tests/printed_command_paste.rs::extract_text_empty_rest_guard_does_not_consume_the_next_bash_command",
   "crates/ripr/tests/printed_command_paste.rs::extract_text_does_not_pair_powershell_text_inside_a_bash_code_span",
+  "crates/ripr/tests/printed_command_paste.rs::extract_text_marks_unavailable_powershell_disclosure_and_does_not_paste_it",
   "crates/ripr/tests/generated_review_workflow.rs::recovery_ref_quoting_accepts_adjacent_and_refspec_forms",
   "crates/ripr/tests/generated_review_workflow.rs::odd_unterminated_quote_before_unquoted_hostile_ref_is_not_quoted",
   "crates/ripr/src/output/first_pr/rendering.rs::tests::preflight_recovery_preserves_markdown_backticks_and_discloses_unsupported_forms",
@@ -5853,6 +5854,11 @@ id = "RIPR-SPEC-0062"
 name = "Cross-language oracle graph"
 spec = "docs/specs/RIPR-SPEC-0062-cross-language-oracle-graph.md"
 tests = [
+  # FFI attribute literal/trivia/raw-identifier regressions: #8090.
+  "crates/ripr/tests/ffi_attribute_literals.rs::raw_doc_string_cannot_invent_a_binding_attribute",
+  "crates/ripr/tests/ffi_attribute_literals.rs::raw_doc_string_cannot_hide_a_real_binding_attribute",
+  "crates/ripr/tests/ffi_attribute_literals.rs::comment_cannot_invent_a_binding_attribute",
+  "crates/ripr/tests/ffi_attribute_literals.rs::attribute_paths_ignore_trivia_and_normalize_raw_identifiers",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::changed_rust_blob_boundary_projects_ts_discriminated_cross_language_grip",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::changed_rust_blob_boundary_projects_missing_resizable_cross_language_grip",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::changed_rust_blob_boundary_with_unknown_bridge_stays_limitation",
@@ -5879,6 +5885,7 @@ tests = [
   "crates/ripr/src/analysis/syntax/ra.rs::tests::impl_block_attrs_are_kept_apart_from_the_method_attrs",
 ]
 fixtures = [
+  "fixtures/rust_ffi_attribute_literals",
   "fixtures/benches_harness_evidence",
   "fixtures/typescript-bun-ub-calibration",
   "fixtures/cross-language-oracle-graph-corpus",
@@ -5899,6 +5906,8 @@ code = [
   "xtask/src/reports/mod.rs",
 ]
 outputs = [
+  "fixtures/rust_ffi_attribute_literals/expected/check.json",
+  "fixtures/rust_ffi_attribute_literals/expected/human.txt",
   "docs/specs/RIPR-SPEC-0062-cross-language-oracle-graph.md",
   "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md",
   "docs/specs/RIPR-SPEC-0061-lane1-canonical-actionability-contract.md",
@@ -7655,6 +7664,8 @@ id = "RIPR-SPEC-0099"
 name = "TypeScript tsconfig.json path-alias resolution"
 spec = "docs/specs/RIPR-SPEC-0099-typescript-tsconfig-path-aliases.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::jsonc_line_comment_endings_preserve_alias_resolution",
+  "crates/ripr/src/analysis/language/typescript/tsconfig/out_dir_tests.rs::jsonc_line_comment_endings_preserve_out_dir_resolution",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::tsconfig_alias_resolution_flag_on_credits_test_as_exposed",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::tsconfig_alias_resolution_multi_entry_value_fails_closed",
@@ -12532,6 +12543,9 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_short_circuit_tail_pins_only_on_a_call_that_runs_every_operand",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_short_circuit_tail_refuses_impure_or_mixed_chains",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_short_circuit_tail_refuses_a_body_with_earlier_statements",
+  "crates/ripr/tests/assertion_helper_credit.rs::returned_helper_panic_assertion_exposes_even_when_result_is_discarded",
+  "crates/ripr/tests/assertion_helper_credit.rs::returned_helper_keeps_execution_binding_and_value_refusals",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::returned_helpers_lend_the_indexed_panic_assertion_and_exact_loan",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_short_circuit_table_column_counts_only_inside_its_loop",
   "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::a_short_circuit_tail_reads_helper_calls_by_parameter",
   "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::reads_homogeneous_comparison_chains_over_parameters",
@@ -14760,6 +14774,7 @@ fixtures = [
   "fixtures/inequality_assertion_not_exact",
   "fixtures/inequality_struct_assertion_not_exact",
   "fixtures/bool_compared_inequality_not_exact",
+  "fixtures/test_compared_with_non_literal_not_exact",
 ]
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",

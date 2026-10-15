@@ -851,6 +851,18 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         ("assert_eq!(r == Err(E::Bad), !!&true);", &err),
         // A module named `eq` is not a comparison call.
         ("assert_eq!(flag ^ helpers::eq::value(), true);", &exact),
+        // #8006 controls: a pattern in a closure or read call keeps its
+        // reading, and a bool value compared with a non-literal pins it.
+        (
+            "assert!(xs.iter().any(|x| { matches!(x, Some(3)) }));",
+            &exact,
+        ),
+        ("assert!(foo(matches!(x, A)).is_ok());", &exact),
+        ("assert_eq!(is_valid(x), expected);", &exact),
+        ("assert_eq!(xs.iter().any(|x| *x == 1), expected);", &exact),
+        // A bitwise `&` over plain values pins a value (review of 49bc452).
+        ("assert_eq!(flags & MASK, 0);", &exact),
+        ("assert_eq!(flags & Flags::A, Flags::A);", &exact),
         // A relation-only conjunct beside a pinning `==` lends no kind: the
         // pinning conjunct decides it (#7947).
         (
@@ -1028,6 +1040,26 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!(Result::eq(&r, &Err(E::Bad)) ^ true, true);",
         "assert_eq!(flag | <_ as PartialEq>::ne(&r, &Err(E::Bad)), true);",
         "assert_eq!(matches!(r, Err(E::Bad)).eq(&!true), true);",
+        // #8006: a negation of the whole condition through a tuple, array,
+        // `Option`, block or group; a block under `^` or `|`; and a test
+        // compared with a side that is no boolean literal.
+        "assert!((matches!(r, Err(E::Bad)),).0.eq(&false));",
+        "assert!([matches!(r, Err(E::Bad))][0].eq(&false));",
+        "assert!(Some(matches!(r, Err(E::Bad))).unwrap().not());",
+        "assert!(!{ matches!(r, Err(E::Bad)) });",
+        "assert!(!(flag || matches!(r, Err(E::Bad))));",
+        "assert!(!(flag && matches!(r, Err(E::Bad))));",
+        "assert!(flag ^ { matches!(r, Err(E::Bad)) });",
+        "assert!(flag | { matches!(r, Err(E::Bad)) });",
+        "assert_eq!(matches!(r, Err(E::Bad)).eq(&true), expected);",
+        "assert_eq!(!matches!(r, Err(E::Bad)).eq(&true), expected);",
+        "assert_eq!(r == Err(E::Bad), expected);",
+        "assert!(expected == (r == Err(E::Bad)));",
+        "assert_eq!((r == Err(E::Bad)) ^ flag, expected);",
+        "assert_eq!(flag | (r == Err(E::Bad)), expected);",
+        "assert!((r == Err(E::Bad)) == expected);",
+        "assert_eq!(matches!(r, Err(E::Bad)) & flag, expected);",
+        "assert_eq!(flag & (r == Err(E::Bad)), expected);",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
