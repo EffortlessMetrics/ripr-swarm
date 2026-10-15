@@ -143,16 +143,16 @@ documented decisions and proceed"). Recorded on #6654.
   and escapes (#7497, landed): a member, bracket or non-null-bracket
   write, a bare rebinding, `++`/`--`, a compound assignment, `delete`,
   and an escape through any non-assertion call (`fix(bo)`,
-  `this.fix(bo)`, `fix<Profile>(bo)`, computed `Object["assign"](bo,
-  ...)`, a parenthesized callee) withhold the whole-result credit for the
-  local — for `toMatchObject` and for `toEqual` through the shared
-  whole-result reader. Residuals: the scan is position-blind (a write
-  anywhere in the body refuses the credit, including after the assertion
-  — fail-closed, because hoisted declarations make textual order
-  unsound); an aliased `expect` import stays withheld; a non-assertion
-  call that shares an assertion matcher's name is still credited;
-  bracket-spelled assertions (`assert["deepEqual"](bo, ...)`) are
-  refused; destructuring-target writes (`[bo.x] = ...`) and
+  `this.fix(bo)`, `fix<Profile>(bo)`, a computed callee spelled
+  `Object["assign"]`, or a parenthesized callee) withhold the
+  whole-result credit for the local — for `toMatchObject` and for
+  `toEqual` through the shared whole-result reader. Residuals: the scan
+  is position-blind (a write anywhere in the body refuses the credit,
+  including after the assertion — fail-closed, because hoisted
+  declarations make textual order unsound); an aliased `expect` import
+  stays withheld; a non-assertion call that shares an assertion matcher's
+  name is still credited; bracket-spelled assertions (`assert["deepEqual"]`)
+  are refused; destructuring-target writes (`[bo.x] = ...`) and
   `for (bo.x of ...)` rebinding are not modeled.
 
 ## Required Evidence
