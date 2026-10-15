@@ -152,9 +152,9 @@ fn detect_python_test_framework_recognizes_from_pytest_import() -> Result<(), St
 #[test]
 fn detect_python_test_framework_prefers_config_markers_over_unittest_imports() -> Result<(), String>
 {
-    // Config-file detection stays first (#7662): a pytest.ini repo that also
-    // has unittest imports is still pytest, matching doctor/check agreement
-    // on marker-backed pytest projects.
+    // Primary-of-set stays pytest (#7662): a pytest.ini repo that also has
+    // unittest imports still returns pytest from the singular detector so
+    // adapter repo-input does not flip. The full set is #7664.
     let root = unique_test_root("config-first");
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     std::fs::write(root.join("pytest.ini"), "[pytest]\n")
@@ -165,6 +165,69 @@ fn detect_python_test_framework_prefers_config_markers_over_unittest_imports() -
     )
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_reports_both_on_mixed_import_evidence() -> Result<(), String> {
+    // #7664: zero-config mixed imports must not collapse to a single winner.
+    let root = unique_test_root("mixed-imports");
+    let tests_dir = root.join("tests");
+    std::fs::create_dir_all(&tests_dir).map_err(|err| format!("create tests dir: {err}"))?;
+    std::fs::write(
+        tests_dir.join("test_pytest_style.py"),
+        "import pytest\n\ndef test_multiply():\n    assert 2 * 3 == 6\n",
+    )
+    .map_err(|err| format!("write pytest file: {err}"))?;
+    std::fs::write(
+        tests_dir.join("test_unit_style.py"),
+        "import unittest\n\nclass TestClamp(unittest.TestCase):\n    def test_clamp_lower(self):\n        self.assertEqual(1, 1)\n",
+    )
+    .map_err(|err| format!("write unittest file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["pytest", "unittest"]
+    );
+    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_reports_both_when_config_and_unittest_coexist()
+-> Result<(), String> {
+    // #7664: config markers add pytest; they must not skip unittest.
+    let root = unique_test_root("mixed-config");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+        .map_err(|err| format!("write pytest.ini: {err}"))?;
+    std::fs::write(
+        root.join("test_pricing.py"),
+        "import unittest\n\nclass TestPricing(unittest.TestCase):\n    pass\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["pytest", "unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_reports_both_when_one_file_imports_both() -> Result<(), String> {
+    let root = unique_test_root("same-file-both");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_mixed.py"),
+        "import pytest\nimport unittest\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["pytest", "unittest"]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }

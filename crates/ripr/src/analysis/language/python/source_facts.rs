@@ -102,8 +102,9 @@ pub(super) struct PythonSourceLimitation {
     pub(super) missing: String,
 }
 
-/// Detect the Python test framework for a workspace root (#2106), using
-/// the marker set the adapter's code-level detection implies:
+/// Detect Python test frameworks for a workspace root (#2106 / #7664).
+///
+/// Marker set the adapter's code-level detection implies:
 ///
 /// - pytest: `pytest.ini`, `conftest.py`, or a pytest section in
 ///   `pyproject.toml` / `setup.cfg` / `tox.ini` (a bare pyproject.toml is
@@ -115,26 +116,22 @@ pub(super) struct PythonSourceLimitation {
 ///   evidence (`import unittest` in a `test_*.py` file at the root or in
 ///   `tests/` / `test/`), matching what the adapter detects from source.
 ///
-/// Config-file pytest markers stay first so a marker-backed pytest repo
-/// that also contains unittest imports still reports pytest. Pytest import
-/// evidence outranks unittest in the same bounded scan so zero-config
-/// pytest repos agree between `ripr doctor` and `ripr check`. Reporting
-/// both frameworks at once is out of scope (#7664). Fail-closed: `None`
-/// when no marker matches — callers must report "not detected", never
-/// guess.
-pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> {
-    if root.join("pytest.ini").exists()
+/// Config-file pytest markers add pytest; they do not skip the unittest
+/// scan, so a mixed repo reports both frameworks (#7664). Pytest is listed
+/// first when both are present so primary-of-set consumers stay pytest-first.
+/// Fail-closed: empty when no marker matches — callers must report
+/// "not detected", never guess. Django `tests.py` / nested app directories
+/// remain #7706.
+pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
+    let mut saw_pytest = root.join("pytest.ini").exists()
         || root.join("conftest.py").exists()
         // A bare pyproject.toml is PEP 517 packaging, not pytest evidence
         // (#2183 review); only an actual pytest section counts.
         || ini_section_present(&root.join("pyproject.toml"), "[tool.pytest.ini_options]")
         || ini_section_present(&root.join("setup.cfg"), "[tool:pytest]")
-        || ini_section_present(&root.join("tox.ini"), "[pytest]")
-    {
-        return Some("pytest");
-    }
+        || ini_section_present(&root.join("tox.ini"), "[pytest]");
     let mut saw_unittest = false;
-    for dir in [root.to_path_buf(), root.join("tests"), root.join("test")] {
+    'dirs: for dir in [root.to_path_buf(), root.join("tests"), root.join("test")] {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
@@ -153,15 +150,32 @@ pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> 
             };
             let prefix = &bytes[..bytes.len().min(4096)];
             let text = String::from_utf8_lossy(prefix);
-            if text.lines().any(is_pytest_import_line) {
-                return Some("pytest");
+            if !saw_pytest && text.lines().any(is_pytest_import_line) {
+                saw_pytest = true;
             }
             if !saw_unittest && text.lines().any(is_unittest_import_line) {
                 saw_unittest = true;
             }
+            if saw_pytest && saw_unittest {
+                break 'dirs;
+            }
         }
     }
-    saw_unittest.then_some("unittest")
+    let mut frameworks = Vec::new();
+    if saw_pytest {
+        frameworks.push("pytest");
+    }
+    if saw_unittest {
+        frameworks.push("unittest");
+    }
+    frameworks
+}
+
+/// Primary detected Python test framework: the first entry of
+/// [`detect_python_test_frameworks`] (pytest before unittest). Adapter
+/// repo-input still stores a single `Option`; doctor prints the full set.
+pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> {
+    detect_python_test_frameworks(root).into_iter().next()
 }
 
 /// Whether a line is a real pytest import statement — `import pytest`,

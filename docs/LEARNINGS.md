@@ -3,6 +3,15 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-15: Pytest evidence must not skip the unittest scan (#7664)
+
+`detect_python_test_frameworks` collects a set. Config markers and
+`import pytest` add pytest; they must not `return` before the unittest
+import scan. Doctor emits one `test_surfaces[]` row per confirmed
+framework. The singular `detect_python_test_framework` is pytest-first
+primary-of-set for adapter repo-input, not mixed catalog authority.
+Django `tests.py` admission stays #7706.
+
 ## 2026-10-12: A timed-out pilot packet must not keep the previous run's repo-exposure (#7425)
 
 `ripr pilot` reuses `--out`. The timeout path writes only `pilot-summary.{json,md}`.
