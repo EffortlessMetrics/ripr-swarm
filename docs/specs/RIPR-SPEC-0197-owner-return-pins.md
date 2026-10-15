@@ -1603,15 +1603,16 @@ reaches the ordinary token rule and reads `weakly_exposed`, still a gap.
   and contains the call, and ends before the call. Neither the definition
   nor the call's arguments hold a binding word (`macro_rules`, `macro`,
   `use`, `extern`, `mod`, `include`, `macro_use`, `macro_export`,
-  `no_implicit_prelude`) or an attribute other than a built-in test or lint
-  attribute. The definition holds no `!` at all and captures no `tt`
+  `no_implicit_prelude`) or an attribute other than a built-in test, lint,
+  `cfg` or `doc` attribute. The definition holds no `!` at all and captures no `tt`
   fragment (the only fragment that can lift a lone `!` or `#` out of the
   arguments and splice it after another name), and the arguments hold a
   `!` only as a bare trusted `name!` (a unary `!` fails closed, since a
   `tt` fragment or a repetition can splice it after a name). No module
   item sits between the definition and the call, and every macro call
-  there is a bare trusted name or another such call of the same wrapper,
-  so nothing can bring in a shadowing definition. Attribute
+  there is another such call of the same wrapper (even a trusted name may
+  be a local macro there), so nothing can bring in a shadowing
+  definition. Attribute
   proc macros elsewhere in the file stay invisible, as for every other
   site.
   `macro_use` or `no_implicit_prelude` anywhere in a non-trusted macro's

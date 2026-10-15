@@ -3874,11 +3874,11 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         refusal(&format!("/// Runs one case.\n{definition}{call}")),
         None
     );
-    // A trusted macro between the definition and the call, and a built-in
+    // Another inert call of the same wrapper between them, and a built-in
     // test attribute in the arguments, bind nothing either.
     assert_eq!(
         refusal(&format!(
-            "{definition}fn build() -> Vec<u32> {{ vec![1] }}\ncase!(one, |v| {{ #[allow(unused)] let w = 1; assert_eq!(v, 1); }});\n"
+            "{definition}case!(two, |v| {{ assert_eq!(v, 2); }});\ncase!(one, |v| {{ #[allow(unused)] let w = 1; assert_eq!(v, 1); }});\n"
         )),
         None
     );
@@ -3896,6 +3896,7 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         // Defined twice, or also imported under its name.
         format!("{definition}{definition}{call}"),
         format!("use other::case;\n{definition}{call}"),
+        format!("use other::wrap as case;\n{definition}{call}"),
         // Reached by path, so not the textual definition.
         format!("{definition}crate::case!(one, |v| {{ assert_eq!(v, 1); }});\n"),
         // The definition invokes a macro or holds a binding word.
@@ -3928,6 +3929,8 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         // A macro expanded between the definition and the call may emit a
         // shadowing `macro_rules! case`.
         format!("{definition}generate!();\n{call}"),
+        // Even a trusted name may be a local macro that emits one.
+        format!("{definition}fn build() -> Vec<u32> {{ vec![1] }}\n{call}"),
         // A module between them may carry a shadowing definition, even
         // without an outer attribute (`#![macro_use]` in its own file).
         format!("{definition}#[macro_use]\nmod shadow;\n{call}"),

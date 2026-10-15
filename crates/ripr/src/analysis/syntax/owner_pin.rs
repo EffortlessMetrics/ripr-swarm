@@ -904,13 +904,14 @@ const INERT_ATTRIBUTES: &[&str] = &[
 /// (#6648). The definition and the call arguments hold no binding word
 /// ([`BINDING_WORDS`]) and no attribute outside [`INERT_ATTRIBUTES`]; the
 /// definition invokes no bang macro and captures no `tt` fragment, and the
-/// arguments invoke only trusted names by their bare name. No macro call between the definition and this
-/// call may shadow it: each one is a bare trusted name or another inert
-/// call of the same wrapper. A wrapper reached by path (`a::wrap!`), named
-/// by a `use` in this file, defined twice, under an attribute other than a
-/// doc comment, inside a function or block, or used before or outside its
-/// definition's scope fails closed: it may be a macro ripr cannot see.
-/// Attribute proc macros stay invisible here as everywhere else.
+/// arguments invoke only trusted names by their bare name. Nothing between
+/// the definition and this call may shadow it: no module item, and no macro
+/// call other than another inert call of the same wrapper. A wrapper
+/// reached by path (`a::wrap!`), named by a `use` in this file, defined
+/// twice, under an attribute other than a doc comment, inside a function or
+/// block, or used before or outside its definition's scope fails closed: it
+/// may be a macro ripr cannot see. Attribute proc macros stay invisible here
+/// as everywhere else.
 fn binding_free_local_wrapper(
     root: &SyntaxNode,
     call: &ast::MacroCall,
@@ -1003,17 +1004,17 @@ fn binding_free_local_wrapper(
     }
     // A macro expanded between the definition and the call could emit a
     // second `macro_rules!` of the same name, which this file never shows
-    // but which shadows the first at the call. Trusted macros only build
-    // expressions, so anything they could expand to stays block-local.
+    // but which shadows the first at the call. Even a trusted name may be
+    // a local or imported macro there (`macro_rules! vec`), so only inert
+    // calls of this same wrapper may sit between them.
     root.descendants()
         .filter_map(ast::MacroCall::cast)
         .filter(|other| between(other.syntax()))
-        .all(|other| match bare_macro_name(&other) {
-            Some(other_name) if trusted.contains(&other_name.as_str()) => true,
-            Some(other_name) if other_name == name => other.token_tree().is_some_and(|tree| {
-                inert_tokens(&non_trivia_tokens(tree.syntax()), trusted, false)
-            }),
-            _ => false,
+        .all(|other| {
+            bare_macro_name(&other).is_some_and(|other_name| other_name == name)
+                && other.token_tree().is_some_and(|tree| {
+                    inert_tokens(&non_trivia_tokens(tree.syntax()), trusted, false)
+                })
         })
 }
 
