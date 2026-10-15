@@ -44,7 +44,7 @@
 pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
-mod short_circuit;
+pub(super) mod short_circuit;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
 
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};

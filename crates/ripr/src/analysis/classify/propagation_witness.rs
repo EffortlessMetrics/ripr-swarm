@@ -306,14 +306,24 @@ pub(in crate::analysis) fn constant_tail_witness(
     // owner's whole body is, like a constant tail, the value the owner
     // returns; whether the pinned input runs its closure is the owner pin's
     // question (rule 2), not this edge's.
+    // RIPR-SPEC-0197 short-circuit tails (#8037): an admitted `&&`/`||`
+    // chain that is the owner's whole body is likewise the value the owner
+    // returns; whether a pinned run evaluates every operand is the owner
+    // pin's run check, not this edge's.
     let (tail_line, limitation) = match constant_owner_tail_line(owner, &identity) {
         Some(line) => (line, "constant_owner_tail"),
-        None => (
-            super::owner_pin::closure_adaptor::owner_adaptor_tail(owner)
-                .filter(|tail| tail.tail_is(&probe.expression))
-                .map(|tail| owner.start_line + tail.tail_line_offset)?,
-            "iterator_adaptor_owner_tail",
-        ),
+        None => match super::owner_pin::closure_adaptor::owner_adaptor_tail(owner)
+            .filter(|tail| tail.tail_is(&probe.expression))
+        {
+            Some(tail) => (
+                owner.start_line + tail.tail_line_offset,
+                "iterator_adaptor_owner_tail",
+            ),
+            None => (
+                short_circuit_owner_tail_line(owner, &probe.expression, &identity)?,
+                "short_circuit_owner_tail",
+            ),
+        },
     };
     if tail_line != probe.location.line {
         return None;
@@ -356,6 +366,32 @@ pub(in crate::analysis) fn constant_tail_witness(
     };
     witness.semantic_digest = witness.compute_semantic_digest();
     Some(witness)
+}
+
+/// The line of the owner's tail when the owner's whole body is one
+/// admitted short-circuit chain (`ShortCircuitTail`) whose normalized text
+/// is `identity`. Its operands cannot call, panic or write, so the chain's
+/// value is the owner's return.
+fn short_circuit_owner_tail_line(
+    owner: &crate::analysis::facts::FunctionSummary,
+    changed: &str,
+    identity: &str,
+) -> Option<usize> {
+    use ra_ap_syntax::{AstNode, ast};
+    super::owner_pin::short_circuit::ShortCircuitTail::parse(&owner.body, changed)?;
+    let parse = crate::analysis::syntax::parse_clean_source_file(&owner.body)?;
+    let function = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let list = function.body()?.stmt_list()?;
+    if list.statements().next().is_some() {
+        return None;
+    }
+    let tail = list.tail_expr()?;
+    if normalize_semantic_text(&tail.syntax().text().to_string()) != identity {
+        return None;
+    }
+    let offset = usize::from(tail.syntax().text_range().start());
+    let before = owner.body.get(..offset)?;
+    Some(owner.start_line + before.matches('\n').count())
 }
 
 /// The line of the owner's body when that body is exactly one constant
@@ -2144,6 +2180,64 @@ mod tests {
         let sinks = super::super::local_flow_sinks(&other, Some(&owner));
         assert!(!sinks.is_empty());
         assert!(constant_tail_witness(&other, &owner, &sinks).is_none());
+    }
+
+    /// #8037: an admitted short-circuit chain that is the owner's whole body
+    /// completes a DirectReturn witness; anything `ShortCircuitTail` refuses
+    /// does not.
+    #[test]
+    fn short_circuit_owner_tail_completes_only_an_admitted_chain() {
+        let body = "fn is_weekend(day: u8) -> bool {\n    day % 7 == 6 || day % 7 == 0\n}";
+        let owner = constant_owner(body);
+        let probe = probe_at(ProbeFamily::ReturnValue, "day % 7 == 6 || day % 7 == 0", 2);
+        let sinks = super::super::local_flow_sinks(&probe, Some(&owner));
+        let witness = constant_tail_witness(&probe, &owner, &sinks);
+        assert!(
+            complete_direct_witness(&probe, witness.as_ref()),
+            "{witness:?} {sinks:?}"
+        );
+        assert!(witness.as_ref().is_some_and(|w| {
+            w.limitations
+                .iter()
+                .any(|l| l == "short_circuit_owner_tail")
+        }));
+        for (body, expression) in [
+            // A closure operand, mixed operators, a call, an earlier statement.
+            (
+                "fn f(x: u8, y: u8) -> bool {\n    g(|| x) || y == 1\n}",
+                "g(|| x) || y == 1",
+            ),
+            (
+                "fn f(a: bool, b: bool, c: bool) -> bool {\n    a && b || c\n}",
+                "a && b || c",
+            ),
+            (
+                "fn f(s: &str, y: u8) -> bool {\n    s.len() == 0 || y == 1\n}",
+                "s.len() == 0 || y == 1",
+            ),
+            (
+                "fn f(x: u8, y: u8) -> bool {\n    let x = x + 1;\n    x == 0 || y == 1\n}",
+                "x == 0 || y == 1",
+            ),
+            // The changed expression is one operand, not the whole tail.
+            (
+                "fn f(x: u8, y: u8) -> bool {\n    x == 0 || y == 1\n}",
+                "y == 1",
+            ),
+        ] {
+            let owner = constant_owner(body);
+            let line = if body.contains("let x") { 3 } else { 2 };
+            let probe = probe_at(ProbeFamily::ReturnValue, expression, line);
+            let sinks = super::super::local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                constant_tail_witness(&probe, &owner, &sinks).is_none(),
+                "{body}"
+            );
+        }
+        // A predicate-family probe on the admitted chain gets nothing.
+        let predicate = probe_at(ProbeFamily::Predicate, "day % 7 == 6 || day % 7 == 0", 2);
+        let sinks = super::super::local_flow_sinks(&predicate, Some(&owner));
+        assert!(constant_tail_witness(&predicate, &owner, &sinks).is_none());
     }
 
     /// #6578: a `format!` tail writes every argument into the `String` the
