@@ -289,7 +289,7 @@ impl ReturnedArray {
         };
         if iter
             .name_ref()
-            .is_none_or(|name| !matches!(&*name.text(), "iter" | "into_iter"))
+            .is_none_or(|name| !matches!(name.text(), "iter" | "into_iter"))
             || iter
                 .arg_list()
                 .is_none_or(|list| list.args().next().is_some())
@@ -583,15 +583,15 @@ mod tests {
         // A negative sibling literal is compared by value: `-33` equal to
         // the expected `-33` refuses, `-33` beside an expected 33 does not.
         let negative = "[Row { total: -33 }, Row { total: a + b + 0 }]";
-        let expect = |literal: &str| {
+        let membership = |literal: &str| {
             format!(
                 "        let rows = rows(30, 3);\n        assert!(rows.iter().any(|r| r.total == {literal}));"
             )
         };
-        if pinned(negative, "#[test]", &expect("-33"))? != Some(false) {
+        if pinned(negative, "#[test]", &membership("-33"))? != Some(false) {
             return Err("a sibling equal to the negative literal still pins".to_string());
         }
-        if pinned(negative, "#[test]", &expect("33"))? != Some(true) {
+        if pinned(negative, "#[test]", &membership("33"))? != Some(true) {
             return Err("a sibling of the opposite sign refused the pin".to_string());
         }
         Ok(())
@@ -788,7 +788,7 @@ mod tests {
             "[make(), Row { total: a + b + 0 }]",
             "[Row { total: a + b + 0 }, Row { total: a + b + 0 }]",
         ] {
-            if pinned(array, "#[test]", ANY)? != None {
+            if pinned(array, "#[test]", ANY)?.is_some() {
                 return Err(format!("expected no read: {array}"));
             }
         }

@@ -272,6 +272,9 @@ rejected alternative. Any can be reversed later without touching the rest.
    `f` is built in exactly one element `k`, a related test pins `f` of
    element `k` when all of these hold:
 
+   - the owner's name is the name of no other indexed function, because the
+     owner call is matched by name and a nested module's `super::rows` or a
+     test file's local `fn rows` could take it;
    - the test's only attribute is exactly `#[test]` (an empty attribute
      list, as the lexical fallback and harness-registered tests carry,
      gives no credit), and no token of its body, macro arguments included,
@@ -398,8 +401,9 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
   refusal (#7066 review).
 - Decision 8: `crates/ripr/tests/returned_element_field_pin.rs` (the
   membership and index pins read `exposed`; the `total: 33` decoy, a
-  computed sibling, another element's index and a shadowed receiver keep
-  the gap) and the unit tests in
+  computed sibling, another element's index, a shadowed receiver, a faked
+  or skipped assertion and a nested module's same-name `rows` keep the gap)
+  and the unit tests in
   `crates/ripr/src/analysis/classify/element_field_pin.rs`.
 - Planned: oracle classifier unit tests for braces outside struct-literal
   operands.

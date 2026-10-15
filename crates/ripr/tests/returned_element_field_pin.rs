@@ -11,12 +11,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// `src/lib.rs` with the returned array on line 6, built from `first` and
-/// the changed `total: a + b + 0`, then one test with `body`.
-fn source(first: &str, body: &str) -> String {
-    source_with(first, "", body)
-}
-
-/// [`source`] with `items` declared in the test module before the test.
+/// the changed `total: a + b + 0`, then one test with `body` after `items`
+/// declared in the test module.
 fn source_with(first: &str, items: &str, body: &str) -> String {
     format!(
         "pub struct Row {{
@@ -112,7 +108,11 @@ fn field_class(first: &str, body: &str) -> Result<ExposureClass, String> {
 }
 
 fn field_class_with(first: &str, items: &str, body: &str) -> Result<ExposureClass, String> {
-    let findings = TempRepo::create(&source_with(first, items, body), &diff(first))?.findings()?;
+    field_class_of(&source_with(first, items, body), first)
+}
+
+fn field_class_of(lib: &str, first: &str) -> Result<ExposureClass, String> {
+    let findings = TempRepo::create(lib, &diff(first))?.findings()?;
     let field = findings
         .iter()
         .find(|finding| {
@@ -196,5 +196,40 @@ fn a_test_that_may_skip_or_fake_the_assertion_keeps_the_gap() -> Result<(), Stri
             "{label}"
         );
     }
+    Ok(())
+}
+
+/// A nested module's own `rows` takes the test's `super::rows(..)` call and
+/// returns 33 in both elements, so the assertion passes whatever the owner's
+/// changed element holds. A name shared by two indexed functions is not read
+/// (#8059 review).
+#[test]
+fn a_call_another_function_of_the_owner_name_may_take_keeps_the_gap() -> Result<(), String> {
+    let lib = "pub struct Row {
+    pub total: u32,
+}
+
+pub fn rows(a: u32, b: u32) -> [Row; 2] {
+    [Row { total: 0 }, Row { total: a + b + 0 }]
+}
+
+pub mod inner {
+    use super::Row;
+
+    pub fn rows(_a: u32, _b: u32) -> [Row; 2] {
+        [Row { total: 33 }, Row { total: 33 }]
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn rows_carry_the_sum() {
+            let rows = super::rows(30, 3);
+            assert_eq!(rows[1].total, 33);
+        }
+    }
+}
+";
+    assert_eq!(field_class_of(lib, "0")?, ExposureClass::WeaklyExposed);
     Ok(())
 }

@@ -614,16 +614,32 @@ impl ClassifiedProbeEvidence {
         // name defeats as reveal's owner pins apply to the owner call.
         let element_field_pinned = matches!(context.probe.family, ProbeFamily::FieldConstruction)
             && context.owner_fn.is_some_and(|owner| {
-                context.related_tests.iter().any(|(test, _)| {
-                    !import_defeats(test, &owner.name)
-                        && !cross_package_defeats(test, &owner.name)
-                        && observes_returned_element_field(context.probe, owner, test, &|line| {
-                            test.assertions.iter().any(|assertion| {
-                                assertion.line == line
-                                    && pin_syntax.admits(test, assertion, context.index)
-                            })
-                        })
-                })
+                // The pin matches the owner call by name. A second indexed
+                // function of that name (a nested module's `super::rows`, a
+                // test file's local `fn rows`) may be the one the test
+                // calls, so only a unique name is read (#8059 review).
+                context
+                    .index
+                    .functions()
+                    .iter()
+                    .filter(|function| function.name == owner.name)
+                    .count()
+                    == 1
+                    && context.related_tests.iter().any(|(test, _)| {
+                        !import_defeats(test, &owner.name)
+                            && !cross_package_defeats(test, &owner.name)
+                            && observes_returned_element_field(
+                                context.probe,
+                                owner,
+                                test,
+                                &|line| {
+                                    test.assertions.iter().any(|assertion| {
+                                        assertion.line == line
+                                            && pin_syntax.admits(test, assertion, context.index)
+                                    })
+                                },
+                            )
+                    })
             });
         if matches!(context.probe.family, ProbeFamily::FieldConstruction)
             && (reveal.owner_pin_credited || element_field_pinned)
