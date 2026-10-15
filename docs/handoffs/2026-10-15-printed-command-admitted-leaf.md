@@ -92,3 +92,41 @@ Changelog: `changelog.d/4987-printed-command-admitted-leaf.md`, Internal / CI,
 uses the canonical section/bullet/reference format. No user-facing command or
 support denominator changes. Independent review is requested against the
 committed candidate, with emphasis on event detection and wrong-subject refusal.
+
+## Caller final-readiness diagnostic follow-up
+
+The joined caller's run 38730519818, final job 116424051377, refused at
+12:34:07 UTC on 2026-10-15 before reducing child results. Its retained log binds
+H `f541c55eb09de188753121852b469dcf5f6a48fd`,
+B `45826d9ab395e47af4ad11e4286541e8270ca48f` and
+G `7221755ffe1e3da7f06b1103079b9ea2b154871f`, but contains no actual API
+response or failed comparison. The exact historical predicate is
+`NOT_ESTABLISHED` and cannot be reconstructed from this log. The independently
+observed Rust failure does not establish what caused final readiness to refuse.
+
+The latest submitted current-head positive review preceded the request at
+11:51:29; revocation was submitted at 12:39:34 and Draft conversion occurred at
+12:39:39, after the refusal. Retrospective review API bodies are editable and
+their submission timestamps do not prove their bytes at 12:34. Later PR,
+mergeability, merge-ref or resolved-thread snapshots likewise cannot establish
+the final shell's live inputs.
+
+The diagnostic repair preserves every original final-readiness decision line
+and native exit status. On refusal it records the phase plus bounded PR
+comparison booleans and expected/observed valid SHA identities, review
+disposition/marker booleans and capped numeric review IDs, or thread error,
+resolution and pagination outcomes. It performs no further API request, logs
+no raw review bodies or credentials, and its advisory jq failures cannot turn
+the original refusal into success. Missing/malformed payloads retain the
+original jq status and stderr with named phase context. All existing production,
+cutover, merge and native-request holds remain.
+
+`tools/repo-policy/tests/final_readiness_diagnostics.rs` pairs the retained
+predecessor shell with the extracted current final shell, comparing native
+statuses and exact mocked API-call sequences. Controls cover every PR
+comparison's false/null/missing case, latest-review ordering and body edits,
+review and thread pages, missing/null/invalid replies and API failures. These
+are local synthetic controls, not a recovered historical predicate or new
+native admission. The predecessor's existing `hasNextPage | tostring` behavior
+for null/missing page flags remains unchanged; this patch adds no pagination
+schema gate. The root integration owner retains full qualification and timing.
