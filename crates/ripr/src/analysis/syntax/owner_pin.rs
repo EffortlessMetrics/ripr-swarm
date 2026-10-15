@@ -1421,7 +1421,7 @@ fn admitted_assertions(
 ///   nested item or `use` item anywhere in its body;
 /// - the helper is a plain function: no attributes other than
 ///   `#[track_caller]`, no generics or `where` clause, not `async`, `const`
-///   or `unsafe`, no `self` parameter, no return type, and no `return` or `?`
+///   or `unsafe`, no `self` parameter, and no `return` or `?`
 ///   in its body, so the assertion cannot be skipped by an early exit;
 /// - the helper passes the test's own escape gate (only trusted macros, no
 ///   closure exits or `yield`) and its supported item context.
