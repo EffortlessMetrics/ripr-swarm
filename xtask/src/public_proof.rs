@@ -883,6 +883,25 @@ fn scoreboard_trend(metric: &Value, baseline_rev: &str) -> String {
     "no earlier measurement".to_string()
 }
 
+/// A sample refreshed from a later observation than the receipt header (#7325)
+/// carries `population_provenance.revision`; name it so the row does not read
+/// as part of the header's run.
+fn with_observation_revision(trend: String, metric: &Value) -> String {
+    let revision = metric
+        .get("samples")
+        .and_then(Value::as_array)
+        .and_then(|samples| samples.first())
+        .and_then(|sample| sample.get("population_provenance"))
+        .and_then(|provenance| provenance.get("revision"))
+        .and_then(Value::as_str);
+    match revision {
+        Some(revision) if !revision.is_empty() => {
+            format!("{trend} (observed at {})", short(revision, 7))
+        }
+        _ => trend,
+    }
+}
+
 fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
     let baseline_rev = short(
         &req_str(
@@ -899,7 +918,7 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
         let mut target = req_f64(metric, "target", &id)?;
         let mut lower_is_better = text(metric, "direction") != "higher_is_better";
         let mut value = field(metric, "value").as_f64();
-        let mut trend = scoreboard_trend(metric, &baseline_rev);
+        let mut trend = with_observation_revision(scoreboard_trend(metric, &baseline_rev), metric);
         let mut basis = text(metric, "source");
         let mut is_derived = false;
         let mut status_src = metric;
@@ -3065,6 +3084,22 @@ mod tests {
         assert!(
             !summary.contains("first measurement"),
             "unmeasured rows are gaps, not first measurements: {summary}"
+        );
+    }
+
+    #[test]
+    fn refreshed_sample_names_its_observation_revision() {
+        let refreshed = serde_json::json!({
+            "samples": [{"population_provenance": {"revision": "2af3f3822bc0b2e1"}}]
+        });
+        assert_eq!(
+            with_observation_revision("no earlier measurement".to_string(), &refreshed),
+            "no earlier measurement (observed at 2af3f38)"
+        );
+        let plain = serde_json::json!({"samples": [{"detail": "x"}]});
+        assert_eq!(
+            with_observation_revision("no earlier measurement".to_string(), &plain),
+            "no earlier measurement"
         );
     }
 
