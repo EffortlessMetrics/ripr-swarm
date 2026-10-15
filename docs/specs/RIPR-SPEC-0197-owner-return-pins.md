@@ -1440,7 +1440,9 @@ The rules above apply with four differences:
 4. The test must not be able to write the file first. A test body that
    writes, creates, copies or renames a file (`fs::write`, a bare `write(..)`
    under `use std::fs::write`, `File::create`, `OpenOptions`, `fs::copy`,
-   `fs::rename`), or calls `set_var` / names `UPDATE_EXPECT`, lends no
+   `fs::rename`, any path-qualified `write(..)` or `create(..)` such as
+   `<File>::create` or `fs_err::write`), runs a `Command`, makes a symlink,
+   persists a temp file, or calls `set_var` / names `UPDATE_EXPECT`, lends no
    golden-file pin, and neither does a test whose file renames an import
    from `std::fs` or `std::env` (`use std::fs::write as save;`), which would
    hide the write behind another name: it could derive the golden from the owner and compare

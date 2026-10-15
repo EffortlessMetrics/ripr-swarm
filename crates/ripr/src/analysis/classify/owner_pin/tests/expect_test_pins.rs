@@ -320,6 +320,11 @@ fn a_test_that_may_write_files_lends_no_golden_pin() {
         "OpenOptions::new().write(true).open(\"w.txt\");",
         "std::fs::copy(\"a\", \"w.txt\");",
         "unsafe { std::env::set_var(\"UPDATE_EXPECT\", \"1\") };",
+        "Command::new(\"cp\").args([\"g.txt\", \"w.txt\"]).status().unwrap();",
+        "std::os::unix::fs::symlink(\"/tmp/g.txt\", \"w.txt\").unwrap();",
+        "<std::fs::File>::create(\"w.txt\")?;",
+        "fs_err::write(\"w.txt\", x).unwrap();",
+        "F::create(\"w.txt\")?;",
     ] {
         assert!(test_may_write_files(body), "{body}");
     }

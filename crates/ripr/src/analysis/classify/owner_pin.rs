@@ -6060,12 +6060,24 @@ fn test_may_write_files(body: &str) -> bool {
         "OpenOptions",
         "UPDATE_EXPECT",
         "set_var",
+        // A subprocess, a symlink or a persisted temp file may also produce it.
+        "Command",
+        "symlink",
+        "soft_link",
+        "persist",
     ];
     WRITERS.iter().any(|writer| compact.contains(writer))
         || ["write", "create", "copy", "rename"].iter().any(|name| {
             compact.match_indices(&format!("{name}(")).any(|(at, _)| {
-                compact[..at].chars().next_back().is_none_or(|before| {
-                    !(before.is_alphanumeric() || matches!(before, '_' | '.' | ':'))
+                let before = &compact[..at];
+                // A bare or path-qualified call (`save::write(`, `<File>::create(`,
+                // `fs_err::write(`) may write; a method call or `io::copy(`
+                // between readers and writers does not.
+                if before.ends_with("::") {
+                    return !before.ends_with("io::");
+                }
+                before.chars().next_back().is_none_or(|previous| {
+                    !(previous.is_alphanumeric() || matches!(previous, '_' | '.' | ':'))
                 })
             })
         })
