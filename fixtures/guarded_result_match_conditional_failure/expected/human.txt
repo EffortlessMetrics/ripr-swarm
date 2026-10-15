@@ -30,7 +30,7 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - fixtures/guarded_result_match_conditional_failure/input/src/lib.rs:18 (no_static_path)
+    - ./src/lib.rs:18 (no_static_path)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

@@ -33,8 +33,8 @@ Write a test for it:
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - fixtures/rust_ffi_attribute_literals/input/src/lib.rs:8 (no_static_path)
-    - fixtures/rust_ffi_attribute_literals/input/src/lib.rs:13 (no_static_path)
+    - ./src/lib.rs:8 (no_static_path)
+    - ./src/lib.rs:13 (no_static_path)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

@@ -374,7 +374,7 @@ pub(crate) fn render_human_triage(
         for finding in triage.omitted.iter().take(listed) {
             out.push_str(&format!(
                 "    - {}:{} ({})\n",
-                display_path(&finding.probe.location.file),
+                crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
                 finding.class.as_str()
             ));
