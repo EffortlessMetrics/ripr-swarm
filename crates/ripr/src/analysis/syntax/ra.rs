@@ -1638,13 +1638,33 @@ fn push_unsafe_boundary_probe_shapes(
 /// RIPR-SPEC-0228: the field path after `self` written by an assignment or
 /// compound assignment (`count` for `self.count += 1`, `child.count` for
 /// `self.child.count = 0`). Any other place (a local, `*p`, an index, a
-/// field of a call result or of another binding) gives `None`.
+/// field of a call result or of another binding) gives `None`, and so does
+/// an assignment that spans lines (a changed continuation line would carry
+/// only part of it) or whose right-hand side is a call, method call, macro,
+/// `?` or `.await`, or that chooses between values (`if`, `match`, a
+/// comparison or `&&`/`||`): those keep their `call_deletion`, predicate
+/// and other probes (RIPR-SPEC-0228 Non-Goals).
 pub(crate) fn field_assignment_path(bin_expr: &ast::BinExpr) -> Option<String> {
     let op = bin_expr.op_token()?;
     if !matches!(
         op.text(),
         "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>="
     ) {
+        return None;
+    }
+    if bin_expr.syntax().text().contains_char('\n')
+        || matches!(
+            bin_expr.rhs()?,
+            ast::Expr::CallExpr(_)
+                | ast::Expr::MethodCallExpr(_)
+                | ast::Expr::MacroExpr(_)
+                | ast::Expr::TryExpr(_)
+                | ast::Expr::AwaitExpr(_)
+                | ast::Expr::IfExpr(_)
+                | ast::Expr::MatchExpr(_)
+        )
+        || matches!(bin_expr.rhs()?, ast::Expr::BinExpr(rhs) if rhs.op_kind().is_some_and(|op| matches!(op, ast::BinaryOp::CmpOp(_) | ast::BinaryOp::LogicOp(_))))
+    {
         return None;
     }
     let mut place = bin_expr.lhs()?;
@@ -4641,5 +4661,48 @@ mod shadow_fact_equivalence_tests {
             "the nested fn's own walk must still emit its return: {return_errors:?}"
         );
         Ok(())
+    }
+
+    /// RIPR-SPEC-0228: which assignments are probed as field writes.
+    #[test]
+    fn field_assignment_path_reads_single_line_plain_self_field_writes() {
+        let path = |statement: &str| {
+            let source = format!("impl P {{ fn f(&mut self) {{ {statement} }} }}");
+            let parse = SourceFile::parse(&source, Edition::CURRENT);
+            parse
+                .tree()
+                .syntax()
+                .descendants()
+                .find_map(ast::BinExpr::cast)
+                .and_then(|bin_expr| field_assignment_path(&bin_expr))
+        };
+        for (statement, expected) in [
+            ("self.count += 2 - 1;", "count"),
+            ("self.child.count = 0;", "child.count"),
+            ("self.state = State::Done;", "state"),
+            ("self.total <<= 1;", "total"),
+        ] {
+            assert_eq!(path(statement).as_deref(), Some(expected), "{statement}");
+        }
+        for statement in [
+            "self.0 = 1;",
+            "self.r#type = 1;",
+            "self.z\u{e4}hler = 1;",
+            "self.count =\n    self.count + 1;",
+            "self.label = compute(2);",
+            "self.label = self.name.clone();",
+            "self.label = format!(\"x\");",
+            "self.count = parse()?;",
+            "count += 1;",
+            "other.count = 1;",
+            "self.items[0] = 1;",
+            "self.count == 1;",
+            "self.locked = self.count >= 4;",
+            "self.ok = self.a && self.b;",
+            "self.count = if self.locked { 2 } else { 5 };",
+            "self.count = match self.locked { true => 1, false => 2 };",
+        ] {
+            assert_eq!(path(statement), None, "{statement}");
+        }
     }
 }

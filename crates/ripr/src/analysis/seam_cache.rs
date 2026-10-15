@@ -857,7 +857,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// (#6578). `1.34` facts lack both; `1.35` is #7828's allocation.
 /// `1.37`: compose JSON binding candidates with expect-test parser facts.
 /// `1.38`: retain separate parser-owned match-head coverage (#5604).
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.38";
+/// `1.39`: single-line `self.<field>` assignments mint a parser-owned
+/// `field_construction` shape (RIPR-SPEC-0228, #6485). `1.38` facts lack it.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.39";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -4344,7 +4346,8 @@ mod tests {
         // 1.34 -> 1.36: inline expect-test oracles and trusted `expect`
         // (#6578); 1.35 is allocated to #7828.
         // 1.36 -> 1.37: combine expect-test facts and JSON binding candidates.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.38");
+        // 1.38 -> 1.39: field-assignment probe shapes (RIPR-SPEC-0228).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.39");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes

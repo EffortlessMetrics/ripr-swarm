@@ -347,35 +347,49 @@ changes `self.count += 2` to `self.count += 1`.
   for RIPR-SPEC-0225 whole-value credit.
 - Field assignments (`self.f = ..`, `self.f op= ..`, every compound
   operator) on a field path rooted at `self` are probed as
-  `field_construction` (`field_assignment_path` in `ra.rs`). One is credited
-  through the same read rule as a pushed literal (`assigned_field_of` and
-  `pushed_collection_compared_whole` in `activation.rs`): an `assert_eq!`
-  whose one operand is the whole field, read directly or through a getter
-  whose body returns it, from the binding the test called the owner on,
-  after that call. The assignment must occur once on its line and start a
-  top-level statement of the owner body, and nothing later in the body may
-  write the field (`assigned_field_path` in `propagation_witness.rs`, with
-  the `may_write_field` rule above). Nothing earlier in the body may leave
-  before it (`return`, `?`, `let .. else`, `break`, `continue`, a panicking
-  macro, `assert`, `.unwrap(`, `.expect(`), the right-hand side may not
-  choose between values (`if`, `match`, a comparison, `&&`, `||`), and the
-  asserted value may not be one a field usually holds before any write
-  (`0`, `false`, `None`, `""`, an empty `String` or `Vec`, a `default()`),
-  since deleting the assignment would leave it in place. Only plain ASCII
-  field names are probed (not `self.0`, `self.r#type` or non-ASCII names).
-  A related test that calls the owner and holds no assertion reads
-  `reachable_unrevealed`. Any weaker reading
-  (`assert!(c.f == ..)`, `assert_ne!`, projections, helper assertions,
-  whole-value or `Debug` comparisons of the receiver, a later read through
-  another method) still reads `static_unknown` with `static_probe_unknown`
-  (`ClassifiedProbeEvidence::class` in `classifier/evidence.rs`), so no
-  probe of this kind reads `weakly_exposed`. Writes through `*p`, a local
-  binding or a non-`self` receiver are not probed. Known limits shared with
-  other probe families: a test whose only oracle is a manual
-  `if .. { panic!(..) }` or a `debug_assert_eq!`, or whose owner asserts on
-  the field itself, reads `reachable_unrevealed`; an assertion that only
-  runs in a dead branch, an empty loop or a `#[should_panic]` test still
-  credits; and a non-default pre-call value equal to the asserted one
+  `field_construction` in diff scope (`field_assignment_path` in `ra.rs`)
+  when the whole assignment sits on one line, every field name is a plain
+  ASCII identifier (not `self.0`, `self.r#type` or a non-ASCII name), and
+  the right-hand side is neither a call, method call, macro, `?` or
+  `.await` (those keep `call_deletion` and their other probes, per the
+  Non-Goals) nor a choice between values (`if`, `match`, a comparison,
+  `&&`, `||`; those keep their predicate probe). Other assignments read as
+  before. Repo-scope seam inventory skips these shapes
+  (`build_seam_from_shape` in `seam_inventory.rs`): its grading does not
+  apply the read rule below.
+- One is credited through the same read rule as a pushed literal
+  (`assigned_field_of` and `pushed_collection_compared_whole` in
+  `activation.rs`): an `assert_eq!` whose one operand is the whole field,
+  read directly or through a getter whose body returns it, from the binding
+  the test called the owner on, after that call. The assignment must occur
+  once on its line and start a top-level statement of the owner body, and
+  nothing later in the body may write the field (`assigned_field_path` in
+  `propagation_witness.rs`). That later-write check is `may_write_field`
+  above, which is narrower than rule 1: it allows later reads of other
+  fields, macro calls and closures that do not name the field, and `self`
+  calls whose bodies do not write it. Nothing earlier in the body may leave
+  before the assignment (`return`, `?`, `let .. else`, `break`,
+  `continue`, any macro call, `assert`, `.unwrap(`, `.expect(`), the
+  right-hand side may not branch, and the asserted value may not be one a
+  field usually holds before any write (`0`, `0 as T`, `T::MIN`,
+  `T::ZERO`, `false`, `None`, `""`, an empty `String` or `Vec`, a
+  `default()`), since deleting the assignment would leave it in place.
+- When no related test holds any assertion, the finding reads
+  `reachable_unrevealed` (Decision 3). Every weaker reading (`assert!(c.f
+  == ..)`, `assert_ne!`, projections, helper assertions, whole-value or
+  `Debug` comparisons of the receiver, a sibling-field read, a later read
+  through another method) reads `static_unknown` with
+  `static_probe_unknown` instead of the `weakly_exposed` that Behavior
+  describes (`ClassifiedProbeEvidence::class` in `classifier/evidence.rs`),
+  failing closed until those reads are established. Writes through `*p`, a
+  local binding or a non-`self` receiver are not probed.
+- Known limits shared with other probe families (#8051, #7638): a test
+  whose only oracle is a manual `if .. { panic!(..) }`, a
+  `debug_assert_eq!` or an unrecognized assertion macro (`assert_that!`,
+  `check!`, `prop_assert_eq!`), or whose owner asserts on the field itself,
+  reads `reachable_unrevealed`; an assertion that only runs in a dead
+  branch, an empty loop or a `#[should_panic]` test still credits; and a
+  non-default pre-call value equal to the asserted one
   (`self.count = self.count.max(1)` with `count` already 5) still credits.
 
 ## Metrics

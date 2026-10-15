@@ -1082,11 +1082,13 @@ pub(in crate::analysis) fn field_assignment_target(expression: &str) -> Option<&
 /// at `start_line`) leaves as the owner's last word on that field. `None`
 /// unless the assignment occurs once on its line, starts a top-level
 /// statement of the body (not in a branch, loop, block or closure, which a
-/// test may never run), and nothing after that statement may write the
-/// field again: a use of `self.<path>` (even a read, fail closed), a parent
-/// field, a bare `self`, or a `self.m(..)` call whose body (from
-/// `method_body`, followed through further `self` calls) may do so. An
-/// unresolved method counts as a write.
+/// test may never run), its right-hand side does not branch, nothing before
+/// it may leave the body early ([`may_exit_early`]), and nothing after that
+/// statement may write the field again ([`may_write_field`]: a use of
+/// `self.<path>` other than a `push` onto it, a parent field, a bare `self`,
+/// or a `self.m(..)` call whose body, from `method_body` and followed
+/// through further `self` calls, may do so; an unresolved method counts as
+/// a write).
 pub(in crate::analysis) fn assigned_field_path(
     body: &str,
     start_line: usize,
@@ -1151,7 +1153,17 @@ fn may_exit_early(before: &str) -> bool {
     let words = before
         .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
         .any(|word| matches!(word, "return" | "else" | "break" | "continue"));
+    // Any macro call may expand to an early exit (`guard!`, `bail!`,
+    // `ensure!`).
+    let macro_call = before.match_indices('!').any(|(at, _)| {
+        before[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+            && before[at + 1..].trim_start().starts_with(['(', '[', '{'])
+    });
     words
+        || macro_call
         || before.contains('?')
         || [
             "panic!",
@@ -1184,6 +1196,13 @@ pub(in crate::analysis) fn assertion_expects_default_like(assertion: &str) -> bo
 
 fn is_default_like(operand: &str) -> bool {
     let operand = operand.trim().trim_start_matches('&').trim();
+    // `0 as u32` reads as its value.
+    let operand = operand
+        .split_once(" as ")
+        .map_or(operand, |(value, _)| value.trim());
+    if operand.ends_with("::MIN") || operand.ends_with("::ZERO") {
+        return true;
+    }
     if matches!(
         operand,
         "false" | "None" | "\"\"" | "String::new()" | "Vec::new()" | "vec![]" | "[]"
@@ -2899,11 +2918,16 @@ mod tests {
             ("self.count += 1; self.count += 1;", &none),
             ("if self.locked { return; } self.count += 1;", &none),
             (
-                "let Some(_) = self.next else { return }; self.count += 1;",
+                "let Some(_) = self.next else { loop {} }; self.count += 1;",
                 &none,
             ),
             ("self.check()?; self.count += 1;", &none),
             ("assert!(self.ready); self.count += 1;", &none),
+            ("guard!(self.locked); self.count += 1;", &none),
+            ("let n = self.next.unwrap(); self.count += 1;", &none),
+            ("let n = self.next.expect(\"n\"); self.count += 1;", &none),
+            ("loop { break; } self.count += 1;", &none),
+            ("for _ in 0..1 { continue; } self.count += 1;", &none),
         ] {
             assert_eq!(at(code, method), None, "{code}");
         }
@@ -2912,6 +2936,10 @@ mod tests {
             "self.count = if self.locked { 2 } else { 5 }",
             "self.count = match self.locked { true => 1, false => 2 }",
             "self.ok = self.a && self.b",
+            "self.ok = self.a || self.b",
+            "self.ok = self.a == self.b",
+            "self.ok = self.a != self.b",
+            "self.ok = self.a < self.b",
         ] {
             let body = format!("fn tick(&mut self) {{\n{changed};\n}}");
             assert_eq!(
@@ -2920,6 +2948,25 @@ mod tests {
                 "{changed}"
             );
         }
+    }
+
+    #[test]
+    fn assigned_field_path_requires_the_changed_text_once_on_its_line() {
+        let none = |_: &str| None;
+        // The changed text appears twice on its line, the second time inside
+        // a string, so `may_write_field` (which reads masked text) would not
+        // refuse it.
+        let body = "fn tick(&mut self) {\nself.count += 1; let s = \"self.count += 1\";\n}";
+        assert_eq!(
+            assigned_field_path(body, 1, 2, "self.count += 1", &none),
+            None
+        );
+        // The same line without the repeat is accepted.
+        let body = "fn tick(&mut self) {\nself.count += 1; let s = \"x\";\n}";
+        assert_eq!(
+            assigned_field_path(body, 1, 2, "self.count += 1", &none).as_deref(),
+            Some("count")
+        );
     }
 
     #[test]
@@ -2935,6 +2982,8 @@ mod tests {
             "assert_eq!(c.items, vec![]);",
             "assert_eq!(c.state, State::default());",
             "assert_eq!(&c.name, &String::new(), \"named\");",
+            "assert_eq!(c.count, 0 as u32);",
+            "assert_eq!(c.count, u32::MIN);",
         ] {
             assert!(assertion_expects_default_like(assertion), "{assertion}");
         }
