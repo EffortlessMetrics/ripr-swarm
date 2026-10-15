@@ -88,7 +88,11 @@ fn shell(name: &str) -> TestResult<String> {
 }
 
 fn shell_from(workflow: &str, name: &str) -> TestResult<String> {
-    let source = job(workflow, "applicability")?;
+    shell_from_job(workflow, "applicability", name)
+}
+
+fn shell_from_job(workflow: &str, job_name: &str, name: &str) -> TestResult<String> {
+    let source = job(workflow, job_name)?;
     let (_, tail) = source
         .split_once(&format!("      - name: {name}\n"))
         .ok_or("step exists")?;
@@ -535,6 +539,8 @@ fn runnable_with_status(
         return Ok(false);
     }
     let translated = expression
+        .replace("!contains(toJSON(inputs), '\"subject_sha\"')", "1 == 1")
+        .replace("contains(toJSON(inputs), '\"subject_sha\"')", "1 == 0")
         .replace("always()", "1 == 1")
         .replace("!cancelled()", if cancelled { "1 == 0" } else { "1 == 1" })
         .replace("github.event_name", &format!("'{event}'"))
@@ -722,7 +728,7 @@ fn actual_job_conditions_cover_skip_failures_and_both_dispatch_routes() -> TestR
     assert!(!failed.status.success());
     assert!(output.is_empty());
     assert!(
-        job(WORKFLOW, "applicability")?.contains("        if: ${{ always() && !cancelled() }}")
+        job(WORKFLOW, "applicability")?.contains("        if: ${{ always() && !cancelled() && !contains(toJSON(inputs), '\"subject_sha\"') }}")
     );
     Ok(())
 }
@@ -1036,6 +1042,250 @@ fn inspection_and_policy_failures_do_not_become_legacy_admission() -> TestResult
     assert_eq!(
         qualification_chain(&fixture, "failure", "true", ("pull_request", false, false))?,
         (true, true)
+    );
+    Ok(())
+}
+
+/// Replay the complete early production guard, with actual Git objects and payload fields.
+fn exact_subject(fixture: &Fixture, inputs: &serde_json::Value) -> TestResult<(Output, String)> {
+    exact_subject_from(fixture, inputs, WORKFLOW)
+}
+
+fn exact_subject_from(
+    fixture: &Fixture,
+    inputs: &serde_json::Value,
+    workflow: &str,
+) -> TestResult<(Output, String)> {
+    let path = fixture.0.join(".git/exact-output");
+    fs::write(&path, "")?;
+    let mut command = fixture.command("bash")?;
+    command
+        .args([
+            "-e",
+            "-o",
+            "pipefail",
+            "-c",
+            &shell_from(
+                workflow,
+                "Verify callable exact subject before policy or product execution",
+            )?,
+        ])
+        .env("CALL_INPUTS", inputs.to_string())
+        .env("GITHUB_REPOSITORY", "EffortlessMetrics/ripr-swarm")
+        .env("GITHUB_WORKFLOW_SHA", "a".repeat(40))
+        .env("GITHUB_RUN_ID", "123")
+        .env("GITHUB_RUN_ATTEMPT", "2")
+        .env("GITHUB_OUTPUT", &path);
+    for (field, variable) in [
+        ("proof_profile", "PROOF_PROFILE"),
+        ("request_id", "ADMITTED_REQUEST"),
+        ("head_sha", "ADMITTED_HEAD"),
+        ("base_sha", "ADMITTED_BASE"),
+        ("subject_sha", "ADMITTED_SUBJECT"),
+        ("subject_tree", "ADMITTED_TREE"),
+        ("workflow_generation", "ADMITTED_GENERATION"),
+    ] {
+        command.env(variable, inputs[field].as_str().unwrap_or(""));
+    }
+    let output = command.output()?;
+    Ok((output, fs::read_to_string(path)?))
+}
+
+fn integration_inputs(fixture: &Fixture) -> TestResult<serde_json::Value> {
+    let base = fixture.git(&["rev-parse", "HEAD"])?;
+    let head = fixture.change("Cargo.toml", "# integration payload control\n")?;
+    let tree = fixture.git(&["rev-parse", "HEAD^{tree}"])?;
+    let subject = fixture.git(&[
+        "commit-tree",
+        &tree,
+        "-p",
+        &base,
+        "-p",
+        &head,
+        "-m",
+        "integration",
+    ])?;
+    fixture.git(&["checkout", "--detach", &subject])?;
+    Ok(
+        serde_json::json!({"proof_profile":"qualification", "request_id":"123-2",
+        "base_sha":base, "head_sha":head, "subject_sha":subject, "subject_tree":tree,
+        "workflow_generation":"a".repeat(40)}),
+    )
+}
+
+#[test]
+fn callable_guard_rejects_wrong_empty_and_stale_payloads_before_expensive_work() -> TestResult {
+    let fixture = Fixture::new()?;
+    let valid = integration_inputs(&fixture)?;
+    let (result, output) = exact_subject(&fixture, &valid)?;
+    assert!(result.status.success(), "{result:?}");
+    assert_eq!(output, "qualify=true\n");
+    for field in [
+        "proof_profile",
+        "request_id",
+        "base_sha",
+        "head_sha",
+        "subject_sha",
+        "subject_tree",
+        "workflow_generation",
+    ] {
+        for bad in ["", "main", &"0".repeat(40), "$(touch injected)"] {
+            let mut payload = valid.clone();
+            payload[field] = bad.into();
+            let (result, output) = exact_subject(&fixture, &payload)?;
+            assert!(
+                !result.status.success(),
+                "accepted {field}={bad}: {result:?}"
+            );
+            assert!(output.is_empty());
+        }
+    }
+    let empty = serde_json::json!({"subject_sha":""});
+    assert!(!exact_subject(&fixture, &empty)?.0.status.success());
+    let mut stale_attempt = valid.clone();
+    stale_attempt["request_id"] = "123-1".into();
+    assert!(!exact_subject(&fixture, &stale_attempt)?.0.status.success());
+    let (legacy, output) = exact_subject(&fixture, &serde_json::json!({}))?;
+    assert!(legacy.status.success());
+    assert!(output.is_empty());
+    assert!(
+        exact_subject(&fixture, &serde_json::Value::Null)?
+            .0
+            .status
+            .success()
+    );
+    let removed = WORKFLOW.replace(
+        "              test \"${tree}\" = \"${ADMITTED_TREE}\"\n",
+        "",
+    );
+    assert_ne!(removed, WORKFLOW);
+    let mut wrong_tree = valid.clone();
+    wrong_tree["subject_tree"] = "0".repeat(40).into();
+    assert!(
+        exact_subject_from(&fixture, &wrong_tree, &removed)?
+            .0
+            .status
+            .success(),
+        "tree-check removal must expose the wrong-tree false success"
+    );
+    let mut diagnostic = valid.clone();
+    diagnostic["proof_profile"] = "diagnostic".into();
+    diagnostic["subject_sha"] = valid["head_sha"].clone();
+    fixture.git(&[
+        "checkout",
+        "--detach",
+        diagnostic["head_sha"].as_str().ok_or("head")?,
+    ])?;
+    assert_eq!(exact_subject(&fixture, &diagnostic)?.1, "qualify=true\n");
+    assert!(
+        !exact_subject(&fixture, &valid)?.0.status.success(),
+        "stale checkout must fail"
+    );
+    // The separate build checkout must not credit matching stdout from failed Git.
+    let expected = diagnostic["head_sha"].as_str().ok_or("diagnostic head")?;
+    fixture.write_shim("git", &format!("printf '%s\\n' {expected:?}; exit 9\n"))?;
+    fixture.write_shim(
+        "cargo",
+        "printf '%s\\n' '{\"packages\":[{\"name\":\"ripr\",\"version\":\"0.11.0\"}]}'\n",
+    )?;
+    let run_binding = |workflow: &str| -> TestResult<(Output, String)> {
+        let output = fixture.0.join(".git/bind-output");
+        let environment = fixture.0.join(".git/bind-env");
+        fs::write(&output, "")?;
+        fs::write(&environment, "")?;
+        let result = fixture
+            .command("bash")?
+            .args([
+                "-e",
+                "-o",
+                "pipefail",
+                "-c",
+                &shell_from_job(
+                    workflow,
+                    "build-wheel",
+                    "Bind exact source candidate and native version",
+                )?,
+            ])
+            .env("CANDIDATE_SHA", expected)
+            .env("GITHUB_REPOSITORY", "EffortlessMetrics/ripr-swarm")
+            .env("GITHUB_OUTPUT", &output)
+            .env("GITHUB_ENV", &environment)
+            .output()?;
+        Ok((result, fs::read_to_string(output)?))
+    };
+    let (failed_probe, output) = run_binding(WORKFLOW)?;
+    assert_eq!(failed_probe.status.code(), Some(9));
+    assert!(output.is_empty());
+    let masked = WORKFLOW.replace(
+        "          checkout_head=\"$(git rev-parse HEAD)\"\n          test \"${checkout_head}\" = \"${CANDIDATE_SHA,,}\"",
+        "          test \"$(git rev-parse HEAD)\" = \"${CANDIDATE_SHA,,}\"",
+    );
+    assert_ne!(masked, WORKFLOW);
+    let (false_success, output) = run_binding(&masked)?;
+    assert!(false_success.status.success(), "{false_success:?}");
+    assert_eq!(output, "native_version=0.11.0\n");
+    Ok(())
+}
+
+#[test]
+fn callable_graph_uses_exact_subject_and_cannot_turn_guard_failure_into_skip() -> TestResult {
+    let fixture = Fixture::new()?;
+    let build = job(WORKFLOW, "build-wheel")?;
+    let expression = condition(&build)?
+        .replace("!contains(toJSON(inputs), '\"subject_sha\"')", "1 == 0")
+        .replace("contains(toJSON(inputs), '\"subject_sha\"')", "1 == 1");
+    for event in ["pull_request", "workflow_dispatch", "push", "schedule"] {
+        for result in ["failure", "skipped", "cancelled"] {
+            assert!(!runnable(
+                &fixture,
+                &expression,
+                event,
+                false,
+                result,
+                "",
+                true
+            )?);
+        }
+        assert!(runnable(
+            &fixture,
+            &expression,
+            event,
+            false,
+            "success",
+            "true",
+            true
+        )?);
+    }
+    let app = job(WORKFLOW, "applicability")?;
+    assert!(
+        app.find("Verify callable exact subject").ok_or("guard")?
+            < app.find("dtolnay/rust-toolchain").ok_or("toolchain")?
+    );
+    assert!(app.contains("!contains(toJSON(inputs), '\"subject_sha\"')"));
+    assert!(WORKFLOW.contains("CANDIDATE_SHA: ${{ inputs.subject_sha || github.event.pull_request.head.sha || github.sha }}"));
+    assert!(app.contains("fetch-depth: 0"));
+    assert!(WORKFLOW.contains("  workflow_call:\n"));
+    assert!(WORKFLOW.contains("  contents: read\n"));
+    assert!(!WORKFLOW.contains("secrets: inherit"));
+    for (job_name, minutes) in [("applicability", 3), ("build-wheel", 12), ("consume", 5)] {
+        assert!(job(WORKFLOW, job_name)?.contains(&format!("&& {minutes} ||")));
+    }
+    let removed = expression.replace(
+        "(1 == 0 || needs.applicability.result == 'success') && ",
+        "",
+    );
+    assert_ne!(removed, expression);
+    assert!(
+        runnable(
+            &fixture,
+            &removed,
+            "pull_request",
+            false,
+            "failure",
+            "",
+            true
+        )?,
+        "removed guard must demonstrate expensive fallback"
     );
     Ok(())
 }
