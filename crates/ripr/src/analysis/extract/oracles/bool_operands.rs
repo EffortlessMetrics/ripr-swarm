@@ -693,15 +693,20 @@ fn is_whole_pattern(text: &str) -> bool {
 }
 
 /// Whether masked `text` spells a comparison as a call anywhere
-/// (`r.eq(&Err(E::Bad)) ^ true`, `PartialOrd::lt(&a, &b) | flag`; #7931).
+/// (`r.eq(&Err(E::Bad)) ^ true`, `PartialOrd::lt(&a, &b) | flag`; #7931),
+/// including through any path (`Result::ne(&r, &x) ^ flag`,
+/// `<_ as PartialEq>::ne(..)`; #7993).
 fn holds_comparison_call(text: &str) -> bool {
     text.contains("PartialEq::")
         || text.contains("PartialOrd::")
         || ["eq", "ne", "lt", "le", "gt", "ge"].iter().any(|name| {
-            text.match_indices(&format!(".{name}"))
-                .any(|(at, matched)| {
-                    text.get(at + matched.len()..)
-                        .is_some_and(|rest| rest.trim_start().starts_with(['(', ':']))
+            [format!(".{name}"), format!("::{name}")]
+                .iter()
+                .any(|spelling| {
+                    text.match_indices(spelling.as_str()).any(|(at, matched)| {
+                        text.get(at + matched.len()..)
+                            .is_some_and(|rest| rest.trim_start().starts_with(['(', ':']))
+                    })
                 })
         })
 }

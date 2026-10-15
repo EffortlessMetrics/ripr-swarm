@@ -843,7 +843,10 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         ("assert_eq!(flag.eq(&false), true);", &exact),
         // #7993 controls: a qualified path call asserted true pins like
         // `==`, and a doubly negated literal is the literal.
-        ("assert_eq!(<_ as PartialEq>::eq(&r, &Err(E::Bad)), true);", &err),
+        (
+            "assert_eq!(<_ as PartialEq>::eq(&r, &Err(E::Bad)), true);",
+            &err,
+        ),
         ("assert_eq!(Result::eq(&r, &Err(E::Bad)), !&false);", &err),
         ("assert_eq!(r == Err(E::Bad), !!&true);", &err),
         // A relation-only conjunct beside a pinning `==` lends no kind: the
@@ -1015,6 +1018,10 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!(r == Err(E::Bad), &!true);",
         "assert_eq!(r == Err(E::Bad), !{ true });",
         "assert_eq!(!&true, Result::eq(&r, &Err(E::Bad)));",
+        "assert_eq!(flag ^ Result::ne(&r, &Err(E::Bad)), true);",
+        "assert_eq!(Result::eq(&r, &Err(E::Bad)) ^ true, true);",
+        "assert_eq!(flag | <_ as PartialEq>::ne(&r, &Err(E::Bad)), true);",
+        "assert_eq!(matches!(r, Err(E::Bad)).eq(&!true), true);",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
