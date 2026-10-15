@@ -9575,11 +9575,16 @@ tests = [
   "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::gap_code_fails_closed_for_unknown_kind",
   "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::unknown_code_does_not_resolve",
   "crates/ripr/src/lsp/diagnostics.rs::tests::gap_record_diagnostic_fails_closed_for_unregistered_kind",
+  "crates/ripr/src/lsp/backend/delivery_selection_parity_tests/quarantine_marker_tests.rs::quarantined_pull_and_push_serve_one_information_marker",
+  "crates/ripr/src/lsp/backend/delivery_selection_parity_tests/quarantine_marker_tests.rs::saving_matching_buffer_retracts_the_marker",
+  "crates/ripr/src/lsp/backend/delivery_selection_parity_tests/quarantine_marker_tests.rs::quarantine_marker_has_no_finding_context_action",
+  "crates/ripr/src/lsp/backend.rs::quarantine_message_tests::quarantined_document_result_id_stays_distinct",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/lsp/diagnostic_catalog.rs",
   "crates/ripr/src/lsp/diagnostics.rs",
+  "crates/ripr/src/lsp/backend.rs",
   "crates/ripr/src/lsp.rs",
 ]
 outputs = [
@@ -13274,6 +13279,9 @@ id = "RIPR-SPEC-0211"
 name = "MCP workspace session evidence"
 spec = "docs/specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md"
 tests = [
+  "crates/ripr/tests/mcp_stdio.rs::rejection_arms_survive_the_stdio_transport",
+  "crates/ripr/tests/mcp_sdk.rs::official_sdk_legacy_client_lists_calls_and_reads_status",
+  "crates/ripr/tests/mcp_sdk.rs::official_sdk_discovery_client_lists_calls_and_reads_status",
   "crates/ripr/tests/support/mcp_scope_contract.rs::status_and_refresh_advertise_committed_scope_variants",
   "crates/ripr/tests/mcp_stdio.rs::refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation",
   "crates/ripr/src/mcp/workspace.rs::tests::gap_list_summaries_project_readiness_matching_get_gap",
@@ -14392,6 +14400,10 @@ tests = [
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::opaque_or_unreadable_inputs_never_select_other",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::receiver_scrutinee_reads_glob_imported_variants",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::integer_arms_compare_by_value",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::char_literal_arms_compare_by_value",
+  "crates/ripr/tests/match_arm_helper_selection.rs::a_helper_lent_literal_that_selects_the_arm_exposes_it",
+  "crates/ripr/tests/match_arm_helper_selection.rs::a_helper_lent_literal_for_another_arm_does_not_expose_it",
+  "crates/ripr/tests/match_arm_helper_selection.rs::a_variable_helper_argument_does_not_expose_the_arm",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::refutable_or_unprovable_patterns_stay_unknown",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::computed_or_rebound_scrutinee_establishes_nothing",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_match_the_call_may_skip_never_credits_the_arm",
@@ -15195,6 +15207,8 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::analyzer_limit_refusals_are_limits_of_ripr_reading",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::refusals_that_can_keep_an_assertion_from_running_are_not_limits",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_outcome_settling_attribute_is_the_refusal_wherever_it_sits",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_return_guard_that_spares_the_expected_value_is_an_analyzer_limit",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_direct_call_name_is_one_bare_call_ending_the_subject",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_relations_stop_crediting_beside_a_reach_bearing_one",

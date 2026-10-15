@@ -114,7 +114,8 @@ grammar above written in the test call itself, or an immutable `let` binding
 in the same test whose initializer is one and which is not shadowed before
 the call. A `let mut` binding, or one passed as `&mut` before the call, is
 unresolved. Arguments from helpers, fixtures, loops,
-parameters or other calls are unresolved.
+parameters or other calls are unresolved, except the helper-lent literals
+of decision 5, which only credit the selected arm.
 
 ### Naming the unselected arm
 
@@ -280,6 +281,20 @@ rejected alternative. Any can be reversed later without touching the rest.
    exact oracle on that call's result, is the discriminator the change
    needs. Rejected: name the selection in the discriminate summary but keep the
    existing token rule for credit.
+5. **Helper-lent literal inputs (#7981).** Adopted: a test-local check
+   helper admitted under RIPR-SPEC-0197 rule 7 (#6482), whose assertion
+   is `assert_eq!` with one operand exactly an owner call on a helper
+   parameter, lends that parameter's literal argument to the owner call.
+   When the literal at that position of a call to the helper provably
+   selects the changed arm, the helper's exact assertion credits it
+   (`check_color('S', "black")` with `assert_eq!(suit_color(suit), want)`).
+   Only the scalar literals `loan_call_literals` reads are lent, and only
+   when every argument of that helper call is one, so
+   `check_color('S', want)` lends nothing; a variable, an expression or a
+   call argument lends nothing. This credits
+   only: a helper call still blocks naming an arm as unselected
+   (decision 3). Rejected: keep helper arguments unresolved, which reads
+   a helper-wrapped table of literal checks as unproven.
 
 ### Implementation Status
 
@@ -289,7 +304,12 @@ credits one.
 
 Implemented:
 
-- integer, char, bool, and cooked or raw string literals, compared by value;
+- integer, char, bool, and cooked or raw string literals, compared by value.
+  A char-literal pattern (`'C' | 'S' =>`) reads since #7981; before it the
+  arm-head reader masked char literals as comments and no char arm ever
+  established;
+- literal arguments a check helper lends to an owner call (decision 5,
+  #7981), for credit only;
 - integer ranges with literal bounds (`a..=b`, `a..b`, `..=b`, `a..`),
   matched by value against an integer input (#5992);
 - enum variant paths, qualified or bare imported, including `Some`, `None`,
@@ -542,6 +562,10 @@ the diff changes `None => 1` to `None => 0`.
 - `crates/ripr/tests/match_arm_unselected_identity.rs`: owner identity
   (foreign imports, a foreign call path, a shadowing closure, a two-level
   helper).
+- `crates/ripr/tests/match_arm_helper_selection.rs` (decision 5): a
+  helper-lent char literal that selects the changed arm credits it; a
+  literal for another arm and a variable argument do not. Verdict corpus
+  case `grid-match-helper`.
 - `crates/ripr/src/analysis/probes/diff.rs` unit tests: an arm-head edit
   drops the unchanged return value; a body edit, or a line with no other
   shape holding the edit, keeps it. Verdict corpus case

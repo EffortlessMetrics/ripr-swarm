@@ -298,7 +298,17 @@ Repair attempts fail closed:
 - tracked differences from the prepared head outside the trusted edit surface block receipt admission, committed or not, and so do untracked paths the attempt wrote outside it; an untracked file that already existed at the before phase and is byte-identical afterwards was not written by the attempt and does not block admission;
 - only a receipt whose `status` is `advisory` recommends including it in review. For an `incomplete` or `invalid` receipt, the receipt's own `summary.next_action.recommended_action` and `summary.next_recommendation` state the status and reason, say the receipt is not review evidence, and name the recovery; the after phase prints that same field as its `next:` line.
 
-Two refusals happen before the attempt is finished, so the attempt stays `awaiting_edit` and the printed rerun works: changed analysis inputs ([Cargo.lock between the phases](#cargolock-between-the-phases)) and a `HEAD` that no longer descends from the prepared head ([Committing between the phases](#committing-between-the-phases)).
+Three refusals happen before the attempt is finished, so the attempt stays `awaiting_edit` and can be rerun after resolving the cause: no repository movement, changed analysis inputs ([Cargo.lock between the phases](#cargolock-between-the-phases)), and a `HEAD` that no longer descends from the prepared head ([Committing between the phases](#committing-between-the-phases)).
+
+On no movement, `ripr continue` and the advanced after phase name the selected
+attempt and its focused test surface from the retained validated packet, then
+explain edit followed by retry and name a root/attempt-bound `ripr agent status`
+command. An inline target keeps its existing `#[cfg(test)]` module restriction;
+production code, the module declaration, and existing tests stay unchanged.
+The original typed error stays intact. Recovery lines appear on stderr, in
+`last_after_refusal.reason`, and in the advanced `--json` refusal's `narration`.
+The façade keeps stdout empty on refusal, the attempt stays `awaiting_edit`, and
+no receipt is issued. A successful focused-edit retry clears the refusal.
 
 A failed, incomparable, or stale attempt is terminal: re-running its after phase or `ripr agent receipt` refuses. The recovery narration follows the verdict (#7204). When the cage refused paths, the after phase lists each refused path and the undo route: if you committed the test edit or a refused change, uncommit it first (for example `git reset --soft HEAD~1` when it is the last commit; the changes stay in the worktree); undo the refused changes and set the test edit aside, for example with `git stash`; while the gap still exists, run `ripr agent repair --root . --seam-id <seam-id> --phase before` to prepare a new attempt; restore the test edit, then run the new `--attempt` command. When the verdict is `Incomparable` with an empty violations list, nothing was refused and no undo is narrated: the narration names the incomparability cause — a before-phase baseline recorded `ambiguous: true` when the attempt's baseline artifact carries it — and routes to a fresh attempt from a clean state: set the test edit aside, run the `--phase before` command from the clean state, restore the test edit, then run the new `--attempt` command. Because an incomparable delta is never judged against the edit surface, an empty violations list is not a compliance finding: the narration also names the changed paths the cage did not evaluate and warns that a plain `git stash` leaves untracked files in place, so an outside-surface change is not silently carried into the next baseline.
 

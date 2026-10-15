@@ -4774,6 +4774,10 @@ struct TsPostLadderContext<'a> {
 /// - RIPR-SPEC-0243 rule 8: an `exposed` result whose exposing test files all
 ///   mock a module the changed line calls reads `static_unknown`, because the
 ///   mock can replace the changed value before any assertion sees it.
+/// - RIPR-SPEC-0246 rule 3: an `exposed` value-seam result whose change
+///   only sets or drops one literal field after spreading a parameter reads
+///   `weakly_exposed` when observed owner calls exist and none passes an
+///   input shown to lack the field or hold another value there.
 /// - RIPR-SPEC-0248 rule 1: an `exposed` value-seam result whose change
 ///   only adds or drops one additive term reads `weakly_exposed` unless an
 ///   observed owner call folds the term to a non-zero number.
@@ -4830,6 +4834,30 @@ fn ts_apply_post_ladder_rules(
     ) {
         return;
     }
+    if let Some(change) = context
+        .old_line_text
+        .and_then(|old| SpreadOverride::read(old, context.line_text))
+        && let Some(reason) = ts_spread_override_unseen(
+            &change,
+            context.owner,
+            context.candidates,
+            context.alias_map,
+            context.workspace_root,
+        )
+    {
+        verdict.class = ExposureClass::WeaklyExposed;
+        verdict.discriminate_state = StageState::Weak;
+        verdict.missing = vec![format!(
+            "The change to `{}` only sets or drops `{}: {}` after spreading `{}`, and {reason}. Add a case whose `{}` lacks `{}` or holds another value there.",
+            context.owner.name,
+            change.key,
+            change.literal,
+            change.subject,
+            change.subject,
+            change.key
+        )];
+        return;
+    }
     let Some(term) = context
         .old_line_text
         .and_then(|old| ts_dropped_additive_term(old, context.line_text))
@@ -4857,6 +4885,111 @@ fn ts_apply_post_ladder_rules(
         "The change to `{}` only adds or drops the additive term `{term}`, which {reason}. Add a case whose input makes `{term}` non-zero.",
         context.owner.name
     )];
+}
+
+/// RIPR-SPEC-0246 rule 3: why no observed owner call can see the spread
+/// override, or `None` when one can, or when no call is observed at all (the
+/// ladder's reading stands). A call can see it when its argument for the
+/// spread parameter is an object literal, inline or bound once by `const`
+/// in the test, that lacks the key or holds another literal there.
+pub(crate) fn ts_spread_override_unseen(
+    change: &SpreadOverride,
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Option<&'static str> {
+    let index = owner.params.iter().position(|p| p == &change.subject)?;
+    if !owner.source_text.as_deref().is_some_and(|source| {
+        ts_parameter_is_stable(source, &change.subject)
+            && masked_owner_body(source)
+                .is_some_and(|body| !ts_members_written(&body, &change.subject, true))
+    }) {
+        return None;
+    }
+    let (mut carries, mut unknown) = (false, false);
+    for candidate in candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+    {
+        if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
+            continue;
+        }
+        let receivers = owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+        let names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
+        let qualified: Vec<String> = receivers
+            .iter()
+            .map(|receiver| format!("{receiver}.{}", owner.name))
+            .collect();
+        let callees: Vec<&str> = names
+            .iter()
+            .copied()
+            .chain(qualified.iter().map(String::as_str))
+            .collect();
+        for assertion in &candidate.test.assertions {
+            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() {
+                continue;
+            }
+            let whole = matches!(
+                assertion.oracle_kind,
+                OracleKind::ExactValue | OracleKind::WholeObjectEquality | OracleKind::Snapshot
+            )
+            .then(|| {
+                ts_observed_owner_call_arguments(
+                    candidate.test,
+                    assertion,
+                    &names,
+                    owner,
+                    &receivers,
+                )
+            })
+            .flatten();
+            // A strong pin on the key itself (`owner(cfg).ok`) also tells the
+            // versions apart when its input lacks the field; on any other
+            // input it neither witnesses nor observes the whole result.
+            let (arguments, member) = match whole {
+                Some(arguments) => (arguments, false),
+                None => match assertion
+                    .observed_expression
+                    .as_deref()
+                    .and_then(|observed| {
+                        ts_owner_call_member_arguments(
+                            observed,
+                            &names,
+                            owner,
+                            &receivers,
+                            &change.key,
+                        )
+                    }) {
+                    Some(arguments) => (arguments, true),
+                    None => continue,
+                },
+            };
+            let object = arguments.get(index).and_then(|argument| {
+                let argument = argument.trim();
+                if argument.starts_with('{') {
+                    Some(argument.to_string())
+                } else {
+                    ts_test_local_object(&candidate.test.body_text, argument, &callees)
+                }
+            });
+            match object.map_or(OverrideInput::Unknown, |object| change.input(&object)) {
+                OverrideInput::Differs => return None,
+                _ if member => {}
+                OverrideInput::Carries => carries = true,
+                OverrideInput::Unknown => unknown = true,
+            }
+        }
+    }
+    match (carries, unknown) {
+        (true, false) => {
+            Some("every tested input already carries it, so both versions return the same value")
+        }
+        (_, true) => Some(
+            "no tested input is shown to lack it, so no test is shown to tell the versions apart",
+        ),
+        (false, false) => None,
+    }
 }
 
 /// What the observed owner calls show about the RIPR-SPEC-0248 rule 1 term.
@@ -5043,6 +5176,93 @@ fn ts_whole_owner_call_arguments(
         .map(str::trim_start)
         .find(|rest| ts_is_one_argument_list(rest))
         .and_then(|rest| balanced_call_arguments(&rest[1..]))
+}
+
+/// RIPR-SPEC-0246 rule 3: the arguments of the owner call (named as
+/// `ts_whole_owner_call_arguments` names it) when `observed` is exactly its
+/// member `key`: `owner(...).key`, `owner(...)?.key` or `owner(...)["key"]`,
+/// with nothing after it. `None` for anything else, including an operator
+/// after the member (`.key ?? true` passes on both versions) and an awaited
+/// form (`await owner(x).key` awaits the member, not the call).
+fn ts_owner_call_member_arguments(
+    observed: &str,
+    names: &[&str],
+    owner: &TypeScriptOwner,
+    receivers: &[String],
+    key: &str,
+) -> Option<Vec<String>> {
+    let observed = observed.trim();
+    let qualified = receivers
+        .iter()
+        .filter_map(|receiver| observed.strip_prefix(receiver.as_str()))
+        .filter_map(|rest| rest.trim_start().strip_prefix('.'))
+        .filter_map(|rest| rest.trim_start().strip_prefix(owner.name.as_str()));
+    let bare = names.iter().filter_map(|name| observed.strip_prefix(name));
+    for rest in bare.chain(qualified).map(str::trim_start) {
+        let Some(arguments) = rest.strip_prefix('(').and_then(balanced_call_arguments) else {
+            continue;
+        };
+        let Some(end) = call_list_end(rest) else {
+            continue;
+        };
+        let tail = rest[end..].trim_start();
+        let optional = tail.strip_prefix("?.").map(str::trim_start);
+        let dotted = optional
+            .filter(|tail| !tail.starts_with('['))
+            .or_else(|| tail.strip_prefix('.').map(str::trim_start))
+            .and_then(|tail| tail.strip_prefix(key))
+            .is_some_and(|after| after.trim().is_empty());
+        let bracketed = optional
+            .unwrap_or(tail)
+            .strip_prefix('[')
+            .map(str::trim_start)
+            .and_then(|inner| {
+                ['"', '\''].into_iter().find_map(|quote| {
+                    inner
+                        .strip_prefix(quote)?
+                        .strip_prefix(key)?
+                        .strip_prefix(quote)
+                })
+            })
+            .and_then(|after| after.trim_start().strip_prefix(']'))
+            .is_some_and(|after| after.trim().is_empty());
+        if dotted || bracketed {
+            return Some(arguments);
+        }
+    }
+    None
+}
+
+/// The byte offset just past the `)` that closes the argument list opening
+/// `rest`, skipping brackets and quoted text, or `None` when it never closes.
+fn call_list_end(rest: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (index, ch) in rest.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return (ch == ')').then_some(index + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// RIPR-SPEC-0246 rule 1: the identifier whose returned object the change

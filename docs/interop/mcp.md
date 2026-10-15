@@ -387,15 +387,17 @@ transaction unless a new refresh commits one.
 An invalid root does not stop the server. Status reports
 `workspace_state: "unavailable"` with a `root.error_code`, and the tool result
 adds a second text content item that names the cause and the recovery
-(restart with `--root <repository>`). An unknown static resource name is
-rejected with the one valid static URI in the message and in
-`error.data.available`; the snapshot and gap templates reject unknown or
-stale identities with their typed codes in `error.data`. A client that
-negotiated an older protocol version gets resource-not-found (`-32002`) for a
-resource miss; current clients get Invalid Params (`-32602`). The SDK maps
-the code, while the adapter's bounded message
-`unknown resource; available: ripr://workspace/status` and
-`error.data.available` name the same valid URI in both lifecycles.
+(restart with `--root <repository>`). An unknown resource URI is
+rejected with the valid static URI and all five resource templates in the
+human-readable message. The same routes remain available separately in
+`error.data.available` and `error.data.resource_templates`. Templates require
+valid resource identities; listing a template does not promise its resource
+currently exists. Recognized snapshot, gap and repair resource routes retain
+their typed missing/stale-identity errors without the generic route list.
+A client that negotiated an older protocol version gets resource-not-found
+(`-32002`) for a resource miss; current clients get Invalid Params (`-32602`).
+The SDK maps the code, while the adapter preserves the same bounded message
+and structured recovery routes in both lifecycles.
 The instructions (returned by both `initialize` and `server/discover`) and the
 tool descriptions state positively what each tool returns, its bounds, and
 what it does not do. Protocol errors keep standard JSON-RPC codes. The pinned

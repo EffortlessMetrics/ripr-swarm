@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-spec0263-one-call-enters-guard",
+  "origin": "authored",
+  "version_label": "authored 2026-10-14 for RIPR-SPEC-0263 acceptance example 3 (a guarded push one of two test calls enters)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "dd3ab70b7ebf8245140d56801f88238d24219f1d7bb5681baeec3750131d7f65"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "a2cb8fbab2c67f7ef04a52ec2340074ad60a81977cc37f71920c9cecad3672cb"
+    }
+  ]
+}

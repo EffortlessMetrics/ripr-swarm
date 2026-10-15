@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0263-let-bound-input",
+  "subject_id": "authored-spec0263-let-bound-input",
+  "diff": "cases/spec0263-let-bound-input.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "direct_collection_equality_let_bound_input",
+  "hard_case": "Known false verdict the spec accepts: example 4 fails closed on a non-literal input, so the direct-collection observer keeps exposed although 4 never enters the guard. Narrow fix proposed in #7964.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "v.push(x + 1);",
+        "mutated_line": "v.push(x + 1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: add(&mut v, 11) records 12"
+      },
+      {
+        "replacement": "let _ = x;",
+        "mutated_line": "let _ = x;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: add(&mut v, 11) records nothing"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "adds_nothing_for_a_bound_small_value binds n = 4 and calls add(&mut v, n); 4 never enters `x > 10`, so every mutant of the push passes. Spec cells: RIPR-SPEC-0263 example 4: the input is not a literal, so the rule fails closed and names no guard.",
+  "labeling_observation": {
+    "ripr_commit": "46faff1e7",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0263#4"
+  ]
+}

@@ -265,3 +265,18 @@ cargo test --locked -p ripr --test default_suppression_disclosure -- --test-thre
 
 The suite distinguishes unused presence from explicit application/refusal,
 preserves complete stdout, and excludes foreign-CWD and directory false positives.
+
+## MCP unknown-resource recovery
+
+[RIPR-SPEC-0211](specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md#unknown-resource-recovery-7767)
+defines the message-only client's recovery contract. The raw stdio control
+pins literal prose and structured routes, preserves recognized-route failures,
+and follows the rejection with a valid status read on the same connection.
+Official SDK cases cover the negotiated lifecycle mapping independently.
+
+```bash
+cargo test --locked -p ripr --test mcp_stdio rejection_arms_survive_the_stdio_transport -- --exact
+cargo test --locked -p ripr --test mcp_sdk
+```
+
+These tests qualify wire behavior, not installation or every protocol version.

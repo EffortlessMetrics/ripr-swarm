@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-spec0263-named-bound-guard",
+  "origin": "authored",
+  "version_label": "authored 2026-10-14 for RIPR-SPEC-0263 acceptance example 5 (a push guarded by a named constant bound the test input misses)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "edb0ed12d4c6015b68cef863c92712ee449399221871b23fe53469b0c12f7be7"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "73fab7737874c7ef03f0f518238db9c5f63c1fbcda355e335547a85595b5a269"
+    }
+  ]
+}

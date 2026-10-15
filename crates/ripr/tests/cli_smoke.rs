@@ -24061,6 +24061,42 @@ fn agent_status_names_a_refused_after_phase_before_repeating_it()
         .unwrap_or_default()
         .to_string();
     assert!(recorded.contains("no repository movement"), "{manifest:#}");
+    assert_eq!(refused_document["attempt_id"], attempt_id);
+    let error = refused_document["error"]
+        .as_str()
+        .ok_or("missing original typed error")?;
+    assert!(recorded.starts_with(error), "{recorded}");
+    assert!(
+        refused_stderr.contains(&format!("ripr: {error}")),
+        "{refused_stderr}"
+    );
+    let narration = refused_document["narration"]
+        .as_array()
+        .ok_or("missing refusal narration")?;
+    assert!(!narration.is_empty(), "{refused_document}");
+    for line in narration {
+        let line = line.as_str().ok_or("non-string refusal narration")?;
+        assert!(
+            refused_stderr.contains(&format!("ripr: {line}")),
+            "{refused_stderr}"
+        );
+        assert!(
+            recorded
+                .to_lowercase()
+                .contains(&line.trim_end_matches('.').to_lowercase()),
+            "{recorded}"
+        );
+    }
+    for expected in [
+        "awaiting_edit",
+        "tests/pricing.rs",
+        "then rerun",
+        "ripr agent status --root",
+        &format!("--attempt {attempt_id}"),
+    ] {
+        assert!(recorded.contains(expected), "{recorded}");
+    }
+    assert!(!root.join("target/ripr/reports/agent-receipt.json").exists());
 
     let report = repair_route_status(&root)?;
     let (step, command) = repair_route_next(&report);

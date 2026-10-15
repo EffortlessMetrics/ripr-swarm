@@ -589,7 +589,7 @@ The extension contributes these command IDs and palette titles:
 | `ripr.openReport` | ripr: Open Report |
 | `ripr.showTopLimitation` | ripr: Show Top Limitation |
 | `ripr.showReceiptStatus` | ripr: Show Receipt Status |
-| `ripr.copyReceiptCommand` | ripr: Copy Receipt Command |
+| `ripr.copyReceiptCommand` | ripr: Copy Receipt Command (Receipt Status) |
 | `ripr.openAttemptLedger` | ripr: Open Attempt Ledger |
 | `ripr.showRouteQuality` | ripr: Show Route Quality |
 
