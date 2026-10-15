@@ -62,6 +62,7 @@ struct Case {
     threads: Vec<String>,
     fail: &'static str,
     label: &'static str,
+    closed_stderr: bool,
 }
 
 fn positive() -> Case {
@@ -84,6 +85,7 @@ fn positive() -> Case {
         ],
         fail: "",
         label: "merge-ready",
+        closed_stderr: false,
     }
 }
 
@@ -122,13 +124,18 @@ fn run(script: &str, case: &Case) -> Result<(Output, String), String> {
       fi
     }
     "#;
+    let stderr_setup = if case.closed_stderr {
+        "exec 2>&-\n"
+    } else {
+        ""
+    };
     let output = std::process::Command::new("timeout")
         .args([
             "--kill-after=1s",
             "10s",
             "bash",
             "-c",
-            &format!("{mock}\n{script}"),
+            &format!("{stderr_setup}{mock}\n{script}"),
         ])
         .env_clear()
         .env("PATH", std::env::var("PATH").map_err(|e| e.to_string())?)
@@ -204,7 +211,7 @@ fn paired(case: &Case, expected: i32, phase: Option<&str>) -> Result<Value, Stri
 fn original_decision_lines_and_native_statuses_are_preserved() -> Result<(), String> {
     let current = body()?;
     let (prefix, inserted) = current
-        .split_once("# Diagnostics are advisory:")
+        .split_once("readiness_refused() { # Advisory diagnostics preserve the original status.\n")
         .ok_or("handler missing")?;
     let (_, original) = inserted
         .split_once("trap readiness_refused ERR\n")
@@ -405,6 +412,21 @@ fn reported_identities_and_review_metadata_are_bounded_and_non_secret() -> Resul
         detail["latest_ids"].as_array().ok_or("IDs missing")?.len(),
         20
     );
+    Ok(())
+}
+
+#[test]
+fn unavailable_diagnostic_stderr_cannot_replace_the_original_failure() -> Result<(), String> {
+    let mut case = positive();
+    case.closed_stderr = true;
+    for endpoint in ["pr", "reviews", "threads"] {
+        case.fail = endpoint;
+        let (before, calls_before) = run(ORIGINAL, &case)?;
+        let (after, calls_after) = run(&body()?, &case)?;
+        assert_eq!(before.status.code(), Some(73));
+        assert_eq!(after.status.code(), before.status.code());
+        assert_eq!(calls_after, calls_before);
+    }
     Ok(())
 }
 

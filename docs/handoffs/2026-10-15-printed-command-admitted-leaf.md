@@ -116,8 +116,8 @@ and native exit status. On refusal it records the phase plus bounded PR
 comparison booleans and expected/observed valid SHA identities, review
 disposition/marker booleans and capped numeric review IDs, or thread error,
 resolution and pagination outcomes. It performs no further API request, logs
-no raw review bodies or credentials, and its advisory jq failures cannot turn
-the original refusal into success. Missing/malformed payloads retain the
+no raw review bodies or credentials, and advisory jq or stderr-write failures
+cannot replace the original status or turn refusal into success. Missing/malformed payloads retain the
 original jq status and stderr with named phase context. All existing production,
 cutover, merge and native-request holds remain.
 
