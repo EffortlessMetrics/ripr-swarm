@@ -91,18 +91,20 @@ use super::{
     StaticLanguageAllowEntry, StaticLanguageMatcher, TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES,
     TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES,
     TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES, TestOracleClass,
-    USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES, USER_SURFACE_PROJECTION_REQUIRED_SURFACES,
-    WorktreeDoctorFinding, WorktreeDoctorSeverity, actionable_gap_outcomes_json,
-    actionable_gap_outcomes_markdown, actionable_gap_outcomes_report_from_values,
-    actionable_gap_outcomes_report_impl, allow_attribute_budget_violations,
-    artifact_router_path_violation, badge_artifact_command_args, badge_artifact_command_label,
-    badge_artifact_jobs, badge_artifact_native_slot, badge_artifacts_impl_with_runners,
-    badge_artifacts_summary_markdown, badge_basis_canonical_projection,
-    badge_basis_derived_ripr_plus_snapshot, badge_basis_needs_repo_badge_plus_job,
-    badge_basis_report_json, badge_basis_report_markdown, badge_basis_seam_native_counts,
-    badge_diff_policy_violations, badge_native_audit_snapshot, build_lsp_cockpit_report,
-    build_repo_exposure_latency_report, build_targeted_test_outcome_report, check_allow_attributes,
-    check_badge_diff_policy_with_context, check_doc_artifacts, check_droid_review_config,
+    UNREGISTERED_SPEC_MESSAGE_LIMIT, USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES,
+    USER_SURFACE_PROJECTION_REQUIRED_SURFACES, WorktreeDoctorFinding, WorktreeDoctorSeverity,
+    actionable_gap_outcomes_json, actionable_gap_outcomes_markdown,
+    actionable_gap_outcomes_report_from_values, actionable_gap_outcomes_report_impl,
+    allow_attribute_budget_violations, artifact_router_path_violation, badge_artifact_command_args,
+    badge_artifact_command_label, badge_artifact_jobs, badge_artifact_native_slot,
+    badge_artifacts_impl_with_runners, badge_artifacts_summary_markdown,
+    badge_basis_canonical_projection, badge_basis_derived_ripr_plus_snapshot,
+    badge_basis_needs_repo_badge_plus_job, badge_basis_report_json, badge_basis_report_markdown,
+    badge_basis_seam_native_counts, badge_diff_policy_violations, badge_native_audit_snapshot,
+    build_lsp_cockpit_report, build_repo_exposure_latency_report,
+    build_targeted_test_outcome_report, check_allow_attributes,
+    check_badge_diff_policy_with_context, check_doc_artifacts,
+    check_doc_artifacts_with_unregistered_baseline, check_droid_review_config,
     check_executable_files, check_file_policy, check_local_context, check_network_policy,
     check_no_panic_family, check_process_policy, check_static_language, check_support_tiers,
     check_workflows, ci_enforced_xtask_invocations, ci_full_evidence_gates, cockpit_json,
@@ -187,9 +189,9 @@ use super::{
     report_index_repo_ops_status, report_packet_index_case_id_violation,
     report_packet_index_generated_at_violation, report_packet_index_render_plan,
     report_status_from_text, repository_owned_review_thread_mutation_violations,
-    ripr_command_literals_in_text, ripr_debug_binary, ripr_plus_receipt_from_badge,
-    ripr_plus_receipt_from_options, ripr_plus_receipt_from_repo_badge_json,
-    ripr_plus_receipt_from_repo_exposure_summary_json,
+    reverse_direction_unregistered_violation, ripr_command_literals_in_text, ripr_debug_binary,
+    ripr_plus_receipt_from_badge, ripr_plus_receipt_from_options,
+    ripr_plus_receipt_from_repo_badge_json, ripr_plus_receipt_from_repo_exposure_summary_json,
     ripr_plus_receipt_from_repo_exposure_summary_json_with_source, ripr_plus_receipt_markdown,
     ripr_pre_commit_hook, ripr_swarm_attempt_allowed_file_line,
     ripr_swarm_attempt_dry_run_from_actionable_gaps_value, ripr_swarm_attempt_dry_run_markdown,
@@ -24990,6 +24992,126 @@ owner = "repo-infra"
 
         check_doc_artifacts()
     })
+}
+
+#[test]
+fn reverse_direction_violation_names_unregistered_spec_ids_and_paths() {
+    let unregistered = [
+        (
+            "RIPR-SPEC-1234".to_string(),
+            "docs/specs/RIPR-SPEC-1234-alpha.md".to_string(),
+        ),
+        (
+            "RIPR-SPEC-1235".to_string(),
+            "docs/specs/RIPR-SPEC-1235-beta.md".to_string(),
+        ),
+    ];
+    let message = reverse_direction_unregistered_violation(&unregistered, 1, DOC_ARTIFACT_LEDGER)
+        .expect("two unregistered specs exceed baseline 1");
+    assert!(
+        message.contains("RIPR-SPEC-1234 (docs/specs/RIPR-SPEC-1234-alpha.md)"),
+        "must name the first unregistered id and path, got {message}"
+    );
+    assert!(
+        message.contains("RIPR-SPEC-1235 (docs/specs/RIPR-SPEC-1235-beta.md)"),
+        "must name the second unregistered id and path, got {message}"
+    );
+    assert!(
+        message.contains("unregistered:"),
+        "must label the named ids, not only the excess count, got {message}"
+    );
+    assert!(
+        message.contains("baseline: 1") && message.contains("current: 2"),
+        "must retain the ratchet counts, got {message}"
+    );
+}
+
+#[test]
+fn reverse_direction_violation_is_silent_at_baseline() {
+    let unregistered = [(
+        "RIPR-SPEC-1234".to_string(),
+        "docs/specs/RIPR-SPEC-1234-alpha.md".to_string(),
+    )];
+    assert_eq!(
+        reverse_direction_unregistered_violation(&unregistered, 1, DOC_ARTIFACT_LEDGER),
+        None,
+        "the ratchet must not fire at the baseline count"
+    );
+}
+
+#[test]
+fn reverse_direction_violation_names_newest_ids_before_truncating() {
+    let unregistered: Vec<(String, String)> = (1..=UNREGISTERED_SPEC_MESSAGE_LIMIT + 2)
+        .map(|n| {
+            let id = format!("RIPR-SPEC-{n:04}");
+            let path = format!("docs/specs/{id}-sample.md");
+            (id, path)
+        })
+        .collect();
+    let message = reverse_direction_unregistered_violation(&unregistered, 0, DOC_ARTIFACT_LEDGER)
+        .expect("any unregistered spec exceeds baseline 0");
+    let newest = format!("RIPR-SPEC-{:04}", UNREGISTERED_SPEC_MESSAGE_LIMIT + 2);
+    assert!(
+        message.contains(&newest),
+        "truncation must keep the newest spec id visible, got {message}"
+    );
+    assert!(
+        !message.contains("RIPR-SPEC-0001 ("),
+        "oldest spec ids should fall into the truncation remainder, got {message}"
+    );
+    let remaining = 2;
+    assert!(
+        message.contains(&format!("and {remaining} more")),
+        "must mark truncated remainder, got {message}"
+    );
+}
+
+#[test]
+fn doc_artifacts_command_names_unregistered_spec_ids() {
+    with_temp_cwd("doc-artifacts-reverse-direction-names-ids", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_fixture(
+            root,
+            "docs/specs/RIPR-SPEC-1234-widget.md",
+            "RIPR-SPEC-1234",
+        );
+        write_doc_artifact_fixture(
+            root,
+            "docs/specs/RIPR-SPEC-1235-gadget.md",
+            "RIPR-SPEC-1235",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "accepted"
+owner = "repo-infra"
+"#,
+        );
+
+        let error = check_doc_artifacts_with_unregistered_baseline(1)
+            .expect_err("two unregistered specs exceed baseline 1");
+        assert!(
+            error.contains("RIPR-SPEC-1234 (docs/specs/RIPR-SPEC-1234-widget.md)"),
+            "command path must name the first unregistered spec, got {error}"
+        );
+        assert!(
+            error.contains("RIPR-SPEC-1235 (docs/specs/RIPR-SPEC-1235-gadget.md)"),
+            "command path must name the second unregistered spec, got {error}"
+        );
+        assert!(
+            error.contains("unregistered:"),
+            "command path must not keep the count-only reverse-direction message, got {error}"
+        );
+    });
 }
 
 #[test]
