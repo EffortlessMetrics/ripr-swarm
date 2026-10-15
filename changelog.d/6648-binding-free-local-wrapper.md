@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A `macro_rules!` wrapper that a test file defines once before its calls, and whose definition can bind no name, no longer makes `assert_eq!` and the other trusted assertions inside its calls ambiguous across the workspace. A test that wraps its cases in such a helper macro now pins the owner's return value instead of refusing on a macro binding. Qualified calls, attributed or repeated definitions, imports of the wrapper's name and definitions that invoke a macro or hold a binding word stay refused (#6648).

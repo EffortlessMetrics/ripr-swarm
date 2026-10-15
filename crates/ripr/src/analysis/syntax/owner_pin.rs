@@ -723,7 +723,12 @@ fn macro_binding_ambiguities(
             // Every mention counts, a plain `assert_eq!(..)` included: to the
             // macro it is only tokens, and `define!(assert_eq!(mod tests;))`
             // can emit `macro_rules! assert_eq` together with the module whose
-            // tests then use it.
+            // tests then use it. The one exception is a wrapper whose only
+            // definition this file shows and whose expansion cannot bind a
+            // name at all (#6648).
+            if binding_free_local_wrapper(parse.tree().syntax(), &call, &tokens) {
+                continue;
+            }
             for token in &tokens {
                 let name = token.text().trim_start_matches("r#");
                 if trusted.contains(&name) {
@@ -871,6 +876,99 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
 /// `#[macro_use]` on that module or any enclosing one in the file, and no
 /// out-of-line `mod name;` inside it (whose file would inherit the scope).
 /// `None` for a file-level definition or a `macro` 2.0 item.
+/// Words that let tokens bind or import a name, or pull in unseen items,
+/// once a macro expansion parses them as items.
+const BINDING_WORDS: &[&str] = &[
+    "macro_rules",
+    "macro",
+    "use",
+    "extern",
+    "mod",
+    "include",
+    "macro_use",
+    "macro_export",
+    "no_implicit_prelude",
+];
+
+/// Whether `call` invokes a `macro_rules!` this file defines once, in
+/// textual scope before the call, whose expansion cannot bind a macro name
+/// (#6648). The definition and the call arguments both hold no binding word
+/// ([`BINDING_WORDS`]), and the definition invokes no macro of its own, so
+/// nothing it emits from its own tokens or the arguments can define, import
+/// or export `assert_eq`. A wrapper reached by path (`a::wrap!`), named by a
+/// `use` in this file, defined twice, under an attribute other than a doc
+/// comment, or used before its definition fails closed: it may be a macro
+/// ripr cannot see.
+fn binding_free_local_wrapper(
+    root: &SyntaxNode,
+    call: &ast::MacroCall,
+    argument_tokens: &[ra_ap_syntax::SyntaxToken],
+) -> bool {
+    let Some(path) = call.path() else {
+        return false;
+    };
+    if path.qualifier().is_some() {
+        return false;
+    }
+    let Some(name) = path
+        .segment()
+        .and_then(|segment| segment.name_ref())
+        .map(|name| name.text().trim_start_matches("r#").to_string())
+    else {
+        return false;
+    };
+    let binding_word = |token: &ra_ap_syntax::SyntaxToken| {
+        BINDING_WORDS.contains(&token.text().trim_start_matches("r#"))
+    };
+    if argument_tokens.iter().any(binding_word) {
+        return false;
+    }
+    let named = |candidate: Option<ast::Name>| {
+        candidate.is_some_and(|candidate| candidate.text().trim_start_matches("r#") == name)
+    };
+    let imported = root
+        .descendants()
+        .filter_map(ast::UseTree::cast)
+        .any(|tree| {
+            tree.rename().is_some_and(|rename| named(rename.name()))
+                || tree
+                    .path()
+                    .and_then(|path| path.segment())
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|segment| segment.text().trim_start_matches("r#") == name)
+        });
+    if imported {
+        return false;
+    }
+    let mut definitions = root
+        .descendants()
+        .filter_map(ast::MacroRules::cast)
+        .filter(|rules| named(rules.name()));
+    let (Some(definition), None) = (definitions.next(), definitions.next()) else {
+        return false;
+    };
+    if definition.attrs().next().is_some() {
+        return false;
+    }
+    let call_start = call.syntax().text_range().start();
+    if definition.syntax().text_range().end() > call_start {
+        return false;
+    }
+    if let Some(scope) = textual_scope(definition.syntax())
+        && !scope.text_range().contains(call_start)
+    {
+        return false;
+    }
+    let Some(body) = definition.token_tree() else {
+        return false;
+    };
+    !body
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .any(|token| binding_word(&token) || token.kind() == ra_ap_syntax::SyntaxKind::BANG)
+}
+
 fn textual_scope(definition: &SyntaxNode) -> Option<SyntaxNode> {
     ast::MacroRules::cast(definition.clone())?;
     // `#[macro_export]` (also under `cfg_attr`) puts the macro at crate-root

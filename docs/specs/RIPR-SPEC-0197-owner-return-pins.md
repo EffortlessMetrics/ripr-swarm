@@ -1595,7 +1595,15 @@ reaches the ordinary token rule and reads `weakly_exposed`, still a gap.
   mention of a trusted name in another macro's arguments stays ambiguous,
   a plain `assert_eq!(..)` included: to that macro it is only tokens, and
   `define!(assert_eq!(mod tests;))` can emit `macro_rules! assert_eq`
-  together with the module whose tests then compile against it.
+  together with the module whose tests then compile against it. The one
+  exception is a call to a wrapper that cannot bind a name at all (#6648):
+  an unqualified call to a `macro_rules!` this file defines exactly once,
+  before the call and in textual scope, with no attribute, no `use` of that
+  name in the file, no binding word (`macro_rules`, `macro`, `use`,
+  `extern`, `mod`, `include`, `macro_use`, `macro_export`,
+  `no_implicit_prelude`) in the definition or the call's arguments, and no
+  macro invocation in the definition. Its expansion only rearranges the
+  call's tokens, so a trusted name in them keeps its prelude meaning.
   `macro_use` or `no_implicit_prelude` anywhere in a non-trusted macro's
   arguments makes every trusted name ambiguous (stricter than the same
   attribute written on an item, which a resolved module can admit). A
@@ -2073,6 +2081,8 @@ assertions. This repair shares the existing callback without that larger migrati
   mutant fails; `raw_path_shadow_module_keeps_the_mutant_green` (#7098
   review) loads a rival `Unit` from a `#[r#path]`-named non-`.rs` module,
   and the mutant passes while the finding refuses.
+- Binding-free local wrappers (#6648): `owner_pin/tests.rs`
+  `a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted`.
 - Short-circuit tail propagation (#8037): `propagation_witness.rs`
   `short_circuit_owner_tail_completes_only_an_admitted_chain`;
   `crates/ripr/tests/short_circuit_or_tail.rs`
