@@ -23,7 +23,9 @@ forms (`from unittest import (mock)` / `from unittest import (\n    mock,\n)`)
 must be accumulated and have delimiters stripped before that mock-only
 check; classifying each line independently treats `(` as a non-mock name.
 Strip `#` comments before joining those lines, or `mock,  # patching`
-becomes a `#` token and mints a false unittest surface.
+becomes a `#` token and mints a false unittest surface. Explicit
+backslash continuations (`from unittest import \\\n    mock`) must wait
+for the next line; classifying `\\` as a name is the same false surface.
 
 ## 2026-10-12: A timed-out pilot packet must not keep the previous run's repo-exposure (#7425)
 

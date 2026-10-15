@@ -280,6 +280,31 @@ fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<
     assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
+    let root = unique_test_root("mock-backslash");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+        .map_err(|err| format!("write pytest.ini: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import \\\n    mock\n\ndef test_api():\n    assert True\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("testcase-backslash");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import \\\n    TestCase\n\nclass ApiTest(TestCase):\n    pass\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
     let root = unique_test_root("testcase-paren-multiline");
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     std::fs::write(

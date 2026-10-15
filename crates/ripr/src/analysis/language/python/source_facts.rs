@@ -220,10 +220,12 @@ fn is_pytest_import_line(line: &str) -> bool {
 }
 
 /// Whether prefix text contains unittest-framework import evidence.
-/// Parenthesized `from unittest import (...)` is accumulated across lines
-/// before mock-only classification (#7664 review).
+/// Parenthesized `from unittest import (...)` and explicit-backslash
+/// continuations are accumulated across lines before mock-only
+/// classification (#7664 review).
 fn text_has_unittest_framework_import(text: &str) -> bool {
     let mut pending = String::new();
+    let mut pending_backslash = false;
     for line in text.lines() {
         let trimmed = strip_python_line_comment(line);
         if trimmed.is_empty() {
@@ -234,13 +236,25 @@ fn text_has_unittest_framework_import(text: &str) -> bool {
                 pending.push_str(trimmed);
                 continue;
             }
+            if unittest_from_import_is_backslash_continuation(trimmed) {
+                pending.push_str(without_trailing_backslash(trimmed));
+                pending_backslash = true;
+                continue;
+            }
             if is_unittest_import_line(trimmed) {
                 return true;
             }
         } else {
             pending.push(' ');
-            pending.push_str(trimmed);
-            if pending.contains(')') {
+            let continues = trimmed.ends_with('\\');
+            pending.push_str(without_trailing_backslash(trimmed));
+            let finished = if pending_backslash {
+                !continues
+            } else {
+                pending.contains(')')
+            };
+            if finished {
+                pending_backslash = false;
                 let complete = std::mem::take(&mut pending);
                 if is_unittest_import_line(&complete) {
                     return true;
@@ -263,6 +277,17 @@ fn unittest_from_import_is_open_paren(trimmed: &str) -> bool {
         return false;
     };
     imported.contains('(') && !imported.contains(')')
+}
+
+fn unittest_from_import_is_backslash_continuation(trimmed: &str) -> bool {
+    unittest_from_import_names(trimmed).is_some() && trimmed.ends_with('\\')
+}
+
+fn without_trailing_backslash(trimmed: &str) -> &str {
+    match trimmed.strip_suffix('\\') {
+        Some(rest) => rest.trim_end(),
+        None => trimmed,
+    }
 }
 
 /// Whether a line is a real unittest import statement — `import unittest`,
