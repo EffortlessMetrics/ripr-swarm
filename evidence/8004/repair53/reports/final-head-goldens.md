@@ -1,0 +1,5215 @@
+# ripr goldens report
+
+Status: pass
+
+## Fixtures
+
+- `fixtures/all_no_path_disclosure`
+- `fixtures/assertion_form_parity_assert_msg`
+- `fixtures/assertion_form_parity_err_guard`
+- `fixtures/assertion_shaped_control_production_caller`
+- `fixtures/assertion_shaped_control_production_owner`
+- `fixtures/assertion_shaped_oracle_cfg_test`
+- `fixtures/assertion_shaped_oracle_test_file`
+- `fixtures/assurance_vocabulary`
+- `fixtures/benches_harness_evidence`
+- `fixtures/binding_predicate_equality_boundary`
+- `fixtures/binding_predicate_positions`
+- `fixtures/binding_predicate_scope_controls`
+- `fixtures/binding_predicate_two_uses`
+- `fixtures/binding_value_fail_closed`
+- `fixtures/binding_value_family_matrix`
+- `fixtures/bool_compared_inequality_not_exact`
+- `fixtures/boundary_gap`
+- `fixtures/boundary_gap_multiline_assert`
+- `fixtures/boundary_gap_nested_tests`
+- `fixtures/boundary_gap_reordered_tests`
+- `fixtures/boundary_named_constant`
+- `fixtures/collection_argument_alias`
+- `fixtures/collection_argument_ambiguous`
+- `fixtures/collection_argument_coerced_equality`
+- `fixtures/collection_argument_computed_expected`
+- `fixtures/collection_argument_constructor_shadow`
+- `fixtures/collection_argument_custom_equality`
+- `fixtures/collection_argument_guarded`
+- `fixtures/collection_argument_imported_constructor`
+- `fixtures/collection_argument_macro_constructor`
+- `fixtures/collection_argument_mutated`
+- `fixtures/collection_argument_named`
+- `fixtures/collection_argument_plain`
+- `fixtures/collection_argument_proc_constructor`
+- `fixtures/collection_argument_qualified_vec`
+- `fixtures/collection_argument_raw_imported_vec`
+- `fixtures/collection_argument_raw_mutated`
+- `fixtures/collection_argument_raw_rebound`
+- `fixtures/collection_argument_raw_type_alias`
+- `fixtures/collection_argument_rebound`
+- `fixtures/collection_argument_root_shadow`
+- `fixtures/collection_argument_tuple`
+- `fixtures/collection_argument_unrelated`
+- `fixtures/collection_argument_wrong_field`
+- `fixtures/collection_argument_wrong_receiver`
+- `fixtures/comment_only_diff`
+- `fixtures/constant_declaration_probe_reconciliation`
+- `fixtures/currentness_matrix_move`
+- `fixtures/currentness_matrix_python_deleted_statement`
+- `fixtures/currentness_matrix_reuse`
+- `fixtures/currentness_matrix_tail`
+- `fixtures/currentness_matrix_typescript_deleted_statement`
+- `fixtures/currentness_matrix_whole_delete`
+- `fixtures/decimal_field_observer_non_member_access`
+- `fixtures/editor_lsp_workflow`
+- `fixtures/enum_variant_declaration_not_call`
+- `fixtures/error_path_diagnostic_absent`
+- `fixtures/error_path_diagnostic_error`
+- `fixtures/error_path_diagnostic_escaped`
+- `fixtures/error_path_diagnostic_format`
+- `fixtures/error_path_diagnostic_neutral`
+- `fixtures/error_path_diagnostic_raw`
+- `fixtures/error_path_diagnostic_typed_argument`
+- `fixtures/error_path_diagnostic_typed_message`
+- `fixtures/error_path_operand_error_lexeme`
+- `fixtures/error_path_oracle_execution_called`
+- `fixtures/error_path_oracle_execution_direct`
+- `fixtures/error_path_oracle_execution_false_branch`
+- `fixtures/error_path_oracle_execution_no_assertion`
+- `fixtures/error_path_oracle_execution_reached_uncalled`
+- `fixtures/error_path_oracle_execution_shadowed`
+- `fixtures/error_path_oracle_execution_uncalled`
+- `fixtures/error_path_sibling_oracle_fake_clean`
+- `fixtures/error_variant_boxed_wrapper_downcast_witness`
+- `fixtures/error_variant_boxed_wrapper_fail_closed`
+- `fixtures/error_variant_wrapper_callee_only_pin`
+- `fixtures/error_variant_wrapper_foreign_pin`
+- `fixtures/error_variant_wrapper_wrong_receiver_pin`
+- `fixtures/exact_any_membership_oracle`
+- `fixtures/format_only_diff`
+- `fixtures/gap_kept_ignored_test`
+- `fixtures/gap_withheld_feature_gated_test`
+- `fixtures/gate_baseline_fallback_disclosure`
+- `fixtures/guarded_result_match_conditional_failure`
+- `fixtures/guarded_result_match_fail_closed`
+- `fixtures/guarded_result_match_owner_observation`
+- `fixtures/guarded_result_match_positive`
+- `fixtures/guarded_result_match_sibling_variant`
+- `fixtures/guarded_result_match_swallowed`
+- `fixtures/harness_dead_construction_no_exposed_credit`
+- `fixtures/helper_chain_controls`
+- `fixtures/helper_chain_multi_hop`
+- `fixtures/helper_chain_one_hop`
+- `fixtures/human_full_shared_parse_port`
+- `fixtures/import_only_diff`
+- `fixtures/inequality_assertion_not_exact`
+- `fixtures/inequality_struct_assertion_not_exact`
+- `fixtures/infect_value_returned`
+- `fixtures/infect_wildcard_discard`
+- `fixtures/infection_expected_value_literal`
+- `fixtures/inherent_receiver_foreign_helper`
+- `fixtures/inherent_receiver_local_wrapper`
+- `fixtures/inherent_receiver_macro_discard`
+- `fixtures/inherent_receiver_operand_item_shadow`
+- `fixtures/inline_test_fixture_text_no_probe`
+- `fixtures/javascript_awaited_registration`
+- `fixtures/javascript_js_preview`
+- `fixtures/javascript_jsx_preview`
+- `fixtures/lsp_agent_protocol`
+- `fixtures/match_arm_blind`
+- `fixtures/match_arm_comment_literal_no_promotion`
+- `fixtures/match_arm_controls`
+- `fixtures/match_arm_diagnostic_literal_no_promotion`
+- `fixtures/match_arm_expected_side_trap`
+- `fixtures/match_arm_observer`
+- `fixtures/match_arm_positive`
+- `fixtures/match_arm_proximity_confirmation_not_credited`
+- `fixtures/match_arm_proximity_wrapper_confirms`
+- `fixtures/match_arm_selected_credit`
+- `fixtures/match_arm_shared_result_no_promotion`
+- `fixtures/match_arm_tuple_derived_return_before_assertion`
+- `fixtures/match_arm_type_token_blind`
+- `fixtures/mixed_rust_typescript_preview`
+- `fixtures/multi_hunk_removed_line_wrong_target`
+- `fixtures/observation_unverified_call_deletion`
+- `fixtures/observation_unverified_field_construction`
+- `fixtures/observation_unverified_return_value`
+- `fixtures/observation_unverified_side_effect`
+- `fixtures/observation_verified_call_deletion`
+- `fixtures/observation_verified_field_construction`
+- `fixtures/observation_verified_return_value`
+- `fixtures/observation_verified_side_effect`
+- `fixtures/opaque_fixture_builder`
+- `fixtures/oracle_confirmation_mixed`
+- `fixtures/owner_name_collision_helper_keeps_credit`
+- `fixtures/owner_parameter_token_coincidence`
+- `fixtures/owner_return_pin_called_closure`
+- `fixtures/owner_return_pin_cfg_attr_module`
+- `fixtures/owner_return_pin_cfg_false_file`
+- `fixtures/owner_return_pin_cfg_false_module`
+- `fixtures/owner_return_pin_deferred_closure_binding`
+- `fixtures/owner_return_pin_direct`
+- `fixtures/owner_return_pin_err_guard`
+- `fixtures/owner_return_pin_err_guard_not_equality`
+- `fixtures/owner_return_pin_err_guard_shadowed_err`
+- `fixtures/owner_return_pin_expired_closure_binding`
+- `fixtures/owner_return_pin_fallible_literal`
+- `fixtures/owner_return_pin_fallible_literal_inverted`
+- `fixtures/owner_return_pin_fallible_literal_message_escape`
+- `fixtures/owner_return_pin_identity_traps`
+- `fixtures/owner_return_pin_if_false`
+- `fixtures/owner_return_pin_json_alternate_return`
+- `fixtures/owner_return_pin_json_effectful_operand`
+- `fixtures/owner_return_pin_json_ignored_result`
+- `fixtures/owner_return_pin_json_nested_literal`
+- `fixtures/owner_return_pin_json_real_literal`
+- `fixtures/owner_return_pin_json_shadowed_assertion`
+- `fixtures/owner_return_pin_json_shadowed_constructor`
+- `fixtures/owner_return_pin_json_shadowed_owner`
+- `fixtures/owner_return_pin_json_uncalled_closure`
+- `fixtures/owner_return_pin_json_unrelated_equality`
+- `fixtures/owner_return_pin_macro_operand_return`
+- `fixtures/owner_return_pin_macro_return`
+- `fixtures/owner_return_pin_nested_test`
+- `fixtures/owner_return_pin_no_assertion`
+- `fixtures/owner_return_pin_out_of_line_cfg`
+- `fixtures/owner_return_pin_out_of_line_test_module_shadow`
+- `fixtures/owner_return_pin_shadowed_assertion`
+- `fixtures/owner_return_pin_single_file_raw_rename_shadow`
+- `fixtures/owner_return_pin_test_module_shadow`
+- `fixtures/owner_return_pin_token_called_closure`
+- `fixtures/owner_return_pin_token_direct`
+- `fixtures/owner_return_pin_token_overlap`
+- `fixtures/owner_return_pin_trait_method`
+- `fixtures/owner_return_pin_uncalled_closure`
+- `fixtures/owner_return_pin_unknown_singleton`
+- `fixtures/owner_return_pin_unpolled_async`
+- `fixtures/parser_formatted_input_provenance`
+- `fixtures/perl_cpan_alpha`
+- `fixtures/plain_diff_multifile_boundary`
+- `fixtures/predicate_boundary_oracle_admitted`
+- `fixtures/predicate_boundary_oracle_refused`
+- `fixtures/predicate_empty_macro_boundary`
+- `fixtures/predicate_oracle_execution_called`
+- `fixtures/predicate_oracle_execution_direct`
+- `fixtures/predicate_oracle_execution_false_branch`
+- `fixtures/predicate_oracle_execution_no_assertion`
+- `fixtures/predicate_oracle_execution_reached_uncalled`
+- `fixtures/predicate_oracle_execution_shadowed`
+- `fixtures/predicate_oracle_execution_uncalled`
+- `fixtures/predicate_pairing_compound_assigned_binding`
+- `fixtures/predicate_pairing_mutably_borrowed_binding`
+- `fixtures/predicate_pairing_newline_split_reassigned_binding`
+- `fixtures/predicate_pairing_reassigned_binding`
+- `fixtures/propagate_log_message`
+- `fixtures/propagate_stdout_macro`
+- `fixtures/propagate_swallowed_ok`
+- `fixtures/propagate_value_returned`
+- `fixtures/propagated_error_closing_early_path`
+- `fixtures/property_macro_lexical_fallback`
+- `fixtures/property_macro_noop_named_test`
+- `fixtures/property_macro_noop_property_assertion`
+- `fixtures/property_macro_noop_proptest`
+- `fixtures/property_macro_noop_qualified_collision`
+- `fixtures/property_macro_noop_quickcheck`
+- `fixtures/property_macro_unrelated_package`
+- `fixtures/proximity_name_oracle_not_credited`
+- `fixtures/python_adversarial_attribute_sink_other_receiver`
+- `fixtures/python_adversarial_buffer_token`
+- `fixtures/python_adversarial_changed_sink_non_delta_operand`
+- `fixtures/python_adversarial_default_value_overridden`
+- `fixtures/python_adversarial_dict_field_sibling_key`
+- `fixtures/python_adversarial_error_path_untaken_branch`
+- `fixtures/python_adversarial_free_function_module_collision`
+- `fixtures/python_adversarial_fstring_length_invariant_aggregate`
+- `fixtures/python_adversarial_list_element_sibling_index`
+- `fixtures/python_adversarial_local_assignment_operator_input`
+- `fixtures/python_adversarial_method_owner_imported_unbound_receiver`
+- `fixtures/python_adversarial_mock_call_not_value`
+- `fixtures/python_adversarial_operator_delta_input_operand`
+- `fixtures/python_adversarial_replaced_block_non_delta_operand`
+- `fixtures/python_adversarial_same_method_other_class`
+- `fixtures/python_api_json_field_repair_gap`
+- `fixtures/python_api_route_decorator_repair_gap`
+- `fixtures/python_argparse_output_repair_gap`
+- `fixtures/python_async_owner`
+- `fixtures/python_boundary_gap`
+- `fixtures/python_broad_boolean_assertion`
+- `fixtures/python_call_argument_shape`
+- `fixtures/python_class_method_owner`
+- `fixtures/python_cli_output_repair_gap`
+- `fixtures/python_cross_file_construct_call`
+- `fixtures/python_cross_file_import_reference`
+- `fixtures/python_decorator_indirection_limit`
+- `fixtures/python_dict_field_repair_gap`
+- `fixtures/python_disabled`
+- `fixtures/python_dynamic_dispatch_limit`
+- `fixtures/python_dynamic_import_limit`
+- `fixtures/python_dynamic_route_registration_limit`
+- `fixtures/python_empty_sink_module_comparison`
+- `fixtures/python_empty_sink_observed_short_function`
+- `fixtures/python_empty_sink_unrelated_short_function`
+- `fixtures/python_error_path_shape`
+- `fixtures/python_field_assignment_shape`
+- `fixtures/python_fixture_name_relation`
+- `fixtures/python_functools_memoization_not_indirection`
+- `fixtures/python_generated_file_excluded`
+- `fixtures/python_local_callable_binding`
+- `fixtures/python_metaclass_limit`
+- `fixtures/python_metaprogramming_limit`
+- `fixtures/python_method_owner`
+- `fixtures/python_missing_import_graph_limit`
+- `fixtures/python_mixed_language_no_cross_route`
+- `fixtures/python_mock_assert_called`
+- `fixtures/python_mock_interaction_shape`
+- `fixtures/python_mocked_module_limit`
+- `fixtures/python_model_field_repair_gap`
+- `fixtures/python_monkeypatch_module_limit`
+- `fixtures/python_named_constant_boundary_repair_gap`
+- `fixtures/python_no_config_repair_gap`
+- `fixtures/python_no_projectable_owner`
+- `fixtures/python_noop_annotation_only_change`
+- `fixtures/python_noop_bare_var_annotation`
+- `fixtures/python_noop_docstring_change`
+- `fixtures/python_noop_multiline_docstring_interior`
+- `fixtures/python_opaque_custom_helper_limit`
+- `fixtures/python_owner_file_match`
+- `fixtures/python_parametrize_basic`
+- `fixtures/python_parametrized_boundary_repair_gap`
+- `fixtures/python_property_based_limit`
+- `fixtures/python_pytest_oracle_shapes`
+- `fixtures/python_pytest_raises`
+- `fixtures/python_ranking_noise_control`
+- `fixtures/python_rebound_constant_boundary_limit`
+- `fixtures/python_related_test_name_similarity`
+- `fixtures/python_return_comparison_boundary`
+- `fixtures/python_return_value_shape`
+- `fixtures/python_same_line_duplicate_collapse`
+- `fixtures/python_same_stem_sibling_owner_not_related`
+- `fixtures/python_same_stem_test`
+- `fixtures/python_src_layout_package_import`
+- `fixtures/python_src_layout_repair_gap`
+- `fixtures/python_strong_oracle`
+- `fixtures/python_substring_sink_alignment`
+- `fixtures/python_test_placement_verify`
+- `fixtures/python_transitive_reach_negative`
+- `fixtures/python_transitive_reach_positive`
+- `fixtures/python_unittest_assertions`
+- `fixtures/python_unittest_basic`
+- `fixtures/python_unittest_list_equal`
+- `fixtures/python_unittest_list_equal_derived_result`
+- `fixtures/python_unittest_list_equal_effectful_argument`
+- `fixtures/python_unittest_list_equal_equal_values`
+- `fixtures/python_unittest_list_equal_nested_class`
+- `fixtures/python_unittest_oracle_shapes`
+- `fixtures/python_unrelated_test_mention`
+- `fixtures/python_unresolved_fixture_limit`
+- `fixtures/python_unsupported_syntax_limit`
+- `fixtures/recursive_controls`
+- `fixtures/recursive_positive`
+- `fixtures/rust_adversarial_free_function_receiver`
+- `fixtures/rust_adversarial_same_method_other_type`
+- `fixtures/rust_adversarial_shared_error_variant_proximity`
+- `fixtures/rust_async_fn_owner`
+- `fixtures/rust_commented_module_orphan`
+- `fixtures/rust_constructor_field_observation`
+- `fixtures/rust_constructor_field_wrong_field_observer`
+- `fixtures/rust_dep_edge_cross_crate_ambiguity`
+- `fixtures/rust_dep_edge_cross_crate_positive`
+- `fixtures/rust_field_construction_token_coincidence`
+- `fixtures/rust_long_expression_display_bound`
+- `fixtures/rust_macro_reach_limitation`
+- `fixtures/rust_macro_wrapped_assertion_limitation`
+- `fixtures/rust_macro_wrapped_test_call_limitation`
+- `fixtures/rust_missing_discriminator_evidence`
+- `fixtures/rust_mixed_direct_macro_reach`
+- `fixtures/rust_proptest_quickcheck_tests`
+- `fixtures/rust_pyo3_cross_language_limit`
+- `fixtures/rust_same_method_owner_type_positive`
+- `fixtures/rust_slice_table_boundary`
+- `fixtures/rust_slice_table_call_exit`
+- `fixtures/rust_slice_table_try_exit`
+- `fixtures/rust_slice_table_zero_elements`
+- `fixtures/rust_test_under_false_cfg_not_grip`
+- `fixtures/rust_trait_default_import`
+- `fixtures/rust_trait_default_shadow`
+- `fixtures/rust_trait_impl_import`
+- `fixtures/rust_trait_impl_shadow`
+- `fixtures/rust_trait_parent_import`
+- `fixtures/rust_trait_parent_shadow`
+- `fixtures/rust_transitive_reach_negative`
+- `fixtures/rust_transitive_reach_positive`
+- `fixtures/rust_transitive_reach_same_name_other_type`
+- `fixtures/rust_transitive_reach_test_helper_chain`
+- `fixtures/rust_uncalled_owner_same_file_tests`
+- `fixtures/rust_where_bound_declarations`
+- `fixtures/same_name_qualified_other_module`
+- `fixtures/same_name_sibling_file_test`
+- `fixtures/same_name_use_imported_owner`
+- `fixtures/scanner_controls`
+- `fixtures/scanner_positive`
+- `fixtures/self_computed_expected_helper`
+- `fixtures/self_computed_expected_value`
+- `fixtures/snapshot_oracle`
+- `fixtures/source_role_harness_suppression`
+- `fixtures/split_test_boundary_oracle`
+- `fixtures/strong_boundary_oracle`
+- `fixtures/strong_error_oracle`
+- `fixtures/tail_comparison_boundary`
+- `fixtures/ts_already_observed`
+- `fixtures/ts_boundary_named_constant_test`
+- `fixtures/ts_cross_language_bridge_limit`
+- `fixtures/ts_cross_package_test`
+- `fixtures/ts_domock_relation_gate`
+- `fixtures/ts_dropped_term_zero_input`
+- `fixtures/ts_dynamic_oracle`
+- `fixtures/ts_full_repo_guidance`
+- `fixtures/ts_heuristic_relation`
+- `fixtures/ts_mock_forms_owner_module`
+- `fixtures/ts_no_verify_command`
+- `fixtures/ts_node_expect_failure_no_credit`
+- `fixtures/ts_node_ordinary_test_control`
+- `fixtures/ts_parse_depth_budget`
+- `fixtures/ts_pkg_discovery_monorepo`
+- `fixtures/ts_pkg_discovery_no_package`
+- `fixtures/ts_pkg_discovery_single_package`
+- `fixtures/ts_predicate_boundary_const_result_local`
+- `fixtures/ts_predicate_boundary_optional_chaining`
+- `fixtures/ts_predicate_boundary_overcredit`
+- `fixtures/ts_repair_packet_boundary_constant_first`
+- `fixtures/ts_repair_packet_boundary_constant_resolved`
+- `fixtures/ts_repair_packet_boundary_constant_unresolved`
+- `fixtures/ts_repair_packet_boundary_literal_derived`
+- `fixtures/ts_repair_packet_boundary_literal_guarded`
+- `fixtures/ts_repair_packet_boundary_parameter_constant_shaped`
+- `fixtures/ts_repair_packet_boundary_parameter_pair`
+- `fixtures/ts_repair_packet_boundary_parameter_written`
+- `fixtures/ts_repair_packet_boundary_unreachable`
+- `fixtures/ts_repair_packet_complete`
+- `fixtures/ts_repair_packet_wrong_family_oracle`
+- `fixtures/ts_return_comparison_boundary`
+- `fixtures/ts_return_ternary_boundary`
+- `fixtures/ts_runner_detect_ava_devdep`
+- `fixtures/ts_runner_detect_ava_script`
+- `fixtures/ts_runner_detect_no_runner`
+- `fixtures/ts_static_limit`
+- `fixtures/typescript_adversarial_hoc_wrapped_owner`
+- `fixtures/typescript_adversarial_mocked_barrel`
+- `fixtures/typescript_adversarial_owner_identity_after_insertion`
+- `fixtures/typescript_adversarial_owner_module_mock`
+- `fixtures/typescript_adversarial_render_unobserved_sink`
+- `fixtures/typescript_adversarial_same_method_other_class`
+- `fixtures/typescript_adversarial_token_substring`
+- `fixtures/typescript_awaited_promise_reject`
+- `fixtures/typescript_boundary_gap`
+- `fixtures/typescript_broad_tothrow`
+- `fixtures/typescript_commonjs_require`
+- `fixtures/typescript_disabled`
+- `fixtures/typescript_dynamic_assertion_unresolved`
+- `fixtures/typescript_effect_owner_alias`
+- `fixtures/typescript_effect_probe_shapes`
+- `fixtures/typescript_empty_each`
+- `fixtures/typescript_jest_vitest_assertion_facts`
+- `fixtures/typescript_limitation_custom_matcher`
+- `fixtures/typescript_mocked_module_limit`
+- `fixtures/typescript_monorepo_package_local`
+- `fixtures/typescript_negated_t_oracle`
+- `fixtures/typescript_oracle_helper_gated`
+- `fixtures/typescript_owner_file_match`
+- `fixtures/typescript_owner_kinds`
+- `fixtures/typescript_parse_error_unsupported_syntax`
+- `fixtures/typescript_probe_facts`
+- `fixtures/typescript_reexport_barrel_other_name`
+- `fixtures/typescript_reexport_directory_star_barrel`
+- `fixtures/typescript_reexport_no_false_credit`
+- `fixtures/typescript_reexport_single_hop`
+- `fixtures/typescript_reexport_two_hop_limit`
+- `fixtures/typescript_rejects_literal_equality`
+- `fixtures/typescript_rejects_reexport_shadow`
+- `fixtures/typescript_related_test_matching`
+- `fixtures/typescript_related_test_name_proximity`
+- `fixtures/typescript_return_value_shape`
+- `fixtures/typescript_same_method_owner_identity_positive`
+- `fixtures/typescript_static_limit_taxonomy`
+- `fixtures/typescript_strict_actionability`
+- `fixtures/typescript_strong_oracle`
+- `fixtures/typescript_t_truthy_oracle`
+- `fixtures/typescript_t_unknown_method_no_oracle`
+- `fixtures/typescript_t_wrong_receiver_no_oracle`
+- `fixtures/typescript_tape_equal_oracle`
+- `fixtures/typescript_tothrow_exact_oracle`
+- `fixtures/typescript_tsx_preview`
+- `fixtures/typescript_witness_dead_argument`
+- `fixtures/typescript_witness_dead_expected`
+- `fixtures/typescript_witness_local_shadow`
+- `fixtures/typescript_witness_nested_expression`
+- `fixtures/typescript_witness_receiver_qualified`
+- `fixtures/unrelated_test_mentions_token`
+- `fixtures/unsafe_boundary_probe`
+- `fixtures/unwrap_err_generic_is_err`
+- `fixtures/unwrap_err_sibling_variant`
+- `fixtures/unwrap_err_variant_positive`
+- `fixtures/unwrap_err_variant_single_line`
+- `fixtures/weak_error_oracle`
+- `fixtures/weak_error_oracle_assert_matches`
+- `fixtures/whole_value_string_from_shadow`
+- `fixtures/wildcard_oracle_exact_original`
+- `fixtures/wildcard_oracle_exact_wrong`
+- `fixtures/wildcard_oracle_guarded_original`
+- `fixtures/wildcard_oracle_guarded_wrong`
+- `fixtures/wildcard_oracle_wildcard_original`
+- `fixtures/wildcard_oracle_wildcard_wrong`
+- `fixtures/wrapper_seam_callee_call_attribution`
+
+## Actual Outputs
+
+- `all_no_path_disclosure` -> `target/ripr/fixtures/all_no_path_disclosure`
+  - `target/ripr/fixtures/all_no_path_disclosure/check.json`
+  - `target/ripr/fixtures/all_no_path_disclosure/human.txt`
+- `assertion_form_parity_assert_msg` -> `target/ripr/fixtures/assertion_form_parity_assert_msg`
+  - `target/ripr/fixtures/assertion_form_parity_assert_msg/check.json`
+  - `target/ripr/fixtures/assertion_form_parity_assert_msg/human.txt`
+- `assertion_form_parity_err_guard` -> `target/ripr/fixtures/assertion_form_parity_err_guard`
+  - `target/ripr/fixtures/assertion_form_parity_err_guard/check.json`
+  - `target/ripr/fixtures/assertion_form_parity_err_guard/human.txt`
+- `assertion_shaped_control_production_caller` -> `target/ripr/fixtures/assertion_shaped_control_production_caller`
+  - `target/ripr/fixtures/assertion_shaped_control_production_caller/check.json`
+  - `target/ripr/fixtures/assertion_shaped_control_production_caller/human.txt`
+- `assertion_shaped_control_production_owner` -> `target/ripr/fixtures/assertion_shaped_control_production_owner`
+  - `target/ripr/fixtures/assertion_shaped_control_production_owner/check.json`
+  - `target/ripr/fixtures/assertion_shaped_control_production_owner/human.txt`
+- `assertion_shaped_oracle_cfg_test` -> `target/ripr/fixtures/assertion_shaped_oracle_cfg_test`
+  - `target/ripr/fixtures/assertion_shaped_oracle_cfg_test/check.json`
+  - `target/ripr/fixtures/assertion_shaped_oracle_cfg_test/human.txt`
+- `assertion_shaped_oracle_test_file` -> `target/ripr/fixtures/assertion_shaped_oracle_test_file`
+  - `target/ripr/fixtures/assertion_shaped_oracle_test_file/check.json`
+  - `target/ripr/fixtures/assertion_shaped_oracle_test_file/human.txt`
+- `assurance_vocabulary` -> `target/ripr/fixtures/assurance_vocabulary`
+  - `target/ripr/fixtures/assurance_vocabulary/check.json`
+  - `target/ripr/fixtures/assurance_vocabulary/human.txt`
+- `benches_harness_evidence` -> `target/ripr/fixtures/benches_harness_evidence`
+  - `target/ripr/fixtures/benches_harness_evidence/check.json`
+  - `target/ripr/fixtures/benches_harness_evidence/human.txt`
+- `binding_predicate_equality_boundary` -> `target/ripr/fixtures/binding_predicate_equality_boundary`
+  - `target/ripr/fixtures/binding_predicate_equality_boundary/check.json`
+  - `target/ripr/fixtures/binding_predicate_equality_boundary/human.txt`
+- `binding_predicate_positions` -> `target/ripr/fixtures/binding_predicate_positions`
+  - `target/ripr/fixtures/binding_predicate_positions/check.json`
+  - `target/ripr/fixtures/binding_predicate_positions/human.txt`
+- `binding_predicate_scope_controls` -> `target/ripr/fixtures/binding_predicate_scope_controls`
+  - `target/ripr/fixtures/binding_predicate_scope_controls/check.json`
+  - `target/ripr/fixtures/binding_predicate_scope_controls/human.txt`
+- `binding_predicate_two_uses` -> `target/ripr/fixtures/binding_predicate_two_uses`
+  - `target/ripr/fixtures/binding_predicate_two_uses/check.json`
+  - `target/ripr/fixtures/binding_predicate_two_uses/human.txt`
+- `binding_value_fail_closed` -> `target/ripr/fixtures/binding_value_fail_closed`
+  - `target/ripr/fixtures/binding_value_fail_closed/check.json`
+  - `target/ripr/fixtures/binding_value_fail_closed/human.txt`
+- `binding_value_family_matrix` -> `target/ripr/fixtures/binding_value_family_matrix`
+  - `target/ripr/fixtures/binding_value_family_matrix/check.json`
+  - `target/ripr/fixtures/binding_value_family_matrix/human.txt`
+- `bool_compared_inequality_not_exact` -> `target/ripr/fixtures/bool_compared_inequality_not_exact`
+  - `target/ripr/fixtures/bool_compared_inequality_not_exact/check.json`
+  - `target/ripr/fixtures/bool_compared_inequality_not_exact/human.txt`
+- `boundary_gap` -> `target/ripr/fixtures/boundary_gap`
+  - `target/ripr/fixtures/boundary_gap/check.json`
+  - `target/ripr/fixtures/boundary_gap/human.txt`
+- `boundary_gap_multiline_assert` -> `target/ripr/fixtures/boundary_gap_multiline_assert`
+  - `target/ripr/fixtures/boundary_gap_multiline_assert/check.json`
+  - `target/ripr/fixtures/boundary_gap_multiline_assert/human.txt`
+- `boundary_gap_nested_tests` -> `target/ripr/fixtures/boundary_gap_nested_tests`
+  - `target/ripr/fixtures/boundary_gap_nested_tests/check.json`
+  - `target/ripr/fixtures/boundary_gap_nested_tests/human.txt`
+- `boundary_gap_reordered_tests` -> `target/ripr/fixtures/boundary_gap_reordered_tests`
+  - `target/ripr/fixtures/boundary_gap_reordered_tests/check.json`
+  - `target/ripr/fixtures/boundary_gap_reordered_tests/human.txt`
+- `boundary_named_constant` -> `target/ripr/fixtures/boundary_named_constant`
+  - `target/ripr/fixtures/boundary_named_constant/check.json`
+  - `target/ripr/fixtures/boundary_named_constant/human.txt`
+- `collection_argument_alias` -> `target/ripr/fixtures/collection_argument_alias`
+  - `target/ripr/fixtures/collection_argument_alias/check.json`
+  - `target/ripr/fixtures/collection_argument_alias/human.txt`
+- `collection_argument_ambiguous` -> `target/ripr/fixtures/collection_argument_ambiguous`
+  - `target/ripr/fixtures/collection_argument_ambiguous/check.json`
+  - `target/ripr/fixtures/collection_argument_ambiguous/human.txt`
+- `collection_argument_coerced_equality` -> `target/ripr/fixtures/collection_argument_coerced_equality`
+  - `target/ripr/fixtures/collection_argument_coerced_equality/check.json`
+  - `target/ripr/fixtures/collection_argument_coerced_equality/human.txt`
+- `collection_argument_computed_expected` -> `target/ripr/fixtures/collection_argument_computed_expected`
+  - `target/ripr/fixtures/collection_argument_computed_expected/check.json`
+  - `target/ripr/fixtures/collection_argument_computed_expected/human.txt`
+- `collection_argument_constructor_shadow` -> `target/ripr/fixtures/collection_argument_constructor_shadow`
+  - `target/ripr/fixtures/collection_argument_constructor_shadow/check.json`
+  - `target/ripr/fixtures/collection_argument_constructor_shadow/human.txt`
+- `collection_argument_custom_equality` -> `target/ripr/fixtures/collection_argument_custom_equality`
+  - `target/ripr/fixtures/collection_argument_custom_equality/check.json`
+  - `target/ripr/fixtures/collection_argument_custom_equality/human.txt`
+- `collection_argument_guarded` -> `target/ripr/fixtures/collection_argument_guarded`
+  - `target/ripr/fixtures/collection_argument_guarded/check.json`
+  - `target/ripr/fixtures/collection_argument_guarded/human.txt`
+- `collection_argument_imported_constructor` -> `target/ripr/fixtures/collection_argument_imported_constructor`
+  - `target/ripr/fixtures/collection_argument_imported_constructor/check.json`
+  - `target/ripr/fixtures/collection_argument_imported_constructor/human.txt`
+- `collection_argument_macro_constructor` -> `target/ripr/fixtures/collection_argument_macro_constructor`
+  - `target/ripr/fixtures/collection_argument_macro_constructor/check.json`
+  - `target/ripr/fixtures/collection_argument_macro_constructor/human.txt`
+- `collection_argument_mutated` -> `target/ripr/fixtures/collection_argument_mutated`
+  - `target/ripr/fixtures/collection_argument_mutated/check.json`
+  - `target/ripr/fixtures/collection_argument_mutated/human.txt`
+- `collection_argument_named` -> `target/ripr/fixtures/collection_argument_named`
+  - `target/ripr/fixtures/collection_argument_named/check.json`
+  - `target/ripr/fixtures/collection_argument_named/human.txt`
+- `collection_argument_plain` -> `target/ripr/fixtures/collection_argument_plain`
+  - `target/ripr/fixtures/collection_argument_plain/check.json`
+  - `target/ripr/fixtures/collection_argument_plain/human.txt`
+- `collection_argument_proc_constructor` -> `target/ripr/fixtures/collection_argument_proc_constructor`
+  - `target/ripr/fixtures/collection_argument_proc_constructor/check.json`
+  - `target/ripr/fixtures/collection_argument_proc_constructor/human.txt`
+- `collection_argument_qualified_vec` -> `target/ripr/fixtures/collection_argument_qualified_vec`
+  - `target/ripr/fixtures/collection_argument_qualified_vec/check.json`
+  - `target/ripr/fixtures/collection_argument_qualified_vec/human.txt`
+- `collection_argument_raw_imported_vec` -> `target/ripr/fixtures/collection_argument_raw_imported_vec`
+  - `target/ripr/fixtures/collection_argument_raw_imported_vec/check.json`
+  - `target/ripr/fixtures/collection_argument_raw_imported_vec/human.txt`
+- `collection_argument_raw_mutated` -> `target/ripr/fixtures/collection_argument_raw_mutated`
+  - `target/ripr/fixtures/collection_argument_raw_mutated/check.json`
+  - `target/ripr/fixtures/collection_argument_raw_mutated/human.txt`
+- `collection_argument_raw_rebound` -> `target/ripr/fixtures/collection_argument_raw_rebound`
+  - `target/ripr/fixtures/collection_argument_raw_rebound/check.json`
+  - `target/ripr/fixtures/collection_argument_raw_rebound/human.txt`
+- `collection_argument_raw_type_alias` -> `target/ripr/fixtures/collection_argument_raw_type_alias`
+  - `target/ripr/fixtures/collection_argument_raw_type_alias/check.json`
+  - `target/ripr/fixtures/collection_argument_raw_type_alias/human.txt`
+- `collection_argument_rebound` -> `target/ripr/fixtures/collection_argument_rebound`
+  - `target/ripr/fixtures/collection_argument_rebound/check.json`
+  - `target/ripr/fixtures/collection_argument_rebound/human.txt`
+- `collection_argument_root_shadow` -> `target/ripr/fixtures/collection_argument_root_shadow`
+  - `target/ripr/fixtures/collection_argument_root_shadow/check.json`
+  - `target/ripr/fixtures/collection_argument_root_shadow/human.txt`
+- `collection_argument_tuple` -> `target/ripr/fixtures/collection_argument_tuple`
+  - `target/ripr/fixtures/collection_argument_tuple/check.json`
+  - `target/ripr/fixtures/collection_argument_tuple/human.txt`
+- `collection_argument_unrelated` -> `target/ripr/fixtures/collection_argument_unrelated`
+  - `target/ripr/fixtures/collection_argument_unrelated/check.json`
+  - `target/ripr/fixtures/collection_argument_unrelated/human.txt`
+- `collection_argument_wrong_field` -> `target/ripr/fixtures/collection_argument_wrong_field`
+  - `target/ripr/fixtures/collection_argument_wrong_field/check.json`
+  - `target/ripr/fixtures/collection_argument_wrong_field/human.txt`
+- `collection_argument_wrong_receiver` -> `target/ripr/fixtures/collection_argument_wrong_receiver`
+  - `target/ripr/fixtures/collection_argument_wrong_receiver/check.json`
+  - `target/ripr/fixtures/collection_argument_wrong_receiver/human.txt`
+- `comment_only_diff` -> `target/ripr/fixtures/comment_only_diff`
+  - `target/ripr/fixtures/comment_only_diff/check.json`
+  - `target/ripr/fixtures/comment_only_diff/human.txt`
+- `constant_declaration_probe_reconciliation` -> `target/ripr/fixtures/constant_declaration_probe_reconciliation`
+  - `target/ripr/fixtures/constant_declaration_probe_reconciliation/check.json`
+  - `target/ripr/fixtures/constant_declaration_probe_reconciliation/human.txt`
+- `currentness_matrix_move` -> `target/ripr/fixtures/currentness_matrix_move`
+  - `target/ripr/fixtures/currentness_matrix_move/check.json`
+  - `target/ripr/fixtures/currentness_matrix_move/human.txt`
+- `currentness_matrix_python_deleted_statement` -> `target/ripr/fixtures/currentness_matrix_python_deleted_statement`
+  - `target/ripr/fixtures/currentness_matrix_python_deleted_statement/check.json`
+  - `target/ripr/fixtures/currentness_matrix_python_deleted_statement/human.txt`
+- `currentness_matrix_reuse` -> `target/ripr/fixtures/currentness_matrix_reuse`
+  - `target/ripr/fixtures/currentness_matrix_reuse/check.json`
+  - `target/ripr/fixtures/currentness_matrix_reuse/human.txt`
+- `currentness_matrix_tail` -> `target/ripr/fixtures/currentness_matrix_tail`
+  - `target/ripr/fixtures/currentness_matrix_tail/check.json`
+  - `target/ripr/fixtures/currentness_matrix_tail/human.txt`
+- `currentness_matrix_typescript_deleted_statement` -> `target/ripr/fixtures/currentness_matrix_typescript_deleted_statement`
+  - `target/ripr/fixtures/currentness_matrix_typescript_deleted_statement/check.json`
+  - `target/ripr/fixtures/currentness_matrix_typescript_deleted_statement/human.txt`
+- `currentness_matrix_whole_delete` -> `target/ripr/fixtures/currentness_matrix_whole_delete`
+  - `target/ripr/fixtures/currentness_matrix_whole_delete/check.json`
+  - `target/ripr/fixtures/currentness_matrix_whole_delete/human.txt`
+- `decimal_field_observer_non_member_access` -> `target/ripr/fixtures/decimal_field_observer_non_member_access`
+  - `target/ripr/fixtures/decimal_field_observer_non_member_access/check.json`
+  - `target/ripr/fixtures/decimal_field_observer_non_member_access/human.txt`
+- `editor_lsp_workflow` -> `target/ripr/fixtures/editor_lsp_workflow`
+  - `target/ripr/fixtures/editor_lsp_workflow/check.json`
+  - `target/ripr/fixtures/editor_lsp_workflow/human.txt`
+- `enum_variant_declaration_not_call` -> `target/ripr/fixtures/enum_variant_declaration_not_call`
+  - `target/ripr/fixtures/enum_variant_declaration_not_call/check.json`
+  - `target/ripr/fixtures/enum_variant_declaration_not_call/human.txt`
+- `error_path_diagnostic_absent` -> `target/ripr/fixtures/error_path_diagnostic_absent`
+  - `target/ripr/fixtures/error_path_diagnostic_absent/check.json`
+  - `target/ripr/fixtures/error_path_diagnostic_absent/human.txt`
+- `error_path_diagnostic_error` -> `target/ripr/fixtures/error_path_diagnostic_error`
+  - `target/ripr/fixtures/error_path_diagnostic_error/check.json`
+  - `target/ripr/fixtures/error_path_diagnostic_error/human.txt`
+- `error_path_diagnostic_escaped` -> `target/ripr/fixtures/error_path_diagnostic_escaped`
+  - `target/ripr/fixtures/error_path_diagnostic_escaped/check.json`
+  - `target/ripr/fixtures/error_path_diagnostic_escaped/human.txt`
+- `error_path_diagnostic_format` -> `target/ripr/fixtures/error_path_diagnostic_format`
+  - `target/ripr/fixtures/error_path_diagnostic_format/check.json`
+  - `target/ripr/fixtures/error_path_diagnostic_format/human.txt`
+- `error_path_diagnostic_neutral` -> `target/ripr/fixtures/error_path_diagnostic_neutral`
+  - `target/ripr/fixtures/error_path_diagnostic_neutral/check.json`
+  - `target/ripr/fixtures/error_path_diagnostic_neutral/human.txt`
+- `error_path_diagnostic_raw` -> `target/ripr/fixtures/error_path_diagnostic_raw`
+  - `target/ripr/fixtures/error_path_diagnostic_raw/check.json`
+  - `target/ripr/fixtures/error_path_diagnostic_raw/human.txt`
+- `error_path_diagnostic_typed_argument` -> `target/ripr/fixtures/error_path_diagnostic_typed_argument`
+  - `target/ripr/fixtures/error_path_diagnostic_typed_argument/check.json`
+  - `target/ripr/fixtures/error_path_diagnostic_typed_argument/human.txt`
+- `error_path_diagnostic_typed_message` -> `target/ripr/fixtures/error_path_diagnostic_typed_message`
+  - `target/ripr/fixtures/error_path_diagnostic_typed_message/check.json`
+  - `target/ripr/fixtures/error_path_diagnostic_typed_message/human.txt`
+- `error_path_operand_error_lexeme` -> `target/ripr/fixtures/error_path_operand_error_lexeme`
+  - `target/ripr/fixtures/error_path_operand_error_lexeme/check.json`
+  - `target/ripr/fixtures/error_path_operand_error_lexeme/human.txt`
+- `error_path_oracle_execution_called` -> `target/ripr/fixtures/error_path_oracle_execution_called`
+  - `target/ripr/fixtures/error_path_oracle_execution_called/check.json`
+  - `target/ripr/fixtures/error_path_oracle_execution_called/human.txt`
+- `error_path_oracle_execution_direct` -> `target/ripr/fixtures/error_path_oracle_execution_direct`
+  - `target/ripr/fixtures/error_path_oracle_execution_direct/check.json`
+  - `target/ripr/fixtures/error_path_oracle_execution_direct/human.txt`
+- `error_path_oracle_execution_false_branch` -> `target/ripr/fixtures/error_path_oracle_execution_false_branch`
+  - `target/ripr/fixtures/error_path_oracle_execution_false_branch/check.json`
+  - `target/ripr/fixtures/error_path_oracle_execution_false_branch/human.txt`
+- `error_path_oracle_execution_no_assertion` -> `target/ripr/fixtures/error_path_oracle_execution_no_assertion`
+  - `target/ripr/fixtures/error_path_oracle_execution_no_assertion/check.json`
+  - `target/ripr/fixtures/error_path_oracle_execution_no_assertion/human.txt`
+- `error_path_oracle_execution_reached_uncalled` -> `target/ripr/fixtures/error_path_oracle_execution_reached_uncalled`
+  - `target/ripr/fixtures/error_path_oracle_execution_reached_uncalled/check.json`
+  - `target/ripr/fixtures/error_path_oracle_execution_reached_uncalled/human.txt`
+- `error_path_oracle_execution_shadowed` -> `target/ripr/fixtures/error_path_oracle_execution_shadowed`
+  - `target/ripr/fixtures/error_path_oracle_execution_shadowed/check.json`
+  - `target/ripr/fixtures/error_path_oracle_execution_shadowed/human.txt`
+- `error_path_oracle_execution_uncalled` -> `target/ripr/fixtures/error_path_oracle_execution_uncalled`
+  - `target/ripr/fixtures/error_path_oracle_execution_uncalled/check.json`
+  - `target/ripr/fixtures/error_path_oracle_execution_uncalled/human.txt`
+- `error_path_sibling_oracle_fake_clean` -> `target/ripr/fixtures/error_path_sibling_oracle_fake_clean`
+  - `target/ripr/fixtures/error_path_sibling_oracle_fake_clean/check.json`
+  - `target/ripr/fixtures/error_path_sibling_oracle_fake_clean/human.txt`
+- `error_variant_boxed_wrapper_downcast_witness` -> `target/ripr/fixtures/error_variant_boxed_wrapper_downcast_witness`
+  - `target/ripr/fixtures/error_variant_boxed_wrapper_downcast_witness/check.json`
+  - `target/ripr/fixtures/error_variant_boxed_wrapper_downcast_witness/human.txt`
+- `error_variant_boxed_wrapper_fail_closed` -> `target/ripr/fixtures/error_variant_boxed_wrapper_fail_closed`
+  - `target/ripr/fixtures/error_variant_boxed_wrapper_fail_closed/check.json`
+  - `target/ripr/fixtures/error_variant_boxed_wrapper_fail_closed/human.txt`
+- `error_variant_wrapper_callee_only_pin` -> `target/ripr/fixtures/error_variant_wrapper_callee_only_pin`
+  - `target/ripr/fixtures/error_variant_wrapper_callee_only_pin/check.json`
+  - `target/ripr/fixtures/error_variant_wrapper_callee_only_pin/human.txt`
+- `error_variant_wrapper_foreign_pin` -> `target/ripr/fixtures/error_variant_wrapper_foreign_pin`
+  - `target/ripr/fixtures/error_variant_wrapper_foreign_pin/check.json`
+  - `target/ripr/fixtures/error_variant_wrapper_foreign_pin/human.txt`
+- `error_variant_wrapper_wrong_receiver_pin` -> `target/ripr/fixtures/error_variant_wrapper_wrong_receiver_pin`
+  - `target/ripr/fixtures/error_variant_wrapper_wrong_receiver_pin/check.json`
+  - `target/ripr/fixtures/error_variant_wrapper_wrong_receiver_pin/human.txt`
+- `exact_any_membership_oracle` -> `target/ripr/fixtures/exact_any_membership_oracle`
+  - `target/ripr/fixtures/exact_any_membership_oracle/check.json`
+  - `target/ripr/fixtures/exact_any_membership_oracle/human.txt`
+- `format_only_diff` -> `target/ripr/fixtures/format_only_diff`
+  - `target/ripr/fixtures/format_only_diff/check.json`
+  - `target/ripr/fixtures/format_only_diff/human.txt`
+- `gap_kept_ignored_test` -> `target/ripr/fixtures/gap_kept_ignored_test`
+  - `target/ripr/fixtures/gap_kept_ignored_test/check.json`
+  - `target/ripr/fixtures/gap_kept_ignored_test/human.txt`
+- `gap_withheld_feature_gated_test` -> `target/ripr/fixtures/gap_withheld_feature_gated_test`
+  - `target/ripr/fixtures/gap_withheld_feature_gated_test/check.json`
+  - `target/ripr/fixtures/gap_withheld_feature_gated_test/human.txt`
+- `gate_baseline_fallback_disclosure` -> `target/ripr/fixtures/gate_baseline_fallback_disclosure`
+  - `target/ripr/fixtures/gate_baseline_fallback_disclosure/check.json`
+  - `target/ripr/fixtures/gate_baseline_fallback_disclosure/human.txt`
+- `guarded_result_match_conditional_failure` -> `target/ripr/fixtures/guarded_result_match_conditional_failure`
+  - `target/ripr/fixtures/guarded_result_match_conditional_failure/check.json`
+  - `target/ripr/fixtures/guarded_result_match_conditional_failure/human.txt`
+- `guarded_result_match_fail_closed` -> `target/ripr/fixtures/guarded_result_match_fail_closed`
+  - `target/ripr/fixtures/guarded_result_match_fail_closed/check.json`
+  - `target/ripr/fixtures/guarded_result_match_fail_closed/human.txt`
+- `guarded_result_match_owner_observation` -> `target/ripr/fixtures/guarded_result_match_owner_observation`
+  - `target/ripr/fixtures/guarded_result_match_owner_observation/check.json`
+  - `target/ripr/fixtures/guarded_result_match_owner_observation/human.txt`
+- `guarded_result_match_positive` -> `target/ripr/fixtures/guarded_result_match_positive`
+  - `target/ripr/fixtures/guarded_result_match_positive/check.json`
+  - `target/ripr/fixtures/guarded_result_match_positive/human.txt`
+- `guarded_result_match_sibling_variant` -> `target/ripr/fixtures/guarded_result_match_sibling_variant`
+  - `target/ripr/fixtures/guarded_result_match_sibling_variant/check.json`
+  - `target/ripr/fixtures/guarded_result_match_sibling_variant/human.txt`
+- `guarded_result_match_swallowed` -> `target/ripr/fixtures/guarded_result_match_swallowed`
+  - `target/ripr/fixtures/guarded_result_match_swallowed/check.json`
+  - `target/ripr/fixtures/guarded_result_match_swallowed/human.txt`
+- `harness_dead_construction_no_exposed_credit` -> `target/ripr/fixtures/harness_dead_construction_no_exposed_credit`
+  - `target/ripr/fixtures/harness_dead_construction_no_exposed_credit/check.json`
+  - `target/ripr/fixtures/harness_dead_construction_no_exposed_credit/human.txt`
+- `helper_chain_controls` -> `target/ripr/fixtures/helper_chain_controls`
+  - `target/ripr/fixtures/helper_chain_controls/check.json`
+  - `target/ripr/fixtures/helper_chain_controls/human.txt`
+- `helper_chain_multi_hop` -> `target/ripr/fixtures/helper_chain_multi_hop`
+  - `target/ripr/fixtures/helper_chain_multi_hop/check.json`
+  - `target/ripr/fixtures/helper_chain_multi_hop/human.txt`
+- `helper_chain_one_hop` -> `target/ripr/fixtures/helper_chain_one_hop`
+  - `target/ripr/fixtures/helper_chain_one_hop/check.json`
+  - `target/ripr/fixtures/helper_chain_one_hop/human.txt`
+- `human_full_shared_parse_port` -> `target/ripr/fixtures/human_full_shared_parse_port`
+  - `target/ripr/fixtures/human_full_shared_parse_port/check.json`
+  - `target/ripr/fixtures/human_full_shared_parse_port/human.txt`
+- `import_only_diff` -> `target/ripr/fixtures/import_only_diff`
+  - `target/ripr/fixtures/import_only_diff/check.json`
+  - `target/ripr/fixtures/import_only_diff/human.txt`
+- `inequality_assertion_not_exact` -> `target/ripr/fixtures/inequality_assertion_not_exact`
+  - `target/ripr/fixtures/inequality_assertion_not_exact/check.json`
+  - `target/ripr/fixtures/inequality_assertion_not_exact/human.txt`
+- `inequality_struct_assertion_not_exact` -> `target/ripr/fixtures/inequality_struct_assertion_not_exact`
+  - `target/ripr/fixtures/inequality_struct_assertion_not_exact/check.json`
+  - `target/ripr/fixtures/inequality_struct_assertion_not_exact/human.txt`
+- `infect_value_returned` -> `target/ripr/fixtures/infect_value_returned`
+  - `target/ripr/fixtures/infect_value_returned/check.json`
+  - `target/ripr/fixtures/infect_value_returned/human.txt`
+- `infect_wildcard_discard` -> `target/ripr/fixtures/infect_wildcard_discard`
+  - `target/ripr/fixtures/infect_wildcard_discard/check.json`
+  - `target/ripr/fixtures/infect_wildcard_discard/human.txt`
+- `infection_expected_value_literal` -> `target/ripr/fixtures/infection_expected_value_literal`
+  - `target/ripr/fixtures/infection_expected_value_literal/check.json`
+  - `target/ripr/fixtures/infection_expected_value_literal/human.txt`
+- `inherent_receiver_foreign_helper` -> `target/ripr/fixtures/inherent_receiver_foreign_helper`
+  - `target/ripr/fixtures/inherent_receiver_foreign_helper/check.json`
+  - `target/ripr/fixtures/inherent_receiver_foreign_helper/human.txt`
+- `inherent_receiver_local_wrapper` -> `target/ripr/fixtures/inherent_receiver_local_wrapper`
+  - `target/ripr/fixtures/inherent_receiver_local_wrapper/check.json`
+  - `target/ripr/fixtures/inherent_receiver_local_wrapper/human.txt`
+- `inherent_receiver_macro_discard` -> `target/ripr/fixtures/inherent_receiver_macro_discard`
+  - `target/ripr/fixtures/inherent_receiver_macro_discard/check.json`
+  - `target/ripr/fixtures/inherent_receiver_macro_discard/human.txt`
+- `inherent_receiver_operand_item_shadow` -> `target/ripr/fixtures/inherent_receiver_operand_item_shadow`
+  - `target/ripr/fixtures/inherent_receiver_operand_item_shadow/check.json`
+  - `target/ripr/fixtures/inherent_receiver_operand_item_shadow/human.txt`
+- `inline_test_fixture_text_no_probe` -> `target/ripr/fixtures/inline_test_fixture_text_no_probe`
+  - `target/ripr/fixtures/inline_test_fixture_text_no_probe/check.json`
+  - `target/ripr/fixtures/inline_test_fixture_text_no_probe/human.txt`
+- `javascript_awaited_registration` -> `target/ripr/fixtures/javascript_awaited_registration`
+  - `target/ripr/fixtures/javascript_awaited_registration/check.json`
+  - `target/ripr/fixtures/javascript_awaited_registration/human.txt`
+- `javascript_js_preview` -> `target/ripr/fixtures/javascript_js_preview`
+  - `target/ripr/fixtures/javascript_js_preview/check.json`
+  - `target/ripr/fixtures/javascript_js_preview/human.txt`
+- `javascript_jsx_preview` -> `target/ripr/fixtures/javascript_jsx_preview`
+  - `target/ripr/fixtures/javascript_jsx_preview/check.json`
+  - `target/ripr/fixtures/javascript_jsx_preview/human.txt`
+- `lsp_agent_protocol` -> `target/ripr/fixtures/lsp_agent_protocol`
+  - `target/ripr/fixtures/lsp_agent_protocol/check.json`
+  - `target/ripr/fixtures/lsp_agent_protocol/human.txt`
+- `match_arm_blind` -> `target/ripr/fixtures/match_arm_blind`
+  - `target/ripr/fixtures/match_arm_blind/check.json`
+  - `target/ripr/fixtures/match_arm_blind/human.txt`
+- `match_arm_comment_literal_no_promotion` -> `target/ripr/fixtures/match_arm_comment_literal_no_promotion`
+  - `target/ripr/fixtures/match_arm_comment_literal_no_promotion/check.json`
+  - `target/ripr/fixtures/match_arm_comment_literal_no_promotion/human.txt`
+- `match_arm_controls` -> `target/ripr/fixtures/match_arm_controls`
+  - `target/ripr/fixtures/match_arm_controls/check.json`
+  - `target/ripr/fixtures/match_arm_controls/human.txt`
+- `match_arm_diagnostic_literal_no_promotion` -> `target/ripr/fixtures/match_arm_diagnostic_literal_no_promotion`
+  - `target/ripr/fixtures/match_arm_diagnostic_literal_no_promotion/check.json`
+  - `target/ripr/fixtures/match_arm_diagnostic_literal_no_promotion/human.txt`
+- `match_arm_expected_side_trap` -> `target/ripr/fixtures/match_arm_expected_side_trap`
+  - `target/ripr/fixtures/match_arm_expected_side_trap/check.json`
+  - `target/ripr/fixtures/match_arm_expected_side_trap/human.txt`
+- `match_arm_observer` -> `target/ripr/fixtures/match_arm_observer`
+  - `target/ripr/fixtures/match_arm_observer/check.json`
+  - `target/ripr/fixtures/match_arm_observer/human.txt`
+- `match_arm_positive` -> `target/ripr/fixtures/match_arm_positive`
+  - `target/ripr/fixtures/match_arm_positive/check.json`
+  - `target/ripr/fixtures/match_arm_positive/human.txt`
+- `match_arm_proximity_confirmation_not_credited` -> `target/ripr/fixtures/match_arm_proximity_confirmation_not_credited`
+  - `target/ripr/fixtures/match_arm_proximity_confirmation_not_credited/check.json`
+  - `target/ripr/fixtures/match_arm_proximity_confirmation_not_credited/human.txt`
+- `match_arm_proximity_wrapper_confirms` -> `target/ripr/fixtures/match_arm_proximity_wrapper_confirms`
+  - `target/ripr/fixtures/match_arm_proximity_wrapper_confirms/check.json`
+  - `target/ripr/fixtures/match_arm_proximity_wrapper_confirms/human.txt`
+- `match_arm_selected_credit` -> `target/ripr/fixtures/match_arm_selected_credit`
+  - `target/ripr/fixtures/match_arm_selected_credit/check.json`
+  - `target/ripr/fixtures/match_arm_selected_credit/human.txt`
+- `match_arm_shared_result_no_promotion` -> `target/ripr/fixtures/match_arm_shared_result_no_promotion`
+  - `target/ripr/fixtures/match_arm_shared_result_no_promotion/check.json`
+  - `target/ripr/fixtures/match_arm_shared_result_no_promotion/human.txt`
+- `match_arm_tuple_derived_return_before_assertion` -> `target/ripr/fixtures/match_arm_tuple_derived_return_before_assertion`
+  - `target/ripr/fixtures/match_arm_tuple_derived_return_before_assertion/check.json`
+  - `target/ripr/fixtures/match_arm_tuple_derived_return_before_assertion/human.txt`
+- `match_arm_type_token_blind` -> `target/ripr/fixtures/match_arm_type_token_blind`
+  - `target/ripr/fixtures/match_arm_type_token_blind/check.json`
+  - `target/ripr/fixtures/match_arm_type_token_blind/human.txt`
+- `mixed_rust_typescript_preview` -> `target/ripr/fixtures/mixed_rust_typescript_preview`
+  - `target/ripr/fixtures/mixed_rust_typescript_preview/check.json`
+  - `target/ripr/fixtures/mixed_rust_typescript_preview/human.txt`
+- `multi_hunk_removed_line_wrong_target` -> `target/ripr/fixtures/multi_hunk_removed_line_wrong_target`
+  - `target/ripr/fixtures/multi_hunk_removed_line_wrong_target/check.json`
+  - `target/ripr/fixtures/multi_hunk_removed_line_wrong_target/human.txt`
+- `observation_unverified_call_deletion` -> `target/ripr/fixtures/observation_unverified_call_deletion`
+  - `target/ripr/fixtures/observation_unverified_call_deletion/check.json`
+  - `target/ripr/fixtures/observation_unverified_call_deletion/human.txt`
+- `observation_unverified_field_construction` -> `target/ripr/fixtures/observation_unverified_field_construction`
+  - `target/ripr/fixtures/observation_unverified_field_construction/check.json`
+  - `target/ripr/fixtures/observation_unverified_field_construction/human.txt`
+- `observation_unverified_return_value` -> `target/ripr/fixtures/observation_unverified_return_value`
+  - `target/ripr/fixtures/observation_unverified_return_value/check.json`
+  - `target/ripr/fixtures/observation_unverified_return_value/human.txt`
+- `observation_unverified_side_effect` -> `target/ripr/fixtures/observation_unverified_side_effect`
+  - `target/ripr/fixtures/observation_unverified_side_effect/check.json`
+  - `target/ripr/fixtures/observation_unverified_side_effect/human.txt`
+- `observation_verified_call_deletion` -> `target/ripr/fixtures/observation_verified_call_deletion`
+  - `target/ripr/fixtures/observation_verified_call_deletion/check.json`
+  - `target/ripr/fixtures/observation_verified_call_deletion/human.txt`
+- `observation_verified_field_construction` -> `target/ripr/fixtures/observation_verified_field_construction`
+  - `target/ripr/fixtures/observation_verified_field_construction/check.json`
+  - `target/ripr/fixtures/observation_verified_field_construction/human.txt`
+- `observation_verified_return_value` -> `target/ripr/fixtures/observation_verified_return_value`
+  - `target/ripr/fixtures/observation_verified_return_value/check.json`
+  - `target/ripr/fixtures/observation_verified_return_value/human.txt`
+- `observation_verified_side_effect` -> `target/ripr/fixtures/observation_verified_side_effect`
+  - `target/ripr/fixtures/observation_verified_side_effect/check.json`
+  - `target/ripr/fixtures/observation_verified_side_effect/human.txt`
+- `opaque_fixture_builder` -> `target/ripr/fixtures/opaque_fixture_builder`
+  - `target/ripr/fixtures/opaque_fixture_builder/check.json`
+  - `target/ripr/fixtures/opaque_fixture_builder/human.txt`
+- `oracle_confirmation_mixed` -> `target/ripr/fixtures/oracle_confirmation_mixed`
+  - `target/ripr/fixtures/oracle_confirmation_mixed/check.json`
+  - `target/ripr/fixtures/oracle_confirmation_mixed/human.txt`
+- `owner_name_collision_helper_keeps_credit` -> `target/ripr/fixtures/owner_name_collision_helper_keeps_credit`
+  - `target/ripr/fixtures/owner_name_collision_helper_keeps_credit/check.json`
+  - `target/ripr/fixtures/owner_name_collision_helper_keeps_credit/human.txt`
+- `owner_parameter_token_coincidence` -> `target/ripr/fixtures/owner_parameter_token_coincidence`
+  - `target/ripr/fixtures/owner_parameter_token_coincidence/check.json`
+  - `target/ripr/fixtures/owner_parameter_token_coincidence/human.txt`
+- `owner_return_pin_called_closure` -> `target/ripr/fixtures/owner_return_pin_called_closure`
+  - `target/ripr/fixtures/owner_return_pin_called_closure/check.json`
+  - `target/ripr/fixtures/owner_return_pin_called_closure/human.txt`
+- `owner_return_pin_cfg_attr_module` -> `target/ripr/fixtures/owner_return_pin_cfg_attr_module`
+  - `target/ripr/fixtures/owner_return_pin_cfg_attr_module/check.json`
+  - `target/ripr/fixtures/owner_return_pin_cfg_attr_module/human.txt`
+- `owner_return_pin_cfg_false_file` -> `target/ripr/fixtures/owner_return_pin_cfg_false_file`
+  - `target/ripr/fixtures/owner_return_pin_cfg_false_file/check.json`
+  - `target/ripr/fixtures/owner_return_pin_cfg_false_file/human.txt`
+- `owner_return_pin_cfg_false_module` -> `target/ripr/fixtures/owner_return_pin_cfg_false_module`
+  - `target/ripr/fixtures/owner_return_pin_cfg_false_module/check.json`
+  - `target/ripr/fixtures/owner_return_pin_cfg_false_module/human.txt`
+- `owner_return_pin_deferred_closure_binding` -> `target/ripr/fixtures/owner_return_pin_deferred_closure_binding`
+  - `target/ripr/fixtures/owner_return_pin_deferred_closure_binding/check.json`
+  - `target/ripr/fixtures/owner_return_pin_deferred_closure_binding/human.txt`
+- `owner_return_pin_direct` -> `target/ripr/fixtures/owner_return_pin_direct`
+  - `target/ripr/fixtures/owner_return_pin_direct/check.json`
+  - `target/ripr/fixtures/owner_return_pin_direct/human.txt`
+- `owner_return_pin_err_guard` -> `target/ripr/fixtures/owner_return_pin_err_guard`
+  - `target/ripr/fixtures/owner_return_pin_err_guard/check.json`
+  - `target/ripr/fixtures/owner_return_pin_err_guard/human.txt`
+- `owner_return_pin_err_guard_not_equality` -> `target/ripr/fixtures/owner_return_pin_err_guard_not_equality`
+  - `target/ripr/fixtures/owner_return_pin_err_guard_not_equality/check.json`
+  - `target/ripr/fixtures/owner_return_pin_err_guard_not_equality/human.txt`
+- `owner_return_pin_err_guard_shadowed_err` -> `target/ripr/fixtures/owner_return_pin_err_guard_shadowed_err`
+  - `target/ripr/fixtures/owner_return_pin_err_guard_shadowed_err/check.json`
+  - `target/ripr/fixtures/owner_return_pin_err_guard_shadowed_err/human.txt`
+- `owner_return_pin_expired_closure_binding` -> `target/ripr/fixtures/owner_return_pin_expired_closure_binding`
+  - `target/ripr/fixtures/owner_return_pin_expired_closure_binding/check.json`
+  - `target/ripr/fixtures/owner_return_pin_expired_closure_binding/human.txt`
+- `owner_return_pin_fallible_literal` -> `target/ripr/fixtures/owner_return_pin_fallible_literal`
+  - `target/ripr/fixtures/owner_return_pin_fallible_literal/check.json`
+  - `target/ripr/fixtures/owner_return_pin_fallible_literal/human.txt`
+- `owner_return_pin_fallible_literal_inverted` -> `target/ripr/fixtures/owner_return_pin_fallible_literal_inverted`
+  - `target/ripr/fixtures/owner_return_pin_fallible_literal_inverted/check.json`
+  - `target/ripr/fixtures/owner_return_pin_fallible_literal_inverted/human.txt`
+- `owner_return_pin_fallible_literal_message_escape` -> `target/ripr/fixtures/owner_return_pin_fallible_literal_message_escape`
+  - `target/ripr/fixtures/owner_return_pin_fallible_literal_message_escape/check.json`
+  - `target/ripr/fixtures/owner_return_pin_fallible_literal_message_escape/human.txt`
+- `owner_return_pin_identity_traps` -> `target/ripr/fixtures/owner_return_pin_identity_traps`
+  - `target/ripr/fixtures/owner_return_pin_identity_traps/check.json`
+  - `target/ripr/fixtures/owner_return_pin_identity_traps/human.txt`
+- `owner_return_pin_if_false` -> `target/ripr/fixtures/owner_return_pin_if_false`
+  - `target/ripr/fixtures/owner_return_pin_if_false/check.json`
+  - `target/ripr/fixtures/owner_return_pin_if_false/human.txt`
+- `owner_return_pin_json_alternate_return` -> `target/ripr/fixtures/owner_return_pin_json_alternate_return`
+  - `target/ripr/fixtures/owner_return_pin_json_alternate_return/check.json`
+  - `target/ripr/fixtures/owner_return_pin_json_alternate_return/human.txt`
+- `owner_return_pin_json_effectful_operand` -> `target/ripr/fixtures/owner_return_pin_json_effectful_operand`
+  - `target/ripr/fixtures/owner_return_pin_json_effectful_operand/check.json`
+  - `target/ripr/fixtures/owner_return_pin_json_effectful_operand/human.txt`
+- `owner_return_pin_json_ignored_result` -> `target/ripr/fixtures/owner_return_pin_json_ignored_result`
+  - `target/ripr/fixtures/owner_return_pin_json_ignored_result/check.json`
+  - `target/ripr/fixtures/owner_return_pin_json_ignored_result/human.txt`
+- `owner_return_pin_json_nested_literal` -> `target/ripr/fixtures/owner_return_pin_json_nested_literal`
+  - `target/ripr/fixtures/owner_return_pin_json_nested_literal/check.json`
+  - `target/ripr/fixtures/owner_return_pin_json_nested_literal/human.txt`
+- `owner_return_pin_json_real_literal` -> `target/ripr/fixtures/owner_return_pin_json_real_literal`
+  - `target/ripr/fixtures/owner_return_pin_json_real_literal/check.json`
+  - `target/ripr/fixtures/owner_return_pin_json_real_literal/human.txt`
+- `owner_return_pin_json_shadowed_assertion` -> `target/ripr/fixtures/owner_return_pin_json_shadowed_assertion`
+  - `target/ripr/fixtures/owner_return_pin_json_shadowed_assertion/check.json`
+  - `target/ripr/fixtures/owner_return_pin_json_shadowed_assertion/human.txt`
+- `owner_return_pin_json_shadowed_constructor` -> `target/ripr/fixtures/owner_return_pin_json_shadowed_constructor`
+  - `target/ripr/fixtures/owner_return_pin_json_shadowed_constructor/check.json`
+  - `target/ripr/fixtures/owner_return_pin_json_shadowed_constructor/human.txt`
+- `owner_return_pin_json_shadowed_owner` -> `target/ripr/fixtures/owner_return_pin_json_shadowed_owner`
+  - `target/ripr/fixtures/owner_return_pin_json_shadowed_owner/check.json`
+  - `target/ripr/fixtures/owner_return_pin_json_shadowed_owner/human.txt`
+- `owner_return_pin_json_uncalled_closure` -> `target/ripr/fixtures/owner_return_pin_json_uncalled_closure`
+  - `target/ripr/fixtures/owner_return_pin_json_uncalled_closure/check.json`
+  - `target/ripr/fixtures/owner_return_pin_json_uncalled_closure/human.txt`
+- `owner_return_pin_json_unrelated_equality` -> `target/ripr/fixtures/owner_return_pin_json_unrelated_equality`
+  - `target/ripr/fixtures/owner_return_pin_json_unrelated_equality/check.json`
+  - `target/ripr/fixtures/owner_return_pin_json_unrelated_equality/human.txt`
+- `owner_return_pin_macro_operand_return` -> `target/ripr/fixtures/owner_return_pin_macro_operand_return`
+  - `target/ripr/fixtures/owner_return_pin_macro_operand_return/check.json`
+  - `target/ripr/fixtures/owner_return_pin_macro_operand_return/human.txt`
+- `owner_return_pin_macro_return` -> `target/ripr/fixtures/owner_return_pin_macro_return`
+  - `target/ripr/fixtures/owner_return_pin_macro_return/check.json`
+  - `target/ripr/fixtures/owner_return_pin_macro_return/human.txt`
+- `owner_return_pin_nested_test` -> `target/ripr/fixtures/owner_return_pin_nested_test`
+  - `target/ripr/fixtures/owner_return_pin_nested_test/check.json`
+  - `target/ripr/fixtures/owner_return_pin_nested_test/human.txt`
+- `owner_return_pin_no_assertion` -> `target/ripr/fixtures/owner_return_pin_no_assertion`
+  - `target/ripr/fixtures/owner_return_pin_no_assertion/check.json`
+  - `target/ripr/fixtures/owner_return_pin_no_assertion/human.txt`
+- `owner_return_pin_out_of_line_cfg` -> `target/ripr/fixtures/owner_return_pin_out_of_line_cfg`
+  - `target/ripr/fixtures/owner_return_pin_out_of_line_cfg/check.json`
+  - `target/ripr/fixtures/owner_return_pin_out_of_line_cfg/human.txt`
+- `owner_return_pin_out_of_line_test_module_shadow` -> `target/ripr/fixtures/owner_return_pin_out_of_line_test_module_shadow`
+  - `target/ripr/fixtures/owner_return_pin_out_of_line_test_module_shadow/check.json`
+  - `target/ripr/fixtures/owner_return_pin_out_of_line_test_module_shadow/human.txt`
+- `owner_return_pin_shadowed_assertion` -> `target/ripr/fixtures/owner_return_pin_shadowed_assertion`
+  - `target/ripr/fixtures/owner_return_pin_shadowed_assertion/check.json`
+  - `target/ripr/fixtures/owner_return_pin_shadowed_assertion/human.txt`
+- `owner_return_pin_single_file_raw_rename_shadow` -> `target/ripr/fixtures/owner_return_pin_single_file_raw_rename_shadow`
+  - `target/ripr/fixtures/owner_return_pin_single_file_raw_rename_shadow/check.json`
+  - `target/ripr/fixtures/owner_return_pin_single_file_raw_rename_shadow/human.txt`
+- `owner_return_pin_test_module_shadow` -> `target/ripr/fixtures/owner_return_pin_test_module_shadow`
+  - `target/ripr/fixtures/owner_return_pin_test_module_shadow/check.json`
+  - `target/ripr/fixtures/owner_return_pin_test_module_shadow/human.txt`
+- `owner_return_pin_token_called_closure` -> `target/ripr/fixtures/owner_return_pin_token_called_closure`
+  - `target/ripr/fixtures/owner_return_pin_token_called_closure/check.json`
+  - `target/ripr/fixtures/owner_return_pin_token_called_closure/human.txt`
+- `owner_return_pin_token_direct` -> `target/ripr/fixtures/owner_return_pin_token_direct`
+  - `target/ripr/fixtures/owner_return_pin_token_direct/check.json`
+  - `target/ripr/fixtures/owner_return_pin_token_direct/human.txt`
+- `owner_return_pin_token_overlap` -> `target/ripr/fixtures/owner_return_pin_token_overlap`
+  - `target/ripr/fixtures/owner_return_pin_token_overlap/check.json`
+  - `target/ripr/fixtures/owner_return_pin_token_overlap/human.txt`
+- `owner_return_pin_trait_method` -> `target/ripr/fixtures/owner_return_pin_trait_method`
+  - `target/ripr/fixtures/owner_return_pin_trait_method/check.json`
+  - `target/ripr/fixtures/owner_return_pin_trait_method/human.txt`
+- `owner_return_pin_uncalled_closure` -> `target/ripr/fixtures/owner_return_pin_uncalled_closure`
+  - `target/ripr/fixtures/owner_return_pin_uncalled_closure/check.json`
+  - `target/ripr/fixtures/owner_return_pin_uncalled_closure/human.txt`
+- `owner_return_pin_unknown_singleton` -> `target/ripr/fixtures/owner_return_pin_unknown_singleton`
+  - `target/ripr/fixtures/owner_return_pin_unknown_singleton/check.json`
+  - `target/ripr/fixtures/owner_return_pin_unknown_singleton/human.txt`
+- `owner_return_pin_unpolled_async` -> `target/ripr/fixtures/owner_return_pin_unpolled_async`
+  - `target/ripr/fixtures/owner_return_pin_unpolled_async/check.json`
+  - `target/ripr/fixtures/owner_return_pin_unpolled_async/human.txt`
+- `parser_formatted_input_provenance` -> `target/ripr/fixtures/parser_formatted_input_provenance`
+  - `target/ripr/fixtures/parser_formatted_input_provenance/check.json`
+  - `target/ripr/fixtures/parser_formatted_input_provenance/human.txt`
+- `perl_cpan_alpha` -> `target/ripr/fixtures/perl_cpan_alpha`
+  - `target/ripr/fixtures/perl_cpan_alpha/check.json`
+  - `target/ripr/fixtures/perl_cpan_alpha/human.txt`
+- `plain_diff_multifile_boundary` -> `target/ripr/fixtures/plain_diff_multifile_boundary`
+  - `target/ripr/fixtures/plain_diff_multifile_boundary/check.json`
+  - `target/ripr/fixtures/plain_diff_multifile_boundary/human.txt`
+- `predicate_boundary_oracle_admitted` -> `target/ripr/fixtures/predicate_boundary_oracle_admitted`
+  - `target/ripr/fixtures/predicate_boundary_oracle_admitted/check.json`
+  - `target/ripr/fixtures/predicate_boundary_oracle_admitted/human.txt`
+- `predicate_boundary_oracle_refused` -> `target/ripr/fixtures/predicate_boundary_oracle_refused`
+  - `target/ripr/fixtures/predicate_boundary_oracle_refused/check.json`
+  - `target/ripr/fixtures/predicate_boundary_oracle_refused/human.txt`
+- `predicate_empty_macro_boundary` -> `target/ripr/fixtures/predicate_empty_macro_boundary`
+  - `target/ripr/fixtures/predicate_empty_macro_boundary/check.json`
+  - `target/ripr/fixtures/predicate_empty_macro_boundary/human.txt`
+- `predicate_oracle_execution_called` -> `target/ripr/fixtures/predicate_oracle_execution_called`
+  - `target/ripr/fixtures/predicate_oracle_execution_called/check.json`
+  - `target/ripr/fixtures/predicate_oracle_execution_called/human.txt`
+- `predicate_oracle_execution_direct` -> `target/ripr/fixtures/predicate_oracle_execution_direct`
+  - `target/ripr/fixtures/predicate_oracle_execution_direct/check.json`
+  - `target/ripr/fixtures/predicate_oracle_execution_direct/human.txt`
+- `predicate_oracle_execution_false_branch` -> `target/ripr/fixtures/predicate_oracle_execution_false_branch`
+  - `target/ripr/fixtures/predicate_oracle_execution_false_branch/check.json`
+  - `target/ripr/fixtures/predicate_oracle_execution_false_branch/human.txt`
+- `predicate_oracle_execution_no_assertion` -> `target/ripr/fixtures/predicate_oracle_execution_no_assertion`
+  - `target/ripr/fixtures/predicate_oracle_execution_no_assertion/check.json`
+  - `target/ripr/fixtures/predicate_oracle_execution_no_assertion/human.txt`
+- `predicate_oracle_execution_reached_uncalled` -> `target/ripr/fixtures/predicate_oracle_execution_reached_uncalled`
+  - `target/ripr/fixtures/predicate_oracle_execution_reached_uncalled/check.json`
+  - `target/ripr/fixtures/predicate_oracle_execution_reached_uncalled/human.txt`
+- `predicate_oracle_execution_shadowed` -> `target/ripr/fixtures/predicate_oracle_execution_shadowed`
+  - `target/ripr/fixtures/predicate_oracle_execution_shadowed/check.json`
+  - `target/ripr/fixtures/predicate_oracle_execution_shadowed/human.txt`
+- `predicate_oracle_execution_uncalled` -> `target/ripr/fixtures/predicate_oracle_execution_uncalled`
+  - `target/ripr/fixtures/predicate_oracle_execution_uncalled/check.json`
+  - `target/ripr/fixtures/predicate_oracle_execution_uncalled/human.txt`
+- `predicate_pairing_compound_assigned_binding` -> `target/ripr/fixtures/predicate_pairing_compound_assigned_binding`
+  - `target/ripr/fixtures/predicate_pairing_compound_assigned_binding/check.json`
+  - `target/ripr/fixtures/predicate_pairing_compound_assigned_binding/human.txt`
+- `predicate_pairing_mutably_borrowed_binding` -> `target/ripr/fixtures/predicate_pairing_mutably_borrowed_binding`
+  - `target/ripr/fixtures/predicate_pairing_mutably_borrowed_binding/check.json`
+  - `target/ripr/fixtures/predicate_pairing_mutably_borrowed_binding/human.txt`
+- `predicate_pairing_newline_split_reassigned_binding` -> `target/ripr/fixtures/predicate_pairing_newline_split_reassigned_binding`
+  - `target/ripr/fixtures/predicate_pairing_newline_split_reassigned_binding/check.json`
+  - `target/ripr/fixtures/predicate_pairing_newline_split_reassigned_binding/human.txt`
+- `predicate_pairing_reassigned_binding` -> `target/ripr/fixtures/predicate_pairing_reassigned_binding`
+  - `target/ripr/fixtures/predicate_pairing_reassigned_binding/check.json`
+  - `target/ripr/fixtures/predicate_pairing_reassigned_binding/human.txt`
+- `propagate_log_message` -> `target/ripr/fixtures/propagate_log_message`
+  - `target/ripr/fixtures/propagate_log_message/check.json`
+  - `target/ripr/fixtures/propagate_log_message/human.txt`
+- `propagate_stdout_macro` -> `target/ripr/fixtures/propagate_stdout_macro`
+  - `target/ripr/fixtures/propagate_stdout_macro/check.json`
+  - `target/ripr/fixtures/propagate_stdout_macro/human.txt`
+- `propagate_swallowed_ok` -> `target/ripr/fixtures/propagate_swallowed_ok`
+  - `target/ripr/fixtures/propagate_swallowed_ok/check.json`
+  - `target/ripr/fixtures/propagate_swallowed_ok/human.txt`
+- `propagate_value_returned` -> `target/ripr/fixtures/propagate_value_returned`
+  - `target/ripr/fixtures/propagate_value_returned/check.json`
+  - `target/ripr/fixtures/propagate_value_returned/human.txt`
+- `propagated_error_closing_early_path` -> `target/ripr/fixtures/propagated_error_closing_early_path`
+  - `target/ripr/fixtures/propagated_error_closing_early_path/check.json`
+  - `target/ripr/fixtures/propagated_error_closing_early_path/human.txt`
+- `property_macro_lexical_fallback` -> `target/ripr/fixtures/property_macro_lexical_fallback`
+  - `target/ripr/fixtures/property_macro_lexical_fallback/check.json`
+  - `target/ripr/fixtures/property_macro_lexical_fallback/human.txt`
+- `property_macro_noop_named_test` -> `target/ripr/fixtures/property_macro_noop_named_test`
+  - `target/ripr/fixtures/property_macro_noop_named_test/check.json`
+  - `target/ripr/fixtures/property_macro_noop_named_test/human.txt`
+- `property_macro_noop_property_assertion` -> `target/ripr/fixtures/property_macro_noop_property_assertion`
+  - `target/ripr/fixtures/property_macro_noop_property_assertion/check.json`
+  - `target/ripr/fixtures/property_macro_noop_property_assertion/human.txt`
+- `property_macro_noop_proptest` -> `target/ripr/fixtures/property_macro_noop_proptest`
+  - `target/ripr/fixtures/property_macro_noop_proptest/check.json`
+  - `target/ripr/fixtures/property_macro_noop_proptest/human.txt`
+- `property_macro_noop_qualified_collision` -> `target/ripr/fixtures/property_macro_noop_qualified_collision`
+  - `target/ripr/fixtures/property_macro_noop_qualified_collision/check.json`
+  - `target/ripr/fixtures/property_macro_noop_qualified_collision/human.txt`
+- `property_macro_noop_quickcheck` -> `target/ripr/fixtures/property_macro_noop_quickcheck`
+  - `target/ripr/fixtures/property_macro_noop_quickcheck/check.json`
+  - `target/ripr/fixtures/property_macro_noop_quickcheck/human.txt`
+- `property_macro_unrelated_package` -> `target/ripr/fixtures/property_macro_unrelated_package`
+  - `target/ripr/fixtures/property_macro_unrelated_package/check.json`
+  - `target/ripr/fixtures/property_macro_unrelated_package/human.txt`
+- `proximity_name_oracle_not_credited` -> `target/ripr/fixtures/proximity_name_oracle_not_credited`
+  - `target/ripr/fixtures/proximity_name_oracle_not_credited/check.json`
+  - `target/ripr/fixtures/proximity_name_oracle_not_credited/human.txt`
+- `python_adversarial_attribute_sink_other_receiver` -> `target/ripr/fixtures/python_adversarial_attribute_sink_other_receiver`
+  - `target/ripr/fixtures/python_adversarial_attribute_sink_other_receiver/check.json`
+  - `target/ripr/fixtures/python_adversarial_attribute_sink_other_receiver/human.txt`
+- `python_adversarial_buffer_token` -> `target/ripr/fixtures/python_adversarial_buffer_token`
+  - `target/ripr/fixtures/python_adversarial_buffer_token/check.json`
+  - `target/ripr/fixtures/python_adversarial_buffer_token/human.txt`
+- `python_adversarial_changed_sink_non_delta_operand` -> `target/ripr/fixtures/python_adversarial_changed_sink_non_delta_operand`
+  - `target/ripr/fixtures/python_adversarial_changed_sink_non_delta_operand/check.json`
+  - `target/ripr/fixtures/python_adversarial_changed_sink_non_delta_operand/human.txt`
+- `python_adversarial_default_value_overridden` -> `target/ripr/fixtures/python_adversarial_default_value_overridden`
+  - `target/ripr/fixtures/python_adversarial_default_value_overridden/check.json`
+  - `target/ripr/fixtures/python_adversarial_default_value_overridden/human.txt`
+- `python_adversarial_dict_field_sibling_key` -> `target/ripr/fixtures/python_adversarial_dict_field_sibling_key`
+  - `target/ripr/fixtures/python_adversarial_dict_field_sibling_key/check.json`
+  - `target/ripr/fixtures/python_adversarial_dict_field_sibling_key/human.txt`
+- `python_adversarial_error_path_untaken_branch` -> `target/ripr/fixtures/python_adversarial_error_path_untaken_branch`
+  - `target/ripr/fixtures/python_adversarial_error_path_untaken_branch/check.json`
+  - `target/ripr/fixtures/python_adversarial_error_path_untaken_branch/human.txt`
+- `python_adversarial_free_function_module_collision` -> `target/ripr/fixtures/python_adversarial_free_function_module_collision`
+  - `target/ripr/fixtures/python_adversarial_free_function_module_collision/check.json`
+  - `target/ripr/fixtures/python_adversarial_free_function_module_collision/human.txt`
+- `python_adversarial_fstring_length_invariant_aggregate` -> `target/ripr/fixtures/python_adversarial_fstring_length_invariant_aggregate`
+  - `target/ripr/fixtures/python_adversarial_fstring_length_invariant_aggregate/check.json`
+  - `target/ripr/fixtures/python_adversarial_fstring_length_invariant_aggregate/human.txt`
+- `python_adversarial_list_element_sibling_index` -> `target/ripr/fixtures/python_adversarial_list_element_sibling_index`
+  - `target/ripr/fixtures/python_adversarial_list_element_sibling_index/check.json`
+  - `target/ripr/fixtures/python_adversarial_list_element_sibling_index/human.txt`
+- `python_adversarial_local_assignment_operator_input` -> `target/ripr/fixtures/python_adversarial_local_assignment_operator_input`
+  - `target/ripr/fixtures/python_adversarial_local_assignment_operator_input/check.json`
+  - `target/ripr/fixtures/python_adversarial_local_assignment_operator_input/human.txt`
+- `python_adversarial_method_owner_imported_unbound_receiver` -> `target/ripr/fixtures/python_adversarial_method_owner_imported_unbound_receiver`
+  - `target/ripr/fixtures/python_adversarial_method_owner_imported_unbound_receiver/check.json`
+  - `target/ripr/fixtures/python_adversarial_method_owner_imported_unbound_receiver/human.txt`
+- `python_adversarial_mock_call_not_value` -> `target/ripr/fixtures/python_adversarial_mock_call_not_value`
+  - `target/ripr/fixtures/python_adversarial_mock_call_not_value/check.json`
+  - `target/ripr/fixtures/python_adversarial_mock_call_not_value/human.txt`
+- `python_adversarial_operator_delta_input_operand` -> `target/ripr/fixtures/python_adversarial_operator_delta_input_operand`
+  - `target/ripr/fixtures/python_adversarial_operator_delta_input_operand/check.json`
+  - `target/ripr/fixtures/python_adversarial_operator_delta_input_operand/human.txt`
+- `python_adversarial_replaced_block_non_delta_operand` -> `target/ripr/fixtures/python_adversarial_replaced_block_non_delta_operand`
+  - `target/ripr/fixtures/python_adversarial_replaced_block_non_delta_operand/check.json`
+  - `target/ripr/fixtures/python_adversarial_replaced_block_non_delta_operand/human.txt`
+- `python_adversarial_same_method_other_class` -> `target/ripr/fixtures/python_adversarial_same_method_other_class`
+  - `target/ripr/fixtures/python_adversarial_same_method_other_class/check.json`
+  - `target/ripr/fixtures/python_adversarial_same_method_other_class/human.txt`
+- `python_api_json_field_repair_gap` -> `target/ripr/fixtures/python_api_json_field_repair_gap`
+  - `target/ripr/fixtures/python_api_json_field_repair_gap/check.json`
+  - `target/ripr/fixtures/python_api_json_field_repair_gap/human.txt`
+- `python_api_route_decorator_repair_gap` -> `target/ripr/fixtures/python_api_route_decorator_repair_gap`
+  - `target/ripr/fixtures/python_api_route_decorator_repair_gap/check.json`
+  - `target/ripr/fixtures/python_api_route_decorator_repair_gap/human.txt`
+- `python_argparse_output_repair_gap` -> `target/ripr/fixtures/python_argparse_output_repair_gap`
+  - `target/ripr/fixtures/python_argparse_output_repair_gap/check.json`
+  - `target/ripr/fixtures/python_argparse_output_repair_gap/human.txt`
+- `python_async_owner` -> `target/ripr/fixtures/python_async_owner`
+  - `target/ripr/fixtures/python_async_owner/check.json`
+  - `target/ripr/fixtures/python_async_owner/human.txt`
+- `python_boundary_gap` -> `target/ripr/fixtures/python_boundary_gap`
+  - `target/ripr/fixtures/python_boundary_gap/check.json`
+  - `target/ripr/fixtures/python_boundary_gap/human.txt`
+- `python_broad_boolean_assertion` -> `target/ripr/fixtures/python_broad_boolean_assertion`
+  - `target/ripr/fixtures/python_broad_boolean_assertion/check.json`
+  - `target/ripr/fixtures/python_broad_boolean_assertion/human.txt`
+- `python_call_argument_shape` -> `target/ripr/fixtures/python_call_argument_shape`
+  - `target/ripr/fixtures/python_call_argument_shape/check.json`
+  - `target/ripr/fixtures/python_call_argument_shape/human.txt`
+- `python_class_method_owner` -> `target/ripr/fixtures/python_class_method_owner`
+  - `target/ripr/fixtures/python_class_method_owner/check.json`
+  - `target/ripr/fixtures/python_class_method_owner/human.txt`
+- `python_cli_output_repair_gap` -> `target/ripr/fixtures/python_cli_output_repair_gap`
+  - `target/ripr/fixtures/python_cli_output_repair_gap/check.json`
+  - `target/ripr/fixtures/python_cli_output_repair_gap/human.txt`
+- `python_cross_file_construct_call` -> `target/ripr/fixtures/python_cross_file_construct_call`
+  - `target/ripr/fixtures/python_cross_file_construct_call/check.json`
+  - `target/ripr/fixtures/python_cross_file_construct_call/human.txt`
+- `python_cross_file_import_reference` -> `target/ripr/fixtures/python_cross_file_import_reference`
+  - `target/ripr/fixtures/python_cross_file_import_reference/check.json`
+  - `target/ripr/fixtures/python_cross_file_import_reference/human.txt`
+- `python_decorator_indirection_limit` -> `target/ripr/fixtures/python_decorator_indirection_limit`
+  - `target/ripr/fixtures/python_decorator_indirection_limit/check.json`
+  - `target/ripr/fixtures/python_decorator_indirection_limit/human.txt`
+- `python_dict_field_repair_gap` -> `target/ripr/fixtures/python_dict_field_repair_gap`
+  - `target/ripr/fixtures/python_dict_field_repair_gap/check.json`
+  - `target/ripr/fixtures/python_dict_field_repair_gap/human.txt`
+- `python_disabled` -> `target/ripr/fixtures/python_disabled`
+  - `target/ripr/fixtures/python_disabled/check.json`
+  - `target/ripr/fixtures/python_disabled/human.txt`
+- `python_dynamic_dispatch_limit` -> `target/ripr/fixtures/python_dynamic_dispatch_limit`
+  - `target/ripr/fixtures/python_dynamic_dispatch_limit/check.json`
+  - `target/ripr/fixtures/python_dynamic_dispatch_limit/human.txt`
+- `python_dynamic_import_limit` -> `target/ripr/fixtures/python_dynamic_import_limit`
+  - `target/ripr/fixtures/python_dynamic_import_limit/check.json`
+  - `target/ripr/fixtures/python_dynamic_import_limit/human.txt`
+- `python_dynamic_route_registration_limit` -> `target/ripr/fixtures/python_dynamic_route_registration_limit`
+  - `target/ripr/fixtures/python_dynamic_route_registration_limit/check.json`
+  - `target/ripr/fixtures/python_dynamic_route_registration_limit/human.txt`
+- `python_empty_sink_module_comparison` -> `target/ripr/fixtures/python_empty_sink_module_comparison`
+  - `target/ripr/fixtures/python_empty_sink_module_comparison/check.json`
+  - `target/ripr/fixtures/python_empty_sink_module_comparison/human.txt`
+- `python_empty_sink_observed_short_function` -> `target/ripr/fixtures/python_empty_sink_observed_short_function`
+  - `target/ripr/fixtures/python_empty_sink_observed_short_function/check.json`
+  - `target/ripr/fixtures/python_empty_sink_observed_short_function/human.txt`
+- `python_empty_sink_unrelated_short_function` -> `target/ripr/fixtures/python_empty_sink_unrelated_short_function`
+  - `target/ripr/fixtures/python_empty_sink_unrelated_short_function/check.json`
+  - `target/ripr/fixtures/python_empty_sink_unrelated_short_function/human.txt`
+- `python_error_path_shape` -> `target/ripr/fixtures/python_error_path_shape`
+  - `target/ripr/fixtures/python_error_path_shape/check.json`
+  - `target/ripr/fixtures/python_error_path_shape/human.txt`
+- `python_field_assignment_shape` -> `target/ripr/fixtures/python_field_assignment_shape`
+  - `target/ripr/fixtures/python_field_assignment_shape/check.json`
+  - `target/ripr/fixtures/python_field_assignment_shape/human.txt`
+- `python_fixture_name_relation` -> `target/ripr/fixtures/python_fixture_name_relation`
+  - `target/ripr/fixtures/python_fixture_name_relation/check.json`
+  - `target/ripr/fixtures/python_fixture_name_relation/human.txt`
+- `python_functools_memoization_not_indirection` -> `target/ripr/fixtures/python_functools_memoization_not_indirection`
+  - `target/ripr/fixtures/python_functools_memoization_not_indirection/check.json`
+  - `target/ripr/fixtures/python_functools_memoization_not_indirection/human.txt`
+- `python_generated_file_excluded` -> `target/ripr/fixtures/python_generated_file_excluded`
+  - `target/ripr/fixtures/python_generated_file_excluded/check.json`
+  - `target/ripr/fixtures/python_generated_file_excluded/human.txt`
+- `python_local_callable_binding` -> `target/ripr/fixtures/python_local_callable_binding`
+  - `target/ripr/fixtures/python_local_callable_binding/check.json`
+  - `target/ripr/fixtures/python_local_callable_binding/human.txt`
+- `python_metaclass_limit` -> `target/ripr/fixtures/python_metaclass_limit`
+  - `target/ripr/fixtures/python_metaclass_limit/check.json`
+  - `target/ripr/fixtures/python_metaclass_limit/human.txt`
+- `python_metaprogramming_limit` -> `target/ripr/fixtures/python_metaprogramming_limit`
+  - `target/ripr/fixtures/python_metaprogramming_limit/check.json`
+  - `target/ripr/fixtures/python_metaprogramming_limit/human.txt`
+- `python_method_owner` -> `target/ripr/fixtures/python_method_owner`
+  - `target/ripr/fixtures/python_method_owner/check.json`
+  - `target/ripr/fixtures/python_method_owner/human.txt`
+- `python_missing_import_graph_limit` -> `target/ripr/fixtures/python_missing_import_graph_limit`
+  - `target/ripr/fixtures/python_missing_import_graph_limit/check.json`
+  - `target/ripr/fixtures/python_missing_import_graph_limit/human.txt`
+- `python_mixed_language_no_cross_route` -> `target/ripr/fixtures/python_mixed_language_no_cross_route`
+  - `target/ripr/fixtures/python_mixed_language_no_cross_route/check.json`
+  - `target/ripr/fixtures/python_mixed_language_no_cross_route/human.txt`
+- `python_mock_assert_called` -> `target/ripr/fixtures/python_mock_assert_called`
+  - `target/ripr/fixtures/python_mock_assert_called/check.json`
+  - `target/ripr/fixtures/python_mock_assert_called/human.txt`
+- `python_mock_interaction_shape` -> `target/ripr/fixtures/python_mock_interaction_shape`
+  - `target/ripr/fixtures/python_mock_interaction_shape/check.json`
+  - `target/ripr/fixtures/python_mock_interaction_shape/human.txt`
+- `python_mocked_module_limit` -> `target/ripr/fixtures/python_mocked_module_limit`
+  - `target/ripr/fixtures/python_mocked_module_limit/check.json`
+  - `target/ripr/fixtures/python_mocked_module_limit/human.txt`
+- `python_model_field_repair_gap` -> `target/ripr/fixtures/python_model_field_repair_gap`
+  - `target/ripr/fixtures/python_model_field_repair_gap/check.json`
+  - `target/ripr/fixtures/python_model_field_repair_gap/human.txt`
+- `python_monkeypatch_module_limit` -> `target/ripr/fixtures/python_monkeypatch_module_limit`
+  - `target/ripr/fixtures/python_monkeypatch_module_limit/check.json`
+  - `target/ripr/fixtures/python_monkeypatch_module_limit/human.txt`
+- `python_named_constant_boundary_repair_gap` -> `target/ripr/fixtures/python_named_constant_boundary_repair_gap`
+  - `target/ripr/fixtures/python_named_constant_boundary_repair_gap/check.json`
+  - `target/ripr/fixtures/python_named_constant_boundary_repair_gap/human.txt`
+- `python_no_config_repair_gap` -> `target/ripr/fixtures/python_no_config_repair_gap`
+  - `target/ripr/fixtures/python_no_config_repair_gap/check.json`
+  - `target/ripr/fixtures/python_no_config_repair_gap/human.txt`
+- `python_no_projectable_owner` -> `target/ripr/fixtures/python_no_projectable_owner`
+  - `target/ripr/fixtures/python_no_projectable_owner/check.json`
+  - `target/ripr/fixtures/python_no_projectable_owner/human.txt`
+- `python_noop_annotation_only_change` -> `target/ripr/fixtures/python_noop_annotation_only_change`
+  - `target/ripr/fixtures/python_noop_annotation_only_change/check.json`
+  - `target/ripr/fixtures/python_noop_annotation_only_change/human.txt`
+- `python_noop_bare_var_annotation` -> `target/ripr/fixtures/python_noop_bare_var_annotation`
+  - `target/ripr/fixtures/python_noop_bare_var_annotation/check.json`
+  - `target/ripr/fixtures/python_noop_bare_var_annotation/human.txt`
+- `python_noop_docstring_change` -> `target/ripr/fixtures/python_noop_docstring_change`
+  - `target/ripr/fixtures/python_noop_docstring_change/check.json`
+  - `target/ripr/fixtures/python_noop_docstring_change/human.txt`
+- `python_noop_multiline_docstring_interior` -> `target/ripr/fixtures/python_noop_multiline_docstring_interior`
+  - `target/ripr/fixtures/python_noop_multiline_docstring_interior/check.json`
+  - `target/ripr/fixtures/python_noop_multiline_docstring_interior/human.txt`
+- `python_opaque_custom_helper_limit` -> `target/ripr/fixtures/python_opaque_custom_helper_limit`
+  - `target/ripr/fixtures/python_opaque_custom_helper_limit/check.json`
+  - `target/ripr/fixtures/python_opaque_custom_helper_limit/human.txt`
+- `python_owner_file_match` -> `target/ripr/fixtures/python_owner_file_match`
+  - `target/ripr/fixtures/python_owner_file_match/check.json`
+  - `target/ripr/fixtures/python_owner_file_match/human.txt`
+- `python_parametrize_basic` -> `target/ripr/fixtures/python_parametrize_basic`
+  - `target/ripr/fixtures/python_parametrize_basic/check.json`
+  - `target/ripr/fixtures/python_parametrize_basic/human.txt`
+- `python_parametrized_boundary_repair_gap` -> `target/ripr/fixtures/python_parametrized_boundary_repair_gap`
+  - `target/ripr/fixtures/python_parametrized_boundary_repair_gap/check.json`
+  - `target/ripr/fixtures/python_parametrized_boundary_repair_gap/human.txt`
+- `python_property_based_limit` -> `target/ripr/fixtures/python_property_based_limit`
+  - `target/ripr/fixtures/python_property_based_limit/check.json`
+  - `target/ripr/fixtures/python_property_based_limit/human.txt`
+- `python_pytest_oracle_shapes` -> `target/ripr/fixtures/python_pytest_oracle_shapes`
+  - `target/ripr/fixtures/python_pytest_oracle_shapes/check.json`
+  - `target/ripr/fixtures/python_pytest_oracle_shapes/human.txt`
+- `python_pytest_raises` -> `target/ripr/fixtures/python_pytest_raises`
+  - `target/ripr/fixtures/python_pytest_raises/check.json`
+  - `target/ripr/fixtures/python_pytest_raises/human.txt`
+- `python_ranking_noise_control` -> `target/ripr/fixtures/python_ranking_noise_control`
+  - `target/ripr/fixtures/python_ranking_noise_control/check.json`
+  - `target/ripr/fixtures/python_ranking_noise_control/human.txt`
+- `python_rebound_constant_boundary_limit` -> `target/ripr/fixtures/python_rebound_constant_boundary_limit`
+  - `target/ripr/fixtures/python_rebound_constant_boundary_limit/check.json`
+  - `target/ripr/fixtures/python_rebound_constant_boundary_limit/human.txt`
+- `python_related_test_name_similarity` -> `target/ripr/fixtures/python_related_test_name_similarity`
+  - `target/ripr/fixtures/python_related_test_name_similarity/check.json`
+  - `target/ripr/fixtures/python_related_test_name_similarity/human.txt`
+- `python_return_comparison_boundary` -> `target/ripr/fixtures/python_return_comparison_boundary`
+  - `target/ripr/fixtures/python_return_comparison_boundary/check.json`
+  - `target/ripr/fixtures/python_return_comparison_boundary/human.txt`
+- `python_return_value_shape` -> `target/ripr/fixtures/python_return_value_shape`
+  - `target/ripr/fixtures/python_return_value_shape/check.json`
+  - `target/ripr/fixtures/python_return_value_shape/human.txt`
+- `python_same_line_duplicate_collapse` -> `target/ripr/fixtures/python_same_line_duplicate_collapse`
+  - `target/ripr/fixtures/python_same_line_duplicate_collapse/check.json`
+  - `target/ripr/fixtures/python_same_line_duplicate_collapse/human.txt`
+- `python_same_stem_sibling_owner_not_related` -> `target/ripr/fixtures/python_same_stem_sibling_owner_not_related`
+  - `target/ripr/fixtures/python_same_stem_sibling_owner_not_related/check.json`
+  - `target/ripr/fixtures/python_same_stem_sibling_owner_not_related/human.txt`
+- `python_same_stem_test` -> `target/ripr/fixtures/python_same_stem_test`
+  - `target/ripr/fixtures/python_same_stem_test/check.json`
+  - `target/ripr/fixtures/python_same_stem_test/human.txt`
+- `python_src_layout_package_import` -> `target/ripr/fixtures/python_src_layout_package_import`
+  - `target/ripr/fixtures/python_src_layout_package_import/check.json`
+  - `target/ripr/fixtures/python_src_layout_package_import/human.txt`
+- `python_src_layout_repair_gap` -> `target/ripr/fixtures/python_src_layout_repair_gap`
+  - `target/ripr/fixtures/python_src_layout_repair_gap/check.json`
+  - `target/ripr/fixtures/python_src_layout_repair_gap/human.txt`
+- `python_strong_oracle` -> `target/ripr/fixtures/python_strong_oracle`
+  - `target/ripr/fixtures/python_strong_oracle/check.json`
+  - `target/ripr/fixtures/python_strong_oracle/human.txt`
+- `python_substring_sink_alignment` -> `target/ripr/fixtures/python_substring_sink_alignment`
+  - `target/ripr/fixtures/python_substring_sink_alignment/check.json`
+  - `target/ripr/fixtures/python_substring_sink_alignment/human.txt`
+- `python_test_placement_verify` -> `target/ripr/fixtures/python_test_placement_verify`
+  - `target/ripr/fixtures/python_test_placement_verify/check.json`
+  - `target/ripr/fixtures/python_test_placement_verify/human.txt`
+- `python_transitive_reach_negative` -> `target/ripr/fixtures/python_transitive_reach_negative`
+  - `target/ripr/fixtures/python_transitive_reach_negative/check.json`
+  - `target/ripr/fixtures/python_transitive_reach_negative/human.txt`
+- `python_transitive_reach_positive` -> `target/ripr/fixtures/python_transitive_reach_positive`
+  - `target/ripr/fixtures/python_transitive_reach_positive/check.json`
+  - `target/ripr/fixtures/python_transitive_reach_positive/human.txt`
+- `python_unittest_assertions` -> `target/ripr/fixtures/python_unittest_assertions`
+  - `target/ripr/fixtures/python_unittest_assertions/check.json`
+  - `target/ripr/fixtures/python_unittest_assertions/human.txt`
+- `python_unittest_basic` -> `target/ripr/fixtures/python_unittest_basic`
+  - `target/ripr/fixtures/python_unittest_basic/check.json`
+  - `target/ripr/fixtures/python_unittest_basic/human.txt`
+- `python_unittest_list_equal` -> `target/ripr/fixtures/python_unittest_list_equal`
+  - `target/ripr/fixtures/python_unittest_list_equal/check.json`
+  - `target/ripr/fixtures/python_unittest_list_equal/human.txt`
+- `python_unittest_list_equal_derived_result` -> `target/ripr/fixtures/python_unittest_list_equal_derived_result`
+  - `target/ripr/fixtures/python_unittest_list_equal_derived_result/check.json`
+  - `target/ripr/fixtures/python_unittest_list_equal_derived_result/human.txt`
+- `python_unittest_list_equal_effectful_argument` -> `target/ripr/fixtures/python_unittest_list_equal_effectful_argument`
+  - `target/ripr/fixtures/python_unittest_list_equal_effectful_argument/check.json`
+  - `target/ripr/fixtures/python_unittest_list_equal_effectful_argument/human.txt`
+- `python_unittest_list_equal_equal_values` -> `target/ripr/fixtures/python_unittest_list_equal_equal_values`
+  - `target/ripr/fixtures/python_unittest_list_equal_equal_values/check.json`
+  - `target/ripr/fixtures/python_unittest_list_equal_equal_values/human.txt`
+- `python_unittest_list_equal_nested_class` -> `target/ripr/fixtures/python_unittest_list_equal_nested_class`
+  - `target/ripr/fixtures/python_unittest_list_equal_nested_class/check.json`
+  - `target/ripr/fixtures/python_unittest_list_equal_nested_class/human.txt`
+- `python_unittest_oracle_shapes` -> `target/ripr/fixtures/python_unittest_oracle_shapes`
+  - `target/ripr/fixtures/python_unittest_oracle_shapes/check.json`
+  - `target/ripr/fixtures/python_unittest_oracle_shapes/human.txt`
+- `python_unrelated_test_mention` -> `target/ripr/fixtures/python_unrelated_test_mention`
+  - `target/ripr/fixtures/python_unrelated_test_mention/check.json`
+  - `target/ripr/fixtures/python_unrelated_test_mention/human.txt`
+- `python_unresolved_fixture_limit` -> `target/ripr/fixtures/python_unresolved_fixture_limit`
+  - `target/ripr/fixtures/python_unresolved_fixture_limit/check.json`
+  - `target/ripr/fixtures/python_unresolved_fixture_limit/human.txt`
+- `python_unsupported_syntax_limit` -> `target/ripr/fixtures/python_unsupported_syntax_limit`
+  - `target/ripr/fixtures/python_unsupported_syntax_limit/check.json`
+  - `target/ripr/fixtures/python_unsupported_syntax_limit/human.txt`
+- `recursive_controls` -> `target/ripr/fixtures/recursive_controls`
+  - `target/ripr/fixtures/recursive_controls/check.json`
+  - `target/ripr/fixtures/recursive_controls/human.txt`
+- `recursive_positive` -> `target/ripr/fixtures/recursive_positive`
+  - `target/ripr/fixtures/recursive_positive/check.json`
+  - `target/ripr/fixtures/recursive_positive/human.txt`
+- `rust_adversarial_free_function_receiver` -> `target/ripr/fixtures/rust_adversarial_free_function_receiver`
+  - `target/ripr/fixtures/rust_adversarial_free_function_receiver/check.json`
+  - `target/ripr/fixtures/rust_adversarial_free_function_receiver/human.txt`
+- `rust_adversarial_same_method_other_type` -> `target/ripr/fixtures/rust_adversarial_same_method_other_type`
+  - `target/ripr/fixtures/rust_adversarial_same_method_other_type/check.json`
+  - `target/ripr/fixtures/rust_adversarial_same_method_other_type/human.txt`
+- `rust_adversarial_shared_error_variant_proximity` -> `target/ripr/fixtures/rust_adversarial_shared_error_variant_proximity`
+  - `target/ripr/fixtures/rust_adversarial_shared_error_variant_proximity/check.json`
+  - `target/ripr/fixtures/rust_adversarial_shared_error_variant_proximity/human.txt`
+- `rust_async_fn_owner` -> `target/ripr/fixtures/rust_async_fn_owner`
+  - `target/ripr/fixtures/rust_async_fn_owner/check.json`
+  - `target/ripr/fixtures/rust_async_fn_owner/human.txt`
+- `rust_commented_module_orphan` -> `target/ripr/fixtures/rust_commented_module_orphan`
+  - `target/ripr/fixtures/rust_commented_module_orphan/check.json`
+  - `target/ripr/fixtures/rust_commented_module_orphan/human.txt`
+- `rust_constructor_field_observation` -> `target/ripr/fixtures/rust_constructor_field_observation`
+  - `target/ripr/fixtures/rust_constructor_field_observation/check.json`
+  - `target/ripr/fixtures/rust_constructor_field_observation/human.txt`
+- `rust_constructor_field_wrong_field_observer` -> `target/ripr/fixtures/rust_constructor_field_wrong_field_observer`
+  - `target/ripr/fixtures/rust_constructor_field_wrong_field_observer/check.json`
+  - `target/ripr/fixtures/rust_constructor_field_wrong_field_observer/human.txt`
+- `rust_dep_edge_cross_crate_ambiguity` -> `target/ripr/fixtures/rust_dep_edge_cross_crate_ambiguity`
+  - `target/ripr/fixtures/rust_dep_edge_cross_crate_ambiguity/check.json`
+  - `target/ripr/fixtures/rust_dep_edge_cross_crate_ambiguity/human.txt`
+- `rust_dep_edge_cross_crate_positive` -> `target/ripr/fixtures/rust_dep_edge_cross_crate_positive`
+  - `target/ripr/fixtures/rust_dep_edge_cross_crate_positive/check.json`
+  - `target/ripr/fixtures/rust_dep_edge_cross_crate_positive/human.txt`
+- `rust_field_construction_token_coincidence` -> `target/ripr/fixtures/rust_field_construction_token_coincidence`
+  - `target/ripr/fixtures/rust_field_construction_token_coincidence/check.json`
+  - `target/ripr/fixtures/rust_field_construction_token_coincidence/human.txt`
+- `rust_long_expression_display_bound` -> `target/ripr/fixtures/rust_long_expression_display_bound`
+  - `target/ripr/fixtures/rust_long_expression_display_bound/check.json`
+  - `target/ripr/fixtures/rust_long_expression_display_bound/human.txt`
+- `rust_macro_reach_limitation` -> `target/ripr/fixtures/rust_macro_reach_limitation`
+  - `target/ripr/fixtures/rust_macro_reach_limitation/check.json`
+  - `target/ripr/fixtures/rust_macro_reach_limitation/human.txt`
+- `rust_macro_wrapped_assertion_limitation` -> `target/ripr/fixtures/rust_macro_wrapped_assertion_limitation`
+  - `target/ripr/fixtures/rust_macro_wrapped_assertion_limitation/check.json`
+  - `target/ripr/fixtures/rust_macro_wrapped_assertion_limitation/human.txt`
+- `rust_macro_wrapped_test_call_limitation` -> `target/ripr/fixtures/rust_macro_wrapped_test_call_limitation`
+  - `target/ripr/fixtures/rust_macro_wrapped_test_call_limitation/check.json`
+  - `target/ripr/fixtures/rust_macro_wrapped_test_call_limitation/human.txt`
+- `rust_missing_discriminator_evidence` -> `target/ripr/fixtures/rust_missing_discriminator_evidence`
+  - `target/ripr/fixtures/rust_missing_discriminator_evidence/check.json`
+  - `target/ripr/fixtures/rust_missing_discriminator_evidence/human.txt`
+- `rust_mixed_direct_macro_reach` -> `target/ripr/fixtures/rust_mixed_direct_macro_reach`
+  - `target/ripr/fixtures/rust_mixed_direct_macro_reach/check.json`
+  - `target/ripr/fixtures/rust_mixed_direct_macro_reach/human.txt`
+- `rust_proptest_quickcheck_tests` -> `target/ripr/fixtures/rust_proptest_quickcheck_tests`
+  - `target/ripr/fixtures/rust_proptest_quickcheck_tests/check.json`
+  - `target/ripr/fixtures/rust_proptest_quickcheck_tests/human.txt`
+- `rust_pyo3_cross_language_limit` -> `target/ripr/fixtures/rust_pyo3_cross_language_limit`
+  - `target/ripr/fixtures/rust_pyo3_cross_language_limit/check.json`
+  - `target/ripr/fixtures/rust_pyo3_cross_language_limit/human.txt`
+- `rust_same_method_owner_type_positive` -> `target/ripr/fixtures/rust_same_method_owner_type_positive`
+  - `target/ripr/fixtures/rust_same_method_owner_type_positive/check.json`
+  - `target/ripr/fixtures/rust_same_method_owner_type_positive/human.txt`
+- `rust_slice_table_boundary` -> `target/ripr/fixtures/rust_slice_table_boundary`
+  - `target/ripr/fixtures/rust_slice_table_boundary/check.json`
+  - `target/ripr/fixtures/rust_slice_table_boundary/human.txt`
+- `rust_slice_table_call_exit` -> `target/ripr/fixtures/rust_slice_table_call_exit`
+  - `target/ripr/fixtures/rust_slice_table_call_exit/check.json`
+  - `target/ripr/fixtures/rust_slice_table_call_exit/human.txt`
+- `rust_slice_table_try_exit` -> `target/ripr/fixtures/rust_slice_table_try_exit`
+  - `target/ripr/fixtures/rust_slice_table_try_exit/check.json`
+  - `target/ripr/fixtures/rust_slice_table_try_exit/human.txt`
+- `rust_slice_table_zero_elements` -> `target/ripr/fixtures/rust_slice_table_zero_elements`
+  - `target/ripr/fixtures/rust_slice_table_zero_elements/check.json`
+  - `target/ripr/fixtures/rust_slice_table_zero_elements/human.txt`
+- `rust_test_under_false_cfg_not_grip` -> `target/ripr/fixtures/rust_test_under_false_cfg_not_grip`
+  - `target/ripr/fixtures/rust_test_under_false_cfg_not_grip/check.json`
+  - `target/ripr/fixtures/rust_test_under_false_cfg_not_grip/human.txt`
+- `rust_trait_default_import` -> `target/ripr/fixtures/rust_trait_default_import`
+  - `target/ripr/fixtures/rust_trait_default_import/check.json`
+  - `target/ripr/fixtures/rust_trait_default_import/human.txt`
+- `rust_trait_default_shadow` -> `target/ripr/fixtures/rust_trait_default_shadow`
+  - `target/ripr/fixtures/rust_trait_default_shadow/check.json`
+  - `target/ripr/fixtures/rust_trait_default_shadow/human.txt`
+- `rust_trait_impl_import` -> `target/ripr/fixtures/rust_trait_impl_import`
+  - `target/ripr/fixtures/rust_trait_impl_import/check.json`
+  - `target/ripr/fixtures/rust_trait_impl_import/human.txt`
+- `rust_trait_impl_shadow` -> `target/ripr/fixtures/rust_trait_impl_shadow`
+  - `target/ripr/fixtures/rust_trait_impl_shadow/check.json`
+  - `target/ripr/fixtures/rust_trait_impl_shadow/human.txt`
+- `rust_trait_parent_import` -> `target/ripr/fixtures/rust_trait_parent_import`
+  - `target/ripr/fixtures/rust_trait_parent_import/check.json`
+  - `target/ripr/fixtures/rust_trait_parent_import/human.txt`
+- `rust_trait_parent_shadow` -> `target/ripr/fixtures/rust_trait_parent_shadow`
+  - `target/ripr/fixtures/rust_trait_parent_shadow/check.json`
+  - `target/ripr/fixtures/rust_trait_parent_shadow/human.txt`
+- `rust_transitive_reach_negative` -> `target/ripr/fixtures/rust_transitive_reach_negative`
+  - `target/ripr/fixtures/rust_transitive_reach_negative/check.json`
+  - `target/ripr/fixtures/rust_transitive_reach_negative/human.txt`
+- `rust_transitive_reach_positive` -> `target/ripr/fixtures/rust_transitive_reach_positive`
+  - `target/ripr/fixtures/rust_transitive_reach_positive/check.json`
+  - `target/ripr/fixtures/rust_transitive_reach_positive/human.txt`
+- `rust_transitive_reach_same_name_other_type` -> `target/ripr/fixtures/rust_transitive_reach_same_name_other_type`
+  - `target/ripr/fixtures/rust_transitive_reach_same_name_other_type/check.json`
+  - `target/ripr/fixtures/rust_transitive_reach_same_name_other_type/human.txt`
+- `rust_transitive_reach_test_helper_chain` -> `target/ripr/fixtures/rust_transitive_reach_test_helper_chain`
+  - `target/ripr/fixtures/rust_transitive_reach_test_helper_chain/check.json`
+  - `target/ripr/fixtures/rust_transitive_reach_test_helper_chain/human.txt`
+- `rust_uncalled_owner_same_file_tests` -> `target/ripr/fixtures/rust_uncalled_owner_same_file_tests`
+  - `target/ripr/fixtures/rust_uncalled_owner_same_file_tests/check.json`
+  - `target/ripr/fixtures/rust_uncalled_owner_same_file_tests/human.txt`
+- `rust_where_bound_declarations` -> `target/ripr/fixtures/rust_where_bound_declarations`
+  - `target/ripr/fixtures/rust_where_bound_declarations/check.json`
+  - `target/ripr/fixtures/rust_where_bound_declarations/human.txt`
+- `same_name_qualified_other_module` -> `target/ripr/fixtures/same_name_qualified_other_module`
+  - `target/ripr/fixtures/same_name_qualified_other_module/check.json`
+  - `target/ripr/fixtures/same_name_qualified_other_module/human.txt`
+- `same_name_sibling_file_test` -> `target/ripr/fixtures/same_name_sibling_file_test`
+  - `target/ripr/fixtures/same_name_sibling_file_test/check.json`
+  - `target/ripr/fixtures/same_name_sibling_file_test/human.txt`
+- `same_name_use_imported_owner` -> `target/ripr/fixtures/same_name_use_imported_owner`
+  - `target/ripr/fixtures/same_name_use_imported_owner/check.json`
+  - `target/ripr/fixtures/same_name_use_imported_owner/human.txt`
+- `scanner_controls` -> `target/ripr/fixtures/scanner_controls`
+  - `target/ripr/fixtures/scanner_controls/check.json`
+  - `target/ripr/fixtures/scanner_controls/human.txt`
+- `scanner_positive` -> `target/ripr/fixtures/scanner_positive`
+  - `target/ripr/fixtures/scanner_positive/check.json`
+  - `target/ripr/fixtures/scanner_positive/human.txt`
+- `self_computed_expected_helper` -> `target/ripr/fixtures/self_computed_expected_helper`
+  - `target/ripr/fixtures/self_computed_expected_helper/check.json`
+  - `target/ripr/fixtures/self_computed_expected_helper/human.txt`
+- `self_computed_expected_value` -> `target/ripr/fixtures/self_computed_expected_value`
+  - `target/ripr/fixtures/self_computed_expected_value/check.json`
+  - `target/ripr/fixtures/self_computed_expected_value/human.txt`
+- `snapshot_oracle` -> `target/ripr/fixtures/snapshot_oracle`
+  - `target/ripr/fixtures/snapshot_oracle/check.json`
+  - `target/ripr/fixtures/snapshot_oracle/human.txt`
+- `source_role_harness_suppression` -> `target/ripr/fixtures/source_role_harness_suppression`
+  - `target/ripr/fixtures/source_role_harness_suppression/check.json`
+  - `target/ripr/fixtures/source_role_harness_suppression/human.txt`
+- `split_test_boundary_oracle` -> `target/ripr/fixtures/split_test_boundary_oracle`
+  - `target/ripr/fixtures/split_test_boundary_oracle/check.json`
+  - `target/ripr/fixtures/split_test_boundary_oracle/human.txt`
+- `strong_boundary_oracle` -> `target/ripr/fixtures/strong_boundary_oracle`
+  - `target/ripr/fixtures/strong_boundary_oracle/check.json`
+  - `target/ripr/fixtures/strong_boundary_oracle/human.txt`
+- `strong_error_oracle` -> `target/ripr/fixtures/strong_error_oracle`
+  - `target/ripr/fixtures/strong_error_oracle/check.json`
+  - `target/ripr/fixtures/strong_error_oracle/human.txt`
+- `tail_comparison_boundary` -> `target/ripr/fixtures/tail_comparison_boundary`
+  - `target/ripr/fixtures/tail_comparison_boundary/check.json`
+  - `target/ripr/fixtures/tail_comparison_boundary/human.txt`
+- `ts_already_observed` -> `target/ripr/fixtures/ts_already_observed`
+  - `target/ripr/fixtures/ts_already_observed/check.json`
+  - `target/ripr/fixtures/ts_already_observed/human.txt`
+- `ts_boundary_named_constant_test` -> `target/ripr/fixtures/ts_boundary_named_constant_test`
+  - `target/ripr/fixtures/ts_boundary_named_constant_test/check.json`
+  - `target/ripr/fixtures/ts_boundary_named_constant_test/human.txt`
+- `ts_cross_language_bridge_limit` -> `target/ripr/fixtures/ts_cross_language_bridge_limit`
+  - `target/ripr/fixtures/ts_cross_language_bridge_limit/check.json`
+  - `target/ripr/fixtures/ts_cross_language_bridge_limit/human.txt`
+- `ts_cross_package_test` -> `target/ripr/fixtures/ts_cross_package_test`
+  - `target/ripr/fixtures/ts_cross_package_test/check.json`
+  - `target/ripr/fixtures/ts_cross_package_test/human.txt`
+- `ts_domock_relation_gate` -> `target/ripr/fixtures/ts_domock_relation_gate`
+  - `target/ripr/fixtures/ts_domock_relation_gate/check.json`
+  - `target/ripr/fixtures/ts_domock_relation_gate/human.txt`
+- `ts_dropped_term_zero_input` -> `target/ripr/fixtures/ts_dropped_term_zero_input`
+  - `target/ripr/fixtures/ts_dropped_term_zero_input/check.json`
+  - `target/ripr/fixtures/ts_dropped_term_zero_input/human.txt`
+- `ts_dynamic_oracle` -> `target/ripr/fixtures/ts_dynamic_oracle`
+  - `target/ripr/fixtures/ts_dynamic_oracle/check.json`
+  - `target/ripr/fixtures/ts_dynamic_oracle/human.txt`
+- `ts_full_repo_guidance` -> `target/ripr/fixtures/ts_full_repo_guidance`
+  - `target/ripr/fixtures/ts_full_repo_guidance/check.json`
+  - `target/ripr/fixtures/ts_full_repo_guidance/human.txt`
+- `ts_heuristic_relation` -> `target/ripr/fixtures/ts_heuristic_relation`
+  - `target/ripr/fixtures/ts_heuristic_relation/check.json`
+  - `target/ripr/fixtures/ts_heuristic_relation/human.txt`
+- `ts_mock_forms_owner_module` -> `target/ripr/fixtures/ts_mock_forms_owner_module`
+  - `target/ripr/fixtures/ts_mock_forms_owner_module/check.json`
+  - `target/ripr/fixtures/ts_mock_forms_owner_module/human.txt`
+- `ts_no_verify_command` -> `target/ripr/fixtures/ts_no_verify_command`
+  - `target/ripr/fixtures/ts_no_verify_command/check.json`
+  - `target/ripr/fixtures/ts_no_verify_command/human.txt`
+- `ts_node_expect_failure_no_credit` -> `target/ripr/fixtures/ts_node_expect_failure_no_credit`
+  - `target/ripr/fixtures/ts_node_expect_failure_no_credit/check.json`
+  - `target/ripr/fixtures/ts_node_expect_failure_no_credit/human.txt`
+- `ts_node_ordinary_test_control` -> `target/ripr/fixtures/ts_node_ordinary_test_control`
+  - `target/ripr/fixtures/ts_node_ordinary_test_control/check.json`
+  - `target/ripr/fixtures/ts_node_ordinary_test_control/human.txt`
+- `ts_parse_depth_budget` -> `target/ripr/fixtures/ts_parse_depth_budget`
+  - `target/ripr/fixtures/ts_parse_depth_budget/check.json`
+  - `target/ripr/fixtures/ts_parse_depth_budget/human.txt`
+- `ts_pkg_discovery_monorepo` -> `target/ripr/fixtures/ts_pkg_discovery_monorepo`
+  - `target/ripr/fixtures/ts_pkg_discovery_monorepo/check.json`
+  - `target/ripr/fixtures/ts_pkg_discovery_monorepo/human.txt`
+- `ts_pkg_discovery_no_package` -> `target/ripr/fixtures/ts_pkg_discovery_no_package`
+  - `target/ripr/fixtures/ts_pkg_discovery_no_package/check.json`
+  - `target/ripr/fixtures/ts_pkg_discovery_no_package/human.txt`
+- `ts_pkg_discovery_single_package` -> `target/ripr/fixtures/ts_pkg_discovery_single_package`
+  - `target/ripr/fixtures/ts_pkg_discovery_single_package/check.json`
+  - `target/ripr/fixtures/ts_pkg_discovery_single_package/human.txt`
+- `ts_predicate_boundary_const_result_local` -> `target/ripr/fixtures/ts_predicate_boundary_const_result_local`
+  - `target/ripr/fixtures/ts_predicate_boundary_const_result_local/check.json`
+  - `target/ripr/fixtures/ts_predicate_boundary_const_result_local/human.txt`
+- `ts_predicate_boundary_optional_chaining` -> `target/ripr/fixtures/ts_predicate_boundary_optional_chaining`
+  - `target/ripr/fixtures/ts_predicate_boundary_optional_chaining/check.json`
+  - `target/ripr/fixtures/ts_predicate_boundary_optional_chaining/human.txt`
+- `ts_predicate_boundary_overcredit` -> `target/ripr/fixtures/ts_predicate_boundary_overcredit`
+  - `target/ripr/fixtures/ts_predicate_boundary_overcredit/check.json`
+  - `target/ripr/fixtures/ts_predicate_boundary_overcredit/human.txt`
+- `ts_repair_packet_boundary_constant_first` -> `target/ripr/fixtures/ts_repair_packet_boundary_constant_first`
+  - `target/ripr/fixtures/ts_repair_packet_boundary_constant_first/check.json`
+  - `target/ripr/fixtures/ts_repair_packet_boundary_constant_first/human.txt`
+- `ts_repair_packet_boundary_constant_resolved` -> `target/ripr/fixtures/ts_repair_packet_boundary_constant_resolved`
+  - `target/ripr/fixtures/ts_repair_packet_boundary_constant_resolved/check.json`
+  - `target/ripr/fixtures/ts_repair_packet_boundary_constant_resolved/human.txt`
+- `ts_repair_packet_boundary_constant_unresolved` -> `target/ripr/fixtures/ts_repair_packet_boundary_constant_unresolved`
+  - `target/ripr/fixtures/ts_repair_packet_boundary_constant_unresolved/check.json`
+  - `target/ripr/fixtures/ts_repair_packet_boundary_constant_unresolved/human.txt`
+- `ts_repair_packet_boundary_literal_derived` -> `target/ripr/fixtures/ts_repair_packet_boundary_literal_derived`
+  - `target/ripr/fixtures/ts_repair_packet_boundary_literal_derived/check.json`
+  - `target/ripr/fixtures/ts_repair_packet_boundary_literal_derived/human.txt`
+- `ts_repair_packet_boundary_literal_guarded` -> `target/ripr/fixtures/ts_repair_packet_boundary_literal_guarded`
+  - `target/ripr/fixtures/ts_repair_packet_boundary_literal_guarded/check.json`
+  - `target/ripr/fixtures/ts_repair_packet_boundary_literal_guarded/human.txt`
+- `ts_repair_packet_boundary_parameter_constant_shaped` -> `target/ripr/fixtures/ts_repair_packet_boundary_parameter_constant_shaped`
+  - `target/ripr/fixtures/ts_repair_packet_boundary_parameter_constant_shaped/check.json`
+  - `target/ripr/fixtures/ts_repair_packet_boundary_parameter_constant_shaped/human.txt`
+- `ts_repair_packet_boundary_parameter_pair` -> `target/ripr/fixtures/ts_repair_packet_boundary_parameter_pair`
+  - `target/ripr/fixtures/ts_repair_packet_boundary_parameter_pair/check.json`
+  - `target/ripr/fixtures/ts_repair_packet_boundary_parameter_pair/human.txt`
+- `ts_repair_packet_boundary_parameter_written` -> `target/ripr/fixtures/ts_repair_packet_boundary_parameter_written`
+  - `target/ripr/fixtures/ts_repair_packet_boundary_parameter_written/check.json`
+  - `target/ripr/fixtures/ts_repair_packet_boundary_parameter_written/human.txt`
+- `ts_repair_packet_boundary_unreachable` -> `target/ripr/fixtures/ts_repair_packet_boundary_unreachable`
+  - `target/ripr/fixtures/ts_repair_packet_boundary_unreachable/check.json`
+  - `target/ripr/fixtures/ts_repair_packet_boundary_unreachable/human.txt`
+- `ts_repair_packet_complete` -> `target/ripr/fixtures/ts_repair_packet_complete`
+  - `target/ripr/fixtures/ts_repair_packet_complete/check.json`
+  - `target/ripr/fixtures/ts_repair_packet_complete/human.txt`
+- `ts_repair_packet_wrong_family_oracle` -> `target/ripr/fixtures/ts_repair_packet_wrong_family_oracle`
+  - `target/ripr/fixtures/ts_repair_packet_wrong_family_oracle/check.json`
+  - `target/ripr/fixtures/ts_repair_packet_wrong_family_oracle/human.txt`
+- `ts_return_comparison_boundary` -> `target/ripr/fixtures/ts_return_comparison_boundary`
+  - `target/ripr/fixtures/ts_return_comparison_boundary/check.json`
+  - `target/ripr/fixtures/ts_return_comparison_boundary/human.txt`
+- `ts_return_ternary_boundary` -> `target/ripr/fixtures/ts_return_ternary_boundary`
+  - `target/ripr/fixtures/ts_return_ternary_boundary/check.json`
+  - `target/ripr/fixtures/ts_return_ternary_boundary/human.txt`
+- `ts_runner_detect_ava_devdep` -> `target/ripr/fixtures/ts_runner_detect_ava_devdep`
+  - `target/ripr/fixtures/ts_runner_detect_ava_devdep/check.json`
+  - `target/ripr/fixtures/ts_runner_detect_ava_devdep/human.txt`
+- `ts_runner_detect_ava_script` -> `target/ripr/fixtures/ts_runner_detect_ava_script`
+  - `target/ripr/fixtures/ts_runner_detect_ava_script/check.json`
+  - `target/ripr/fixtures/ts_runner_detect_ava_script/human.txt`
+- `ts_runner_detect_no_runner` -> `target/ripr/fixtures/ts_runner_detect_no_runner`
+  - `target/ripr/fixtures/ts_runner_detect_no_runner/check.json`
+  - `target/ripr/fixtures/ts_runner_detect_no_runner/human.txt`
+- `ts_static_limit` -> `target/ripr/fixtures/ts_static_limit`
+  - `target/ripr/fixtures/ts_static_limit/check.json`
+  - `target/ripr/fixtures/ts_static_limit/human.txt`
+- `typescript_adversarial_hoc_wrapped_owner` -> `target/ripr/fixtures/typescript_adversarial_hoc_wrapped_owner`
+  - `target/ripr/fixtures/typescript_adversarial_hoc_wrapped_owner/check.json`
+  - `target/ripr/fixtures/typescript_adversarial_hoc_wrapped_owner/human.txt`
+- `typescript_adversarial_mocked_barrel` -> `target/ripr/fixtures/typescript_adversarial_mocked_barrel`
+  - `target/ripr/fixtures/typescript_adversarial_mocked_barrel/check.json`
+  - `target/ripr/fixtures/typescript_adversarial_mocked_barrel/human.txt`
+- `typescript_adversarial_owner_identity_after_insertion` -> `target/ripr/fixtures/typescript_adversarial_owner_identity_after_insertion`
+  - `target/ripr/fixtures/typescript_adversarial_owner_identity_after_insertion/check.json`
+  - `target/ripr/fixtures/typescript_adversarial_owner_identity_after_insertion/human.txt`
+- `typescript_adversarial_owner_module_mock` -> `target/ripr/fixtures/typescript_adversarial_owner_module_mock`
+  - `target/ripr/fixtures/typescript_adversarial_owner_module_mock/check.json`
+  - `target/ripr/fixtures/typescript_adversarial_owner_module_mock/human.txt`
+- `typescript_adversarial_render_unobserved_sink` -> `target/ripr/fixtures/typescript_adversarial_render_unobserved_sink`
+  - `target/ripr/fixtures/typescript_adversarial_render_unobserved_sink/check.json`
+  - `target/ripr/fixtures/typescript_adversarial_render_unobserved_sink/human.txt`
+- `typescript_adversarial_same_method_other_class` -> `target/ripr/fixtures/typescript_adversarial_same_method_other_class`
+  - `target/ripr/fixtures/typescript_adversarial_same_method_other_class/check.json`
+  - `target/ripr/fixtures/typescript_adversarial_same_method_other_class/human.txt`
+- `typescript_adversarial_token_substring` -> `target/ripr/fixtures/typescript_adversarial_token_substring`
+  - `target/ripr/fixtures/typescript_adversarial_token_substring/check.json`
+  - `target/ripr/fixtures/typescript_adversarial_token_substring/human.txt`
+- `typescript_awaited_promise_reject` -> `target/ripr/fixtures/typescript_awaited_promise_reject`
+  - `target/ripr/fixtures/typescript_awaited_promise_reject/check.json`
+  - `target/ripr/fixtures/typescript_awaited_promise_reject/human.txt`
+- `typescript_boundary_gap` -> `target/ripr/fixtures/typescript_boundary_gap`
+  - `target/ripr/fixtures/typescript_boundary_gap/check.json`
+  - `target/ripr/fixtures/typescript_boundary_gap/human.txt`
+- `typescript_broad_tothrow` -> `target/ripr/fixtures/typescript_broad_tothrow`
+  - `target/ripr/fixtures/typescript_broad_tothrow/check.json`
+  - `target/ripr/fixtures/typescript_broad_tothrow/human.txt`
+- `typescript_commonjs_require` -> `target/ripr/fixtures/typescript_commonjs_require`
+  - `target/ripr/fixtures/typescript_commonjs_require/check.json`
+  - `target/ripr/fixtures/typescript_commonjs_require/human.txt`
+- `typescript_disabled` -> `target/ripr/fixtures/typescript_disabled`
+  - `target/ripr/fixtures/typescript_disabled/check.json`
+  - `target/ripr/fixtures/typescript_disabled/human.txt`
+- `typescript_dynamic_assertion_unresolved` -> `target/ripr/fixtures/typescript_dynamic_assertion_unresolved`
+  - `target/ripr/fixtures/typescript_dynamic_assertion_unresolved/check.json`
+  - `target/ripr/fixtures/typescript_dynamic_assertion_unresolved/human.txt`
+- `typescript_effect_owner_alias` -> `target/ripr/fixtures/typescript_effect_owner_alias`
+  - `target/ripr/fixtures/typescript_effect_owner_alias/check.json`
+  - `target/ripr/fixtures/typescript_effect_owner_alias/human.txt`
+- `typescript_effect_probe_shapes` -> `target/ripr/fixtures/typescript_effect_probe_shapes`
+  - `target/ripr/fixtures/typescript_effect_probe_shapes/check.json`
+  - `target/ripr/fixtures/typescript_effect_probe_shapes/human.txt`
+- `typescript_empty_each` -> `target/ripr/fixtures/typescript_empty_each`
+  - `target/ripr/fixtures/typescript_empty_each/check.json`
+  - `target/ripr/fixtures/typescript_empty_each/human.txt`
+- `typescript_jest_vitest_assertion_facts` -> `target/ripr/fixtures/typescript_jest_vitest_assertion_facts`
+  - `target/ripr/fixtures/typescript_jest_vitest_assertion_facts/check.json`
+  - `target/ripr/fixtures/typescript_jest_vitest_assertion_facts/human.txt`
+- `typescript_limitation_custom_matcher` -> `target/ripr/fixtures/typescript_limitation_custom_matcher`
+  - `target/ripr/fixtures/typescript_limitation_custom_matcher/check.json`
+  - `target/ripr/fixtures/typescript_limitation_custom_matcher/human.txt`
+- `typescript_mocked_module_limit` -> `target/ripr/fixtures/typescript_mocked_module_limit`
+  - `target/ripr/fixtures/typescript_mocked_module_limit/check.json`
+  - `target/ripr/fixtures/typescript_mocked_module_limit/human.txt`
+- `typescript_monorepo_package_local` -> `target/ripr/fixtures/typescript_monorepo_package_local`
+  - `target/ripr/fixtures/typescript_monorepo_package_local/check.json`
+  - `target/ripr/fixtures/typescript_monorepo_package_local/human.txt`
+- `typescript_negated_t_oracle` -> `target/ripr/fixtures/typescript_negated_t_oracle`
+  - `target/ripr/fixtures/typescript_negated_t_oracle/check.json`
+  - `target/ripr/fixtures/typescript_negated_t_oracle/human.txt`
+- `typescript_oracle_helper_gated` -> `target/ripr/fixtures/typescript_oracle_helper_gated`
+  - `target/ripr/fixtures/typescript_oracle_helper_gated/check.json`
+  - `target/ripr/fixtures/typescript_oracle_helper_gated/human.txt`
+- `typescript_owner_file_match` -> `target/ripr/fixtures/typescript_owner_file_match`
+  - `target/ripr/fixtures/typescript_owner_file_match/check.json`
+  - `target/ripr/fixtures/typescript_owner_file_match/human.txt`
+- `typescript_owner_kinds` -> `target/ripr/fixtures/typescript_owner_kinds`
+  - `target/ripr/fixtures/typescript_owner_kinds/check.json`
+  - `target/ripr/fixtures/typescript_owner_kinds/human.txt`
+- `typescript_parse_error_unsupported_syntax` -> `target/ripr/fixtures/typescript_parse_error_unsupported_syntax`
+  - `target/ripr/fixtures/typescript_parse_error_unsupported_syntax/check.json`
+  - `target/ripr/fixtures/typescript_parse_error_unsupported_syntax/human.txt`
+- `typescript_probe_facts` -> `target/ripr/fixtures/typescript_probe_facts`
+  - `target/ripr/fixtures/typescript_probe_facts/check.json`
+  - `target/ripr/fixtures/typescript_probe_facts/human.txt`
+- `typescript_reexport_barrel_other_name` -> `target/ripr/fixtures/typescript_reexport_barrel_other_name`
+  - `target/ripr/fixtures/typescript_reexport_barrel_other_name/check.json`
+  - `target/ripr/fixtures/typescript_reexport_barrel_other_name/human.txt`
+- `typescript_reexport_directory_star_barrel` -> `target/ripr/fixtures/typescript_reexport_directory_star_barrel`
+  - `target/ripr/fixtures/typescript_reexport_directory_star_barrel/check.json`
+  - `target/ripr/fixtures/typescript_reexport_directory_star_barrel/human.txt`
+- `typescript_reexport_no_false_credit` -> `target/ripr/fixtures/typescript_reexport_no_false_credit`
+  - `target/ripr/fixtures/typescript_reexport_no_false_credit/check.json`
+  - `target/ripr/fixtures/typescript_reexport_no_false_credit/human.txt`
+- `typescript_reexport_single_hop` -> `target/ripr/fixtures/typescript_reexport_single_hop`
+  - `target/ripr/fixtures/typescript_reexport_single_hop/check.json`
+  - `target/ripr/fixtures/typescript_reexport_single_hop/human.txt`
+- `typescript_reexport_two_hop_limit` -> `target/ripr/fixtures/typescript_reexport_two_hop_limit`
+  - `target/ripr/fixtures/typescript_reexport_two_hop_limit/check.json`
+  - `target/ripr/fixtures/typescript_reexport_two_hop_limit/human.txt`
+- `typescript_rejects_literal_equality` -> `target/ripr/fixtures/typescript_rejects_literal_equality`
+  - `target/ripr/fixtures/typescript_rejects_literal_equality/check.json`
+  - `target/ripr/fixtures/typescript_rejects_literal_equality/human.txt`
+- `typescript_rejects_reexport_shadow` -> `target/ripr/fixtures/typescript_rejects_reexport_shadow`
+  - `target/ripr/fixtures/typescript_rejects_reexport_shadow/check.json`
+  - `target/ripr/fixtures/typescript_rejects_reexport_shadow/human.txt`
+- `typescript_related_test_matching` -> `target/ripr/fixtures/typescript_related_test_matching`
+  - `target/ripr/fixtures/typescript_related_test_matching/check.json`
+  - `target/ripr/fixtures/typescript_related_test_matching/human.txt`
+- `typescript_related_test_name_proximity` -> `target/ripr/fixtures/typescript_related_test_name_proximity`
+  - `target/ripr/fixtures/typescript_related_test_name_proximity/check.json`
+  - `target/ripr/fixtures/typescript_related_test_name_proximity/human.txt`
+- `typescript_return_value_shape` -> `target/ripr/fixtures/typescript_return_value_shape`
+  - `target/ripr/fixtures/typescript_return_value_shape/check.json`
+  - `target/ripr/fixtures/typescript_return_value_shape/human.txt`
+- `typescript_same_method_owner_identity_positive` -> `target/ripr/fixtures/typescript_same_method_owner_identity_positive`
+  - `target/ripr/fixtures/typescript_same_method_owner_identity_positive/check.json`
+  - `target/ripr/fixtures/typescript_same_method_owner_identity_positive/human.txt`
+- `typescript_static_limit_taxonomy` -> `target/ripr/fixtures/typescript_static_limit_taxonomy`
+  - `target/ripr/fixtures/typescript_static_limit_taxonomy/check.json`
+  - `target/ripr/fixtures/typescript_static_limit_taxonomy/human.txt`
+- `typescript_strict_actionability` -> `target/ripr/fixtures/typescript_strict_actionability`
+  - `target/ripr/fixtures/typescript_strict_actionability/check.json`
+  - `target/ripr/fixtures/typescript_strict_actionability/human.txt`
+- `typescript_strong_oracle` -> `target/ripr/fixtures/typescript_strong_oracle`
+  - `target/ripr/fixtures/typescript_strong_oracle/check.json`
+  - `target/ripr/fixtures/typescript_strong_oracle/human.txt`
+- `typescript_t_truthy_oracle` -> `target/ripr/fixtures/typescript_t_truthy_oracle`
+  - `target/ripr/fixtures/typescript_t_truthy_oracle/check.json`
+  - `target/ripr/fixtures/typescript_t_truthy_oracle/human.txt`
+- `typescript_t_unknown_method_no_oracle` -> `target/ripr/fixtures/typescript_t_unknown_method_no_oracle`
+  - `target/ripr/fixtures/typescript_t_unknown_method_no_oracle/check.json`
+  - `target/ripr/fixtures/typescript_t_unknown_method_no_oracle/human.txt`
+- `typescript_t_wrong_receiver_no_oracle` -> `target/ripr/fixtures/typescript_t_wrong_receiver_no_oracle`
+  - `target/ripr/fixtures/typescript_t_wrong_receiver_no_oracle/check.json`
+  - `target/ripr/fixtures/typescript_t_wrong_receiver_no_oracle/human.txt`
+- `typescript_tape_equal_oracle` -> `target/ripr/fixtures/typescript_tape_equal_oracle`
+  - `target/ripr/fixtures/typescript_tape_equal_oracle/check.json`
+  - `target/ripr/fixtures/typescript_tape_equal_oracle/human.txt`
+- `typescript_tothrow_exact_oracle` -> `target/ripr/fixtures/typescript_tothrow_exact_oracle`
+  - `target/ripr/fixtures/typescript_tothrow_exact_oracle/check.json`
+  - `target/ripr/fixtures/typescript_tothrow_exact_oracle/human.txt`
+- `typescript_tsx_preview` -> `target/ripr/fixtures/typescript_tsx_preview`
+  - `target/ripr/fixtures/typescript_tsx_preview/check.json`
+  - `target/ripr/fixtures/typescript_tsx_preview/human.txt`
+- `typescript_witness_dead_argument` -> `target/ripr/fixtures/typescript_witness_dead_argument`
+  - `target/ripr/fixtures/typescript_witness_dead_argument/check.json`
+  - `target/ripr/fixtures/typescript_witness_dead_argument/human.txt`
+- `typescript_witness_dead_expected` -> `target/ripr/fixtures/typescript_witness_dead_expected`
+  - `target/ripr/fixtures/typescript_witness_dead_expected/check.json`
+  - `target/ripr/fixtures/typescript_witness_dead_expected/human.txt`
+- `typescript_witness_local_shadow` -> `target/ripr/fixtures/typescript_witness_local_shadow`
+  - `target/ripr/fixtures/typescript_witness_local_shadow/check.json`
+  - `target/ripr/fixtures/typescript_witness_local_shadow/human.txt`
+- `typescript_witness_nested_expression` -> `target/ripr/fixtures/typescript_witness_nested_expression`
+  - `target/ripr/fixtures/typescript_witness_nested_expression/check.json`
+  - `target/ripr/fixtures/typescript_witness_nested_expression/human.txt`
+- `typescript_witness_receiver_qualified` -> `target/ripr/fixtures/typescript_witness_receiver_qualified`
+  - `target/ripr/fixtures/typescript_witness_receiver_qualified/check.json`
+  - `target/ripr/fixtures/typescript_witness_receiver_qualified/human.txt`
+- `unrelated_test_mentions_token` -> `target/ripr/fixtures/unrelated_test_mentions_token`
+  - `target/ripr/fixtures/unrelated_test_mentions_token/check.json`
+  - `target/ripr/fixtures/unrelated_test_mentions_token/human.txt`
+- `unsafe_boundary_probe` -> `target/ripr/fixtures/unsafe_boundary_probe`
+  - `target/ripr/fixtures/unsafe_boundary_probe/check.json`
+  - `target/ripr/fixtures/unsafe_boundary_probe/human.txt`
+- `unwrap_err_generic_is_err` -> `target/ripr/fixtures/unwrap_err_generic_is_err`
+  - `target/ripr/fixtures/unwrap_err_generic_is_err/check.json`
+  - `target/ripr/fixtures/unwrap_err_generic_is_err/human.txt`
+- `unwrap_err_sibling_variant` -> `target/ripr/fixtures/unwrap_err_sibling_variant`
+  - `target/ripr/fixtures/unwrap_err_sibling_variant/check.json`
+  - `target/ripr/fixtures/unwrap_err_sibling_variant/human.txt`
+- `unwrap_err_variant_positive` -> `target/ripr/fixtures/unwrap_err_variant_positive`
+  - `target/ripr/fixtures/unwrap_err_variant_positive/check.json`
+  - `target/ripr/fixtures/unwrap_err_variant_positive/human.txt`
+- `unwrap_err_variant_single_line` -> `target/ripr/fixtures/unwrap_err_variant_single_line`
+  - `target/ripr/fixtures/unwrap_err_variant_single_line/check.json`
+  - `target/ripr/fixtures/unwrap_err_variant_single_line/human.txt`
+- `weak_error_oracle` -> `target/ripr/fixtures/weak_error_oracle`
+  - `target/ripr/fixtures/weak_error_oracle/check.json`
+  - `target/ripr/fixtures/weak_error_oracle/human.txt`
+- `weak_error_oracle_assert_matches` -> `target/ripr/fixtures/weak_error_oracle_assert_matches`
+  - `target/ripr/fixtures/weak_error_oracle_assert_matches/check.json`
+  - `target/ripr/fixtures/weak_error_oracle_assert_matches/human.txt`
+- `whole_value_string_from_shadow` -> `target/ripr/fixtures/whole_value_string_from_shadow`
+  - `target/ripr/fixtures/whole_value_string_from_shadow/check.json`
+  - `target/ripr/fixtures/whole_value_string_from_shadow/human.txt`
+- `wildcard_oracle_exact_original` -> `target/ripr/fixtures/wildcard_oracle_exact_original`
+  - `target/ripr/fixtures/wildcard_oracle_exact_original/check.json`
+  - `target/ripr/fixtures/wildcard_oracle_exact_original/human.txt`
+- `wildcard_oracle_exact_wrong` -> `target/ripr/fixtures/wildcard_oracle_exact_wrong`
+  - `target/ripr/fixtures/wildcard_oracle_exact_wrong/check.json`
+  - `target/ripr/fixtures/wildcard_oracle_exact_wrong/human.txt`
+- `wildcard_oracle_guarded_original` -> `target/ripr/fixtures/wildcard_oracle_guarded_original`
+  - `target/ripr/fixtures/wildcard_oracle_guarded_original/check.json`
+  - `target/ripr/fixtures/wildcard_oracle_guarded_original/human.txt`
+- `wildcard_oracle_guarded_wrong` -> `target/ripr/fixtures/wildcard_oracle_guarded_wrong`
+  - `target/ripr/fixtures/wildcard_oracle_guarded_wrong/check.json`
+  - `target/ripr/fixtures/wildcard_oracle_guarded_wrong/human.txt`
+- `wildcard_oracle_wildcard_original` -> `target/ripr/fixtures/wildcard_oracle_wildcard_original`
+  - `target/ripr/fixtures/wildcard_oracle_wildcard_original/check.json`
+  - `target/ripr/fixtures/wildcard_oracle_wildcard_original/human.txt`
+- `wildcard_oracle_wildcard_wrong` -> `target/ripr/fixtures/wildcard_oracle_wildcard_wrong`
+  - `target/ripr/fixtures/wildcard_oracle_wildcard_wrong/check.json`
+  - `target/ripr/fixtures/wildcard_oracle_wildcard_wrong/human.txt`
+- `wrapper_seam_callee_call_attribution` -> `target/ripr/fixtures/wrapper_seam_callee_call_attribution`
+  - `target/ripr/fixtures/wrapper_seam_callee_call_attribution/check.json`
+  - `target/ripr/fixtures/wrapper_seam_callee_call_attribution/human.txt`
+
+## Golden Comparisons
+
+- `all_no_path_disclosure` `check.json`: pass
+  - expected: `fixtures/all_no_path_disclosure/expected/check.json`
+  - actual: `target/ripr/fixtures/all_no_path_disclosure/check.json`
+- `all_no_path_disclosure` `human.txt`: pass
+  - expected: `fixtures/all_no_path_disclosure/expected/human.txt`
+  - actual: `target/ripr/fixtures/all_no_path_disclosure/human.txt`
+- `assertion_form_parity_assert_msg` `check.json`: pass
+  - expected: `fixtures/assertion_form_parity_assert_msg/expected/check.json`
+  - actual: `target/ripr/fixtures/assertion_form_parity_assert_msg/check.json`
+- `assertion_form_parity_assert_msg` `human.txt`: pass
+  - expected: `fixtures/assertion_form_parity_assert_msg/expected/human.txt`
+  - actual: `target/ripr/fixtures/assertion_form_parity_assert_msg/human.txt`
+- `assertion_form_parity_err_guard` `check.json`: pass
+  - expected: `fixtures/assertion_form_parity_err_guard/expected/check.json`
+  - actual: `target/ripr/fixtures/assertion_form_parity_err_guard/check.json`
+- `assertion_form_parity_err_guard` `human.txt`: pass
+  - expected: `fixtures/assertion_form_parity_err_guard/expected/human.txt`
+  - actual: `target/ripr/fixtures/assertion_form_parity_err_guard/human.txt`
+- `assertion_shaped_control_production_caller` `check.json`: pass
+  - expected: `fixtures/assertion_shaped_control_production_caller/expected/check.json`
+  - actual: `target/ripr/fixtures/assertion_shaped_control_production_caller/check.json`
+- `assertion_shaped_control_production_caller` `human.txt`: pass
+  - expected: `fixtures/assertion_shaped_control_production_caller/expected/human.txt`
+  - actual: `target/ripr/fixtures/assertion_shaped_control_production_caller/human.txt`
+- `assertion_shaped_control_production_owner` `check.json`: pass
+  - expected: `fixtures/assertion_shaped_control_production_owner/expected/check.json`
+  - actual: `target/ripr/fixtures/assertion_shaped_control_production_owner/check.json`
+- `assertion_shaped_control_production_owner` `human.txt`: pass
+  - expected: `fixtures/assertion_shaped_control_production_owner/expected/human.txt`
+  - actual: `target/ripr/fixtures/assertion_shaped_control_production_owner/human.txt`
+- `assertion_shaped_oracle_cfg_test` `check.json`: pass
+  - expected: `fixtures/assertion_shaped_oracle_cfg_test/expected/check.json`
+  - actual: `target/ripr/fixtures/assertion_shaped_oracle_cfg_test/check.json`
+- `assertion_shaped_oracle_cfg_test` `human.txt`: pass
+  - expected: `fixtures/assertion_shaped_oracle_cfg_test/expected/human.txt`
+  - actual: `target/ripr/fixtures/assertion_shaped_oracle_cfg_test/human.txt`
+- `assertion_shaped_oracle_test_file` `check.json`: pass
+  - expected: `fixtures/assertion_shaped_oracle_test_file/expected/check.json`
+  - actual: `target/ripr/fixtures/assertion_shaped_oracle_test_file/check.json`
+- `assertion_shaped_oracle_test_file` `human.txt`: pass
+  - expected: `fixtures/assertion_shaped_oracle_test_file/expected/human.txt`
+  - actual: `target/ripr/fixtures/assertion_shaped_oracle_test_file/human.txt`
+- `assurance_vocabulary` `check.json`: pass
+  - expected: `fixtures/assurance_vocabulary/expected/check.json`
+  - actual: `target/ripr/fixtures/assurance_vocabulary/check.json`
+- `assurance_vocabulary` `human.txt`: pass
+  - expected: `fixtures/assurance_vocabulary/expected/human.txt`
+  - actual: `target/ripr/fixtures/assurance_vocabulary/human.txt`
+- `benches_harness_evidence` `check.json`: pass
+  - expected: `fixtures/benches_harness_evidence/expected/check.json`
+  - actual: `target/ripr/fixtures/benches_harness_evidence/check.json`
+- `benches_harness_evidence` `human.txt`: pass
+  - expected: `fixtures/benches_harness_evidence/expected/human.txt`
+  - actual: `target/ripr/fixtures/benches_harness_evidence/human.txt`
+- `binding_predicate_equality_boundary` `check.json`: pass
+  - expected: `fixtures/binding_predicate_equality_boundary/expected/check.json`
+  - actual: `target/ripr/fixtures/binding_predicate_equality_boundary/check.json`
+- `binding_predicate_equality_boundary` `human.txt`: pass
+  - expected: `fixtures/binding_predicate_equality_boundary/expected/human.txt`
+  - actual: `target/ripr/fixtures/binding_predicate_equality_boundary/human.txt`
+- `binding_predicate_positions` `check.json`: pass
+  - expected: `fixtures/binding_predicate_positions/expected/check.json`
+  - actual: `target/ripr/fixtures/binding_predicate_positions/check.json`
+- `binding_predicate_positions` `human.txt`: pass
+  - expected: `fixtures/binding_predicate_positions/expected/human.txt`
+  - actual: `target/ripr/fixtures/binding_predicate_positions/human.txt`
+- `binding_predicate_scope_controls` `check.json`: pass
+  - expected: `fixtures/binding_predicate_scope_controls/expected/check.json`
+  - actual: `target/ripr/fixtures/binding_predicate_scope_controls/check.json`
+- `binding_predicate_scope_controls` `human.txt`: pass
+  - expected: `fixtures/binding_predicate_scope_controls/expected/human.txt`
+  - actual: `target/ripr/fixtures/binding_predicate_scope_controls/human.txt`
+- `binding_predicate_two_uses` `check.json`: pass
+  - expected: `fixtures/binding_predicate_two_uses/expected/check.json`
+  - actual: `target/ripr/fixtures/binding_predicate_two_uses/check.json`
+- `binding_predicate_two_uses` `human.txt`: pass
+  - expected: `fixtures/binding_predicate_two_uses/expected/human.txt`
+  - actual: `target/ripr/fixtures/binding_predicate_two_uses/human.txt`
+- `binding_value_fail_closed` `check.json`: pass
+  - expected: `fixtures/binding_value_fail_closed/expected/check.json`
+  - actual: `target/ripr/fixtures/binding_value_fail_closed/check.json`
+- `binding_value_fail_closed` `human.txt`: pass
+  - expected: `fixtures/binding_value_fail_closed/expected/human.txt`
+  - actual: `target/ripr/fixtures/binding_value_fail_closed/human.txt`
+- `binding_value_family_matrix` `check.json`: pass
+  - expected: `fixtures/binding_value_family_matrix/expected/check.json`
+  - actual: `target/ripr/fixtures/binding_value_family_matrix/check.json`
+- `binding_value_family_matrix` `human.txt`: pass
+  - expected: `fixtures/binding_value_family_matrix/expected/human.txt`
+  - actual: `target/ripr/fixtures/binding_value_family_matrix/human.txt`
+- `bool_compared_inequality_not_exact` `check.json`: pass
+  - expected: `fixtures/bool_compared_inequality_not_exact/expected/check.json`
+  - actual: `target/ripr/fixtures/bool_compared_inequality_not_exact/check.json`
+- `bool_compared_inequality_not_exact` `human.txt`: pass
+  - expected: `fixtures/bool_compared_inequality_not_exact/expected/human.txt`
+  - actual: `target/ripr/fixtures/bool_compared_inequality_not_exact/human.txt`
+- `bool_compared_inequality_not_exact` `human-full.txt`: pass
+  - expected: `fixtures/bool_compared_inequality_not_exact/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/bool_compared_inequality_not_exact/human-full.txt`
+- `boundary_gap` `check.json`: pass
+  - expected: `fixtures/boundary_gap/expected/check.json`
+  - actual: `target/ripr/fixtures/boundary_gap/check.json`
+- `boundary_gap` `human.txt`: pass
+  - expected: `fixtures/boundary_gap/expected/human.txt`
+  - actual: `target/ripr/fixtures/boundary_gap/human.txt`
+- `boundary_gap` `human-full.txt`: pass
+  - expected: `fixtures/boundary_gap/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/boundary_gap/human-full.txt`
+- `boundary_gap_multiline_assert` `check.json`: pass
+  - expected: `fixtures/boundary_gap_multiline_assert/expected/check.json`
+  - actual: `target/ripr/fixtures/boundary_gap_multiline_assert/check.json`
+- `boundary_gap_multiline_assert` `human.txt`: pass
+  - expected: `fixtures/boundary_gap_multiline_assert/expected/human.txt`
+  - actual: `target/ripr/fixtures/boundary_gap_multiline_assert/human.txt`
+- `boundary_gap_nested_tests` `check.json`: pass
+  - expected: `fixtures/boundary_gap_nested_tests/expected/check.json`
+  - actual: `target/ripr/fixtures/boundary_gap_nested_tests/check.json`
+- `boundary_gap_nested_tests` `human.txt`: pass
+  - expected: `fixtures/boundary_gap_nested_tests/expected/human.txt`
+  - actual: `target/ripr/fixtures/boundary_gap_nested_tests/human.txt`
+- `boundary_gap_reordered_tests` `check.json`: pass
+  - expected: `fixtures/boundary_gap_reordered_tests/expected/check.json`
+  - actual: `target/ripr/fixtures/boundary_gap_reordered_tests/check.json`
+- `boundary_gap_reordered_tests` `human.txt`: pass
+  - expected: `fixtures/boundary_gap_reordered_tests/expected/human.txt`
+  - actual: `target/ripr/fixtures/boundary_gap_reordered_tests/human.txt`
+- `boundary_named_constant` `check.json`: pass
+  - expected: `fixtures/boundary_named_constant/expected/check.json`
+  - actual: `target/ripr/fixtures/boundary_named_constant/check.json`
+- `boundary_named_constant` `human.txt`: pass
+  - expected: `fixtures/boundary_named_constant/expected/human.txt`
+  - actual: `target/ripr/fixtures/boundary_named_constant/human.txt`
+- `collection_argument_alias` `check.json`: pass
+  - expected: `fixtures/collection_argument_alias/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_alias/check.json`
+- `collection_argument_alias` `human.txt`: pass
+  - expected: `fixtures/collection_argument_alias/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_alias/human.txt`
+- `collection_argument_alias` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_alias/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_alias/human-full.txt`
+- `collection_argument_ambiguous` `check.json`: pass
+  - expected: `fixtures/collection_argument_ambiguous/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_ambiguous/check.json`
+- `collection_argument_ambiguous` `human.txt`: pass
+  - expected: `fixtures/collection_argument_ambiguous/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_ambiguous/human.txt`
+- `collection_argument_ambiguous` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_ambiguous/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_ambiguous/human-full.txt`
+- `collection_argument_coerced_equality` `check.json`: pass
+  - expected: `fixtures/collection_argument_coerced_equality/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_coerced_equality/check.json`
+- `collection_argument_coerced_equality` `human.txt`: pass
+  - expected: `fixtures/collection_argument_coerced_equality/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_coerced_equality/human.txt`
+- `collection_argument_coerced_equality` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_coerced_equality/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_coerced_equality/human-full.txt`
+- `collection_argument_computed_expected` `check.json`: pass
+  - expected: `fixtures/collection_argument_computed_expected/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_computed_expected/check.json`
+- `collection_argument_computed_expected` `human.txt`: pass
+  - expected: `fixtures/collection_argument_computed_expected/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_computed_expected/human.txt`
+- `collection_argument_computed_expected` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_computed_expected/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_computed_expected/human-full.txt`
+- `collection_argument_constructor_shadow` `check.json`: pass
+  - expected: `fixtures/collection_argument_constructor_shadow/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_constructor_shadow/check.json`
+- `collection_argument_constructor_shadow` `human.txt`: pass
+  - expected: `fixtures/collection_argument_constructor_shadow/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_constructor_shadow/human.txt`
+- `collection_argument_constructor_shadow` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_constructor_shadow/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_constructor_shadow/human-full.txt`
+- `collection_argument_custom_equality` `check.json`: pass
+  - expected: `fixtures/collection_argument_custom_equality/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_custom_equality/check.json`
+- `collection_argument_custom_equality` `human.txt`: pass
+  - expected: `fixtures/collection_argument_custom_equality/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_custom_equality/human.txt`
+- `collection_argument_custom_equality` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_custom_equality/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_custom_equality/human-full.txt`
+- `collection_argument_guarded` `check.json`: pass
+  - expected: `fixtures/collection_argument_guarded/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_guarded/check.json`
+- `collection_argument_guarded` `human.txt`: pass
+  - expected: `fixtures/collection_argument_guarded/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_guarded/human.txt`
+- `collection_argument_guarded` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_guarded/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_guarded/human-full.txt`
+- `collection_argument_imported_constructor` `check.json`: pass
+  - expected: `fixtures/collection_argument_imported_constructor/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_imported_constructor/check.json`
+- `collection_argument_imported_constructor` `human.txt`: pass
+  - expected: `fixtures/collection_argument_imported_constructor/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_imported_constructor/human.txt`
+- `collection_argument_imported_constructor` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_imported_constructor/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_imported_constructor/human-full.txt`
+- `collection_argument_macro_constructor` `check.json`: pass
+  - expected: `fixtures/collection_argument_macro_constructor/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_macro_constructor/check.json`
+- `collection_argument_macro_constructor` `human.txt`: pass
+  - expected: `fixtures/collection_argument_macro_constructor/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_macro_constructor/human.txt`
+- `collection_argument_macro_constructor` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_macro_constructor/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_macro_constructor/human-full.txt`
+- `collection_argument_mutated` `check.json`: pass
+  - expected: `fixtures/collection_argument_mutated/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_mutated/check.json`
+- `collection_argument_mutated` `human.txt`: pass
+  - expected: `fixtures/collection_argument_mutated/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_mutated/human.txt`
+- `collection_argument_mutated` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_mutated/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_mutated/human-full.txt`
+- `collection_argument_named` `check.json`: pass
+  - expected: `fixtures/collection_argument_named/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_named/check.json`
+- `collection_argument_named` `human.txt`: pass
+  - expected: `fixtures/collection_argument_named/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_named/human.txt`
+- `collection_argument_named` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_named/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_named/human-full.txt`
+- `collection_argument_plain` `check.json`: pass
+  - expected: `fixtures/collection_argument_plain/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_plain/check.json`
+- `collection_argument_plain` `human.txt`: pass
+  - expected: `fixtures/collection_argument_plain/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_plain/human.txt`
+- `collection_argument_plain` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_plain/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_plain/human-full.txt`
+- `collection_argument_proc_constructor` `check.json`: pass
+  - expected: `fixtures/collection_argument_proc_constructor/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_proc_constructor/check.json`
+- `collection_argument_proc_constructor` `human.txt`: pass
+  - expected: `fixtures/collection_argument_proc_constructor/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_proc_constructor/human.txt`
+- `collection_argument_proc_constructor` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_proc_constructor/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_proc_constructor/human-full.txt`
+- `collection_argument_qualified_vec` `check.json`: pass
+  - expected: `fixtures/collection_argument_qualified_vec/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_qualified_vec/check.json`
+- `collection_argument_qualified_vec` `human.txt`: pass
+  - expected: `fixtures/collection_argument_qualified_vec/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_qualified_vec/human.txt`
+- `collection_argument_qualified_vec` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_qualified_vec/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_qualified_vec/human-full.txt`
+- `collection_argument_raw_imported_vec` `check.json`: pass
+  - expected: `fixtures/collection_argument_raw_imported_vec/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_raw_imported_vec/check.json`
+- `collection_argument_raw_imported_vec` `human.txt`: pass
+  - expected: `fixtures/collection_argument_raw_imported_vec/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_raw_imported_vec/human.txt`
+- `collection_argument_raw_imported_vec` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_raw_imported_vec/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_raw_imported_vec/human-full.txt`
+- `collection_argument_raw_mutated` `check.json`: pass
+  - expected: `fixtures/collection_argument_raw_mutated/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_raw_mutated/check.json`
+- `collection_argument_raw_mutated` `human.txt`: pass
+  - expected: `fixtures/collection_argument_raw_mutated/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_raw_mutated/human.txt`
+- `collection_argument_raw_mutated` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_raw_mutated/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_raw_mutated/human-full.txt`
+- `collection_argument_raw_rebound` `check.json`: pass
+  - expected: `fixtures/collection_argument_raw_rebound/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_raw_rebound/check.json`
+- `collection_argument_raw_rebound` `human.txt`: pass
+  - expected: `fixtures/collection_argument_raw_rebound/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_raw_rebound/human.txt`
+- `collection_argument_raw_rebound` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_raw_rebound/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_raw_rebound/human-full.txt`
+- `collection_argument_raw_type_alias` `check.json`: pass
+  - expected: `fixtures/collection_argument_raw_type_alias/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_raw_type_alias/check.json`
+- `collection_argument_raw_type_alias` `human.txt`: pass
+  - expected: `fixtures/collection_argument_raw_type_alias/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_raw_type_alias/human.txt`
+- `collection_argument_raw_type_alias` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_raw_type_alias/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_raw_type_alias/human-full.txt`
+- `collection_argument_rebound` `check.json`: pass
+  - expected: `fixtures/collection_argument_rebound/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_rebound/check.json`
+- `collection_argument_rebound` `human.txt`: pass
+  - expected: `fixtures/collection_argument_rebound/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_rebound/human.txt`
+- `collection_argument_rebound` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_rebound/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_rebound/human-full.txt`
+- `collection_argument_root_shadow` `check.json`: pass
+  - expected: `fixtures/collection_argument_root_shadow/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_root_shadow/check.json`
+- `collection_argument_root_shadow` `human.txt`: pass
+  - expected: `fixtures/collection_argument_root_shadow/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_root_shadow/human.txt`
+- `collection_argument_root_shadow` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_root_shadow/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_root_shadow/human-full.txt`
+- `collection_argument_tuple` `check.json`: pass
+  - expected: `fixtures/collection_argument_tuple/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_tuple/check.json`
+- `collection_argument_tuple` `human.txt`: pass
+  - expected: `fixtures/collection_argument_tuple/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_tuple/human.txt`
+- `collection_argument_tuple` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_tuple/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_tuple/human-full.txt`
+- `collection_argument_unrelated` `check.json`: pass
+  - expected: `fixtures/collection_argument_unrelated/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_unrelated/check.json`
+- `collection_argument_unrelated` `human.txt`: pass
+  - expected: `fixtures/collection_argument_unrelated/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_unrelated/human.txt`
+- `collection_argument_unrelated` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_unrelated/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_unrelated/human-full.txt`
+- `collection_argument_wrong_field` `check.json`: pass
+  - expected: `fixtures/collection_argument_wrong_field/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_wrong_field/check.json`
+- `collection_argument_wrong_field` `human.txt`: pass
+  - expected: `fixtures/collection_argument_wrong_field/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_wrong_field/human.txt`
+- `collection_argument_wrong_field` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_wrong_field/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_wrong_field/human-full.txt`
+- `collection_argument_wrong_receiver` `check.json`: pass
+  - expected: `fixtures/collection_argument_wrong_receiver/expected/check.json`
+  - actual: `target/ripr/fixtures/collection_argument_wrong_receiver/check.json`
+- `collection_argument_wrong_receiver` `human.txt`: pass
+  - expected: `fixtures/collection_argument_wrong_receiver/expected/human.txt`
+  - actual: `target/ripr/fixtures/collection_argument_wrong_receiver/human.txt`
+- `collection_argument_wrong_receiver` `human-full.txt`: pass
+  - expected: `fixtures/collection_argument_wrong_receiver/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/collection_argument_wrong_receiver/human-full.txt`
+- `comment_only_diff` `check.json`: pass
+  - expected: `fixtures/comment_only_diff/expected/check.json`
+  - actual: `target/ripr/fixtures/comment_only_diff/check.json`
+- `comment_only_diff` `human.txt`: pass
+  - expected: `fixtures/comment_only_diff/expected/human.txt`
+  - actual: `target/ripr/fixtures/comment_only_diff/human.txt`
+- `constant_declaration_probe_reconciliation` `check.json`: pass
+  - expected: `fixtures/constant_declaration_probe_reconciliation/expected/check.json`
+  - actual: `target/ripr/fixtures/constant_declaration_probe_reconciliation/check.json`
+- `constant_declaration_probe_reconciliation` `human.txt`: pass
+  - expected: `fixtures/constant_declaration_probe_reconciliation/expected/human.txt`
+  - actual: `target/ripr/fixtures/constant_declaration_probe_reconciliation/human.txt`
+- `constant_declaration_probe_reconciliation` `human-full.txt`: pass
+  - expected: `fixtures/constant_declaration_probe_reconciliation/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/constant_declaration_probe_reconciliation/human-full.txt`
+- `currentness_matrix_move` `check.json`: pass
+  - expected: `fixtures/currentness_matrix_move/expected/check.json`
+  - actual: `target/ripr/fixtures/currentness_matrix_move/check.json`
+- `currentness_matrix_move` `human.txt`: pass
+  - expected: `fixtures/currentness_matrix_move/expected/human.txt`
+  - actual: `target/ripr/fixtures/currentness_matrix_move/human.txt`
+- `currentness_matrix_python_deleted_statement` `check.json`: pass
+  - expected: `fixtures/currentness_matrix_python_deleted_statement/expected/check.json`
+  - actual: `target/ripr/fixtures/currentness_matrix_python_deleted_statement/check.json`
+- `currentness_matrix_python_deleted_statement` `human.txt`: pass
+  - expected: `fixtures/currentness_matrix_python_deleted_statement/expected/human.txt`
+  - actual: `target/ripr/fixtures/currentness_matrix_python_deleted_statement/human.txt`
+- `currentness_matrix_reuse` `check.json`: pass
+  - expected: `fixtures/currentness_matrix_reuse/expected/check.json`
+  - actual: `target/ripr/fixtures/currentness_matrix_reuse/check.json`
+- `currentness_matrix_reuse` `human.txt`: pass
+  - expected: `fixtures/currentness_matrix_reuse/expected/human.txt`
+  - actual: `target/ripr/fixtures/currentness_matrix_reuse/human.txt`
+- `currentness_matrix_tail` `check.json`: pass
+  - expected: `fixtures/currentness_matrix_tail/expected/check.json`
+  - actual: `target/ripr/fixtures/currentness_matrix_tail/check.json`
+- `currentness_matrix_tail` `human.txt`: pass
+  - expected: `fixtures/currentness_matrix_tail/expected/human.txt`
+  - actual: `target/ripr/fixtures/currentness_matrix_tail/human.txt`
+- `currentness_matrix_typescript_deleted_statement` `check.json`: pass
+  - expected: `fixtures/currentness_matrix_typescript_deleted_statement/expected/check.json`
+  - actual: `target/ripr/fixtures/currentness_matrix_typescript_deleted_statement/check.json`
+- `currentness_matrix_typescript_deleted_statement` `human.txt`: pass
+  - expected: `fixtures/currentness_matrix_typescript_deleted_statement/expected/human.txt`
+  - actual: `target/ripr/fixtures/currentness_matrix_typescript_deleted_statement/human.txt`
+- `currentness_matrix_whole_delete` `check.json`: pass
+  - expected: `fixtures/currentness_matrix_whole_delete/expected/check.json`
+  - actual: `target/ripr/fixtures/currentness_matrix_whole_delete/check.json`
+- `currentness_matrix_whole_delete` `human.txt`: pass
+  - expected: `fixtures/currentness_matrix_whole_delete/expected/human.txt`
+  - actual: `target/ripr/fixtures/currentness_matrix_whole_delete/human.txt`
+- `decimal_field_observer_non_member_access` `check.json`: pass
+  - expected: `fixtures/decimal_field_observer_non_member_access/expected/check.json`
+  - actual: `target/ripr/fixtures/decimal_field_observer_non_member_access/check.json`
+- `decimal_field_observer_non_member_access` `human.txt`: pass
+  - expected: `fixtures/decimal_field_observer_non_member_access/expected/human.txt`
+  - actual: `target/ripr/fixtures/decimal_field_observer_non_member_access/human.txt`
+- `editor_lsp_workflow` `check.json`: pass
+  - expected: `fixtures/editor_lsp_workflow/expected/check.json`
+  - actual: `target/ripr/fixtures/editor_lsp_workflow/check.json`
+- `editor_lsp_workflow` `human.txt`: pass
+  - expected: `fixtures/editor_lsp_workflow/expected/human.txt`
+  - actual: `target/ripr/fixtures/editor_lsp_workflow/human.txt`
+- `enum_variant_declaration_not_call` `check.json`: pass
+  - expected: `fixtures/enum_variant_declaration_not_call/expected/check.json`
+  - actual: `target/ripr/fixtures/enum_variant_declaration_not_call/check.json`
+- `enum_variant_declaration_not_call` `human.txt`: pass
+  - expected: `fixtures/enum_variant_declaration_not_call/expected/human.txt`
+  - actual: `target/ripr/fixtures/enum_variant_declaration_not_call/human.txt`
+- `error_path_diagnostic_absent` `check.json`: pass
+  - expected: `fixtures/error_path_diagnostic_absent/expected/check.json`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_absent/check.json`
+- `error_path_diagnostic_absent` `human.txt`: pass
+  - expected: `fixtures/error_path_diagnostic_absent/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_absent/human.txt`
+- `error_path_diagnostic_absent` `human-full.txt`: pass
+  - expected: `fixtures/error_path_diagnostic_absent/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_absent/human-full.txt`
+- `error_path_diagnostic_error` `check.json`: pass
+  - expected: `fixtures/error_path_diagnostic_error/expected/check.json`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_error/check.json`
+- `error_path_diagnostic_error` `human.txt`: pass
+  - expected: `fixtures/error_path_diagnostic_error/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_error/human.txt`
+- `error_path_diagnostic_error` `human-full.txt`: pass
+  - expected: `fixtures/error_path_diagnostic_error/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_error/human-full.txt`
+- `error_path_diagnostic_escaped` `check.json`: pass
+  - expected: `fixtures/error_path_diagnostic_escaped/expected/check.json`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_escaped/check.json`
+- `error_path_diagnostic_escaped` `human.txt`: pass
+  - expected: `fixtures/error_path_diagnostic_escaped/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_escaped/human.txt`
+- `error_path_diagnostic_escaped` `human-full.txt`: pass
+  - expected: `fixtures/error_path_diagnostic_escaped/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_escaped/human-full.txt`
+- `error_path_diagnostic_format` `check.json`: pass
+  - expected: `fixtures/error_path_diagnostic_format/expected/check.json`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_format/check.json`
+- `error_path_diagnostic_format` `human.txt`: pass
+  - expected: `fixtures/error_path_diagnostic_format/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_format/human.txt`
+- `error_path_diagnostic_format` `human-full.txt`: pass
+  - expected: `fixtures/error_path_diagnostic_format/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_format/human-full.txt`
+- `error_path_diagnostic_neutral` `check.json`: pass
+  - expected: `fixtures/error_path_diagnostic_neutral/expected/check.json`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_neutral/check.json`
+- `error_path_diagnostic_neutral` `human.txt`: pass
+  - expected: `fixtures/error_path_diagnostic_neutral/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_neutral/human.txt`
+- `error_path_diagnostic_neutral` `human-full.txt`: pass
+  - expected: `fixtures/error_path_diagnostic_neutral/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_neutral/human-full.txt`
+- `error_path_diagnostic_raw` `check.json`: pass
+  - expected: `fixtures/error_path_diagnostic_raw/expected/check.json`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_raw/check.json`
+- `error_path_diagnostic_raw` `human.txt`: pass
+  - expected: `fixtures/error_path_diagnostic_raw/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_raw/human.txt`
+- `error_path_diagnostic_raw` `human-full.txt`: pass
+  - expected: `fixtures/error_path_diagnostic_raw/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_raw/human-full.txt`
+- `error_path_diagnostic_typed_argument` `check.json`: pass
+  - expected: `fixtures/error_path_diagnostic_typed_argument/expected/check.json`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_typed_argument/check.json`
+- `error_path_diagnostic_typed_argument` `human.txt`: pass
+  - expected: `fixtures/error_path_diagnostic_typed_argument/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_typed_argument/human.txt`
+- `error_path_diagnostic_typed_argument` `human-full.txt`: pass
+  - expected: `fixtures/error_path_diagnostic_typed_argument/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_typed_argument/human-full.txt`
+- `error_path_diagnostic_typed_message` `check.json`: pass
+  - expected: `fixtures/error_path_diagnostic_typed_message/expected/check.json`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_typed_message/check.json`
+- `error_path_diagnostic_typed_message` `human.txt`: pass
+  - expected: `fixtures/error_path_diagnostic_typed_message/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_typed_message/human.txt`
+- `error_path_diagnostic_typed_message` `human-full.txt`: pass
+  - expected: `fixtures/error_path_diagnostic_typed_message/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_path_diagnostic_typed_message/human-full.txt`
+- `error_path_operand_error_lexeme` `check.json`: pass
+  - expected: `fixtures/error_path_operand_error_lexeme/expected/check.json`
+  - actual: `target/ripr/fixtures/error_path_operand_error_lexeme/check.json`
+- `error_path_operand_error_lexeme` `human.txt`: pass
+  - expected: `fixtures/error_path_operand_error_lexeme/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_path_operand_error_lexeme/human.txt`
+- `error_path_operand_error_lexeme` `human-full.txt`: pass
+  - expected: `fixtures/error_path_operand_error_lexeme/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_path_operand_error_lexeme/human-full.txt`
+- `error_path_oracle_execution_called` `check.json`: pass
+  - expected: `fixtures/error_path_oracle_execution_called/expected/check.json`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_called/check.json`
+- `error_path_oracle_execution_called` `human.txt`: pass
+  - expected: `fixtures/error_path_oracle_execution_called/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_called/human.txt`
+- `error_path_oracle_execution_called` `human-full.txt`: pass
+  - expected: `fixtures/error_path_oracle_execution_called/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_called/human-full.txt`
+- `error_path_oracle_execution_direct` `check.json`: pass
+  - expected: `fixtures/error_path_oracle_execution_direct/expected/check.json`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_direct/check.json`
+- `error_path_oracle_execution_direct` `human.txt`: pass
+  - expected: `fixtures/error_path_oracle_execution_direct/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_direct/human.txt`
+- `error_path_oracle_execution_direct` `human-full.txt`: pass
+  - expected: `fixtures/error_path_oracle_execution_direct/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_direct/human-full.txt`
+- `error_path_oracle_execution_false_branch` `check.json`: pass
+  - expected: `fixtures/error_path_oracle_execution_false_branch/expected/check.json`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_false_branch/check.json`
+- `error_path_oracle_execution_false_branch` `human.txt`: pass
+  - expected: `fixtures/error_path_oracle_execution_false_branch/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_false_branch/human.txt`
+- `error_path_oracle_execution_false_branch` `human-full.txt`: pass
+  - expected: `fixtures/error_path_oracle_execution_false_branch/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_false_branch/human-full.txt`
+- `error_path_oracle_execution_no_assertion` `check.json`: pass
+  - expected: `fixtures/error_path_oracle_execution_no_assertion/expected/check.json`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_no_assertion/check.json`
+- `error_path_oracle_execution_no_assertion` `human.txt`: pass
+  - expected: `fixtures/error_path_oracle_execution_no_assertion/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_no_assertion/human.txt`
+- `error_path_oracle_execution_no_assertion` `human-full.txt`: pass
+  - expected: `fixtures/error_path_oracle_execution_no_assertion/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_no_assertion/human-full.txt`
+- `error_path_oracle_execution_reached_uncalled` `check.json`: pass
+  - expected: `fixtures/error_path_oracle_execution_reached_uncalled/expected/check.json`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_reached_uncalled/check.json`
+- `error_path_oracle_execution_reached_uncalled` `human.txt`: pass
+  - expected: `fixtures/error_path_oracle_execution_reached_uncalled/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_reached_uncalled/human.txt`
+- `error_path_oracle_execution_reached_uncalled` `human-full.txt`: pass
+  - expected: `fixtures/error_path_oracle_execution_reached_uncalled/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_reached_uncalled/human-full.txt`
+- `error_path_oracle_execution_shadowed` `check.json`: pass
+  - expected: `fixtures/error_path_oracle_execution_shadowed/expected/check.json`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_shadowed/check.json`
+- `error_path_oracle_execution_shadowed` `human.txt`: pass
+  - expected: `fixtures/error_path_oracle_execution_shadowed/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_shadowed/human.txt`
+- `error_path_oracle_execution_shadowed` `human-full.txt`: pass
+  - expected: `fixtures/error_path_oracle_execution_shadowed/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_shadowed/human-full.txt`
+- `error_path_oracle_execution_uncalled` `check.json`: pass
+  - expected: `fixtures/error_path_oracle_execution_uncalled/expected/check.json`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_uncalled/check.json`
+- `error_path_oracle_execution_uncalled` `human.txt`: pass
+  - expected: `fixtures/error_path_oracle_execution_uncalled/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_uncalled/human.txt`
+- `error_path_oracle_execution_uncalled` `human-full.txt`: pass
+  - expected: `fixtures/error_path_oracle_execution_uncalled/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_path_oracle_execution_uncalled/human-full.txt`
+- `error_path_sibling_oracle_fake_clean` `check.json`: pass
+  - expected: `fixtures/error_path_sibling_oracle_fake_clean/expected/check.json`
+  - actual: `target/ripr/fixtures/error_path_sibling_oracle_fake_clean/check.json`
+- `error_path_sibling_oracle_fake_clean` `human.txt`: pass
+  - expected: `fixtures/error_path_sibling_oracle_fake_clean/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_path_sibling_oracle_fake_clean/human.txt`
+- `error_path_sibling_oracle_fake_clean` `human-full.txt`: pass
+  - expected: `fixtures/error_path_sibling_oracle_fake_clean/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_path_sibling_oracle_fake_clean/human-full.txt`
+- `error_variant_boxed_wrapper_downcast_witness` `check.json`: pass
+  - expected: `fixtures/error_variant_boxed_wrapper_downcast_witness/expected/check.json`
+  - actual: `target/ripr/fixtures/error_variant_boxed_wrapper_downcast_witness/check.json`
+- `error_variant_boxed_wrapper_downcast_witness` `human.txt`: pass
+  - expected: `fixtures/error_variant_boxed_wrapper_downcast_witness/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_variant_boxed_wrapper_downcast_witness/human.txt`
+- `error_variant_boxed_wrapper_downcast_witness` `human-full.txt`: pass
+  - expected: `fixtures/error_variant_boxed_wrapper_downcast_witness/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_variant_boxed_wrapper_downcast_witness/human-full.txt`
+- `error_variant_boxed_wrapper_fail_closed` `check.json`: pass
+  - expected: `fixtures/error_variant_boxed_wrapper_fail_closed/expected/check.json`
+  - actual: `target/ripr/fixtures/error_variant_boxed_wrapper_fail_closed/check.json`
+- `error_variant_boxed_wrapper_fail_closed` `human.txt`: pass
+  - expected: `fixtures/error_variant_boxed_wrapper_fail_closed/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_variant_boxed_wrapper_fail_closed/human.txt`
+- `error_variant_boxed_wrapper_fail_closed` `human-full.txt`: pass
+  - expected: `fixtures/error_variant_boxed_wrapper_fail_closed/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_variant_boxed_wrapper_fail_closed/human-full.txt`
+- `error_variant_wrapper_callee_only_pin` `check.json`: pass
+  - expected: `fixtures/error_variant_wrapper_callee_only_pin/expected/check.json`
+  - actual: `target/ripr/fixtures/error_variant_wrapper_callee_only_pin/check.json`
+- `error_variant_wrapper_callee_only_pin` `human.txt`: pass
+  - expected: `fixtures/error_variant_wrapper_callee_only_pin/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_variant_wrapper_callee_only_pin/human.txt`
+- `error_variant_wrapper_callee_only_pin` `human-full.txt`: pass
+  - expected: `fixtures/error_variant_wrapper_callee_only_pin/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_variant_wrapper_callee_only_pin/human-full.txt`
+- `error_variant_wrapper_foreign_pin` `check.json`: pass
+  - expected: `fixtures/error_variant_wrapper_foreign_pin/expected/check.json`
+  - actual: `target/ripr/fixtures/error_variant_wrapper_foreign_pin/check.json`
+- `error_variant_wrapper_foreign_pin` `human.txt`: pass
+  - expected: `fixtures/error_variant_wrapper_foreign_pin/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_variant_wrapper_foreign_pin/human.txt`
+- `error_variant_wrapper_foreign_pin` `human-full.txt`: pass
+  - expected: `fixtures/error_variant_wrapper_foreign_pin/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/error_variant_wrapper_foreign_pin/human-full.txt`
+- `error_variant_wrapper_wrong_receiver_pin` `check.json`: pass
+  - expected: `fixtures/error_variant_wrapper_wrong_receiver_pin/expected/check.json`
+  - actual: `target/ripr/fixtures/error_variant_wrapper_wrong_receiver_pin/check.json`
+- `error_variant_wrapper_wrong_receiver_pin` `human.txt`: pass
+  - expected: `fixtures/error_variant_wrapper_wrong_receiver_pin/expected/human.txt`
+  - actual: `target/ripr/fixtures/error_variant_wrapper_wrong_receiver_pin/human.txt`
+- `exact_any_membership_oracle` `check.json`: pass
+  - expected: `fixtures/exact_any_membership_oracle/expected/check.json`
+  - actual: `target/ripr/fixtures/exact_any_membership_oracle/check.json`
+- `exact_any_membership_oracle` `human.txt`: pass
+  - expected: `fixtures/exact_any_membership_oracle/expected/human.txt`
+  - actual: `target/ripr/fixtures/exact_any_membership_oracle/human.txt`
+- `format_only_diff` `check.json`: pass
+  - expected: `fixtures/format_only_diff/expected/check.json`
+  - actual: `target/ripr/fixtures/format_only_diff/check.json`
+- `format_only_diff` `human.txt`: pass
+  - expected: `fixtures/format_only_diff/expected/human.txt`
+  - actual: `target/ripr/fixtures/format_only_diff/human.txt`
+- `gap_kept_ignored_test` `check.json`: pass
+  - expected: `fixtures/gap_kept_ignored_test/expected/check.json`
+  - actual: `target/ripr/fixtures/gap_kept_ignored_test/check.json`
+- `gap_kept_ignored_test` `human.txt`: pass
+  - expected: `fixtures/gap_kept_ignored_test/expected/human.txt`
+  - actual: `target/ripr/fixtures/gap_kept_ignored_test/human.txt`
+- `gap_withheld_feature_gated_test` `check.json`: pass
+  - expected: `fixtures/gap_withheld_feature_gated_test/expected/check.json`
+  - actual: `target/ripr/fixtures/gap_withheld_feature_gated_test/check.json`
+- `gap_withheld_feature_gated_test` `human.txt`: pass
+  - expected: `fixtures/gap_withheld_feature_gated_test/expected/human.txt`
+  - actual: `target/ripr/fixtures/gap_withheld_feature_gated_test/human.txt`
+- `gate_baseline_fallback_disclosure` `check.json`: pass
+  - expected: `fixtures/gate_baseline_fallback_disclosure/expected/check.json`
+  - actual: `target/ripr/fixtures/gate_baseline_fallback_disclosure/check.json`
+- `gate_baseline_fallback_disclosure` `human.txt`: pass
+  - expected: `fixtures/gate_baseline_fallback_disclosure/expected/human.txt`
+  - actual: `target/ripr/fixtures/gate_baseline_fallback_disclosure/human.txt`
+- `guarded_result_match_conditional_failure` `check.json`: pass
+  - expected: `fixtures/guarded_result_match_conditional_failure/expected/check.json`
+  - actual: `target/ripr/fixtures/guarded_result_match_conditional_failure/check.json`
+- `guarded_result_match_conditional_failure` `human.txt`: pass
+  - expected: `fixtures/guarded_result_match_conditional_failure/expected/human.txt`
+  - actual: `target/ripr/fixtures/guarded_result_match_conditional_failure/human.txt`
+- `guarded_result_match_conditional_failure` `human-full.txt`: pass
+  - expected: `fixtures/guarded_result_match_conditional_failure/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/guarded_result_match_conditional_failure/human-full.txt`
+- `guarded_result_match_fail_closed` `check.json`: pass
+  - expected: `fixtures/guarded_result_match_fail_closed/expected/check.json`
+  - actual: `target/ripr/fixtures/guarded_result_match_fail_closed/check.json`
+- `guarded_result_match_fail_closed` `human.txt`: pass
+  - expected: `fixtures/guarded_result_match_fail_closed/expected/human.txt`
+  - actual: `target/ripr/fixtures/guarded_result_match_fail_closed/human.txt`
+- `guarded_result_match_fail_closed` `human-full.txt`: pass
+  - expected: `fixtures/guarded_result_match_fail_closed/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/guarded_result_match_fail_closed/human-full.txt`
+- `guarded_result_match_owner_observation` `check.json`: pass
+  - expected: `fixtures/guarded_result_match_owner_observation/expected/check.json`
+  - actual: `target/ripr/fixtures/guarded_result_match_owner_observation/check.json`
+- `guarded_result_match_owner_observation` `human.txt`: pass
+  - expected: `fixtures/guarded_result_match_owner_observation/expected/human.txt`
+  - actual: `target/ripr/fixtures/guarded_result_match_owner_observation/human.txt`
+- `guarded_result_match_positive` `check.json`: pass
+  - expected: `fixtures/guarded_result_match_positive/expected/check.json`
+  - actual: `target/ripr/fixtures/guarded_result_match_positive/check.json`
+- `guarded_result_match_positive` `human.txt`: pass
+  - expected: `fixtures/guarded_result_match_positive/expected/human.txt`
+  - actual: `target/ripr/fixtures/guarded_result_match_positive/human.txt`
+- `guarded_result_match_sibling_variant` `check.json`: pass
+  - expected: `fixtures/guarded_result_match_sibling_variant/expected/check.json`
+  - actual: `target/ripr/fixtures/guarded_result_match_sibling_variant/check.json`
+- `guarded_result_match_sibling_variant` `human.txt`: pass
+  - expected: `fixtures/guarded_result_match_sibling_variant/expected/human.txt`
+  - actual: `target/ripr/fixtures/guarded_result_match_sibling_variant/human.txt`
+- `guarded_result_match_sibling_variant` `human-full.txt`: pass
+  - expected: `fixtures/guarded_result_match_sibling_variant/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/guarded_result_match_sibling_variant/human-full.txt`
+- `guarded_result_match_swallowed` `check.json`: pass
+  - expected: `fixtures/guarded_result_match_swallowed/expected/check.json`
+  - actual: `target/ripr/fixtures/guarded_result_match_swallowed/check.json`
+- `guarded_result_match_swallowed` `human.txt`: pass
+  - expected: `fixtures/guarded_result_match_swallowed/expected/human.txt`
+  - actual: `target/ripr/fixtures/guarded_result_match_swallowed/human.txt`
+- `guarded_result_match_swallowed` `human-full.txt`: pass
+  - expected: `fixtures/guarded_result_match_swallowed/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/guarded_result_match_swallowed/human-full.txt`
+- `harness_dead_construction_no_exposed_credit` `check.json`: pass
+  - expected: `fixtures/harness_dead_construction_no_exposed_credit/expected/check.json`
+  - actual: `target/ripr/fixtures/harness_dead_construction_no_exposed_credit/check.json`
+- `harness_dead_construction_no_exposed_credit` `human.txt`: pass
+  - expected: `fixtures/harness_dead_construction_no_exposed_credit/expected/human.txt`
+  - actual: `target/ripr/fixtures/harness_dead_construction_no_exposed_credit/human.txt`
+- `harness_dead_construction_no_exposed_credit` `human-full.txt`: pass
+  - expected: `fixtures/harness_dead_construction_no_exposed_credit/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/harness_dead_construction_no_exposed_credit/human-full.txt`
+- `helper_chain_controls` `check.json`: pass
+  - expected: `fixtures/helper_chain_controls/expected/check.json`
+  - actual: `target/ripr/fixtures/helper_chain_controls/check.json`
+- `helper_chain_controls` `human.txt`: pass
+  - expected: `fixtures/helper_chain_controls/expected/human.txt`
+  - actual: `target/ripr/fixtures/helper_chain_controls/human.txt`
+- `helper_chain_multi_hop` `check.json`: pass
+  - expected: `fixtures/helper_chain_multi_hop/expected/check.json`
+  - actual: `target/ripr/fixtures/helper_chain_multi_hop/check.json`
+- `helper_chain_multi_hop` `human.txt`: pass
+  - expected: `fixtures/helper_chain_multi_hop/expected/human.txt`
+  - actual: `target/ripr/fixtures/helper_chain_multi_hop/human.txt`
+- `helper_chain_one_hop` `check.json`: pass
+  - expected: `fixtures/helper_chain_one_hop/expected/check.json`
+  - actual: `target/ripr/fixtures/helper_chain_one_hop/check.json`
+- `helper_chain_one_hop` `human.txt`: pass
+  - expected: `fixtures/helper_chain_one_hop/expected/human.txt`
+  - actual: `target/ripr/fixtures/helper_chain_one_hop/human.txt`
+- `human_full_shared_parse_port` `check.json`: pass
+  - expected: `fixtures/human_full_shared_parse_port/expected/check.json`
+  - actual: `target/ripr/fixtures/human_full_shared_parse_port/check.json`
+- `human_full_shared_parse_port` `human.txt`: pass
+  - expected: `fixtures/human_full_shared_parse_port/expected/human.txt`
+  - actual: `target/ripr/fixtures/human_full_shared_parse_port/human.txt`
+- `human_full_shared_parse_port` `human-full.txt`: pass
+  - expected: `fixtures/human_full_shared_parse_port/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/human_full_shared_parse_port/human-full.txt`
+- `import_only_diff` `check.json`: pass
+  - expected: `fixtures/import_only_diff/expected/check.json`
+  - actual: `target/ripr/fixtures/import_only_diff/check.json`
+- `import_only_diff` `human.txt`: pass
+  - expected: `fixtures/import_only_diff/expected/human.txt`
+  - actual: `target/ripr/fixtures/import_only_diff/human.txt`
+- `inequality_assertion_not_exact` `check.json`: pass
+  - expected: `fixtures/inequality_assertion_not_exact/expected/check.json`
+  - actual: `target/ripr/fixtures/inequality_assertion_not_exact/check.json`
+- `inequality_assertion_not_exact` `human.txt`: pass
+  - expected: `fixtures/inequality_assertion_not_exact/expected/human.txt`
+  - actual: `target/ripr/fixtures/inequality_assertion_not_exact/human.txt`
+- `inequality_assertion_not_exact` `human-full.txt`: pass
+  - expected: `fixtures/inequality_assertion_not_exact/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/inequality_assertion_not_exact/human-full.txt`
+- `inequality_struct_assertion_not_exact` `check.json`: pass
+  - expected: `fixtures/inequality_struct_assertion_not_exact/expected/check.json`
+  - actual: `target/ripr/fixtures/inequality_struct_assertion_not_exact/check.json`
+- `inequality_struct_assertion_not_exact` `human.txt`: pass
+  - expected: `fixtures/inequality_struct_assertion_not_exact/expected/human.txt`
+  - actual: `target/ripr/fixtures/inequality_struct_assertion_not_exact/human.txt`
+- `inequality_struct_assertion_not_exact` `human-full.txt`: pass
+  - expected: `fixtures/inequality_struct_assertion_not_exact/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/inequality_struct_assertion_not_exact/human-full.txt`
+- `infect_value_returned` `check.json`: pass
+  - expected: `fixtures/infect_value_returned/expected/check.json`
+  - actual: `target/ripr/fixtures/infect_value_returned/check.json`
+- `infect_value_returned` `human.txt`: pass
+  - expected: `fixtures/infect_value_returned/expected/human.txt`
+  - actual: `target/ripr/fixtures/infect_value_returned/human.txt`
+- `infect_wildcard_discard` `check.json`: pass
+  - expected: `fixtures/infect_wildcard_discard/expected/check.json`
+  - actual: `target/ripr/fixtures/infect_wildcard_discard/check.json`
+- `infect_wildcard_discard` `human.txt`: pass
+  - expected: `fixtures/infect_wildcard_discard/expected/human.txt`
+  - actual: `target/ripr/fixtures/infect_wildcard_discard/human.txt`
+- `infection_expected_value_literal` `check.json`: pass
+  - expected: `fixtures/infection_expected_value_literal/expected/check.json`
+  - actual: `target/ripr/fixtures/infection_expected_value_literal/check.json`
+- `infection_expected_value_literal` `human.txt`: pass
+  - expected: `fixtures/infection_expected_value_literal/expected/human.txt`
+  - actual: `target/ripr/fixtures/infection_expected_value_literal/human.txt`
+- `inherent_receiver_foreign_helper` `check.json`: pass
+  - expected: `fixtures/inherent_receiver_foreign_helper/expected/check.json`
+  - actual: `target/ripr/fixtures/inherent_receiver_foreign_helper/check.json`
+- `inherent_receiver_foreign_helper` `human.txt`: pass
+  - expected: `fixtures/inherent_receiver_foreign_helper/expected/human.txt`
+  - actual: `target/ripr/fixtures/inherent_receiver_foreign_helper/human.txt`
+- `inherent_receiver_foreign_helper` `human-full.txt`: pass
+  - expected: `fixtures/inherent_receiver_foreign_helper/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/inherent_receiver_foreign_helper/human-full.txt`
+- `inherent_receiver_local_wrapper` `check.json`: pass
+  - expected: `fixtures/inherent_receiver_local_wrapper/expected/check.json`
+  - actual: `target/ripr/fixtures/inherent_receiver_local_wrapper/check.json`
+- `inherent_receiver_local_wrapper` `human.txt`: pass
+  - expected: `fixtures/inherent_receiver_local_wrapper/expected/human.txt`
+  - actual: `target/ripr/fixtures/inherent_receiver_local_wrapper/human.txt`
+- `inherent_receiver_local_wrapper` `human-full.txt`: pass
+  - expected: `fixtures/inherent_receiver_local_wrapper/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/inherent_receiver_local_wrapper/human-full.txt`
+- `inherent_receiver_macro_discard` `check.json`: pass
+  - expected: `fixtures/inherent_receiver_macro_discard/expected/check.json`
+  - actual: `target/ripr/fixtures/inherent_receiver_macro_discard/check.json`
+- `inherent_receiver_macro_discard` `human.txt`: pass
+  - expected: `fixtures/inherent_receiver_macro_discard/expected/human.txt`
+  - actual: `target/ripr/fixtures/inherent_receiver_macro_discard/human.txt`
+- `inherent_receiver_macro_discard` `human-full.txt`: pass
+  - expected: `fixtures/inherent_receiver_macro_discard/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/inherent_receiver_macro_discard/human-full.txt`
+- `inherent_receiver_operand_item_shadow` `check.json`: pass
+  - expected: `fixtures/inherent_receiver_operand_item_shadow/expected/check.json`
+  - actual: `target/ripr/fixtures/inherent_receiver_operand_item_shadow/check.json`
+- `inherent_receiver_operand_item_shadow` `human.txt`: pass
+  - expected: `fixtures/inherent_receiver_operand_item_shadow/expected/human.txt`
+  - actual: `target/ripr/fixtures/inherent_receiver_operand_item_shadow/human.txt`
+- `inherent_receiver_operand_item_shadow` `human-full.txt`: pass
+  - expected: `fixtures/inherent_receiver_operand_item_shadow/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/inherent_receiver_operand_item_shadow/human-full.txt`
+- `inline_test_fixture_text_no_probe` `check.json`: pass
+  - expected: `fixtures/inline_test_fixture_text_no_probe/expected/check.json`
+  - actual: `target/ripr/fixtures/inline_test_fixture_text_no_probe/check.json`
+- `inline_test_fixture_text_no_probe` `human.txt`: pass
+  - expected: `fixtures/inline_test_fixture_text_no_probe/expected/human.txt`
+  - actual: `target/ripr/fixtures/inline_test_fixture_text_no_probe/human.txt`
+- `inline_test_fixture_text_no_probe` `human-full.txt`: pass
+  - expected: `fixtures/inline_test_fixture_text_no_probe/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/inline_test_fixture_text_no_probe/human-full.txt`
+- `javascript_awaited_registration` `check.json`: pass
+  - expected: `fixtures/javascript_awaited_registration/expected/check.json`
+  - actual: `target/ripr/fixtures/javascript_awaited_registration/check.json`
+- `javascript_awaited_registration` `human.txt`: pass
+  - expected: `fixtures/javascript_awaited_registration/expected/human.txt`
+  - actual: `target/ripr/fixtures/javascript_awaited_registration/human.txt`
+- `javascript_js_preview` `check.json`: pass
+  - expected: `fixtures/javascript_js_preview/expected/check.json`
+  - actual: `target/ripr/fixtures/javascript_js_preview/check.json`
+- `javascript_js_preview` `human.txt`: pass
+  - expected: `fixtures/javascript_js_preview/expected/human.txt`
+  - actual: `target/ripr/fixtures/javascript_js_preview/human.txt`
+- `javascript_jsx_preview` `check.json`: pass
+  - expected: `fixtures/javascript_jsx_preview/expected/check.json`
+  - actual: `target/ripr/fixtures/javascript_jsx_preview/check.json`
+- `javascript_jsx_preview` `human.txt`: pass
+  - expected: `fixtures/javascript_jsx_preview/expected/human.txt`
+  - actual: `target/ripr/fixtures/javascript_jsx_preview/human.txt`
+- `lsp_agent_protocol` `check.json`: pass
+  - expected: `fixtures/lsp_agent_protocol/expected/check.json`
+  - actual: `target/ripr/fixtures/lsp_agent_protocol/check.json`
+- `lsp_agent_protocol` `human.txt`: pass
+  - expected: `fixtures/lsp_agent_protocol/expected/human.txt`
+  - actual: `target/ripr/fixtures/lsp_agent_protocol/human.txt`
+- `match_arm_blind` `check.json`: pass
+  - expected: `fixtures/match_arm_blind/expected/check.json`
+  - actual: `target/ripr/fixtures/match_arm_blind/check.json`
+- `match_arm_blind` `human.txt`: pass
+  - expected: `fixtures/match_arm_blind/expected/human.txt`
+  - actual: `target/ripr/fixtures/match_arm_blind/human.txt`
+- `match_arm_comment_literal_no_promotion` `check.json`: pass
+  - expected: `fixtures/match_arm_comment_literal_no_promotion/expected/check.json`
+  - actual: `target/ripr/fixtures/match_arm_comment_literal_no_promotion/check.json`
+- `match_arm_comment_literal_no_promotion` `human.txt`: pass
+  - expected: `fixtures/match_arm_comment_literal_no_promotion/expected/human.txt`
+  - actual: `target/ripr/fixtures/match_arm_comment_literal_no_promotion/human.txt`
+- `match_arm_comment_literal_no_promotion` `human-full.txt`: pass
+  - expected: `fixtures/match_arm_comment_literal_no_promotion/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/match_arm_comment_literal_no_promotion/human-full.txt`
+- `match_arm_controls` `check.json`: pass
+  - expected: `fixtures/match_arm_controls/expected/check.json`
+  - actual: `target/ripr/fixtures/match_arm_controls/check.json`
+- `match_arm_controls` `human.txt`: pass
+  - expected: `fixtures/match_arm_controls/expected/human.txt`
+  - actual: `target/ripr/fixtures/match_arm_controls/human.txt`
+- `match_arm_diagnostic_literal_no_promotion` `check.json`: pass
+  - expected: `fixtures/match_arm_diagnostic_literal_no_promotion/expected/check.json`
+  - actual: `target/ripr/fixtures/match_arm_diagnostic_literal_no_promotion/check.json`
+- `match_arm_diagnostic_literal_no_promotion` `human.txt`: pass
+  - expected: `fixtures/match_arm_diagnostic_literal_no_promotion/expected/human.txt`
+  - actual: `target/ripr/fixtures/match_arm_diagnostic_literal_no_promotion/human.txt`
+- `match_arm_diagnostic_literal_no_promotion` `human-full.txt`: pass
+  - expected: `fixtures/match_arm_diagnostic_literal_no_promotion/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/match_arm_diagnostic_literal_no_promotion/human-full.txt`
+- `match_arm_expected_side_trap` `check.json`: pass
+  - expected: `fixtures/match_arm_expected_side_trap/expected/check.json`
+  - actual: `target/ripr/fixtures/match_arm_expected_side_trap/check.json`
+- `match_arm_expected_side_trap` `human.txt`: pass
+  - expected: `fixtures/match_arm_expected_side_trap/expected/human.txt`
+  - actual: `target/ripr/fixtures/match_arm_expected_side_trap/human.txt`
+- `match_arm_observer` `check.json`: pass
+  - expected: `fixtures/match_arm_observer/expected/check.json`
+  - actual: `target/ripr/fixtures/match_arm_observer/check.json`
+- `match_arm_observer` `human.txt`: pass
+  - expected: `fixtures/match_arm_observer/expected/human.txt`
+  - actual: `target/ripr/fixtures/match_arm_observer/human.txt`
+- `match_arm_positive` `check.json`: pass
+  - expected: `fixtures/match_arm_positive/expected/check.json`
+  - actual: `target/ripr/fixtures/match_arm_positive/check.json`
+- `match_arm_positive` `human.txt`: pass
+  - expected: `fixtures/match_arm_positive/expected/human.txt`
+  - actual: `target/ripr/fixtures/match_arm_positive/human.txt`
+- `match_arm_proximity_confirmation_not_credited` `check.json`: pass
+  - expected: `fixtures/match_arm_proximity_confirmation_not_credited/expected/check.json`
+  - actual: `target/ripr/fixtures/match_arm_proximity_confirmation_not_credited/check.json`
+- `match_arm_proximity_confirmation_not_credited` `human.txt`: pass
+  - expected: `fixtures/match_arm_proximity_confirmation_not_credited/expected/human.txt`
+  - actual: `target/ripr/fixtures/match_arm_proximity_confirmation_not_credited/human.txt`
+- `match_arm_proximity_confirmation_not_credited` `human-full.txt`: pass
+  - expected: `fixtures/match_arm_proximity_confirmation_not_credited/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/match_arm_proximity_confirmation_not_credited/human-full.txt`
+- `match_arm_proximity_wrapper_confirms` `check.json`: pass
+  - expected: `fixtures/match_arm_proximity_wrapper_confirms/expected/check.json`
+  - actual: `target/ripr/fixtures/match_arm_proximity_wrapper_confirms/check.json`
+- `match_arm_proximity_wrapper_confirms` `human.txt`: pass
+  - expected: `fixtures/match_arm_proximity_wrapper_confirms/expected/human.txt`
+  - actual: `target/ripr/fixtures/match_arm_proximity_wrapper_confirms/human.txt`
+- `match_arm_proximity_wrapper_confirms` `human-full.txt`: pass
+  - expected: `fixtures/match_arm_proximity_wrapper_confirms/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/match_arm_proximity_wrapper_confirms/human-full.txt`
+- `match_arm_selected_credit` `check.json`: pass
+  - expected: `fixtures/match_arm_selected_credit/expected/check.json`
+  - actual: `target/ripr/fixtures/match_arm_selected_credit/check.json`
+- `match_arm_selected_credit` `human.txt`: pass
+  - expected: `fixtures/match_arm_selected_credit/expected/human.txt`
+  - actual: `target/ripr/fixtures/match_arm_selected_credit/human.txt`
+- `match_arm_shared_result_no_promotion` `check.json`: pass
+  - expected: `fixtures/match_arm_shared_result_no_promotion/expected/check.json`
+  - actual: `target/ripr/fixtures/match_arm_shared_result_no_promotion/check.json`
+- `match_arm_shared_result_no_promotion` `human.txt`: pass
+  - expected: `fixtures/match_arm_shared_result_no_promotion/expected/human.txt`
+  - actual: `target/ripr/fixtures/match_arm_shared_result_no_promotion/human.txt`
+- `match_arm_shared_result_no_promotion` `human-full.txt`: pass
+  - expected: `fixtures/match_arm_shared_result_no_promotion/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/match_arm_shared_result_no_promotion/human-full.txt`
+- `match_arm_tuple_derived_return_before_assertion` `check.json`: pass
+  - expected: `fixtures/match_arm_tuple_derived_return_before_assertion/expected/check.json`
+  - actual: `target/ripr/fixtures/match_arm_tuple_derived_return_before_assertion/check.json`
+- `match_arm_tuple_derived_return_before_assertion` `human.txt`: pass
+  - expected: `fixtures/match_arm_tuple_derived_return_before_assertion/expected/human.txt`
+  - actual: `target/ripr/fixtures/match_arm_tuple_derived_return_before_assertion/human.txt`
+- `match_arm_tuple_derived_return_before_assertion` `human-full.txt`: pass
+  - expected: `fixtures/match_arm_tuple_derived_return_before_assertion/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/match_arm_tuple_derived_return_before_assertion/human-full.txt`
+- `match_arm_type_token_blind` `check.json`: pass
+  - expected: `fixtures/match_arm_type_token_blind/expected/check.json`
+  - actual: `target/ripr/fixtures/match_arm_type_token_blind/check.json`
+- `match_arm_type_token_blind` `human.txt`: pass
+  - expected: `fixtures/match_arm_type_token_blind/expected/human.txt`
+  - actual: `target/ripr/fixtures/match_arm_type_token_blind/human.txt`
+- `mixed_rust_typescript_preview` `check.json`: pass
+  - expected: `fixtures/mixed_rust_typescript_preview/expected/check.json`
+  - actual: `target/ripr/fixtures/mixed_rust_typescript_preview/check.json`
+- `mixed_rust_typescript_preview` `human.txt`: pass
+  - expected: `fixtures/mixed_rust_typescript_preview/expected/human.txt`
+  - actual: `target/ripr/fixtures/mixed_rust_typescript_preview/human.txt`
+- `multi_hunk_removed_line_wrong_target` `check.json`: pass
+  - expected: `fixtures/multi_hunk_removed_line_wrong_target/expected/check.json`
+  - actual: `target/ripr/fixtures/multi_hunk_removed_line_wrong_target/check.json`
+- `multi_hunk_removed_line_wrong_target` `human.txt`: pass
+  - expected: `fixtures/multi_hunk_removed_line_wrong_target/expected/human.txt`
+  - actual: `target/ripr/fixtures/multi_hunk_removed_line_wrong_target/human.txt`
+- `observation_unverified_call_deletion` `check.json`: pass
+  - expected: `fixtures/observation_unverified_call_deletion/expected/check.json`
+  - actual: `target/ripr/fixtures/observation_unverified_call_deletion/check.json`
+- `observation_unverified_call_deletion` `human.txt`: pass
+  - expected: `fixtures/observation_unverified_call_deletion/expected/human.txt`
+  - actual: `target/ripr/fixtures/observation_unverified_call_deletion/human.txt`
+- `observation_unverified_field_construction` `check.json`: pass
+  - expected: `fixtures/observation_unverified_field_construction/expected/check.json`
+  - actual: `target/ripr/fixtures/observation_unverified_field_construction/check.json`
+- `observation_unverified_field_construction` `human.txt`: pass
+  - expected: `fixtures/observation_unverified_field_construction/expected/human.txt`
+  - actual: `target/ripr/fixtures/observation_unverified_field_construction/human.txt`
+- `observation_unverified_return_value` `check.json`: pass
+  - expected: `fixtures/observation_unverified_return_value/expected/check.json`
+  - actual: `target/ripr/fixtures/observation_unverified_return_value/check.json`
+- `observation_unverified_return_value` `human.txt`: pass
+  - expected: `fixtures/observation_unverified_return_value/expected/human.txt`
+  - actual: `target/ripr/fixtures/observation_unverified_return_value/human.txt`
+- `observation_unverified_side_effect` `check.json`: pass
+  - expected: `fixtures/observation_unverified_side_effect/expected/check.json`
+  - actual: `target/ripr/fixtures/observation_unverified_side_effect/check.json`
+- `observation_unverified_side_effect` `human.txt`: pass
+  - expected: `fixtures/observation_unverified_side_effect/expected/human.txt`
+  - actual: `target/ripr/fixtures/observation_unverified_side_effect/human.txt`
+- `observation_verified_call_deletion` `check.json`: pass
+  - expected: `fixtures/observation_verified_call_deletion/expected/check.json`
+  - actual: `target/ripr/fixtures/observation_verified_call_deletion/check.json`
+- `observation_verified_call_deletion` `human.txt`: pass
+  - expected: `fixtures/observation_verified_call_deletion/expected/human.txt`
+  - actual: `target/ripr/fixtures/observation_verified_call_deletion/human.txt`
+- `observation_verified_field_construction` `check.json`: pass
+  - expected: `fixtures/observation_verified_field_construction/expected/check.json`
+  - actual: `target/ripr/fixtures/observation_verified_field_construction/check.json`
+- `observation_verified_field_construction` `human.txt`: pass
+  - expected: `fixtures/observation_verified_field_construction/expected/human.txt`
+  - actual: `target/ripr/fixtures/observation_verified_field_construction/human.txt`
+- `observation_verified_return_value` `check.json`: pass
+  - expected: `fixtures/observation_verified_return_value/expected/check.json`
+  - actual: `target/ripr/fixtures/observation_verified_return_value/check.json`
+- `observation_verified_return_value` `human.txt`: pass
+  - expected: `fixtures/observation_verified_return_value/expected/human.txt`
+  - actual: `target/ripr/fixtures/observation_verified_return_value/human.txt`
+- `observation_verified_side_effect` `check.json`: pass
+  - expected: `fixtures/observation_verified_side_effect/expected/check.json`
+  - actual: `target/ripr/fixtures/observation_verified_side_effect/check.json`
+- `observation_verified_side_effect` `human.txt`: pass
+  - expected: `fixtures/observation_verified_side_effect/expected/human.txt`
+  - actual: `target/ripr/fixtures/observation_verified_side_effect/human.txt`
+- `opaque_fixture_builder` `check.json`: pass
+  - expected: `fixtures/opaque_fixture_builder/expected/check.json`
+  - actual: `target/ripr/fixtures/opaque_fixture_builder/check.json`
+- `opaque_fixture_builder` `human.txt`: pass
+  - expected: `fixtures/opaque_fixture_builder/expected/human.txt`
+  - actual: `target/ripr/fixtures/opaque_fixture_builder/human.txt`
+- `oracle_confirmation_mixed` `check.json`: pass
+  - expected: `fixtures/oracle_confirmation_mixed/expected/check.json`
+  - actual: `target/ripr/fixtures/oracle_confirmation_mixed/check.json`
+- `oracle_confirmation_mixed` `human.txt`: pass
+  - expected: `fixtures/oracle_confirmation_mixed/expected/human.txt`
+  - actual: `target/ripr/fixtures/oracle_confirmation_mixed/human.txt`
+- `oracle_confirmation_mixed` `human-full.txt`: pass
+  - expected: `fixtures/oracle_confirmation_mixed/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/oracle_confirmation_mixed/human-full.txt`
+- `owner_name_collision_helper_keeps_credit` `check.json`: pass
+  - expected: `fixtures/owner_name_collision_helper_keeps_credit/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_name_collision_helper_keeps_credit/check.json`
+- `owner_name_collision_helper_keeps_credit` `human.txt`: pass
+  - expected: `fixtures/owner_name_collision_helper_keeps_credit/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_name_collision_helper_keeps_credit/human.txt`
+- `owner_name_collision_helper_keeps_credit` `human-full.txt`: pass
+  - expected: `fixtures/owner_name_collision_helper_keeps_credit/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_name_collision_helper_keeps_credit/human-full.txt`
+- `owner_parameter_token_coincidence` `check.json`: pass
+  - expected: `fixtures/owner_parameter_token_coincidence/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_parameter_token_coincidence/check.json`
+- `owner_parameter_token_coincidence` `human.txt`: pass
+  - expected: `fixtures/owner_parameter_token_coincidence/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_parameter_token_coincidence/human.txt`
+- `owner_parameter_token_coincidence` `human-full.txt`: pass
+  - expected: `fixtures/owner_parameter_token_coincidence/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_parameter_token_coincidence/human-full.txt`
+- `owner_return_pin_called_closure` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_called_closure/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_called_closure/check.json`
+- `owner_return_pin_called_closure` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_called_closure/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_called_closure/human.txt`
+- `owner_return_pin_called_closure` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_called_closure/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_called_closure/human-full.txt`
+- `owner_return_pin_cfg_attr_module` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_cfg_attr_module/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_cfg_attr_module/check.json`
+- `owner_return_pin_cfg_attr_module` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_cfg_attr_module/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_cfg_attr_module/human.txt`
+- `owner_return_pin_cfg_attr_module` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_cfg_attr_module/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_cfg_attr_module/human-full.txt`
+- `owner_return_pin_cfg_false_file` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_cfg_false_file/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_cfg_false_file/check.json`
+- `owner_return_pin_cfg_false_file` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_cfg_false_file/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_cfg_false_file/human.txt`
+- `owner_return_pin_cfg_false_file` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_cfg_false_file/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_cfg_false_file/human-full.txt`
+- `owner_return_pin_cfg_false_module` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_cfg_false_module/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_cfg_false_module/check.json`
+- `owner_return_pin_cfg_false_module` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_cfg_false_module/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_cfg_false_module/human.txt`
+- `owner_return_pin_cfg_false_module` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_cfg_false_module/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_cfg_false_module/human-full.txt`
+- `owner_return_pin_deferred_closure_binding` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_deferred_closure_binding/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_deferred_closure_binding/check.json`
+- `owner_return_pin_deferred_closure_binding` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_deferred_closure_binding/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_deferred_closure_binding/human.txt`
+- `owner_return_pin_deferred_closure_binding` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_deferred_closure_binding/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_deferred_closure_binding/human-full.txt`
+- `owner_return_pin_direct` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_direct/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_direct/check.json`
+- `owner_return_pin_direct` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_direct/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_direct/human.txt`
+- `owner_return_pin_direct` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_direct/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_direct/human-full.txt`
+- `owner_return_pin_err_guard` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_err_guard/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_err_guard/check.json`
+- `owner_return_pin_err_guard` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_err_guard/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_err_guard/human.txt`
+- `owner_return_pin_err_guard` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_err_guard/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_err_guard/human-full.txt`
+- `owner_return_pin_err_guard_not_equality` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_err_guard_not_equality/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_err_guard_not_equality/check.json`
+- `owner_return_pin_err_guard_not_equality` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_err_guard_not_equality/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_err_guard_not_equality/human.txt`
+- `owner_return_pin_err_guard_not_equality` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_err_guard_not_equality/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_err_guard_not_equality/human-full.txt`
+- `owner_return_pin_err_guard_shadowed_err` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_err_guard_shadowed_err/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_err_guard_shadowed_err/check.json`
+- `owner_return_pin_err_guard_shadowed_err` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_err_guard_shadowed_err/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_err_guard_shadowed_err/human.txt`
+- `owner_return_pin_err_guard_shadowed_err` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_err_guard_shadowed_err/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_err_guard_shadowed_err/human-full.txt`
+- `owner_return_pin_expired_closure_binding` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_expired_closure_binding/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_expired_closure_binding/check.json`
+- `owner_return_pin_expired_closure_binding` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_expired_closure_binding/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_expired_closure_binding/human.txt`
+- `owner_return_pin_expired_closure_binding` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_expired_closure_binding/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_expired_closure_binding/human-full.txt`
+- `owner_return_pin_fallible_literal` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_fallible_literal/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_fallible_literal/check.json`
+- `owner_return_pin_fallible_literal` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_fallible_literal/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_fallible_literal/human.txt`
+- `owner_return_pin_fallible_literal` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_fallible_literal/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_fallible_literal/human-full.txt`
+- `owner_return_pin_fallible_literal_inverted` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_fallible_literal_inverted/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_fallible_literal_inverted/check.json`
+- `owner_return_pin_fallible_literal_inverted` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_fallible_literal_inverted/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_fallible_literal_inverted/human.txt`
+- `owner_return_pin_fallible_literal_inverted` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_fallible_literal_inverted/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_fallible_literal_inverted/human-full.txt`
+- `owner_return_pin_fallible_literal_message_escape` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_fallible_literal_message_escape/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_fallible_literal_message_escape/check.json`
+- `owner_return_pin_fallible_literal_message_escape` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_fallible_literal_message_escape/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_fallible_literal_message_escape/human.txt`
+- `owner_return_pin_fallible_literal_message_escape` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_fallible_literal_message_escape/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_fallible_literal_message_escape/human-full.txt`
+- `owner_return_pin_identity_traps` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_identity_traps/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_identity_traps/check.json`
+- `owner_return_pin_identity_traps` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_identity_traps/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_identity_traps/human.txt`
+- `owner_return_pin_if_false` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_if_false/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_if_false/check.json`
+- `owner_return_pin_if_false` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_if_false/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_if_false/human.txt`
+- `owner_return_pin_if_false` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_if_false/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_if_false/human-full.txt`
+- `owner_return_pin_json_alternate_return` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_json_alternate_return/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_alternate_return/check.json`
+- `owner_return_pin_json_alternate_return` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_json_alternate_return/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_alternate_return/human.txt`
+- `owner_return_pin_json_effectful_operand` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_json_effectful_operand/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_effectful_operand/check.json`
+- `owner_return_pin_json_effectful_operand` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_json_effectful_operand/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_effectful_operand/human.txt`
+- `owner_return_pin_json_ignored_result` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_json_ignored_result/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_ignored_result/check.json`
+- `owner_return_pin_json_ignored_result` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_json_ignored_result/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_ignored_result/human.txt`
+- `owner_return_pin_json_nested_literal` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_json_nested_literal/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_nested_literal/check.json`
+- `owner_return_pin_json_nested_literal` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_json_nested_literal/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_nested_literal/human.txt`
+- `owner_return_pin_json_real_literal` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_json_real_literal/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_real_literal/check.json`
+- `owner_return_pin_json_real_literal` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_json_real_literal/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_real_literal/human.txt`
+- `owner_return_pin_json_shadowed_assertion` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_json_shadowed_assertion/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_shadowed_assertion/check.json`
+- `owner_return_pin_json_shadowed_assertion` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_json_shadowed_assertion/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_shadowed_assertion/human.txt`
+- `owner_return_pin_json_shadowed_constructor` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_json_shadowed_constructor/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_shadowed_constructor/check.json`
+- `owner_return_pin_json_shadowed_constructor` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_json_shadowed_constructor/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_shadowed_constructor/human.txt`
+- `owner_return_pin_json_shadowed_owner` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_json_shadowed_owner/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_shadowed_owner/check.json`
+- `owner_return_pin_json_shadowed_owner` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_json_shadowed_owner/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_shadowed_owner/human.txt`
+- `owner_return_pin_json_uncalled_closure` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_json_uncalled_closure/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_uncalled_closure/check.json`
+- `owner_return_pin_json_uncalled_closure` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_json_uncalled_closure/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_uncalled_closure/human.txt`
+- `owner_return_pin_json_unrelated_equality` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_json_unrelated_equality/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_unrelated_equality/check.json`
+- `owner_return_pin_json_unrelated_equality` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_json_unrelated_equality/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_json_unrelated_equality/human.txt`
+- `owner_return_pin_macro_operand_return` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_macro_operand_return/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_macro_operand_return/check.json`
+- `owner_return_pin_macro_operand_return` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_macro_operand_return/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_macro_operand_return/human.txt`
+- `owner_return_pin_macro_operand_return` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_macro_operand_return/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_macro_operand_return/human-full.txt`
+- `owner_return_pin_macro_return` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_macro_return/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_macro_return/check.json`
+- `owner_return_pin_macro_return` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_macro_return/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_macro_return/human.txt`
+- `owner_return_pin_macro_return` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_macro_return/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_macro_return/human-full.txt`
+- `owner_return_pin_nested_test` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_nested_test/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_nested_test/check.json`
+- `owner_return_pin_nested_test` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_nested_test/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_nested_test/human.txt`
+- `owner_return_pin_nested_test` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_nested_test/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_nested_test/human-full.txt`
+- `owner_return_pin_no_assertion` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_no_assertion/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_no_assertion/check.json`
+- `owner_return_pin_no_assertion` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_no_assertion/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_no_assertion/human.txt`
+- `owner_return_pin_no_assertion` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_no_assertion/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_no_assertion/human-full.txt`
+- `owner_return_pin_out_of_line_cfg` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_out_of_line_cfg/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_out_of_line_cfg/check.json`
+- `owner_return_pin_out_of_line_cfg` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_out_of_line_cfg/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_out_of_line_cfg/human.txt`
+- `owner_return_pin_out_of_line_cfg` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_out_of_line_cfg/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_out_of_line_cfg/human-full.txt`
+- `owner_return_pin_out_of_line_test_module_shadow` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_out_of_line_test_module_shadow/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_out_of_line_test_module_shadow/check.json`
+- `owner_return_pin_out_of_line_test_module_shadow` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_out_of_line_test_module_shadow/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_out_of_line_test_module_shadow/human.txt`
+- `owner_return_pin_out_of_line_test_module_shadow` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_out_of_line_test_module_shadow/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_out_of_line_test_module_shadow/human-full.txt`
+- `owner_return_pin_shadowed_assertion` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_shadowed_assertion/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_shadowed_assertion/check.json`
+- `owner_return_pin_shadowed_assertion` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_shadowed_assertion/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_shadowed_assertion/human.txt`
+- `owner_return_pin_shadowed_assertion` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_shadowed_assertion/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_shadowed_assertion/human-full.txt`
+- `owner_return_pin_single_file_raw_rename_shadow` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_single_file_raw_rename_shadow/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_single_file_raw_rename_shadow/check.json`
+- `owner_return_pin_single_file_raw_rename_shadow` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_single_file_raw_rename_shadow/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_single_file_raw_rename_shadow/human.txt`
+- `owner_return_pin_single_file_raw_rename_shadow` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_single_file_raw_rename_shadow/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_single_file_raw_rename_shadow/human-full.txt`
+- `owner_return_pin_test_module_shadow` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_test_module_shadow/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_test_module_shadow/check.json`
+- `owner_return_pin_test_module_shadow` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_test_module_shadow/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_test_module_shadow/human.txt`
+- `owner_return_pin_test_module_shadow` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_test_module_shadow/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_test_module_shadow/human-full.txt`
+- `owner_return_pin_token_called_closure` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_token_called_closure/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_token_called_closure/check.json`
+- `owner_return_pin_token_called_closure` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_token_called_closure/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_token_called_closure/human.txt`
+- `owner_return_pin_token_called_closure` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_token_called_closure/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_token_called_closure/human-full.txt`
+- `owner_return_pin_token_direct` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_token_direct/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_token_direct/check.json`
+- `owner_return_pin_token_direct` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_token_direct/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_token_direct/human.txt`
+- `owner_return_pin_token_direct` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_token_direct/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_token_direct/human-full.txt`
+- `owner_return_pin_token_overlap` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_token_overlap/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_token_overlap/check.json`
+- `owner_return_pin_token_overlap` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_token_overlap/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_token_overlap/human.txt`
+- `owner_return_pin_token_overlap` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_token_overlap/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_token_overlap/human-full.txt`
+- `owner_return_pin_trait_method` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_trait_method/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_trait_method/check.json`
+- `owner_return_pin_trait_method` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_trait_method/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_trait_method/human.txt`
+- `owner_return_pin_uncalled_closure` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_uncalled_closure/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_uncalled_closure/check.json`
+- `owner_return_pin_uncalled_closure` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_uncalled_closure/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_uncalled_closure/human.txt`
+- `owner_return_pin_uncalled_closure` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_uncalled_closure/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_uncalled_closure/human-full.txt`
+- `owner_return_pin_unknown_singleton` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_unknown_singleton/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_unknown_singleton/check.json`
+- `owner_return_pin_unknown_singleton` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_unknown_singleton/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_unknown_singleton/human.txt`
+- `owner_return_pin_unknown_singleton` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_unknown_singleton/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_unknown_singleton/human-full.txt`
+- `owner_return_pin_unpolled_async` `check.json`: pass
+  - expected: `fixtures/owner_return_pin_unpolled_async/expected/check.json`
+  - actual: `target/ripr/fixtures/owner_return_pin_unpolled_async/check.json`
+- `owner_return_pin_unpolled_async` `human.txt`: pass
+  - expected: `fixtures/owner_return_pin_unpolled_async/expected/human.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_unpolled_async/human.txt`
+- `owner_return_pin_unpolled_async` `human-full.txt`: pass
+  - expected: `fixtures/owner_return_pin_unpolled_async/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/owner_return_pin_unpolled_async/human-full.txt`
+- `parser_formatted_input_provenance` `check.json`: pass
+  - expected: `fixtures/parser_formatted_input_provenance/expected/check.json`
+  - actual: `target/ripr/fixtures/parser_formatted_input_provenance/check.json`
+- `parser_formatted_input_provenance` `human.txt`: pass
+  - expected: `fixtures/parser_formatted_input_provenance/expected/human.txt`
+  - actual: `target/ripr/fixtures/parser_formatted_input_provenance/human.txt`
+- `parser_formatted_input_provenance` `human-full.txt`: pass
+  - expected: `fixtures/parser_formatted_input_provenance/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/parser_formatted_input_provenance/human-full.txt`
+- `perl_cpan_alpha` `check.json`: pass
+  - expected: `fixtures/perl_cpan_alpha/expected/check.json`
+  - actual: `target/ripr/fixtures/perl_cpan_alpha/check.json`
+- `perl_cpan_alpha` `human.txt`: pass
+  - expected: `fixtures/perl_cpan_alpha/expected/human.txt`
+  - actual: `target/ripr/fixtures/perl_cpan_alpha/human.txt`
+- `plain_diff_multifile_boundary` `check.json`: pass
+  - expected: `fixtures/plain_diff_multifile_boundary/expected/check.json`
+  - actual: `target/ripr/fixtures/plain_diff_multifile_boundary/check.json`
+- `plain_diff_multifile_boundary` `human.txt`: pass
+  - expected: `fixtures/plain_diff_multifile_boundary/expected/human.txt`
+  - actual: `target/ripr/fixtures/plain_diff_multifile_boundary/human.txt`
+- `predicate_boundary_oracle_admitted` `check.json`: pass
+  - expected: `fixtures/predicate_boundary_oracle_admitted/expected/check.json`
+  - actual: `target/ripr/fixtures/predicate_boundary_oracle_admitted/check.json`
+- `predicate_boundary_oracle_admitted` `human.txt`: pass
+  - expected: `fixtures/predicate_boundary_oracle_admitted/expected/human.txt`
+  - actual: `target/ripr/fixtures/predicate_boundary_oracle_admitted/human.txt`
+- `predicate_boundary_oracle_admitted` `human-full.txt`: pass
+  - expected: `fixtures/predicate_boundary_oracle_admitted/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/predicate_boundary_oracle_admitted/human-full.txt`
+- `predicate_boundary_oracle_refused` `check.json`: pass
+  - expected: `fixtures/predicate_boundary_oracle_refused/expected/check.json`
+  - actual: `target/ripr/fixtures/predicate_boundary_oracle_refused/check.json`
+- `predicate_boundary_oracle_refused` `human.txt`: pass
+  - expected: `fixtures/predicate_boundary_oracle_refused/expected/human.txt`
+  - actual: `target/ripr/fixtures/predicate_boundary_oracle_refused/human.txt`
+- `predicate_boundary_oracle_refused` `human-full.txt`: pass
+  - expected: `fixtures/predicate_boundary_oracle_refused/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/predicate_boundary_oracle_refused/human-full.txt`
+- `predicate_empty_macro_boundary` `check.json`: pass
+  - expected: `fixtures/predicate_empty_macro_boundary/expected/check.json`
+  - actual: `target/ripr/fixtures/predicate_empty_macro_boundary/check.json`
+- `predicate_empty_macro_boundary` `human.txt`: pass
+  - expected: `fixtures/predicate_empty_macro_boundary/expected/human.txt`
+  - actual: `target/ripr/fixtures/predicate_empty_macro_boundary/human.txt`
+- `predicate_empty_macro_boundary` `human-full.txt`: pass
+  - expected: `fixtures/predicate_empty_macro_boundary/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/predicate_empty_macro_boundary/human-full.txt`
+- `predicate_oracle_execution_called` `check.json`: pass
+  - expected: `fixtures/predicate_oracle_execution_called/expected/check.json`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_called/check.json`
+- `predicate_oracle_execution_called` `human.txt`: pass
+  - expected: `fixtures/predicate_oracle_execution_called/expected/human.txt`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_called/human.txt`
+- `predicate_oracle_execution_called` `human-full.txt`: pass
+  - expected: `fixtures/predicate_oracle_execution_called/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_called/human-full.txt`
+- `predicate_oracle_execution_direct` `check.json`: pass
+  - expected: `fixtures/predicate_oracle_execution_direct/expected/check.json`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_direct/check.json`
+- `predicate_oracle_execution_direct` `human.txt`: pass
+  - expected: `fixtures/predicate_oracle_execution_direct/expected/human.txt`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_direct/human.txt`
+- `predicate_oracle_execution_direct` `human-full.txt`: pass
+  - expected: `fixtures/predicate_oracle_execution_direct/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_direct/human-full.txt`
+- `predicate_oracle_execution_false_branch` `check.json`: pass
+  - expected: `fixtures/predicate_oracle_execution_false_branch/expected/check.json`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_false_branch/check.json`
+- `predicate_oracle_execution_false_branch` `human.txt`: pass
+  - expected: `fixtures/predicate_oracle_execution_false_branch/expected/human.txt`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_false_branch/human.txt`
+- `predicate_oracle_execution_false_branch` `human-full.txt`: pass
+  - expected: `fixtures/predicate_oracle_execution_false_branch/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_false_branch/human-full.txt`
+- `predicate_oracle_execution_no_assertion` `check.json`: pass
+  - expected: `fixtures/predicate_oracle_execution_no_assertion/expected/check.json`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_no_assertion/check.json`
+- `predicate_oracle_execution_no_assertion` `human.txt`: pass
+  - expected: `fixtures/predicate_oracle_execution_no_assertion/expected/human.txt`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_no_assertion/human.txt`
+- `predicate_oracle_execution_no_assertion` `human-full.txt`: pass
+  - expected: `fixtures/predicate_oracle_execution_no_assertion/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_no_assertion/human-full.txt`
+- `predicate_oracle_execution_reached_uncalled` `check.json`: pass
+  - expected: `fixtures/predicate_oracle_execution_reached_uncalled/expected/check.json`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_reached_uncalled/check.json`
+- `predicate_oracle_execution_reached_uncalled` `human.txt`: pass
+  - expected: `fixtures/predicate_oracle_execution_reached_uncalled/expected/human.txt`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_reached_uncalled/human.txt`
+- `predicate_oracle_execution_reached_uncalled` `human-full.txt`: pass
+  - expected: `fixtures/predicate_oracle_execution_reached_uncalled/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_reached_uncalled/human-full.txt`
+- `predicate_oracle_execution_shadowed` `check.json`: pass
+  - expected: `fixtures/predicate_oracle_execution_shadowed/expected/check.json`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_shadowed/check.json`
+- `predicate_oracle_execution_shadowed` `human.txt`: pass
+  - expected: `fixtures/predicate_oracle_execution_shadowed/expected/human.txt`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_shadowed/human.txt`
+- `predicate_oracle_execution_shadowed` `human-full.txt`: pass
+  - expected: `fixtures/predicate_oracle_execution_shadowed/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_shadowed/human-full.txt`
+- `predicate_oracle_execution_uncalled` `check.json`: pass
+  - expected: `fixtures/predicate_oracle_execution_uncalled/expected/check.json`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_uncalled/check.json`
+- `predicate_oracle_execution_uncalled` `human.txt`: pass
+  - expected: `fixtures/predicate_oracle_execution_uncalled/expected/human.txt`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_uncalled/human.txt`
+- `predicate_oracle_execution_uncalled` `human-full.txt`: pass
+  - expected: `fixtures/predicate_oracle_execution_uncalled/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/predicate_oracle_execution_uncalled/human-full.txt`
+- `predicate_pairing_compound_assigned_binding` `check.json`: pass
+  - expected: `fixtures/predicate_pairing_compound_assigned_binding/expected/check.json`
+  - actual: `target/ripr/fixtures/predicate_pairing_compound_assigned_binding/check.json`
+- `predicate_pairing_compound_assigned_binding` `human.txt`: pass
+  - expected: `fixtures/predicate_pairing_compound_assigned_binding/expected/human.txt`
+  - actual: `target/ripr/fixtures/predicate_pairing_compound_assigned_binding/human.txt`
+- `predicate_pairing_compound_assigned_binding` `human-full.txt`: pass
+  - expected: `fixtures/predicate_pairing_compound_assigned_binding/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/predicate_pairing_compound_assigned_binding/human-full.txt`
+- `predicate_pairing_mutably_borrowed_binding` `check.json`: pass
+  - expected: `fixtures/predicate_pairing_mutably_borrowed_binding/expected/check.json`
+  - actual: `target/ripr/fixtures/predicate_pairing_mutably_borrowed_binding/check.json`
+- `predicate_pairing_mutably_borrowed_binding` `human.txt`: pass
+  - expected: `fixtures/predicate_pairing_mutably_borrowed_binding/expected/human.txt`
+  - actual: `target/ripr/fixtures/predicate_pairing_mutably_borrowed_binding/human.txt`
+- `predicate_pairing_mutably_borrowed_binding` `human-full.txt`: pass
+  - expected: `fixtures/predicate_pairing_mutably_borrowed_binding/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/predicate_pairing_mutably_borrowed_binding/human-full.txt`
+- `predicate_pairing_newline_split_reassigned_binding` `check.json`: pass
+  - expected: `fixtures/predicate_pairing_newline_split_reassigned_binding/expected/check.json`
+  - actual: `target/ripr/fixtures/predicate_pairing_newline_split_reassigned_binding/check.json`
+- `predicate_pairing_newline_split_reassigned_binding` `human.txt`: pass
+  - expected: `fixtures/predicate_pairing_newline_split_reassigned_binding/expected/human.txt`
+  - actual: `target/ripr/fixtures/predicate_pairing_newline_split_reassigned_binding/human.txt`
+- `predicate_pairing_newline_split_reassigned_binding` `human-full.txt`: pass
+  - expected: `fixtures/predicate_pairing_newline_split_reassigned_binding/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/predicate_pairing_newline_split_reassigned_binding/human-full.txt`
+- `predicate_pairing_reassigned_binding` `check.json`: pass
+  - expected: `fixtures/predicate_pairing_reassigned_binding/expected/check.json`
+  - actual: `target/ripr/fixtures/predicate_pairing_reassigned_binding/check.json`
+- `predicate_pairing_reassigned_binding` `human.txt`: pass
+  - expected: `fixtures/predicate_pairing_reassigned_binding/expected/human.txt`
+  - actual: `target/ripr/fixtures/predicate_pairing_reassigned_binding/human.txt`
+- `predicate_pairing_reassigned_binding` `human-full.txt`: pass
+  - expected: `fixtures/predicate_pairing_reassigned_binding/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/predicate_pairing_reassigned_binding/human-full.txt`
+- `propagate_log_message` `check.json`: pass
+  - expected: `fixtures/propagate_log_message/expected/check.json`
+  - actual: `target/ripr/fixtures/propagate_log_message/check.json`
+- `propagate_log_message` `human.txt`: pass
+  - expected: `fixtures/propagate_log_message/expected/human.txt`
+  - actual: `target/ripr/fixtures/propagate_log_message/human.txt`
+- `propagate_stdout_macro` `check.json`: pass
+  - expected: `fixtures/propagate_stdout_macro/expected/check.json`
+  - actual: `target/ripr/fixtures/propagate_stdout_macro/check.json`
+- `propagate_stdout_macro` `human.txt`: pass
+  - expected: `fixtures/propagate_stdout_macro/expected/human.txt`
+  - actual: `target/ripr/fixtures/propagate_stdout_macro/human.txt`
+- `propagate_swallowed_ok` `check.json`: pass
+  - expected: `fixtures/propagate_swallowed_ok/expected/check.json`
+  - actual: `target/ripr/fixtures/propagate_swallowed_ok/check.json`
+- `propagate_swallowed_ok` `human.txt`: pass
+  - expected: `fixtures/propagate_swallowed_ok/expected/human.txt`
+  - actual: `target/ripr/fixtures/propagate_swallowed_ok/human.txt`
+- `propagate_value_returned` `check.json`: pass
+  - expected: `fixtures/propagate_value_returned/expected/check.json`
+  - actual: `target/ripr/fixtures/propagate_value_returned/check.json`
+- `propagate_value_returned` `human.txt`: pass
+  - expected: `fixtures/propagate_value_returned/expected/human.txt`
+  - actual: `target/ripr/fixtures/propagate_value_returned/human.txt`
+- `propagated_error_closing_early_path` `check.json`: pass
+  - expected: `fixtures/propagated_error_closing_early_path/expected/check.json`
+  - actual: `target/ripr/fixtures/propagated_error_closing_early_path/check.json`
+- `propagated_error_closing_early_path` `human.txt`: pass
+  - expected: `fixtures/propagated_error_closing_early_path/expected/human.txt`
+  - actual: `target/ripr/fixtures/propagated_error_closing_early_path/human.txt`
+- `propagated_error_closing_early_path` `human-full.txt`: pass
+  - expected: `fixtures/propagated_error_closing_early_path/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/propagated_error_closing_early_path/human-full.txt`
+- `property_macro_lexical_fallback` `check.json`: pass
+  - expected: `fixtures/property_macro_lexical_fallback/expected/check.json`
+  - actual: `target/ripr/fixtures/property_macro_lexical_fallback/check.json`
+- `property_macro_lexical_fallback` `human.txt`: pass
+  - expected: `fixtures/property_macro_lexical_fallback/expected/human.txt`
+  - actual: `target/ripr/fixtures/property_macro_lexical_fallback/human.txt`
+- `property_macro_lexical_fallback` `human-full.txt`: pass
+  - expected: `fixtures/property_macro_lexical_fallback/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/property_macro_lexical_fallback/human-full.txt`
+- `property_macro_noop_named_test` `check.json`: pass
+  - expected: `fixtures/property_macro_noop_named_test/expected/check.json`
+  - actual: `target/ripr/fixtures/property_macro_noop_named_test/check.json`
+- `property_macro_noop_named_test` `human.txt`: pass
+  - expected: `fixtures/property_macro_noop_named_test/expected/human.txt`
+  - actual: `target/ripr/fixtures/property_macro_noop_named_test/human.txt`
+- `property_macro_noop_named_test` `human-full.txt`: pass
+  - expected: `fixtures/property_macro_noop_named_test/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/property_macro_noop_named_test/human-full.txt`
+- `property_macro_noop_property_assertion` `check.json`: pass
+  - expected: `fixtures/property_macro_noop_property_assertion/expected/check.json`
+  - actual: `target/ripr/fixtures/property_macro_noop_property_assertion/check.json`
+- `property_macro_noop_property_assertion` `human.txt`: pass
+  - expected: `fixtures/property_macro_noop_property_assertion/expected/human.txt`
+  - actual: `target/ripr/fixtures/property_macro_noop_property_assertion/human.txt`
+- `property_macro_noop_property_assertion` `human-full.txt`: pass
+  - expected: `fixtures/property_macro_noop_property_assertion/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/property_macro_noop_property_assertion/human-full.txt`
+- `property_macro_noop_proptest` `check.json`: pass
+  - expected: `fixtures/property_macro_noop_proptest/expected/check.json`
+  - actual: `target/ripr/fixtures/property_macro_noop_proptest/check.json`
+- `property_macro_noop_proptest` `human.txt`: pass
+  - expected: `fixtures/property_macro_noop_proptest/expected/human.txt`
+  - actual: `target/ripr/fixtures/property_macro_noop_proptest/human.txt`
+- `property_macro_noop_proptest` `human-full.txt`: pass
+  - expected: `fixtures/property_macro_noop_proptest/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/property_macro_noop_proptest/human-full.txt`
+- `property_macro_noop_qualified_collision` `check.json`: pass
+  - expected: `fixtures/property_macro_noop_qualified_collision/expected/check.json`
+  - actual: `target/ripr/fixtures/property_macro_noop_qualified_collision/check.json`
+- `property_macro_noop_qualified_collision` `human.txt`: pass
+  - expected: `fixtures/property_macro_noop_qualified_collision/expected/human.txt`
+  - actual: `target/ripr/fixtures/property_macro_noop_qualified_collision/human.txt`
+- `property_macro_noop_qualified_collision` `human-full.txt`: pass
+  - expected: `fixtures/property_macro_noop_qualified_collision/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/property_macro_noop_qualified_collision/human-full.txt`
+- `property_macro_noop_quickcheck` `check.json`: pass
+  - expected: `fixtures/property_macro_noop_quickcheck/expected/check.json`
+  - actual: `target/ripr/fixtures/property_macro_noop_quickcheck/check.json`
+- `property_macro_noop_quickcheck` `human.txt`: pass
+  - expected: `fixtures/property_macro_noop_quickcheck/expected/human.txt`
+  - actual: `target/ripr/fixtures/property_macro_noop_quickcheck/human.txt`
+- `property_macro_noop_quickcheck` `human-full.txt`: pass
+  - expected: `fixtures/property_macro_noop_quickcheck/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/property_macro_noop_quickcheck/human-full.txt`
+- `property_macro_unrelated_package` `check.json`: pass
+  - expected: `fixtures/property_macro_unrelated_package/expected/check.json`
+  - actual: `target/ripr/fixtures/property_macro_unrelated_package/check.json`
+- `property_macro_unrelated_package` `human.txt`: pass
+  - expected: `fixtures/property_macro_unrelated_package/expected/human.txt`
+  - actual: `target/ripr/fixtures/property_macro_unrelated_package/human.txt`
+- `property_macro_unrelated_package` `human-full.txt`: pass
+  - expected: `fixtures/property_macro_unrelated_package/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/property_macro_unrelated_package/human-full.txt`
+- `proximity_name_oracle_not_credited` `check.json`: pass
+  - expected: `fixtures/proximity_name_oracle_not_credited/expected/check.json`
+  - actual: `target/ripr/fixtures/proximity_name_oracle_not_credited/check.json`
+- `proximity_name_oracle_not_credited` `human.txt`: pass
+  - expected: `fixtures/proximity_name_oracle_not_credited/expected/human.txt`
+  - actual: `target/ripr/fixtures/proximity_name_oracle_not_credited/human.txt`
+- `python_adversarial_attribute_sink_other_receiver` `check.json`: pass
+  - expected: `fixtures/python_adversarial_attribute_sink_other_receiver/expected/check.json`
+  - actual: `target/ripr/fixtures/python_adversarial_attribute_sink_other_receiver/check.json`
+- `python_adversarial_attribute_sink_other_receiver` `human.txt`: pass
+  - expected: `fixtures/python_adversarial_attribute_sink_other_receiver/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_attribute_sink_other_receiver/human.txt`
+- `python_adversarial_attribute_sink_other_receiver` `human-full.txt`: pass
+  - expected: `fixtures/python_adversarial_attribute_sink_other_receiver/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_attribute_sink_other_receiver/human-full.txt`
+- `python_adversarial_buffer_token` `check.json`: pass
+  - expected: `fixtures/python_adversarial_buffer_token/expected/check.json`
+  - actual: `target/ripr/fixtures/python_adversarial_buffer_token/check.json`
+- `python_adversarial_buffer_token` `human.txt`: pass
+  - expected: `fixtures/python_adversarial_buffer_token/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_buffer_token/human.txt`
+- `python_adversarial_buffer_token` `human-full.txt`: pass
+  - expected: `fixtures/python_adversarial_buffer_token/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_buffer_token/human-full.txt`
+- `python_adversarial_changed_sink_non_delta_operand` `check.json`: pass
+  - expected: `fixtures/python_adversarial_changed_sink_non_delta_operand/expected/check.json`
+  - actual: `target/ripr/fixtures/python_adversarial_changed_sink_non_delta_operand/check.json`
+- `python_adversarial_changed_sink_non_delta_operand` `human.txt`: pass
+  - expected: `fixtures/python_adversarial_changed_sink_non_delta_operand/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_changed_sink_non_delta_operand/human.txt`
+- `python_adversarial_changed_sink_non_delta_operand` `human-full.txt`: pass
+  - expected: `fixtures/python_adversarial_changed_sink_non_delta_operand/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_changed_sink_non_delta_operand/human-full.txt`
+- `python_adversarial_default_value_overridden` `check.json`: pass
+  - expected: `fixtures/python_adversarial_default_value_overridden/expected/check.json`
+  - actual: `target/ripr/fixtures/python_adversarial_default_value_overridden/check.json`
+- `python_adversarial_default_value_overridden` `human.txt`: pass
+  - expected: `fixtures/python_adversarial_default_value_overridden/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_default_value_overridden/human.txt`
+- `python_adversarial_default_value_overridden` `human-full.txt`: pass
+  - expected: `fixtures/python_adversarial_default_value_overridden/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_default_value_overridden/human-full.txt`
+- `python_adversarial_dict_field_sibling_key` `check.json`: pass
+  - expected: `fixtures/python_adversarial_dict_field_sibling_key/expected/check.json`
+  - actual: `target/ripr/fixtures/python_adversarial_dict_field_sibling_key/check.json`
+- `python_adversarial_dict_field_sibling_key` `human.txt`: pass
+  - expected: `fixtures/python_adversarial_dict_field_sibling_key/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_dict_field_sibling_key/human.txt`
+- `python_adversarial_dict_field_sibling_key` `human-full.txt`: pass
+  - expected: `fixtures/python_adversarial_dict_field_sibling_key/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_dict_field_sibling_key/human-full.txt`
+- `python_adversarial_error_path_untaken_branch` `check.json`: pass
+  - expected: `fixtures/python_adversarial_error_path_untaken_branch/expected/check.json`
+  - actual: `target/ripr/fixtures/python_adversarial_error_path_untaken_branch/check.json`
+- `python_adversarial_error_path_untaken_branch` `human.txt`: pass
+  - expected: `fixtures/python_adversarial_error_path_untaken_branch/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_error_path_untaken_branch/human.txt`
+- `python_adversarial_error_path_untaken_branch` `human-full.txt`: pass
+  - expected: `fixtures/python_adversarial_error_path_untaken_branch/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_error_path_untaken_branch/human-full.txt`
+- `python_adversarial_free_function_module_collision` `check.json`: pass
+  - expected: `fixtures/python_adversarial_free_function_module_collision/expected/check.json`
+  - actual: `target/ripr/fixtures/python_adversarial_free_function_module_collision/check.json`
+- `python_adversarial_free_function_module_collision` `human.txt`: pass
+  - expected: `fixtures/python_adversarial_free_function_module_collision/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_free_function_module_collision/human.txt`
+- `python_adversarial_free_function_module_collision` `human-full.txt`: pass
+  - expected: `fixtures/python_adversarial_free_function_module_collision/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_free_function_module_collision/human-full.txt`
+- `python_adversarial_fstring_length_invariant_aggregate` `check.json`: pass
+  - expected: `fixtures/python_adversarial_fstring_length_invariant_aggregate/expected/check.json`
+  - actual: `target/ripr/fixtures/python_adversarial_fstring_length_invariant_aggregate/check.json`
+- `python_adversarial_fstring_length_invariant_aggregate` `human.txt`: pass
+  - expected: `fixtures/python_adversarial_fstring_length_invariant_aggregate/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_fstring_length_invariant_aggregate/human.txt`
+- `python_adversarial_fstring_length_invariant_aggregate` `human-full.txt`: pass
+  - expected: `fixtures/python_adversarial_fstring_length_invariant_aggregate/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_fstring_length_invariant_aggregate/human-full.txt`
+- `python_adversarial_list_element_sibling_index` `check.json`: pass
+  - expected: `fixtures/python_adversarial_list_element_sibling_index/expected/check.json`
+  - actual: `target/ripr/fixtures/python_adversarial_list_element_sibling_index/check.json`
+- `python_adversarial_list_element_sibling_index` `human.txt`: pass
+  - expected: `fixtures/python_adversarial_list_element_sibling_index/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_list_element_sibling_index/human.txt`
+- `python_adversarial_list_element_sibling_index` `human-full.txt`: pass
+  - expected: `fixtures/python_adversarial_list_element_sibling_index/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_list_element_sibling_index/human-full.txt`
+- `python_adversarial_local_assignment_operator_input` `check.json`: pass
+  - expected: `fixtures/python_adversarial_local_assignment_operator_input/expected/check.json`
+  - actual: `target/ripr/fixtures/python_adversarial_local_assignment_operator_input/check.json`
+- `python_adversarial_local_assignment_operator_input` `human.txt`: pass
+  - expected: `fixtures/python_adversarial_local_assignment_operator_input/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_local_assignment_operator_input/human.txt`
+- `python_adversarial_local_assignment_operator_input` `human-full.txt`: pass
+  - expected: `fixtures/python_adversarial_local_assignment_operator_input/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_local_assignment_operator_input/human-full.txt`
+- `python_adversarial_method_owner_imported_unbound_receiver` `check.json`: pass
+  - expected: `fixtures/python_adversarial_method_owner_imported_unbound_receiver/expected/check.json`
+  - actual: `target/ripr/fixtures/python_adversarial_method_owner_imported_unbound_receiver/check.json`
+- `python_adversarial_method_owner_imported_unbound_receiver` `human.txt`: pass
+  - expected: `fixtures/python_adversarial_method_owner_imported_unbound_receiver/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_method_owner_imported_unbound_receiver/human.txt`
+- `python_adversarial_method_owner_imported_unbound_receiver` `human-full.txt`: pass
+  - expected: `fixtures/python_adversarial_method_owner_imported_unbound_receiver/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_method_owner_imported_unbound_receiver/human-full.txt`
+- `python_adversarial_mock_call_not_value` `check.json`: pass
+  - expected: `fixtures/python_adversarial_mock_call_not_value/expected/check.json`
+  - actual: `target/ripr/fixtures/python_adversarial_mock_call_not_value/check.json`
+- `python_adversarial_mock_call_not_value` `human.txt`: pass
+  - expected: `fixtures/python_adversarial_mock_call_not_value/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_mock_call_not_value/human.txt`
+- `python_adversarial_mock_call_not_value` `human-full.txt`: pass
+  - expected: `fixtures/python_adversarial_mock_call_not_value/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_mock_call_not_value/human-full.txt`
+- `python_adversarial_operator_delta_input_operand` `check.json`: pass
+  - expected: `fixtures/python_adversarial_operator_delta_input_operand/expected/check.json`
+  - actual: `target/ripr/fixtures/python_adversarial_operator_delta_input_operand/check.json`
+- `python_adversarial_operator_delta_input_operand` `human.txt`: pass
+  - expected: `fixtures/python_adversarial_operator_delta_input_operand/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_operator_delta_input_operand/human.txt`
+- `python_adversarial_operator_delta_input_operand` `human-full.txt`: pass
+  - expected: `fixtures/python_adversarial_operator_delta_input_operand/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_operator_delta_input_operand/human-full.txt`
+- `python_adversarial_replaced_block_non_delta_operand` `check.json`: pass
+  - expected: `fixtures/python_adversarial_replaced_block_non_delta_operand/expected/check.json`
+  - actual: `target/ripr/fixtures/python_adversarial_replaced_block_non_delta_operand/check.json`
+- `python_adversarial_replaced_block_non_delta_operand` `human.txt`: pass
+  - expected: `fixtures/python_adversarial_replaced_block_non_delta_operand/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_replaced_block_non_delta_operand/human.txt`
+- `python_adversarial_replaced_block_non_delta_operand` `human-full.txt`: pass
+  - expected: `fixtures/python_adversarial_replaced_block_non_delta_operand/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_replaced_block_non_delta_operand/human-full.txt`
+- `python_adversarial_same_method_other_class` `check.json`: pass
+  - expected: `fixtures/python_adversarial_same_method_other_class/expected/check.json`
+  - actual: `target/ripr/fixtures/python_adversarial_same_method_other_class/check.json`
+- `python_adversarial_same_method_other_class` `human.txt`: pass
+  - expected: `fixtures/python_adversarial_same_method_other_class/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_same_method_other_class/human.txt`
+- `python_adversarial_same_method_other_class` `human-full.txt`: pass
+  - expected: `fixtures/python_adversarial_same_method_other_class/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_adversarial_same_method_other_class/human-full.txt`
+- `python_api_json_field_repair_gap` `check.json`: pass
+  - expected: `fixtures/python_api_json_field_repair_gap/expected/check.json`
+  - actual: `target/ripr/fixtures/python_api_json_field_repair_gap/check.json`
+- `python_api_json_field_repair_gap` `human.txt`: pass
+  - expected: `fixtures/python_api_json_field_repair_gap/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_api_json_field_repair_gap/human.txt`
+- `python_api_route_decorator_repair_gap` `check.json`: pass
+  - expected: `fixtures/python_api_route_decorator_repair_gap/expected/check.json`
+  - actual: `target/ripr/fixtures/python_api_route_decorator_repair_gap/check.json`
+- `python_api_route_decorator_repair_gap` `human.txt`: pass
+  - expected: `fixtures/python_api_route_decorator_repair_gap/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_api_route_decorator_repair_gap/human.txt`
+- `python_argparse_output_repair_gap` `check.json`: pass
+  - expected: `fixtures/python_argparse_output_repair_gap/expected/check.json`
+  - actual: `target/ripr/fixtures/python_argparse_output_repair_gap/check.json`
+- `python_argparse_output_repair_gap` `human.txt`: pass
+  - expected: `fixtures/python_argparse_output_repair_gap/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_argparse_output_repair_gap/human.txt`
+- `python_async_owner` `check.json`: pass
+  - expected: `fixtures/python_async_owner/expected/check.json`
+  - actual: `target/ripr/fixtures/python_async_owner/check.json`
+- `python_async_owner` `human.txt`: pass
+  - expected: `fixtures/python_async_owner/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_async_owner/human.txt`
+- `python_boundary_gap` `check.json`: pass
+  - expected: `fixtures/python_boundary_gap/expected/check.json`
+  - actual: `target/ripr/fixtures/python_boundary_gap/check.json`
+- `python_boundary_gap` `human.txt`: pass
+  - expected: `fixtures/python_boundary_gap/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_boundary_gap/human.txt`
+- `python_broad_boolean_assertion` `check.json`: pass
+  - expected: `fixtures/python_broad_boolean_assertion/expected/check.json`
+  - actual: `target/ripr/fixtures/python_broad_boolean_assertion/check.json`
+- `python_broad_boolean_assertion` `human.txt`: pass
+  - expected: `fixtures/python_broad_boolean_assertion/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_broad_boolean_assertion/human.txt`
+- `python_call_argument_shape` `check.json`: pass
+  - expected: `fixtures/python_call_argument_shape/expected/check.json`
+  - actual: `target/ripr/fixtures/python_call_argument_shape/check.json`
+- `python_call_argument_shape` `human.txt`: pass
+  - expected: `fixtures/python_call_argument_shape/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_call_argument_shape/human.txt`
+- `python_class_method_owner` `check.json`: pass
+  - expected: `fixtures/python_class_method_owner/expected/check.json`
+  - actual: `target/ripr/fixtures/python_class_method_owner/check.json`
+- `python_class_method_owner` `human.txt`: pass
+  - expected: `fixtures/python_class_method_owner/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_class_method_owner/human.txt`
+- `python_cli_output_repair_gap` `check.json`: pass
+  - expected: `fixtures/python_cli_output_repair_gap/expected/check.json`
+  - actual: `target/ripr/fixtures/python_cli_output_repair_gap/check.json`
+- `python_cli_output_repair_gap` `human.txt`: pass
+  - expected: `fixtures/python_cli_output_repair_gap/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_cli_output_repair_gap/human.txt`
+- `python_cross_file_construct_call` `check.json`: pass
+  - expected: `fixtures/python_cross_file_construct_call/expected/check.json`
+  - actual: `target/ripr/fixtures/python_cross_file_construct_call/check.json`
+- `python_cross_file_construct_call` `human.txt`: pass
+  - expected: `fixtures/python_cross_file_construct_call/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_cross_file_construct_call/human.txt`
+- `python_cross_file_import_reference` `check.json`: pass
+  - expected: `fixtures/python_cross_file_import_reference/expected/check.json`
+  - actual: `target/ripr/fixtures/python_cross_file_import_reference/check.json`
+- `python_cross_file_import_reference` `human.txt`: pass
+  - expected: `fixtures/python_cross_file_import_reference/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_cross_file_import_reference/human.txt`
+- `python_decorator_indirection_limit` `check.json`: pass
+  - expected: `fixtures/python_decorator_indirection_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/python_decorator_indirection_limit/check.json`
+- `python_decorator_indirection_limit` `human.txt`: pass
+  - expected: `fixtures/python_decorator_indirection_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_decorator_indirection_limit/human.txt`
+- `python_dict_field_repair_gap` `check.json`: pass
+  - expected: `fixtures/python_dict_field_repair_gap/expected/check.json`
+  - actual: `target/ripr/fixtures/python_dict_field_repair_gap/check.json`
+- `python_dict_field_repair_gap` `human.txt`: pass
+  - expected: `fixtures/python_dict_field_repair_gap/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_dict_field_repair_gap/human.txt`
+- `python_disabled` `check.json`: pass
+  - expected: `fixtures/python_disabled/expected/check.json`
+  - actual: `target/ripr/fixtures/python_disabled/check.json`
+- `python_disabled` `human.txt`: pass
+  - expected: `fixtures/python_disabled/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_disabled/human.txt`
+- `python_dynamic_dispatch_limit` `check.json`: pass
+  - expected: `fixtures/python_dynamic_dispatch_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/python_dynamic_dispatch_limit/check.json`
+- `python_dynamic_dispatch_limit` `human.txt`: pass
+  - expected: `fixtures/python_dynamic_dispatch_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_dynamic_dispatch_limit/human.txt`
+- `python_dynamic_import_limit` `check.json`: pass
+  - expected: `fixtures/python_dynamic_import_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/python_dynamic_import_limit/check.json`
+- `python_dynamic_import_limit` `human.txt`: pass
+  - expected: `fixtures/python_dynamic_import_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_dynamic_import_limit/human.txt`
+- `python_dynamic_route_registration_limit` `check.json`: pass
+  - expected: `fixtures/python_dynamic_route_registration_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/python_dynamic_route_registration_limit/check.json`
+- `python_dynamic_route_registration_limit` `human.txt`: pass
+  - expected: `fixtures/python_dynamic_route_registration_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_dynamic_route_registration_limit/human.txt`
+- `python_empty_sink_module_comparison` `check.json`: pass
+  - expected: `fixtures/python_empty_sink_module_comparison/expected/check.json`
+  - actual: `target/ripr/fixtures/python_empty_sink_module_comparison/check.json`
+- `python_empty_sink_module_comparison` `human.txt`: pass
+  - expected: `fixtures/python_empty_sink_module_comparison/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_empty_sink_module_comparison/human.txt`
+- `python_empty_sink_module_comparison` `human-full.txt`: pass
+  - expected: `fixtures/python_empty_sink_module_comparison/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_empty_sink_module_comparison/human-full.txt`
+- `python_empty_sink_observed_short_function` `check.json`: pass
+  - expected: `fixtures/python_empty_sink_observed_short_function/expected/check.json`
+  - actual: `target/ripr/fixtures/python_empty_sink_observed_short_function/check.json`
+- `python_empty_sink_observed_short_function` `human.txt`: pass
+  - expected: `fixtures/python_empty_sink_observed_short_function/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_empty_sink_observed_short_function/human.txt`
+- `python_empty_sink_observed_short_function` `human-full.txt`: pass
+  - expected: `fixtures/python_empty_sink_observed_short_function/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_empty_sink_observed_short_function/human-full.txt`
+- `python_empty_sink_unrelated_short_function` `check.json`: pass
+  - expected: `fixtures/python_empty_sink_unrelated_short_function/expected/check.json`
+  - actual: `target/ripr/fixtures/python_empty_sink_unrelated_short_function/check.json`
+- `python_empty_sink_unrelated_short_function` `human.txt`: pass
+  - expected: `fixtures/python_empty_sink_unrelated_short_function/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_empty_sink_unrelated_short_function/human.txt`
+- `python_empty_sink_unrelated_short_function` `human-full.txt`: pass
+  - expected: `fixtures/python_empty_sink_unrelated_short_function/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_empty_sink_unrelated_short_function/human-full.txt`
+- `python_error_path_shape` `check.json`: pass
+  - expected: `fixtures/python_error_path_shape/expected/check.json`
+  - actual: `target/ripr/fixtures/python_error_path_shape/check.json`
+- `python_error_path_shape` `human.txt`: pass
+  - expected: `fixtures/python_error_path_shape/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_error_path_shape/human.txt`
+- `python_field_assignment_shape` `check.json`: pass
+  - expected: `fixtures/python_field_assignment_shape/expected/check.json`
+  - actual: `target/ripr/fixtures/python_field_assignment_shape/check.json`
+- `python_field_assignment_shape` `human.txt`: pass
+  - expected: `fixtures/python_field_assignment_shape/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_field_assignment_shape/human.txt`
+- `python_fixture_name_relation` `check.json`: pass
+  - expected: `fixtures/python_fixture_name_relation/expected/check.json`
+  - actual: `target/ripr/fixtures/python_fixture_name_relation/check.json`
+- `python_fixture_name_relation` `human.txt`: pass
+  - expected: `fixtures/python_fixture_name_relation/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_fixture_name_relation/human.txt`
+- `python_functools_memoization_not_indirection` `check.json`: pass
+  - expected: `fixtures/python_functools_memoization_not_indirection/expected/check.json`
+  - actual: `target/ripr/fixtures/python_functools_memoization_not_indirection/check.json`
+- `python_functools_memoization_not_indirection` `human.txt`: pass
+  - expected: `fixtures/python_functools_memoization_not_indirection/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_functools_memoization_not_indirection/human.txt`
+- `python_generated_file_excluded` `check.json`: pass
+  - expected: `fixtures/python_generated_file_excluded/expected/check.json`
+  - actual: `target/ripr/fixtures/python_generated_file_excluded/check.json`
+- `python_generated_file_excluded` `human.txt`: pass
+  - expected: `fixtures/python_generated_file_excluded/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_generated_file_excluded/human.txt`
+- `python_local_callable_binding` `check.json`: pass
+  - expected: `fixtures/python_local_callable_binding/expected/check.json`
+  - actual: `target/ripr/fixtures/python_local_callable_binding/check.json`
+- `python_local_callable_binding` `human.txt`: pass
+  - expected: `fixtures/python_local_callable_binding/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_local_callable_binding/human.txt`
+- `python_metaclass_limit` `check.json`: pass
+  - expected: `fixtures/python_metaclass_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/python_metaclass_limit/check.json`
+- `python_metaclass_limit` `human.txt`: pass
+  - expected: `fixtures/python_metaclass_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_metaclass_limit/human.txt`
+- `python_metaprogramming_limit` `check.json`: pass
+  - expected: `fixtures/python_metaprogramming_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/python_metaprogramming_limit/check.json`
+- `python_metaprogramming_limit` `human.txt`: pass
+  - expected: `fixtures/python_metaprogramming_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_metaprogramming_limit/human.txt`
+- `python_method_owner` `check.json`: pass
+  - expected: `fixtures/python_method_owner/expected/check.json`
+  - actual: `target/ripr/fixtures/python_method_owner/check.json`
+- `python_method_owner` `human.txt`: pass
+  - expected: `fixtures/python_method_owner/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_method_owner/human.txt`
+- `python_missing_import_graph_limit` `check.json`: pass
+  - expected: `fixtures/python_missing_import_graph_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/python_missing_import_graph_limit/check.json`
+- `python_missing_import_graph_limit` `human.txt`: pass
+  - expected: `fixtures/python_missing_import_graph_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_missing_import_graph_limit/human.txt`
+- `python_mixed_language_no_cross_route` `check.json`: pass
+  - expected: `fixtures/python_mixed_language_no_cross_route/expected/check.json`
+  - actual: `target/ripr/fixtures/python_mixed_language_no_cross_route/check.json`
+- `python_mixed_language_no_cross_route` `human.txt`: pass
+  - expected: `fixtures/python_mixed_language_no_cross_route/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_mixed_language_no_cross_route/human.txt`
+- `python_mock_assert_called` `check.json`: pass
+  - expected: `fixtures/python_mock_assert_called/expected/check.json`
+  - actual: `target/ripr/fixtures/python_mock_assert_called/check.json`
+- `python_mock_assert_called` `human.txt`: pass
+  - expected: `fixtures/python_mock_assert_called/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_mock_assert_called/human.txt`
+- `python_mock_interaction_shape` `check.json`: pass
+  - expected: `fixtures/python_mock_interaction_shape/expected/check.json`
+  - actual: `target/ripr/fixtures/python_mock_interaction_shape/check.json`
+- `python_mock_interaction_shape` `human.txt`: pass
+  - expected: `fixtures/python_mock_interaction_shape/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_mock_interaction_shape/human.txt`
+- `python_mocked_module_limit` `check.json`: pass
+  - expected: `fixtures/python_mocked_module_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/python_mocked_module_limit/check.json`
+- `python_mocked_module_limit` `human.txt`: pass
+  - expected: `fixtures/python_mocked_module_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_mocked_module_limit/human.txt`
+- `python_model_field_repair_gap` `check.json`: pass
+  - expected: `fixtures/python_model_field_repair_gap/expected/check.json`
+  - actual: `target/ripr/fixtures/python_model_field_repair_gap/check.json`
+- `python_model_field_repair_gap` `human.txt`: pass
+  - expected: `fixtures/python_model_field_repair_gap/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_model_field_repair_gap/human.txt`
+- `python_monkeypatch_module_limit` `check.json`: pass
+  - expected: `fixtures/python_monkeypatch_module_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/python_monkeypatch_module_limit/check.json`
+- `python_monkeypatch_module_limit` `human.txt`: pass
+  - expected: `fixtures/python_monkeypatch_module_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_monkeypatch_module_limit/human.txt`
+- `python_named_constant_boundary_repair_gap` `check.json`: pass
+  - expected: `fixtures/python_named_constant_boundary_repair_gap/expected/check.json`
+  - actual: `target/ripr/fixtures/python_named_constant_boundary_repair_gap/check.json`
+- `python_named_constant_boundary_repair_gap` `human.txt`: pass
+  - expected: `fixtures/python_named_constant_boundary_repair_gap/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_named_constant_boundary_repair_gap/human.txt`
+- `python_no_config_repair_gap` `check.json`: pass
+  - expected: `fixtures/python_no_config_repair_gap/expected/check.json`
+  - actual: `target/ripr/fixtures/python_no_config_repair_gap/check.json`
+- `python_no_config_repair_gap` `human.txt`: pass
+  - expected: `fixtures/python_no_config_repair_gap/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_no_config_repair_gap/human.txt`
+- `python_no_projectable_owner` `check.json`: pass
+  - expected: `fixtures/python_no_projectable_owner/expected/check.json`
+  - actual: `target/ripr/fixtures/python_no_projectable_owner/check.json`
+- `python_no_projectable_owner` `human.txt`: pass
+  - expected: `fixtures/python_no_projectable_owner/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_no_projectable_owner/human.txt`
+- `python_noop_annotation_only_change` `check.json`: pass
+  - expected: `fixtures/python_noop_annotation_only_change/expected/check.json`
+  - actual: `target/ripr/fixtures/python_noop_annotation_only_change/check.json`
+- `python_noop_annotation_only_change` `human.txt`: pass
+  - expected: `fixtures/python_noop_annotation_only_change/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_noop_annotation_only_change/human.txt`
+- `python_noop_bare_var_annotation` `check.json`: pass
+  - expected: `fixtures/python_noop_bare_var_annotation/expected/check.json`
+  - actual: `target/ripr/fixtures/python_noop_bare_var_annotation/check.json`
+- `python_noop_bare_var_annotation` `human.txt`: pass
+  - expected: `fixtures/python_noop_bare_var_annotation/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_noop_bare_var_annotation/human.txt`
+- `python_noop_docstring_change` `check.json`: pass
+  - expected: `fixtures/python_noop_docstring_change/expected/check.json`
+  - actual: `target/ripr/fixtures/python_noop_docstring_change/check.json`
+- `python_noop_docstring_change` `human.txt`: pass
+  - expected: `fixtures/python_noop_docstring_change/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_noop_docstring_change/human.txt`
+- `python_noop_multiline_docstring_interior` `check.json`: pass
+  - expected: `fixtures/python_noop_multiline_docstring_interior/expected/check.json`
+  - actual: `target/ripr/fixtures/python_noop_multiline_docstring_interior/check.json`
+- `python_noop_multiline_docstring_interior` `human.txt`: pass
+  - expected: `fixtures/python_noop_multiline_docstring_interior/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_noop_multiline_docstring_interior/human.txt`
+- `python_noop_multiline_docstring_interior` `human-full.txt`: pass
+  - expected: `fixtures/python_noop_multiline_docstring_interior/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_noop_multiline_docstring_interior/human-full.txt`
+- `python_opaque_custom_helper_limit` `check.json`: pass
+  - expected: `fixtures/python_opaque_custom_helper_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/python_opaque_custom_helper_limit/check.json`
+- `python_opaque_custom_helper_limit` `human.txt`: pass
+  - expected: `fixtures/python_opaque_custom_helper_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_opaque_custom_helper_limit/human.txt`
+- `python_owner_file_match` `check.json`: pass
+  - expected: `fixtures/python_owner_file_match/expected/check.json`
+  - actual: `target/ripr/fixtures/python_owner_file_match/check.json`
+- `python_owner_file_match` `human.txt`: pass
+  - expected: `fixtures/python_owner_file_match/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_owner_file_match/human.txt`
+- `python_parametrize_basic` `check.json`: pass
+  - expected: `fixtures/python_parametrize_basic/expected/check.json`
+  - actual: `target/ripr/fixtures/python_parametrize_basic/check.json`
+- `python_parametrize_basic` `human.txt`: pass
+  - expected: `fixtures/python_parametrize_basic/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_parametrize_basic/human.txt`
+- `python_parametrized_boundary_repair_gap` `check.json`: pass
+  - expected: `fixtures/python_parametrized_boundary_repair_gap/expected/check.json`
+  - actual: `target/ripr/fixtures/python_parametrized_boundary_repair_gap/check.json`
+- `python_parametrized_boundary_repair_gap` `human.txt`: pass
+  - expected: `fixtures/python_parametrized_boundary_repair_gap/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_parametrized_boundary_repair_gap/human.txt`
+- `python_property_based_limit` `check.json`: pass
+  - expected: `fixtures/python_property_based_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/python_property_based_limit/check.json`
+- `python_property_based_limit` `human.txt`: pass
+  - expected: `fixtures/python_property_based_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_property_based_limit/human.txt`
+- `python_pytest_oracle_shapes` `check.json`: pass
+  - expected: `fixtures/python_pytest_oracle_shapes/expected/check.json`
+  - actual: `target/ripr/fixtures/python_pytest_oracle_shapes/check.json`
+- `python_pytest_oracle_shapes` `human.txt`: pass
+  - expected: `fixtures/python_pytest_oracle_shapes/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_pytest_oracle_shapes/human.txt`
+- `python_pytest_raises` `check.json`: pass
+  - expected: `fixtures/python_pytest_raises/expected/check.json`
+  - actual: `target/ripr/fixtures/python_pytest_raises/check.json`
+- `python_pytest_raises` `human.txt`: pass
+  - expected: `fixtures/python_pytest_raises/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_pytest_raises/human.txt`
+- `python_ranking_noise_control` `check.json`: pass
+  - expected: `fixtures/python_ranking_noise_control/expected/check.json`
+  - actual: `target/ripr/fixtures/python_ranking_noise_control/check.json`
+- `python_ranking_noise_control` `human.txt`: pass
+  - expected: `fixtures/python_ranking_noise_control/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_ranking_noise_control/human.txt`
+- `python_rebound_constant_boundary_limit` `check.json`: pass
+  - expected: `fixtures/python_rebound_constant_boundary_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/python_rebound_constant_boundary_limit/check.json`
+- `python_rebound_constant_boundary_limit` `human.txt`: pass
+  - expected: `fixtures/python_rebound_constant_boundary_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_rebound_constant_boundary_limit/human.txt`
+- `python_related_test_name_similarity` `check.json`: pass
+  - expected: `fixtures/python_related_test_name_similarity/expected/check.json`
+  - actual: `target/ripr/fixtures/python_related_test_name_similarity/check.json`
+- `python_related_test_name_similarity` `human.txt`: pass
+  - expected: `fixtures/python_related_test_name_similarity/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_related_test_name_similarity/human.txt`
+- `python_return_comparison_boundary` `check.json`: pass
+  - expected: `fixtures/python_return_comparison_boundary/expected/check.json`
+  - actual: `target/ripr/fixtures/python_return_comparison_boundary/check.json`
+- `python_return_comparison_boundary` `human.txt`: pass
+  - expected: `fixtures/python_return_comparison_boundary/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_return_comparison_boundary/human.txt`
+- `python_return_comparison_boundary` `human-full.txt`: pass
+  - expected: `fixtures/python_return_comparison_boundary/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_return_comparison_boundary/human-full.txt`
+- `python_return_value_shape` `check.json`: pass
+  - expected: `fixtures/python_return_value_shape/expected/check.json`
+  - actual: `target/ripr/fixtures/python_return_value_shape/check.json`
+- `python_return_value_shape` `human.txt`: pass
+  - expected: `fixtures/python_return_value_shape/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_return_value_shape/human.txt`
+- `python_same_line_duplicate_collapse` `check.json`: pass
+  - expected: `fixtures/python_same_line_duplicate_collapse/expected/check.json`
+  - actual: `target/ripr/fixtures/python_same_line_duplicate_collapse/check.json`
+- `python_same_line_duplicate_collapse` `human.txt`: pass
+  - expected: `fixtures/python_same_line_duplicate_collapse/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_same_line_duplicate_collapse/human.txt`
+- `python_same_stem_sibling_owner_not_related` `check.json`: pass
+  - expected: `fixtures/python_same_stem_sibling_owner_not_related/expected/check.json`
+  - actual: `target/ripr/fixtures/python_same_stem_sibling_owner_not_related/check.json`
+- `python_same_stem_sibling_owner_not_related` `human.txt`: pass
+  - expected: `fixtures/python_same_stem_sibling_owner_not_related/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_same_stem_sibling_owner_not_related/human.txt`
+- `python_same_stem_test` `check.json`: pass
+  - expected: `fixtures/python_same_stem_test/expected/check.json`
+  - actual: `target/ripr/fixtures/python_same_stem_test/check.json`
+- `python_same_stem_test` `human.txt`: pass
+  - expected: `fixtures/python_same_stem_test/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_same_stem_test/human.txt`
+- `python_src_layout_package_import` `check.json`: pass
+  - expected: `fixtures/python_src_layout_package_import/expected/check.json`
+  - actual: `target/ripr/fixtures/python_src_layout_package_import/check.json`
+- `python_src_layout_package_import` `human.txt`: pass
+  - expected: `fixtures/python_src_layout_package_import/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_src_layout_package_import/human.txt`
+- `python_src_layout_repair_gap` `check.json`: pass
+  - expected: `fixtures/python_src_layout_repair_gap/expected/check.json`
+  - actual: `target/ripr/fixtures/python_src_layout_repair_gap/check.json`
+- `python_src_layout_repair_gap` `human.txt`: pass
+  - expected: `fixtures/python_src_layout_repair_gap/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_src_layout_repair_gap/human.txt`
+- `python_strong_oracle` `check.json`: pass
+  - expected: `fixtures/python_strong_oracle/expected/check.json`
+  - actual: `target/ripr/fixtures/python_strong_oracle/check.json`
+- `python_strong_oracle` `human.txt`: pass
+  - expected: `fixtures/python_strong_oracle/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_strong_oracle/human.txt`
+- `python_substring_sink_alignment` `check.json`: pass
+  - expected: `fixtures/python_substring_sink_alignment/expected/check.json`
+  - actual: `target/ripr/fixtures/python_substring_sink_alignment/check.json`
+- `python_substring_sink_alignment` `human.txt`: pass
+  - expected: `fixtures/python_substring_sink_alignment/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_substring_sink_alignment/human.txt`
+- `python_test_placement_verify` `check.json`: pass
+  - expected: `fixtures/python_test_placement_verify/expected/check.json`
+  - actual: `target/ripr/fixtures/python_test_placement_verify/check.json`
+- `python_test_placement_verify` `human.txt`: pass
+  - expected: `fixtures/python_test_placement_verify/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_test_placement_verify/human.txt`
+- `python_transitive_reach_negative` `check.json`: pass
+  - expected: `fixtures/python_transitive_reach_negative/expected/check.json`
+  - actual: `target/ripr/fixtures/python_transitive_reach_negative/check.json`
+- `python_transitive_reach_negative` `human.txt`: pass
+  - expected: `fixtures/python_transitive_reach_negative/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_transitive_reach_negative/human.txt`
+- `python_transitive_reach_positive` `check.json`: pass
+  - expected: `fixtures/python_transitive_reach_positive/expected/check.json`
+  - actual: `target/ripr/fixtures/python_transitive_reach_positive/check.json`
+- `python_transitive_reach_positive` `human.txt`: pass
+  - expected: `fixtures/python_transitive_reach_positive/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_transitive_reach_positive/human.txt`
+- `python_unittest_assertions` `check.json`: pass
+  - expected: `fixtures/python_unittest_assertions/expected/check.json`
+  - actual: `target/ripr/fixtures/python_unittest_assertions/check.json`
+- `python_unittest_assertions` `human.txt`: pass
+  - expected: `fixtures/python_unittest_assertions/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_unittest_assertions/human.txt`
+- `python_unittest_basic` `check.json`: pass
+  - expected: `fixtures/python_unittest_basic/expected/check.json`
+  - actual: `target/ripr/fixtures/python_unittest_basic/check.json`
+- `python_unittest_basic` `human.txt`: pass
+  - expected: `fixtures/python_unittest_basic/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_unittest_basic/human.txt`
+- `python_unittest_list_equal` `check.json`: pass
+  - expected: `fixtures/python_unittest_list_equal/expected/check.json`
+  - actual: `target/ripr/fixtures/python_unittest_list_equal/check.json`
+- `python_unittest_list_equal` `human.txt`: pass
+  - expected: `fixtures/python_unittest_list_equal/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_unittest_list_equal/human.txt`
+- `python_unittest_list_equal_derived_result` `check.json`: pass
+  - expected: `fixtures/python_unittest_list_equal_derived_result/expected/check.json`
+  - actual: `target/ripr/fixtures/python_unittest_list_equal_derived_result/check.json`
+- `python_unittest_list_equal_derived_result` `human.txt`: pass
+  - expected: `fixtures/python_unittest_list_equal_derived_result/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_unittest_list_equal_derived_result/human.txt`
+- `python_unittest_list_equal_derived_result` `human-full.txt`: pass
+  - expected: `fixtures/python_unittest_list_equal_derived_result/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_unittest_list_equal_derived_result/human-full.txt`
+- `python_unittest_list_equal_effectful_argument` `check.json`: pass
+  - expected: `fixtures/python_unittest_list_equal_effectful_argument/expected/check.json`
+  - actual: `target/ripr/fixtures/python_unittest_list_equal_effectful_argument/check.json`
+- `python_unittest_list_equal_effectful_argument` `human.txt`: pass
+  - expected: `fixtures/python_unittest_list_equal_effectful_argument/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_unittest_list_equal_effectful_argument/human.txt`
+- `python_unittest_list_equal_effectful_argument` `human-full.txt`: pass
+  - expected: `fixtures/python_unittest_list_equal_effectful_argument/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_unittest_list_equal_effectful_argument/human-full.txt`
+- `python_unittest_list_equal_equal_values` `check.json`: pass
+  - expected: `fixtures/python_unittest_list_equal_equal_values/expected/check.json`
+  - actual: `target/ripr/fixtures/python_unittest_list_equal_equal_values/check.json`
+- `python_unittest_list_equal_equal_values` `human.txt`: pass
+  - expected: `fixtures/python_unittest_list_equal_equal_values/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_unittest_list_equal_equal_values/human.txt`
+- `python_unittest_list_equal_equal_values` `human-full.txt`: pass
+  - expected: `fixtures/python_unittest_list_equal_equal_values/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_unittest_list_equal_equal_values/human-full.txt`
+- `python_unittest_list_equal_nested_class` `check.json`: pass
+  - expected: `fixtures/python_unittest_list_equal_nested_class/expected/check.json`
+  - actual: `target/ripr/fixtures/python_unittest_list_equal_nested_class/check.json`
+- `python_unittest_list_equal_nested_class` `human.txt`: pass
+  - expected: `fixtures/python_unittest_list_equal_nested_class/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_unittest_list_equal_nested_class/human.txt`
+- `python_unittest_list_equal_nested_class` `human-full.txt`: pass
+  - expected: `fixtures/python_unittest_list_equal_nested_class/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/python_unittest_list_equal_nested_class/human-full.txt`
+- `python_unittest_oracle_shapes` `check.json`: pass
+  - expected: `fixtures/python_unittest_oracle_shapes/expected/check.json`
+  - actual: `target/ripr/fixtures/python_unittest_oracle_shapes/check.json`
+- `python_unittest_oracle_shapes` `human.txt`: pass
+  - expected: `fixtures/python_unittest_oracle_shapes/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_unittest_oracle_shapes/human.txt`
+- `python_unrelated_test_mention` `check.json`: pass
+  - expected: `fixtures/python_unrelated_test_mention/expected/check.json`
+  - actual: `target/ripr/fixtures/python_unrelated_test_mention/check.json`
+- `python_unrelated_test_mention` `human.txt`: pass
+  - expected: `fixtures/python_unrelated_test_mention/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_unrelated_test_mention/human.txt`
+- `python_unresolved_fixture_limit` `check.json`: pass
+  - expected: `fixtures/python_unresolved_fixture_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/python_unresolved_fixture_limit/check.json`
+- `python_unresolved_fixture_limit` `human.txt`: pass
+  - expected: `fixtures/python_unresolved_fixture_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_unresolved_fixture_limit/human.txt`
+- `python_unsupported_syntax_limit` `check.json`: pass
+  - expected: `fixtures/python_unsupported_syntax_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/python_unsupported_syntax_limit/check.json`
+- `python_unsupported_syntax_limit` `human.txt`: pass
+  - expected: `fixtures/python_unsupported_syntax_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/python_unsupported_syntax_limit/human.txt`
+- `recursive_controls` `check.json`: pass
+  - expected: `fixtures/recursive_controls/expected/check.json`
+  - actual: `target/ripr/fixtures/recursive_controls/check.json`
+- `recursive_controls` `human.txt`: pass
+  - expected: `fixtures/recursive_controls/expected/human.txt`
+  - actual: `target/ripr/fixtures/recursive_controls/human.txt`
+- `recursive_positive` `check.json`: pass
+  - expected: `fixtures/recursive_positive/expected/check.json`
+  - actual: `target/ripr/fixtures/recursive_positive/check.json`
+- `recursive_positive` `human.txt`: pass
+  - expected: `fixtures/recursive_positive/expected/human.txt`
+  - actual: `target/ripr/fixtures/recursive_positive/human.txt`
+- `rust_adversarial_free_function_receiver` `check.json`: pass
+  - expected: `fixtures/rust_adversarial_free_function_receiver/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_adversarial_free_function_receiver/check.json`
+- `rust_adversarial_free_function_receiver` `human.txt`: pass
+  - expected: `fixtures/rust_adversarial_free_function_receiver/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_adversarial_free_function_receiver/human.txt`
+- `rust_adversarial_free_function_receiver` `human-full.txt`: pass
+  - expected: `fixtures/rust_adversarial_free_function_receiver/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_adversarial_free_function_receiver/human-full.txt`
+- `rust_adversarial_same_method_other_type` `check.json`: pass
+  - expected: `fixtures/rust_adversarial_same_method_other_type/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_adversarial_same_method_other_type/check.json`
+- `rust_adversarial_same_method_other_type` `human.txt`: pass
+  - expected: `fixtures/rust_adversarial_same_method_other_type/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_adversarial_same_method_other_type/human.txt`
+- `rust_adversarial_same_method_other_type` `human-full.txt`: pass
+  - expected: `fixtures/rust_adversarial_same_method_other_type/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_adversarial_same_method_other_type/human-full.txt`
+- `rust_adversarial_shared_error_variant_proximity` `check.json`: pass
+  - expected: `fixtures/rust_adversarial_shared_error_variant_proximity/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_adversarial_shared_error_variant_proximity/check.json`
+- `rust_adversarial_shared_error_variant_proximity` `human.txt`: pass
+  - expected: `fixtures/rust_adversarial_shared_error_variant_proximity/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_adversarial_shared_error_variant_proximity/human.txt`
+- `rust_adversarial_shared_error_variant_proximity` `human-full.txt`: pass
+  - expected: `fixtures/rust_adversarial_shared_error_variant_proximity/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_adversarial_shared_error_variant_proximity/human-full.txt`
+- `rust_async_fn_owner` `check.json`: pass
+  - expected: `fixtures/rust_async_fn_owner/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_async_fn_owner/check.json`
+- `rust_async_fn_owner` `human.txt`: pass
+  - expected: `fixtures/rust_async_fn_owner/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_async_fn_owner/human.txt`
+- `rust_async_fn_owner` `human-full.txt`: pass
+  - expected: `fixtures/rust_async_fn_owner/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_async_fn_owner/human-full.txt`
+- `rust_commented_module_orphan` `check.json`: pass
+  - expected: `fixtures/rust_commented_module_orphan/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_commented_module_orphan/check.json`
+- `rust_commented_module_orphan` `human.txt`: pass
+  - expected: `fixtures/rust_commented_module_orphan/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_commented_module_orphan/human.txt`
+- `rust_commented_module_orphan` `human-full.txt`: pass
+  - expected: `fixtures/rust_commented_module_orphan/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_commented_module_orphan/human-full.txt`
+- `rust_constructor_field_observation` `check.json`: pass
+  - expected: `fixtures/rust_constructor_field_observation/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_constructor_field_observation/check.json`
+- `rust_constructor_field_observation` `human.txt`: pass
+  - expected: `fixtures/rust_constructor_field_observation/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_constructor_field_observation/human.txt`
+- `rust_constructor_field_observation` `human-full.txt`: pass
+  - expected: `fixtures/rust_constructor_field_observation/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_constructor_field_observation/human-full.txt`
+- `rust_constructor_field_wrong_field_observer` `check.json`: pass
+  - expected: `fixtures/rust_constructor_field_wrong_field_observer/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_constructor_field_wrong_field_observer/check.json`
+- `rust_constructor_field_wrong_field_observer` `human.txt`: pass
+  - expected: `fixtures/rust_constructor_field_wrong_field_observer/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_constructor_field_wrong_field_observer/human.txt`
+- `rust_constructor_field_wrong_field_observer` `human-full.txt`: pass
+  - expected: `fixtures/rust_constructor_field_wrong_field_observer/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_constructor_field_wrong_field_observer/human-full.txt`
+- `rust_dep_edge_cross_crate_ambiguity` `check.json`: pass
+  - expected: `fixtures/rust_dep_edge_cross_crate_ambiguity/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_dep_edge_cross_crate_ambiguity/check.json`
+- `rust_dep_edge_cross_crate_ambiguity` `human.txt`: pass
+  - expected: `fixtures/rust_dep_edge_cross_crate_ambiguity/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_dep_edge_cross_crate_ambiguity/human.txt`
+- `rust_dep_edge_cross_crate_ambiguity` `human-full.txt`: pass
+  - expected: `fixtures/rust_dep_edge_cross_crate_ambiguity/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_dep_edge_cross_crate_ambiguity/human-full.txt`
+- `rust_dep_edge_cross_crate_positive` `check.json`: pass
+  - expected: `fixtures/rust_dep_edge_cross_crate_positive/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_dep_edge_cross_crate_positive/check.json`
+- `rust_dep_edge_cross_crate_positive` `human.txt`: pass
+  - expected: `fixtures/rust_dep_edge_cross_crate_positive/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_dep_edge_cross_crate_positive/human.txt`
+- `rust_dep_edge_cross_crate_positive` `human-full.txt`: pass
+  - expected: `fixtures/rust_dep_edge_cross_crate_positive/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_dep_edge_cross_crate_positive/human-full.txt`
+- `rust_field_construction_token_coincidence` `check.json`: pass
+  - expected: `fixtures/rust_field_construction_token_coincidence/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_field_construction_token_coincidence/check.json`
+- `rust_field_construction_token_coincidence` `human.txt`: pass
+  - expected: `fixtures/rust_field_construction_token_coincidence/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_field_construction_token_coincidence/human.txt`
+- `rust_long_expression_display_bound` `check.json`: pass
+  - expected: `fixtures/rust_long_expression_display_bound/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_long_expression_display_bound/check.json`
+- `rust_long_expression_display_bound` `human.txt`: pass
+  - expected: `fixtures/rust_long_expression_display_bound/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_long_expression_display_bound/human.txt`
+- `rust_long_expression_display_bound` `human-full.txt`: pass
+  - expected: `fixtures/rust_long_expression_display_bound/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_long_expression_display_bound/human-full.txt`
+- `rust_macro_reach_limitation` `check.json`: pass
+  - expected: `fixtures/rust_macro_reach_limitation/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_macro_reach_limitation/check.json`
+- `rust_macro_reach_limitation` `human.txt`: pass
+  - expected: `fixtures/rust_macro_reach_limitation/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_macro_reach_limitation/human.txt`
+- `rust_macro_reach_limitation` `human-full.txt`: pass
+  - expected: `fixtures/rust_macro_reach_limitation/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_macro_reach_limitation/human-full.txt`
+- `rust_macro_wrapped_assertion_limitation` `check.json`: pass
+  - expected: `fixtures/rust_macro_wrapped_assertion_limitation/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_macro_wrapped_assertion_limitation/check.json`
+- `rust_macro_wrapped_assertion_limitation` `human.txt`: pass
+  - expected: `fixtures/rust_macro_wrapped_assertion_limitation/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_macro_wrapped_assertion_limitation/human.txt`
+- `rust_macro_wrapped_assertion_limitation` `human-full.txt`: pass
+  - expected: `fixtures/rust_macro_wrapped_assertion_limitation/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_macro_wrapped_assertion_limitation/human-full.txt`
+- `rust_macro_wrapped_test_call_limitation` `check.json`: pass
+  - expected: `fixtures/rust_macro_wrapped_test_call_limitation/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_macro_wrapped_test_call_limitation/check.json`
+- `rust_macro_wrapped_test_call_limitation` `human.txt`: pass
+  - expected: `fixtures/rust_macro_wrapped_test_call_limitation/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_macro_wrapped_test_call_limitation/human.txt`
+- `rust_macro_wrapped_test_call_limitation` `human-full.txt`: pass
+  - expected: `fixtures/rust_macro_wrapped_test_call_limitation/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_macro_wrapped_test_call_limitation/human-full.txt`
+- `rust_missing_discriminator_evidence` `check.json`: pass
+  - expected: `fixtures/rust_missing_discriminator_evidence/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_missing_discriminator_evidence/check.json`
+- `rust_missing_discriminator_evidence` `human.txt`: pass
+  - expected: `fixtures/rust_missing_discriminator_evidence/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_missing_discriminator_evidence/human.txt`
+- `rust_mixed_direct_macro_reach` `check.json`: pass
+  - expected: `fixtures/rust_mixed_direct_macro_reach/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_mixed_direct_macro_reach/check.json`
+- `rust_mixed_direct_macro_reach` `human.txt`: pass
+  - expected: `fixtures/rust_mixed_direct_macro_reach/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_mixed_direct_macro_reach/human.txt`
+- `rust_mixed_direct_macro_reach` `human-full.txt`: pass
+  - expected: `fixtures/rust_mixed_direct_macro_reach/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_mixed_direct_macro_reach/human-full.txt`
+- `rust_proptest_quickcheck_tests` `check.json`: pass
+  - expected: `fixtures/rust_proptest_quickcheck_tests/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_proptest_quickcheck_tests/check.json`
+- `rust_proptest_quickcheck_tests` `human.txt`: pass
+  - expected: `fixtures/rust_proptest_quickcheck_tests/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_proptest_quickcheck_tests/human.txt`
+- `rust_pyo3_cross_language_limit` `check.json`: pass
+  - expected: `fixtures/rust_pyo3_cross_language_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_pyo3_cross_language_limit/check.json`
+- `rust_pyo3_cross_language_limit` `human.txt`: pass
+  - expected: `fixtures/rust_pyo3_cross_language_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_pyo3_cross_language_limit/human.txt`
+- `rust_same_method_owner_type_positive` `check.json`: pass
+  - expected: `fixtures/rust_same_method_owner_type_positive/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_same_method_owner_type_positive/check.json`
+- `rust_same_method_owner_type_positive` `human.txt`: pass
+  - expected: `fixtures/rust_same_method_owner_type_positive/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_same_method_owner_type_positive/human.txt`
+- `rust_same_method_owner_type_positive` `human-full.txt`: pass
+  - expected: `fixtures/rust_same_method_owner_type_positive/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_same_method_owner_type_positive/human-full.txt`
+- `rust_slice_table_boundary` `check.json`: pass
+  - expected: `fixtures/rust_slice_table_boundary/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_slice_table_boundary/check.json`
+- `rust_slice_table_boundary` `human.txt`: pass
+  - expected: `fixtures/rust_slice_table_boundary/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_slice_table_boundary/human.txt`
+- `rust_slice_table_boundary` `human-full.txt`: pass
+  - expected: `fixtures/rust_slice_table_boundary/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_slice_table_boundary/human-full.txt`
+- `rust_slice_table_call_exit` `check.json`: pass
+  - expected: `fixtures/rust_slice_table_call_exit/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_slice_table_call_exit/check.json`
+- `rust_slice_table_call_exit` `human.txt`: pass
+  - expected: `fixtures/rust_slice_table_call_exit/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_slice_table_call_exit/human.txt`
+- `rust_slice_table_call_exit` `human-full.txt`: pass
+  - expected: `fixtures/rust_slice_table_call_exit/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_slice_table_call_exit/human-full.txt`
+- `rust_slice_table_try_exit` `check.json`: pass
+  - expected: `fixtures/rust_slice_table_try_exit/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_slice_table_try_exit/check.json`
+- `rust_slice_table_try_exit` `human.txt`: pass
+  - expected: `fixtures/rust_slice_table_try_exit/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_slice_table_try_exit/human.txt`
+- `rust_slice_table_try_exit` `human-full.txt`: pass
+  - expected: `fixtures/rust_slice_table_try_exit/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_slice_table_try_exit/human-full.txt`
+- `rust_slice_table_zero_elements` `check.json`: pass
+  - expected: `fixtures/rust_slice_table_zero_elements/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_slice_table_zero_elements/check.json`
+- `rust_slice_table_zero_elements` `human.txt`: pass
+  - expected: `fixtures/rust_slice_table_zero_elements/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_slice_table_zero_elements/human.txt`
+- `rust_slice_table_zero_elements` `human-full.txt`: pass
+  - expected: `fixtures/rust_slice_table_zero_elements/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_slice_table_zero_elements/human-full.txt`
+- `rust_test_under_false_cfg_not_grip` `check.json`: pass
+  - expected: `fixtures/rust_test_under_false_cfg_not_grip/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_test_under_false_cfg_not_grip/check.json`
+- `rust_test_under_false_cfg_not_grip` `human.txt`: pass
+  - expected: `fixtures/rust_test_under_false_cfg_not_grip/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_test_under_false_cfg_not_grip/human.txt`
+- `rust_trait_default_import` `check.json`: pass
+  - expected: `fixtures/rust_trait_default_import/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_trait_default_import/check.json`
+- `rust_trait_default_import` `human.txt`: pass
+  - expected: `fixtures/rust_trait_default_import/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_trait_default_import/human.txt`
+- `rust_trait_default_import` `human-full.txt`: pass
+  - expected: `fixtures/rust_trait_default_import/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_trait_default_import/human-full.txt`
+- `rust_trait_default_shadow` `check.json`: pass
+  - expected: `fixtures/rust_trait_default_shadow/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_trait_default_shadow/check.json`
+- `rust_trait_default_shadow` `human.txt`: pass
+  - expected: `fixtures/rust_trait_default_shadow/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_trait_default_shadow/human.txt`
+- `rust_trait_default_shadow` `human-full.txt`: pass
+  - expected: `fixtures/rust_trait_default_shadow/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_trait_default_shadow/human-full.txt`
+- `rust_trait_impl_import` `check.json`: pass
+  - expected: `fixtures/rust_trait_impl_import/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_trait_impl_import/check.json`
+- `rust_trait_impl_import` `human.txt`: pass
+  - expected: `fixtures/rust_trait_impl_import/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_trait_impl_import/human.txt`
+- `rust_trait_impl_import` `human-full.txt`: pass
+  - expected: `fixtures/rust_trait_impl_import/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_trait_impl_import/human-full.txt`
+- `rust_trait_impl_shadow` `check.json`: pass
+  - expected: `fixtures/rust_trait_impl_shadow/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_trait_impl_shadow/check.json`
+- `rust_trait_impl_shadow` `human.txt`: pass
+  - expected: `fixtures/rust_trait_impl_shadow/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_trait_impl_shadow/human.txt`
+- `rust_trait_impl_shadow` `human-full.txt`: pass
+  - expected: `fixtures/rust_trait_impl_shadow/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_trait_impl_shadow/human-full.txt`
+- `rust_trait_parent_import` `check.json`: pass
+  - expected: `fixtures/rust_trait_parent_import/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_trait_parent_import/check.json`
+- `rust_trait_parent_import` `human.txt`: pass
+  - expected: `fixtures/rust_trait_parent_import/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_trait_parent_import/human.txt`
+- `rust_trait_parent_import` `human-full.txt`: pass
+  - expected: `fixtures/rust_trait_parent_import/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_trait_parent_import/human-full.txt`
+- `rust_trait_parent_shadow` `check.json`: pass
+  - expected: `fixtures/rust_trait_parent_shadow/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_trait_parent_shadow/check.json`
+- `rust_trait_parent_shadow` `human.txt`: pass
+  - expected: `fixtures/rust_trait_parent_shadow/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_trait_parent_shadow/human.txt`
+- `rust_trait_parent_shadow` `human-full.txt`: pass
+  - expected: `fixtures/rust_trait_parent_shadow/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_trait_parent_shadow/human-full.txt`
+- `rust_transitive_reach_negative` `check.json`: pass
+  - expected: `fixtures/rust_transitive_reach_negative/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_transitive_reach_negative/check.json`
+- `rust_transitive_reach_negative` `human.txt`: pass
+  - expected: `fixtures/rust_transitive_reach_negative/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_transitive_reach_negative/human.txt`
+- `rust_transitive_reach_positive` `check.json`: pass
+  - expected: `fixtures/rust_transitive_reach_positive/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_transitive_reach_positive/check.json`
+- `rust_transitive_reach_positive` `human.txt`: pass
+  - expected: `fixtures/rust_transitive_reach_positive/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_transitive_reach_positive/human.txt`
+- `rust_transitive_reach_positive` `human-full.txt`: pass
+  - expected: `fixtures/rust_transitive_reach_positive/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_transitive_reach_positive/human-full.txt`
+- `rust_transitive_reach_same_name_other_type` `check.json`: pass
+  - expected: `fixtures/rust_transitive_reach_same_name_other_type/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_transitive_reach_same_name_other_type/check.json`
+- `rust_transitive_reach_same_name_other_type` `human.txt`: pass
+  - expected: `fixtures/rust_transitive_reach_same_name_other_type/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_transitive_reach_same_name_other_type/human.txt`
+- `rust_transitive_reach_same_name_other_type` `human-full.txt`: pass
+  - expected: `fixtures/rust_transitive_reach_same_name_other_type/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_transitive_reach_same_name_other_type/human-full.txt`
+- `rust_transitive_reach_test_helper_chain` `check.json`: pass
+  - expected: `fixtures/rust_transitive_reach_test_helper_chain/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_transitive_reach_test_helper_chain/check.json`
+- `rust_transitive_reach_test_helper_chain` `human.txt`: pass
+  - expected: `fixtures/rust_transitive_reach_test_helper_chain/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_transitive_reach_test_helper_chain/human.txt`
+- `rust_transitive_reach_test_helper_chain` `human-full.txt`: pass
+  - expected: `fixtures/rust_transitive_reach_test_helper_chain/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_transitive_reach_test_helper_chain/human-full.txt`
+- `rust_uncalled_owner_same_file_tests` `check.json`: pass
+  - expected: `fixtures/rust_uncalled_owner_same_file_tests/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_uncalled_owner_same_file_tests/check.json`
+- `rust_uncalled_owner_same_file_tests` `human.txt`: pass
+  - expected: `fixtures/rust_uncalled_owner_same_file_tests/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_uncalled_owner_same_file_tests/human.txt`
+- `rust_where_bound_declarations` `check.json`: pass
+  - expected: `fixtures/rust_where_bound_declarations/expected/check.json`
+  - actual: `target/ripr/fixtures/rust_where_bound_declarations/check.json`
+- `rust_where_bound_declarations` `human.txt`: pass
+  - expected: `fixtures/rust_where_bound_declarations/expected/human.txt`
+  - actual: `target/ripr/fixtures/rust_where_bound_declarations/human.txt`
+- `rust_where_bound_declarations` `human-full.txt`: pass
+  - expected: `fixtures/rust_where_bound_declarations/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/rust_where_bound_declarations/human-full.txt`
+- `same_name_qualified_other_module` `check.json`: pass
+  - expected: `fixtures/same_name_qualified_other_module/expected/check.json`
+  - actual: `target/ripr/fixtures/same_name_qualified_other_module/check.json`
+- `same_name_qualified_other_module` `human.txt`: pass
+  - expected: `fixtures/same_name_qualified_other_module/expected/human.txt`
+  - actual: `target/ripr/fixtures/same_name_qualified_other_module/human.txt`
+- `same_name_qualified_other_module` `human-full.txt`: pass
+  - expected: `fixtures/same_name_qualified_other_module/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/same_name_qualified_other_module/human-full.txt`
+- `same_name_sibling_file_test` `check.json`: pass
+  - expected: `fixtures/same_name_sibling_file_test/expected/check.json`
+  - actual: `target/ripr/fixtures/same_name_sibling_file_test/check.json`
+- `same_name_sibling_file_test` `human.txt`: pass
+  - expected: `fixtures/same_name_sibling_file_test/expected/human.txt`
+  - actual: `target/ripr/fixtures/same_name_sibling_file_test/human.txt`
+- `same_name_sibling_file_test` `human-full.txt`: pass
+  - expected: `fixtures/same_name_sibling_file_test/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/same_name_sibling_file_test/human-full.txt`
+- `same_name_use_imported_owner` `check.json`: pass
+  - expected: `fixtures/same_name_use_imported_owner/expected/check.json`
+  - actual: `target/ripr/fixtures/same_name_use_imported_owner/check.json`
+- `same_name_use_imported_owner` `human.txt`: pass
+  - expected: `fixtures/same_name_use_imported_owner/expected/human.txt`
+  - actual: `target/ripr/fixtures/same_name_use_imported_owner/human.txt`
+- `same_name_use_imported_owner` `human-full.txt`: pass
+  - expected: `fixtures/same_name_use_imported_owner/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/same_name_use_imported_owner/human-full.txt`
+- `scanner_controls` `check.json`: pass
+  - expected: `fixtures/scanner_controls/expected/check.json`
+  - actual: `target/ripr/fixtures/scanner_controls/check.json`
+- `scanner_controls` `human.txt`: pass
+  - expected: `fixtures/scanner_controls/expected/human.txt`
+  - actual: `target/ripr/fixtures/scanner_controls/human.txt`
+- `scanner_positive` `check.json`: pass
+  - expected: `fixtures/scanner_positive/expected/check.json`
+  - actual: `target/ripr/fixtures/scanner_positive/check.json`
+- `scanner_positive` `human.txt`: pass
+  - expected: `fixtures/scanner_positive/expected/human.txt`
+  - actual: `target/ripr/fixtures/scanner_positive/human.txt`
+- `self_computed_expected_helper` `check.json`: pass
+  - expected: `fixtures/self_computed_expected_helper/expected/check.json`
+  - actual: `target/ripr/fixtures/self_computed_expected_helper/check.json`
+- `self_computed_expected_helper` `human.txt`: pass
+  - expected: `fixtures/self_computed_expected_helper/expected/human.txt`
+  - actual: `target/ripr/fixtures/self_computed_expected_helper/human.txt`
+- `self_computed_expected_helper` `human-full.txt`: pass
+  - expected: `fixtures/self_computed_expected_helper/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/self_computed_expected_helper/human-full.txt`
+- `self_computed_expected_value` `check.json`: pass
+  - expected: `fixtures/self_computed_expected_value/expected/check.json`
+  - actual: `target/ripr/fixtures/self_computed_expected_value/check.json`
+- `self_computed_expected_value` `human.txt`: pass
+  - expected: `fixtures/self_computed_expected_value/expected/human.txt`
+  - actual: `target/ripr/fixtures/self_computed_expected_value/human.txt`
+- `self_computed_expected_value` `human-full.txt`: pass
+  - expected: `fixtures/self_computed_expected_value/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/self_computed_expected_value/human-full.txt`
+- `snapshot_oracle` `check.json`: pass
+  - expected: `fixtures/snapshot_oracle/expected/check.json`
+  - actual: `target/ripr/fixtures/snapshot_oracle/check.json`
+- `snapshot_oracle` `human.txt`: pass
+  - expected: `fixtures/snapshot_oracle/expected/human.txt`
+  - actual: `target/ripr/fixtures/snapshot_oracle/human.txt`
+- `source_role_harness_suppression` `check.json`: pass
+  - expected: `fixtures/source_role_harness_suppression/expected/check.json`
+  - actual: `target/ripr/fixtures/source_role_harness_suppression/check.json`
+- `source_role_harness_suppression` `human.txt`: pass
+  - expected: `fixtures/source_role_harness_suppression/expected/human.txt`
+  - actual: `target/ripr/fixtures/source_role_harness_suppression/human.txt`
+- `split_test_boundary_oracle` `check.json`: pass
+  - expected: `fixtures/split_test_boundary_oracle/expected/check.json`
+  - actual: `target/ripr/fixtures/split_test_boundary_oracle/check.json`
+- `split_test_boundary_oracle` `human.txt`: pass
+  - expected: `fixtures/split_test_boundary_oracle/expected/human.txt`
+  - actual: `target/ripr/fixtures/split_test_boundary_oracle/human.txt`
+- `strong_boundary_oracle` `check.json`: pass
+  - expected: `fixtures/strong_boundary_oracle/expected/check.json`
+  - actual: `target/ripr/fixtures/strong_boundary_oracle/check.json`
+- `strong_boundary_oracle` `human.txt`: pass
+  - expected: `fixtures/strong_boundary_oracle/expected/human.txt`
+  - actual: `target/ripr/fixtures/strong_boundary_oracle/human.txt`
+- `strong_error_oracle` `check.json`: pass
+  - expected: `fixtures/strong_error_oracle/expected/check.json`
+  - actual: `target/ripr/fixtures/strong_error_oracle/check.json`
+- `strong_error_oracle` `human.txt`: pass
+  - expected: `fixtures/strong_error_oracle/expected/human.txt`
+  - actual: `target/ripr/fixtures/strong_error_oracle/human.txt`
+- `strong_error_oracle` `human-full.txt`: pass
+  - expected: `fixtures/strong_error_oracle/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/strong_error_oracle/human-full.txt`
+- `tail_comparison_boundary` `check.json`: pass
+  - expected: `fixtures/tail_comparison_boundary/expected/check.json`
+  - actual: `target/ripr/fixtures/tail_comparison_boundary/check.json`
+- `tail_comparison_boundary` `human.txt`: pass
+  - expected: `fixtures/tail_comparison_boundary/expected/human.txt`
+  - actual: `target/ripr/fixtures/tail_comparison_boundary/human.txt`
+- `ts_already_observed` `check.json`: pass
+  - expected: `fixtures/ts_already_observed/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_already_observed/check.json`
+- `ts_already_observed` `human.txt`: pass
+  - expected: `fixtures/ts_already_observed/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_already_observed/human.txt`
+- `ts_boundary_named_constant_test` `check.json`: pass
+  - expected: `fixtures/ts_boundary_named_constant_test/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_boundary_named_constant_test/check.json`
+- `ts_boundary_named_constant_test` `human.txt`: pass
+  - expected: `fixtures/ts_boundary_named_constant_test/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_boundary_named_constant_test/human.txt`
+- `ts_boundary_named_constant_test` `human-full.txt`: pass
+  - expected: `fixtures/ts_boundary_named_constant_test/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/ts_boundary_named_constant_test/human-full.txt`
+- `ts_cross_language_bridge_limit` `check.json`: pass
+  - expected: `fixtures/ts_cross_language_bridge_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_cross_language_bridge_limit/check.json`
+- `ts_cross_language_bridge_limit` `human.txt`: pass
+  - expected: `fixtures/ts_cross_language_bridge_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_cross_language_bridge_limit/human.txt`
+- `ts_cross_package_test` `check.json`: pass
+  - expected: `fixtures/ts_cross_package_test/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_cross_package_test/check.json`
+- `ts_cross_package_test` `human.txt`: pass
+  - expected: `fixtures/ts_cross_package_test/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_cross_package_test/human.txt`
+- `ts_domock_relation_gate` `check.json`: pass
+  - expected: `fixtures/ts_domock_relation_gate/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_domock_relation_gate/check.json`
+- `ts_domock_relation_gate` `human.txt`: pass
+  - expected: `fixtures/ts_domock_relation_gate/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_domock_relation_gate/human.txt`
+- `ts_dropped_term_zero_input` `check.json`: pass
+  - expected: `fixtures/ts_dropped_term_zero_input/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_dropped_term_zero_input/check.json`
+- `ts_dropped_term_zero_input` `human.txt`: pass
+  - expected: `fixtures/ts_dropped_term_zero_input/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_dropped_term_zero_input/human.txt`
+- `ts_dynamic_oracle` `check.json`: pass
+  - expected: `fixtures/ts_dynamic_oracle/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_dynamic_oracle/check.json`
+- `ts_dynamic_oracle` `human.txt`: pass
+  - expected: `fixtures/ts_dynamic_oracle/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_dynamic_oracle/human.txt`
+- `ts_full_repo_guidance` `check.json`: pass
+  - expected: `fixtures/ts_full_repo_guidance/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_full_repo_guidance/check.json`
+- `ts_full_repo_guidance` `human.txt`: pass
+  - expected: `fixtures/ts_full_repo_guidance/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_full_repo_guidance/human.txt`
+- `ts_heuristic_relation` `check.json`: pass
+  - expected: `fixtures/ts_heuristic_relation/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_heuristic_relation/check.json`
+- `ts_heuristic_relation` `human.txt`: pass
+  - expected: `fixtures/ts_heuristic_relation/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_heuristic_relation/human.txt`
+- `ts_mock_forms_owner_module` `check.json`: pass
+  - expected: `fixtures/ts_mock_forms_owner_module/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_mock_forms_owner_module/check.json`
+- `ts_mock_forms_owner_module` `human.txt`: pass
+  - expected: `fixtures/ts_mock_forms_owner_module/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_mock_forms_owner_module/human.txt`
+- `ts_no_verify_command` `check.json`: pass
+  - expected: `fixtures/ts_no_verify_command/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_no_verify_command/check.json`
+- `ts_no_verify_command` `human.txt`: pass
+  - expected: `fixtures/ts_no_verify_command/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_no_verify_command/human.txt`
+- `ts_node_expect_failure_no_credit` `check.json`: pass
+  - expected: `fixtures/ts_node_expect_failure_no_credit/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_node_expect_failure_no_credit/check.json`
+- `ts_node_expect_failure_no_credit` `human.txt`: pass
+  - expected: `fixtures/ts_node_expect_failure_no_credit/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_node_expect_failure_no_credit/human.txt`
+- `ts_node_expect_failure_no_credit` `human-full.txt`: pass
+  - expected: `fixtures/ts_node_expect_failure_no_credit/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/ts_node_expect_failure_no_credit/human-full.txt`
+- `ts_node_ordinary_test_control` `check.json`: pass
+  - expected: `fixtures/ts_node_ordinary_test_control/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_node_ordinary_test_control/check.json`
+- `ts_node_ordinary_test_control` `human.txt`: pass
+  - expected: `fixtures/ts_node_ordinary_test_control/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_node_ordinary_test_control/human.txt`
+- `ts_node_ordinary_test_control` `human-full.txt`: pass
+  - expected: `fixtures/ts_node_ordinary_test_control/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/ts_node_ordinary_test_control/human-full.txt`
+- `ts_parse_depth_budget` `check.json`: pass
+  - expected: `fixtures/ts_parse_depth_budget/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_parse_depth_budget/check.json`
+- `ts_parse_depth_budget` `human.txt`: pass
+  - expected: `fixtures/ts_parse_depth_budget/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_parse_depth_budget/human.txt`
+- `ts_pkg_discovery_monorepo` `check.json`: pass
+  - expected: `fixtures/ts_pkg_discovery_monorepo/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_pkg_discovery_monorepo/check.json`
+- `ts_pkg_discovery_monorepo` `human.txt`: pass
+  - expected: `fixtures/ts_pkg_discovery_monorepo/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_pkg_discovery_monorepo/human.txt`
+- `ts_pkg_discovery_no_package` `check.json`: pass
+  - expected: `fixtures/ts_pkg_discovery_no_package/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_pkg_discovery_no_package/check.json`
+- `ts_pkg_discovery_no_package` `human.txt`: pass
+  - expected: `fixtures/ts_pkg_discovery_no_package/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_pkg_discovery_no_package/human.txt`
+- `ts_pkg_discovery_single_package` `check.json`: pass
+  - expected: `fixtures/ts_pkg_discovery_single_package/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_pkg_discovery_single_package/check.json`
+- `ts_pkg_discovery_single_package` `human.txt`: pass
+  - expected: `fixtures/ts_pkg_discovery_single_package/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_pkg_discovery_single_package/human.txt`
+- `ts_predicate_boundary_const_result_local` `check.json`: pass
+  - expected: `fixtures/ts_predicate_boundary_const_result_local/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_predicate_boundary_const_result_local/check.json`
+- `ts_predicate_boundary_const_result_local` `human.txt`: pass
+  - expected: `fixtures/ts_predicate_boundary_const_result_local/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_predicate_boundary_const_result_local/human.txt`
+- `ts_predicate_boundary_const_result_local` `human-full.txt`: pass
+  - expected: `fixtures/ts_predicate_boundary_const_result_local/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/ts_predicate_boundary_const_result_local/human-full.txt`
+- `ts_predicate_boundary_optional_chaining` `check.json`: pass
+  - expected: `fixtures/ts_predicate_boundary_optional_chaining/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_predicate_boundary_optional_chaining/check.json`
+- `ts_predicate_boundary_optional_chaining` `human.txt`: pass
+  - expected: `fixtures/ts_predicate_boundary_optional_chaining/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_predicate_boundary_optional_chaining/human.txt`
+- `ts_predicate_boundary_optional_chaining` `human-full.txt`: pass
+  - expected: `fixtures/ts_predicate_boundary_optional_chaining/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/ts_predicate_boundary_optional_chaining/human-full.txt`
+- `ts_predicate_boundary_overcredit` `check.json`: pass
+  - expected: `fixtures/ts_predicate_boundary_overcredit/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_predicate_boundary_overcredit/check.json`
+- `ts_predicate_boundary_overcredit` `human.txt`: pass
+  - expected: `fixtures/ts_predicate_boundary_overcredit/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_predicate_boundary_overcredit/human.txt`
+- `ts_predicate_boundary_overcredit` `human-full.txt`: pass
+  - expected: `fixtures/ts_predicate_boundary_overcredit/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/ts_predicate_boundary_overcredit/human-full.txt`
+- `ts_repair_packet_boundary_constant_first` `check.json`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_constant_first/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_constant_first/check.json`
+- `ts_repair_packet_boundary_constant_first` `human.txt`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_constant_first/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_constant_first/human.txt`
+- `ts_repair_packet_boundary_constant_first` `human-full.txt`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_constant_first/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_constant_first/human-full.txt`
+- `ts_repair_packet_boundary_constant_resolved` `check.json`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_constant_resolved/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_constant_resolved/check.json`
+- `ts_repair_packet_boundary_constant_resolved` `human.txt`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_constant_resolved/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_constant_resolved/human.txt`
+- `ts_repair_packet_boundary_constant_unresolved` `check.json`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_constant_unresolved/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_constant_unresolved/check.json`
+- `ts_repair_packet_boundary_constant_unresolved` `human.txt`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_constant_unresolved/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_constant_unresolved/human.txt`
+- `ts_repair_packet_boundary_constant_unresolved` `human-full.txt`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_constant_unresolved/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_constant_unresolved/human-full.txt`
+- `ts_repair_packet_boundary_literal_derived` `check.json`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_literal_derived/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_literal_derived/check.json`
+- `ts_repair_packet_boundary_literal_derived` `human.txt`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_literal_derived/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_literal_derived/human.txt`
+- `ts_repair_packet_boundary_literal_guarded` `check.json`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_literal_guarded/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_literal_guarded/check.json`
+- `ts_repair_packet_boundary_literal_guarded` `human.txt`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_literal_guarded/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_literal_guarded/human.txt`
+- `ts_repair_packet_boundary_parameter_constant_shaped` `check.json`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_parameter_constant_shaped/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_parameter_constant_shaped/check.json`
+- `ts_repair_packet_boundary_parameter_constant_shaped` `human.txt`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_parameter_constant_shaped/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_parameter_constant_shaped/human.txt`
+- `ts_repair_packet_boundary_parameter_pair` `check.json`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_parameter_pair/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_parameter_pair/check.json`
+- `ts_repair_packet_boundary_parameter_pair` `human.txt`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_parameter_pair/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_parameter_pair/human.txt`
+- `ts_repair_packet_boundary_parameter_written` `check.json`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_parameter_written/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_parameter_written/check.json`
+- `ts_repair_packet_boundary_parameter_written` `human.txt`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_parameter_written/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_parameter_written/human.txt`
+- `ts_repair_packet_boundary_unreachable` `check.json`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_unreachable/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_unreachable/check.json`
+- `ts_repair_packet_boundary_unreachable` `human.txt`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_unreachable/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_unreachable/human.txt`
+- `ts_repair_packet_boundary_unreachable` `human-full.txt`: pass
+  - expected: `fixtures/ts_repair_packet_boundary_unreachable/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/ts_repair_packet_boundary_unreachable/human-full.txt`
+- `ts_repair_packet_complete` `check.json`: pass
+  - expected: `fixtures/ts_repair_packet_complete/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_repair_packet_complete/check.json`
+- `ts_repair_packet_complete` `human.txt`: pass
+  - expected: `fixtures/ts_repair_packet_complete/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_repair_packet_complete/human.txt`
+- `ts_repair_packet_complete` `human-full.txt`: pass
+  - expected: `fixtures/ts_repair_packet_complete/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/ts_repair_packet_complete/human-full.txt`
+- `ts_repair_packet_wrong_family_oracle` `check.json`: pass
+  - expected: `fixtures/ts_repair_packet_wrong_family_oracle/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_repair_packet_wrong_family_oracle/check.json`
+- `ts_repair_packet_wrong_family_oracle` `human.txt`: pass
+  - expected: `fixtures/ts_repair_packet_wrong_family_oracle/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_repair_packet_wrong_family_oracle/human.txt`
+- `ts_return_comparison_boundary` `check.json`: pass
+  - expected: `fixtures/ts_return_comparison_boundary/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_return_comparison_boundary/check.json`
+- `ts_return_comparison_boundary` `human.txt`: pass
+  - expected: `fixtures/ts_return_comparison_boundary/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_return_comparison_boundary/human.txt`
+- `ts_return_comparison_boundary` `human-full.txt`: pass
+  - expected: `fixtures/ts_return_comparison_boundary/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/ts_return_comparison_boundary/human-full.txt`
+- `ts_return_ternary_boundary` `check.json`: pass
+  - expected: `fixtures/ts_return_ternary_boundary/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_return_ternary_boundary/check.json`
+- `ts_return_ternary_boundary` `human.txt`: pass
+  - expected: `fixtures/ts_return_ternary_boundary/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_return_ternary_boundary/human.txt`
+- `ts_return_ternary_boundary` `human-full.txt`: pass
+  - expected: `fixtures/ts_return_ternary_boundary/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/ts_return_ternary_boundary/human-full.txt`
+- `ts_runner_detect_ava_devdep` `check.json`: pass
+  - expected: `fixtures/ts_runner_detect_ava_devdep/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_runner_detect_ava_devdep/check.json`
+- `ts_runner_detect_ava_devdep` `human.txt`: pass
+  - expected: `fixtures/ts_runner_detect_ava_devdep/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_runner_detect_ava_devdep/human.txt`
+- `ts_runner_detect_ava_devdep` `human-full.txt`: pass
+  - expected: `fixtures/ts_runner_detect_ava_devdep/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/ts_runner_detect_ava_devdep/human-full.txt`
+- `ts_runner_detect_ava_script` `check.json`: pass
+  - expected: `fixtures/ts_runner_detect_ava_script/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_runner_detect_ava_script/check.json`
+- `ts_runner_detect_ava_script` `human.txt`: pass
+  - expected: `fixtures/ts_runner_detect_ava_script/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_runner_detect_ava_script/human.txt`
+- `ts_runner_detect_no_runner` `check.json`: pass
+  - expected: `fixtures/ts_runner_detect_no_runner/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_runner_detect_no_runner/check.json`
+- `ts_runner_detect_no_runner` `human.txt`: pass
+  - expected: `fixtures/ts_runner_detect_no_runner/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_runner_detect_no_runner/human.txt`
+- `ts_static_limit` `check.json`: pass
+  - expected: `fixtures/ts_static_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/ts_static_limit/check.json`
+- `ts_static_limit` `human.txt`: pass
+  - expected: `fixtures/ts_static_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/ts_static_limit/human.txt`
+- `typescript_adversarial_hoc_wrapped_owner` `check.json`: pass
+  - expected: `fixtures/typescript_adversarial_hoc_wrapped_owner/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_adversarial_hoc_wrapped_owner/check.json`
+- `typescript_adversarial_hoc_wrapped_owner` `human.txt`: pass
+  - expected: `fixtures/typescript_adversarial_hoc_wrapped_owner/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_adversarial_hoc_wrapped_owner/human.txt`
+- `typescript_adversarial_hoc_wrapped_owner` `human-full.txt`: pass
+  - expected: `fixtures/typescript_adversarial_hoc_wrapped_owner/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_adversarial_hoc_wrapped_owner/human-full.txt`
+- `typescript_adversarial_mocked_barrel` `check.json`: pass
+  - expected: `fixtures/typescript_adversarial_mocked_barrel/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_adversarial_mocked_barrel/check.json`
+- `typescript_adversarial_mocked_barrel` `human.txt`: pass
+  - expected: `fixtures/typescript_adversarial_mocked_barrel/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_adversarial_mocked_barrel/human.txt`
+- `typescript_adversarial_owner_identity_after_insertion` `check.json`: pass
+  - expected: `fixtures/typescript_adversarial_owner_identity_after_insertion/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_adversarial_owner_identity_after_insertion/check.json`
+- `typescript_adversarial_owner_identity_after_insertion` `human.txt`: pass
+  - expected: `fixtures/typescript_adversarial_owner_identity_after_insertion/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_adversarial_owner_identity_after_insertion/human.txt`
+- `typescript_adversarial_owner_identity_after_insertion` `human-full.txt`: pass
+  - expected: `fixtures/typescript_adversarial_owner_identity_after_insertion/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_adversarial_owner_identity_after_insertion/human-full.txt`
+- `typescript_adversarial_owner_module_mock` `check.json`: pass
+  - expected: `fixtures/typescript_adversarial_owner_module_mock/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_adversarial_owner_module_mock/check.json`
+- `typescript_adversarial_owner_module_mock` `human.txt`: pass
+  - expected: `fixtures/typescript_adversarial_owner_module_mock/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_adversarial_owner_module_mock/human.txt`
+- `typescript_adversarial_owner_module_mock` `human-full.txt`: pass
+  - expected: `fixtures/typescript_adversarial_owner_module_mock/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_adversarial_owner_module_mock/human-full.txt`
+- `typescript_adversarial_render_unobserved_sink` `check.json`: pass
+  - expected: `fixtures/typescript_adversarial_render_unobserved_sink/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_adversarial_render_unobserved_sink/check.json`
+- `typescript_adversarial_render_unobserved_sink` `human.txt`: pass
+  - expected: `fixtures/typescript_adversarial_render_unobserved_sink/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_adversarial_render_unobserved_sink/human.txt`
+- `typescript_adversarial_render_unobserved_sink` `human-full.txt`: pass
+  - expected: `fixtures/typescript_adversarial_render_unobserved_sink/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_adversarial_render_unobserved_sink/human-full.txt`
+- `typescript_adversarial_same_method_other_class` `check.json`: pass
+  - expected: `fixtures/typescript_adversarial_same_method_other_class/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_adversarial_same_method_other_class/check.json`
+- `typescript_adversarial_same_method_other_class` `human.txt`: pass
+  - expected: `fixtures/typescript_adversarial_same_method_other_class/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_adversarial_same_method_other_class/human.txt`
+- `typescript_adversarial_same_method_other_class` `human-full.txt`: pass
+  - expected: `fixtures/typescript_adversarial_same_method_other_class/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_adversarial_same_method_other_class/human-full.txt`
+- `typescript_adversarial_token_substring` `check.json`: pass
+  - expected: `fixtures/typescript_adversarial_token_substring/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_adversarial_token_substring/check.json`
+- `typescript_adversarial_token_substring` `human.txt`: pass
+  - expected: `fixtures/typescript_adversarial_token_substring/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_adversarial_token_substring/human.txt`
+- `typescript_adversarial_token_substring` `human-full.txt`: pass
+  - expected: `fixtures/typescript_adversarial_token_substring/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_adversarial_token_substring/human-full.txt`
+- `typescript_awaited_promise_reject` `check.json`: pass
+  - expected: `fixtures/typescript_awaited_promise_reject/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_awaited_promise_reject/check.json`
+- `typescript_awaited_promise_reject` `human.txt`: pass
+  - expected: `fixtures/typescript_awaited_promise_reject/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_awaited_promise_reject/human.txt`
+- `typescript_boundary_gap` `check.json`: pass
+  - expected: `fixtures/typescript_boundary_gap/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_boundary_gap/check.json`
+- `typescript_boundary_gap` `human.txt`: pass
+  - expected: `fixtures/typescript_boundary_gap/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_boundary_gap/human.txt`
+- `typescript_broad_tothrow` `check.json`: pass
+  - expected: `fixtures/typescript_broad_tothrow/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_broad_tothrow/check.json`
+- `typescript_broad_tothrow` `human.txt`: pass
+  - expected: `fixtures/typescript_broad_tothrow/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_broad_tothrow/human.txt`
+- `typescript_broad_tothrow` `human-full.txt`: pass
+  - expected: `fixtures/typescript_broad_tothrow/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_broad_tothrow/human-full.txt`
+- `typescript_commonjs_require` `check.json`: pass
+  - expected: `fixtures/typescript_commonjs_require/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_commonjs_require/check.json`
+- `typescript_commonjs_require` `human.txt`: pass
+  - expected: `fixtures/typescript_commonjs_require/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_commonjs_require/human.txt`
+- `typescript_disabled` `check.json`: pass
+  - expected: `fixtures/typescript_disabled/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_disabled/check.json`
+- `typescript_disabled` `human.txt`: pass
+  - expected: `fixtures/typescript_disabled/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_disabled/human.txt`
+- `typescript_dynamic_assertion_unresolved` `check.json`: pass
+  - expected: `fixtures/typescript_dynamic_assertion_unresolved/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_dynamic_assertion_unresolved/check.json`
+- `typescript_dynamic_assertion_unresolved` `human.txt`: pass
+  - expected: `fixtures/typescript_dynamic_assertion_unresolved/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_dynamic_assertion_unresolved/human.txt`
+- `typescript_dynamic_assertion_unresolved` `human-full.txt`: pass
+  - expected: `fixtures/typescript_dynamic_assertion_unresolved/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_dynamic_assertion_unresolved/human-full.txt`
+- `typescript_effect_owner_alias` `check.json`: pass
+  - expected: `fixtures/typescript_effect_owner_alias/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_effect_owner_alias/check.json`
+- `typescript_effect_owner_alias` `human.txt`: pass
+  - expected: `fixtures/typescript_effect_owner_alias/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_effect_owner_alias/human.txt`
+- `typescript_effect_owner_alias` `human-full.txt`: pass
+  - expected: `fixtures/typescript_effect_owner_alias/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_effect_owner_alias/human-full.txt`
+- `typescript_effect_probe_shapes` `check.json`: pass
+  - expected: `fixtures/typescript_effect_probe_shapes/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_effect_probe_shapes/check.json`
+- `typescript_effect_probe_shapes` `human.txt`: pass
+  - expected: `fixtures/typescript_effect_probe_shapes/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_effect_probe_shapes/human.txt`
+- `typescript_empty_each` `check.json`: pass
+  - expected: `fixtures/typescript_empty_each/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_empty_each/check.json`
+- `typescript_empty_each` `human.txt`: pass
+  - expected: `fixtures/typescript_empty_each/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_empty_each/human.txt`
+- `typescript_empty_each` `human-full.txt`: pass
+  - expected: `fixtures/typescript_empty_each/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_empty_each/human-full.txt`
+- `typescript_jest_vitest_assertion_facts` `check.json`: pass
+  - expected: `fixtures/typescript_jest_vitest_assertion_facts/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_jest_vitest_assertion_facts/check.json`
+- `typescript_jest_vitest_assertion_facts` `human.txt`: pass
+  - expected: `fixtures/typescript_jest_vitest_assertion_facts/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_jest_vitest_assertion_facts/human.txt`
+- `typescript_limitation_custom_matcher` `check.json`: pass
+  - expected: `fixtures/typescript_limitation_custom_matcher/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_limitation_custom_matcher/check.json`
+- `typescript_limitation_custom_matcher` `human.txt`: pass
+  - expected: `fixtures/typescript_limitation_custom_matcher/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_limitation_custom_matcher/human.txt`
+- `typescript_mocked_module_limit` `check.json`: pass
+  - expected: `fixtures/typescript_mocked_module_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_mocked_module_limit/check.json`
+- `typescript_mocked_module_limit` `human.txt`: pass
+  - expected: `fixtures/typescript_mocked_module_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_mocked_module_limit/human.txt`
+- `typescript_monorepo_package_local` `check.json`: pass
+  - expected: `fixtures/typescript_monorepo_package_local/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_monorepo_package_local/check.json`
+- `typescript_monorepo_package_local` `human.txt`: pass
+  - expected: `fixtures/typescript_monorepo_package_local/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_monorepo_package_local/human.txt`
+- `typescript_negated_t_oracle` `check.json`: pass
+  - expected: `fixtures/typescript_negated_t_oracle/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_negated_t_oracle/check.json`
+- `typescript_negated_t_oracle` `human.txt`: pass
+  - expected: `fixtures/typescript_negated_t_oracle/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_negated_t_oracle/human.txt`
+- `typescript_negated_t_oracle` `human-full.txt`: pass
+  - expected: `fixtures/typescript_negated_t_oracle/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_negated_t_oracle/human-full.txt`
+- `typescript_oracle_helper_gated` `check.json`: pass
+  - expected: `fixtures/typescript_oracle_helper_gated/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_oracle_helper_gated/check.json`
+- `typescript_oracle_helper_gated` `human.txt`: pass
+  - expected: `fixtures/typescript_oracle_helper_gated/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_oracle_helper_gated/human.txt`
+- `typescript_owner_file_match` `check.json`: pass
+  - expected: `fixtures/typescript_owner_file_match/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_owner_file_match/check.json`
+- `typescript_owner_file_match` `human.txt`: pass
+  - expected: `fixtures/typescript_owner_file_match/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_owner_file_match/human.txt`
+- `typescript_owner_kinds` `check.json`: pass
+  - expected: `fixtures/typescript_owner_kinds/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_owner_kinds/check.json`
+- `typescript_owner_kinds` `human.txt`: pass
+  - expected: `fixtures/typescript_owner_kinds/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_owner_kinds/human.txt`
+- `typescript_parse_error_unsupported_syntax` `check.json`: pass
+  - expected: `fixtures/typescript_parse_error_unsupported_syntax/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_parse_error_unsupported_syntax/check.json`
+- `typescript_parse_error_unsupported_syntax` `human.txt`: pass
+  - expected: `fixtures/typescript_parse_error_unsupported_syntax/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_parse_error_unsupported_syntax/human.txt`
+- `typescript_probe_facts` `check.json`: pass
+  - expected: `fixtures/typescript_probe_facts/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_probe_facts/check.json`
+- `typescript_probe_facts` `human.txt`: pass
+  - expected: `fixtures/typescript_probe_facts/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_probe_facts/human.txt`
+- `typescript_reexport_barrel_other_name` `check.json`: pass
+  - expected: `fixtures/typescript_reexport_barrel_other_name/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_reexport_barrel_other_name/check.json`
+- `typescript_reexport_barrel_other_name` `human.txt`: pass
+  - expected: `fixtures/typescript_reexport_barrel_other_name/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_reexport_barrel_other_name/human.txt`
+- `typescript_reexport_directory_star_barrel` `check.json`: pass
+  - expected: `fixtures/typescript_reexport_directory_star_barrel/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_reexport_directory_star_barrel/check.json`
+- `typescript_reexport_directory_star_barrel` `human.txt`: pass
+  - expected: `fixtures/typescript_reexport_directory_star_barrel/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_reexport_directory_star_barrel/human.txt`
+- `typescript_reexport_no_false_credit` `check.json`: pass
+  - expected: `fixtures/typescript_reexport_no_false_credit/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_reexport_no_false_credit/check.json`
+- `typescript_reexport_no_false_credit` `human.txt`: pass
+  - expected: `fixtures/typescript_reexport_no_false_credit/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_reexport_no_false_credit/human.txt`
+- `typescript_reexport_single_hop` `check.json`: pass
+  - expected: `fixtures/typescript_reexport_single_hop/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_reexport_single_hop/check.json`
+- `typescript_reexport_single_hop` `human.txt`: pass
+  - expected: `fixtures/typescript_reexport_single_hop/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_reexport_single_hop/human.txt`
+- `typescript_reexport_two_hop_limit` `check.json`: pass
+  - expected: `fixtures/typescript_reexport_two_hop_limit/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_reexport_two_hop_limit/check.json`
+- `typescript_reexport_two_hop_limit` `human.txt`: pass
+  - expected: `fixtures/typescript_reexport_two_hop_limit/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_reexport_two_hop_limit/human.txt`
+- `typescript_rejects_literal_equality` `check.json`: pass
+  - expected: `fixtures/typescript_rejects_literal_equality/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_rejects_literal_equality/check.json`
+- `typescript_rejects_literal_equality` `human.txt`: pass
+  - expected: `fixtures/typescript_rejects_literal_equality/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_rejects_literal_equality/human.txt`
+- `typescript_rejects_literal_equality` `human-full.txt`: pass
+  - expected: `fixtures/typescript_rejects_literal_equality/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_rejects_literal_equality/human-full.txt`
+- `typescript_rejects_reexport_shadow` `check.json`: pass
+  - expected: `fixtures/typescript_rejects_reexport_shadow/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_rejects_reexport_shadow/check.json`
+- `typescript_rejects_reexport_shadow` `human.txt`: pass
+  - expected: `fixtures/typescript_rejects_reexport_shadow/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_rejects_reexport_shadow/human.txt`
+- `typescript_rejects_reexport_shadow` `human-full.txt`: pass
+  - expected: `fixtures/typescript_rejects_reexport_shadow/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_rejects_reexport_shadow/human-full.txt`
+- `typescript_related_test_matching` `check.json`: pass
+  - expected: `fixtures/typescript_related_test_matching/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_related_test_matching/check.json`
+- `typescript_related_test_matching` `human.txt`: pass
+  - expected: `fixtures/typescript_related_test_matching/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_related_test_matching/human.txt`
+- `typescript_related_test_name_proximity` `check.json`: pass
+  - expected: `fixtures/typescript_related_test_name_proximity/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_related_test_name_proximity/check.json`
+- `typescript_related_test_name_proximity` `human.txt`: pass
+  - expected: `fixtures/typescript_related_test_name_proximity/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_related_test_name_proximity/human.txt`
+- `typescript_return_value_shape` `check.json`: pass
+  - expected: `fixtures/typescript_return_value_shape/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_return_value_shape/check.json`
+- `typescript_return_value_shape` `human.txt`: pass
+  - expected: `fixtures/typescript_return_value_shape/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_return_value_shape/human.txt`
+- `typescript_same_method_owner_identity_positive` `check.json`: pass
+  - expected: `fixtures/typescript_same_method_owner_identity_positive/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_same_method_owner_identity_positive/check.json`
+- `typescript_same_method_owner_identity_positive` `human.txt`: pass
+  - expected: `fixtures/typescript_same_method_owner_identity_positive/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_same_method_owner_identity_positive/human.txt`
+- `typescript_same_method_owner_identity_positive` `human-full.txt`: pass
+  - expected: `fixtures/typescript_same_method_owner_identity_positive/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_same_method_owner_identity_positive/human-full.txt`
+- `typescript_static_limit_taxonomy` `check.json`: pass
+  - expected: `fixtures/typescript_static_limit_taxonomy/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_static_limit_taxonomy/check.json`
+- `typescript_static_limit_taxonomy` `human.txt`: pass
+  - expected: `fixtures/typescript_static_limit_taxonomy/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_static_limit_taxonomy/human.txt`
+- `typescript_strict_actionability` `check.json`: pass
+  - expected: `fixtures/typescript_strict_actionability/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_strict_actionability/check.json`
+- `typescript_strict_actionability` `human.txt`: pass
+  - expected: `fixtures/typescript_strict_actionability/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_strict_actionability/human.txt`
+- `typescript_strong_oracle` `check.json`: pass
+  - expected: `fixtures/typescript_strong_oracle/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_strong_oracle/check.json`
+- `typescript_strong_oracle` `human.txt`: pass
+  - expected: `fixtures/typescript_strong_oracle/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_strong_oracle/human.txt`
+- `typescript_strong_oracle` `human-full.txt`: pass
+  - expected: `fixtures/typescript_strong_oracle/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_strong_oracle/human-full.txt`
+- `typescript_t_truthy_oracle` `check.json`: pass
+  - expected: `fixtures/typescript_t_truthy_oracle/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_t_truthy_oracle/check.json`
+- `typescript_t_truthy_oracle` `human.txt`: pass
+  - expected: `fixtures/typescript_t_truthy_oracle/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_t_truthy_oracle/human.txt`
+- `typescript_t_truthy_oracle` `human-full.txt`: pass
+  - expected: `fixtures/typescript_t_truthy_oracle/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_t_truthy_oracle/human-full.txt`
+- `typescript_t_unknown_method_no_oracle` `check.json`: pass
+  - expected: `fixtures/typescript_t_unknown_method_no_oracle/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_t_unknown_method_no_oracle/check.json`
+- `typescript_t_unknown_method_no_oracle` `human.txt`: pass
+  - expected: `fixtures/typescript_t_unknown_method_no_oracle/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_t_unknown_method_no_oracle/human.txt`
+- `typescript_t_unknown_method_no_oracle` `human-full.txt`: pass
+  - expected: `fixtures/typescript_t_unknown_method_no_oracle/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_t_unknown_method_no_oracle/human-full.txt`
+- `typescript_t_wrong_receiver_no_oracle` `check.json`: pass
+  - expected: `fixtures/typescript_t_wrong_receiver_no_oracle/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_t_wrong_receiver_no_oracle/check.json`
+- `typescript_t_wrong_receiver_no_oracle` `human.txt`: pass
+  - expected: `fixtures/typescript_t_wrong_receiver_no_oracle/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_t_wrong_receiver_no_oracle/human.txt`
+- `typescript_t_wrong_receiver_no_oracle` `human-full.txt`: pass
+  - expected: `fixtures/typescript_t_wrong_receiver_no_oracle/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_t_wrong_receiver_no_oracle/human-full.txt`
+- `typescript_tape_equal_oracle` `check.json`: pass
+  - expected: `fixtures/typescript_tape_equal_oracle/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_tape_equal_oracle/check.json`
+- `typescript_tape_equal_oracle` `human.txt`: pass
+  - expected: `fixtures/typescript_tape_equal_oracle/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_tape_equal_oracle/human.txt`
+- `typescript_tape_equal_oracle` `human-full.txt`: pass
+  - expected: `fixtures/typescript_tape_equal_oracle/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/typescript_tape_equal_oracle/human-full.txt`
+- `typescript_tothrow_exact_oracle` `check.json`: pass
+  - expected: `fixtures/typescript_tothrow_exact_oracle/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_tothrow_exact_oracle/check.json`
+- `typescript_tothrow_exact_oracle` `human.txt`: pass
+  - expected: `fixtures/typescript_tothrow_exact_oracle/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_tothrow_exact_oracle/human.txt`
+- `typescript_tsx_preview` `check.json`: pass
+  - expected: `fixtures/typescript_tsx_preview/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_tsx_preview/check.json`
+- `typescript_tsx_preview` `human.txt`: pass
+  - expected: `fixtures/typescript_tsx_preview/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_tsx_preview/human.txt`
+- `typescript_witness_dead_argument` `check.json`: pass
+  - expected: `fixtures/typescript_witness_dead_argument/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_witness_dead_argument/check.json`
+- `typescript_witness_dead_argument` `human.txt`: pass
+  - expected: `fixtures/typescript_witness_dead_argument/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_witness_dead_argument/human.txt`
+- `typescript_witness_dead_expected` `check.json`: pass
+  - expected: `fixtures/typescript_witness_dead_expected/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_witness_dead_expected/check.json`
+- `typescript_witness_dead_expected` `human.txt`: pass
+  - expected: `fixtures/typescript_witness_dead_expected/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_witness_dead_expected/human.txt`
+- `typescript_witness_local_shadow` `check.json`: pass
+  - expected: `fixtures/typescript_witness_local_shadow/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_witness_local_shadow/check.json`
+- `typescript_witness_local_shadow` `human.txt`: pass
+  - expected: `fixtures/typescript_witness_local_shadow/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_witness_local_shadow/human.txt`
+- `typescript_witness_nested_expression` `check.json`: pass
+  - expected: `fixtures/typescript_witness_nested_expression/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_witness_nested_expression/check.json`
+- `typescript_witness_nested_expression` `human.txt`: pass
+  - expected: `fixtures/typescript_witness_nested_expression/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_witness_nested_expression/human.txt`
+- `typescript_witness_receiver_qualified` `check.json`: pass
+  - expected: `fixtures/typescript_witness_receiver_qualified/expected/check.json`
+  - actual: `target/ripr/fixtures/typescript_witness_receiver_qualified/check.json`
+- `typescript_witness_receiver_qualified` `human.txt`: pass
+  - expected: `fixtures/typescript_witness_receiver_qualified/expected/human.txt`
+  - actual: `target/ripr/fixtures/typescript_witness_receiver_qualified/human.txt`
+- `unrelated_test_mentions_token` `check.json`: pass
+  - expected: `fixtures/unrelated_test_mentions_token/expected/check.json`
+  - actual: `target/ripr/fixtures/unrelated_test_mentions_token/check.json`
+- `unrelated_test_mentions_token` `human.txt`: pass
+  - expected: `fixtures/unrelated_test_mentions_token/expected/human.txt`
+  - actual: `target/ripr/fixtures/unrelated_test_mentions_token/human.txt`
+- `unsafe_boundary_probe` `check.json`: pass
+  - expected: `fixtures/unsafe_boundary_probe/expected/check.json`
+  - actual: `target/ripr/fixtures/unsafe_boundary_probe/check.json`
+- `unsafe_boundary_probe` `human.txt`: pass
+  - expected: `fixtures/unsafe_boundary_probe/expected/human.txt`
+  - actual: `target/ripr/fixtures/unsafe_boundary_probe/human.txt`
+- `unwrap_err_generic_is_err` `check.json`: pass
+  - expected: `fixtures/unwrap_err_generic_is_err/expected/check.json`
+  - actual: `target/ripr/fixtures/unwrap_err_generic_is_err/check.json`
+- `unwrap_err_generic_is_err` `human.txt`: pass
+  - expected: `fixtures/unwrap_err_generic_is_err/expected/human.txt`
+  - actual: `target/ripr/fixtures/unwrap_err_generic_is_err/human.txt`
+- `unwrap_err_sibling_variant` `check.json`: pass
+  - expected: `fixtures/unwrap_err_sibling_variant/expected/check.json`
+  - actual: `target/ripr/fixtures/unwrap_err_sibling_variant/check.json`
+- `unwrap_err_sibling_variant` `human.txt`: pass
+  - expected: `fixtures/unwrap_err_sibling_variant/expected/human.txt`
+  - actual: `target/ripr/fixtures/unwrap_err_sibling_variant/human.txt`
+- `unwrap_err_variant_positive` `check.json`: pass
+  - expected: `fixtures/unwrap_err_variant_positive/expected/check.json`
+  - actual: `target/ripr/fixtures/unwrap_err_variant_positive/check.json`
+- `unwrap_err_variant_positive` `human.txt`: pass
+  - expected: `fixtures/unwrap_err_variant_positive/expected/human.txt`
+  - actual: `target/ripr/fixtures/unwrap_err_variant_positive/human.txt`
+- `unwrap_err_variant_positive` `human-full.txt`: pass
+  - expected: `fixtures/unwrap_err_variant_positive/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/unwrap_err_variant_positive/human-full.txt`
+- `unwrap_err_variant_single_line` `check.json`: pass
+  - expected: `fixtures/unwrap_err_variant_single_line/expected/check.json`
+  - actual: `target/ripr/fixtures/unwrap_err_variant_single_line/check.json`
+- `unwrap_err_variant_single_line` `human.txt`: pass
+  - expected: `fixtures/unwrap_err_variant_single_line/expected/human.txt`
+  - actual: `target/ripr/fixtures/unwrap_err_variant_single_line/human.txt`
+- `weak_error_oracle` `check.json`: pass
+  - expected: `fixtures/weak_error_oracle/expected/check.json`
+  - actual: `target/ripr/fixtures/weak_error_oracle/check.json`
+- `weak_error_oracle` `human.txt`: pass
+  - expected: `fixtures/weak_error_oracle/expected/human.txt`
+  - actual: `target/ripr/fixtures/weak_error_oracle/human.txt`
+- `weak_error_oracle` `human-full.txt`: pass
+  - expected: `fixtures/weak_error_oracle/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/weak_error_oracle/human-full.txt`
+- `weak_error_oracle_assert_matches` `check.json`: pass
+  - expected: `fixtures/weak_error_oracle_assert_matches/expected/check.json`
+  - actual: `target/ripr/fixtures/weak_error_oracle_assert_matches/check.json`
+- `weak_error_oracle_assert_matches` `human.txt`: pass
+  - expected: `fixtures/weak_error_oracle_assert_matches/expected/human.txt`
+  - actual: `target/ripr/fixtures/weak_error_oracle_assert_matches/human.txt`
+- `whole_value_string_from_shadow` `check.json`: pass
+  - expected: `fixtures/whole_value_string_from_shadow/expected/check.json`
+  - actual: `target/ripr/fixtures/whole_value_string_from_shadow/check.json`
+- `whole_value_string_from_shadow` `human.txt`: pass
+  - expected: `fixtures/whole_value_string_from_shadow/expected/human.txt`
+  - actual: `target/ripr/fixtures/whole_value_string_from_shadow/human.txt`
+- `whole_value_string_from_shadow` `human-full.txt`: pass
+  - expected: `fixtures/whole_value_string_from_shadow/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/whole_value_string_from_shadow/human-full.txt`
+- `wildcard_oracle_exact_original` `check.json`: pass
+  - expected: `fixtures/wildcard_oracle_exact_original/expected/check.json`
+  - actual: `target/ripr/fixtures/wildcard_oracle_exact_original/check.json`
+- `wildcard_oracle_exact_original` `human.txt`: pass
+  - expected: `fixtures/wildcard_oracle_exact_original/expected/human.txt`
+  - actual: `target/ripr/fixtures/wildcard_oracle_exact_original/human.txt`
+- `wildcard_oracle_exact_original` `human-full.txt`: pass
+  - expected: `fixtures/wildcard_oracle_exact_original/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/wildcard_oracle_exact_original/human-full.txt`
+- `wildcard_oracle_exact_wrong` `check.json`: pass
+  - expected: `fixtures/wildcard_oracle_exact_wrong/expected/check.json`
+  - actual: `target/ripr/fixtures/wildcard_oracle_exact_wrong/check.json`
+- `wildcard_oracle_exact_wrong` `human.txt`: pass
+  - expected: `fixtures/wildcard_oracle_exact_wrong/expected/human.txt`
+  - actual: `target/ripr/fixtures/wildcard_oracle_exact_wrong/human.txt`
+- `wildcard_oracle_exact_wrong` `human-full.txt`: pass
+  - expected: `fixtures/wildcard_oracle_exact_wrong/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/wildcard_oracle_exact_wrong/human-full.txt`
+- `wildcard_oracle_guarded_original` `check.json`: pass
+  - expected: `fixtures/wildcard_oracle_guarded_original/expected/check.json`
+  - actual: `target/ripr/fixtures/wildcard_oracle_guarded_original/check.json`
+- `wildcard_oracle_guarded_original` `human.txt`: pass
+  - expected: `fixtures/wildcard_oracle_guarded_original/expected/human.txt`
+  - actual: `target/ripr/fixtures/wildcard_oracle_guarded_original/human.txt`
+- `wildcard_oracle_guarded_original` `human-full.txt`: pass
+  - expected: `fixtures/wildcard_oracle_guarded_original/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/wildcard_oracle_guarded_original/human-full.txt`
+- `wildcard_oracle_guarded_wrong` `check.json`: pass
+  - expected: `fixtures/wildcard_oracle_guarded_wrong/expected/check.json`
+  - actual: `target/ripr/fixtures/wildcard_oracle_guarded_wrong/check.json`
+- `wildcard_oracle_guarded_wrong` `human.txt`: pass
+  - expected: `fixtures/wildcard_oracle_guarded_wrong/expected/human.txt`
+  - actual: `target/ripr/fixtures/wildcard_oracle_guarded_wrong/human.txt`
+- `wildcard_oracle_guarded_wrong` `human-full.txt`: pass
+  - expected: `fixtures/wildcard_oracle_guarded_wrong/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/wildcard_oracle_guarded_wrong/human-full.txt`
+- `wildcard_oracle_wildcard_original` `check.json`: pass
+  - expected: `fixtures/wildcard_oracle_wildcard_original/expected/check.json`
+  - actual: `target/ripr/fixtures/wildcard_oracle_wildcard_original/check.json`
+- `wildcard_oracle_wildcard_original` `human.txt`: pass
+  - expected: `fixtures/wildcard_oracle_wildcard_original/expected/human.txt`
+  - actual: `target/ripr/fixtures/wildcard_oracle_wildcard_original/human.txt`
+- `wildcard_oracle_wildcard_original` `human-full.txt`: pass
+  - expected: `fixtures/wildcard_oracle_wildcard_original/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/wildcard_oracle_wildcard_original/human-full.txt`
+- `wildcard_oracle_wildcard_wrong` `check.json`: pass
+  - expected: `fixtures/wildcard_oracle_wildcard_wrong/expected/check.json`
+  - actual: `target/ripr/fixtures/wildcard_oracle_wildcard_wrong/check.json`
+- `wildcard_oracle_wildcard_wrong` `human.txt`: pass
+  - expected: `fixtures/wildcard_oracle_wildcard_wrong/expected/human.txt`
+  - actual: `target/ripr/fixtures/wildcard_oracle_wildcard_wrong/human.txt`
+- `wildcard_oracle_wildcard_wrong` `human-full.txt`: pass
+  - expected: `fixtures/wildcard_oracle_wildcard_wrong/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/wildcard_oracle_wildcard_wrong/human-full.txt`
+- `wrapper_seam_callee_call_attribution` `check.json`: pass
+  - expected: `fixtures/wrapper_seam_callee_call_attribution/expected/check.json`
+  - actual: `target/ripr/fixtures/wrapper_seam_callee_call_attribution/check.json`
+- `wrapper_seam_callee_call_attribution` `human.txt`: pass
+  - expected: `fixtures/wrapper_seam_callee_call_attribution/expected/human.txt`
+  - actual: `target/ripr/fixtures/wrapper_seam_callee_call_attribution/human.txt`
+- `wrapper_seam_callee_call_attribution` `human-full.txt`: pass
+  - expected: `fixtures/wrapper_seam_callee_call_attribution/expected/human-full.txt`
+  - actual: `target/ripr/fixtures/wrapper_seam_callee_call_attribution/human-full.txt`
+
+## Violations
+
+None detected.

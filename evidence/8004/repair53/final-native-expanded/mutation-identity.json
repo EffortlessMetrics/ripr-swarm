@@ -1,0 +1,44 @@
+[
+  {
+    "original": "inherent_receiver_foreign_helper-local-helper-original.rs",
+    "mutant": "inherent_receiver_foreign_helper-local-helper-mutant.rs",
+    "replacement_count": 1,
+    "original_sha256": "2a136aadf8205fe117ff39d7549d67b17fba541ad77caecc8682ff3fc439e6c0",
+    "mutant_sha256": "11ebf70ea8a20b7a4bec417020212bb0aa929be5ec8d4df0340c497cb4d55f87"
+  },
+  {
+    "original": "inherent_receiver_foreign_helper-shadowed-owner-type-original.rs",
+    "mutant": "inherent_receiver_foreign_helper-shadowed-owner-type-mutant.rs",
+    "replacement_count": 1,
+    "original_sha256": "4d900f8eb47e35878bfb4012db5cb1997c57603778d9460b6d1a5d522f6697c0",
+    "mutant_sha256": "a415e74069c30211ff48baec9ad94ce437de25613b8cb2c68400e8bdea0d7561"
+  },
+  {
+    "original": "inherent_receiver_local_wrapper-foreign-entry-original.rs",
+    "mutant": "inherent_receiver_local_wrapper-foreign-entry-mutant.rs",
+    "replacement_count": 1,
+    "original_sha256": "e5bde6ba840d67e782788b72c12f442e247ae61fe63ef20867f413763edb3b67",
+    "mutant_sha256": "5a8dab5224867a2f5c39c13959817e32bbb3c8891935c103591e9354edba6c41"
+  },
+  {
+    "original": "inherent_receiver_local_wrapper-foreign-last-hop-original.rs",
+    "mutant": "inherent_receiver_local_wrapper-foreign-last-hop-mutant.rs",
+    "replacement_count": 1,
+    "original_sha256": "4cabe7a5e23a6c198182424c6ddb99ffdf76de4c9d63dd1b6b3b74ef5b5812d3",
+    "mutant_sha256": "cc50bba030a337b29ce6adfc88e9b3e96ae13d5fa6c7c040ae5b163591ccb3f8"
+  },
+  {
+    "original": "inherent_receiver_macro_discard-sibling-shadow-original.rs",
+    "mutant": "inherent_receiver_macro_discard-sibling-shadow-mutant.rs",
+    "replacement_count": 1,
+    "original_sha256": "e407fc9fbb206f9d7ddf5054b0c19eaa102342f620cd5af479eb65f8085a1c4e",
+    "mutant_sha256": "d9d71b49ad4391ad23bdd04b2c247d95e34245cb7d45731a6158c9d60a3a8fb0"
+  },
+  {
+    "original": "inherent_receiver_macro_discard-standard-original.rs",
+    "mutant": "inherent_receiver_macro_discard-standard-mutant.rs",
+    "replacement_count": 1,
+    "original_sha256": "3aa6574059ba370efdf48903d0e32c8246b3c368975ed2b692edd6c981ce25b5",
+    "mutant_sha256": "6b66ede35c5a5516db28071c02f32e52a3282cf962b270f131c7f003acd5e3ed"
+  }
+]

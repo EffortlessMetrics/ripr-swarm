@@ -1,0 +1,56 @@
+   Compiling ripr v0.11.0 (/workspace/repair8004-composition/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 2m 56s
+     Running tests/assertion_helper_credit.rs (/workspace/ripr-swarm/target/debug/deps/assertion_helper_credit-877f96dfb34bc5ee)
+
+running 23 tests
+test examples_tests_check_helper_does_not_expose ... ok
+test helper_asserting_on_something_else_reads_as_the_inline_assertion ... ok
+test helper_ignoring_its_arguments_does_not_take_the_callers_boundary ... ok
+test harness_false_integration_helper_does_not_expose ... ok
+test excluded_nested_package_integration_helper_does_not_expose ... ok
+test declared_integration_helper_with_autotests_false_still_exposes ... ok
+test integration_assert_macro_helper_does_not_expose ... ok
+test integration_target_check_helper_exposes_the_changed_predicate ... ok
+test integration_helper_path_qualified_owner_does_not_expose ... ok
+test nested_package_integration_helper_exposes_the_changed_predicate ... ok
+test nested_tests_support_check_helper_does_not_expose ... ok
+test nested_tests_support_tests_check_helper_does_not_expose ... ok
+test integration_contains_helper_does_not_expose ... ok
+test production_top_level_check_helper_does_not_expose ... ok
+test integration_helper_that_names_the_owner_twice_does_not_expose ... ok
+test required_features_default_enabled_integration_helper_exposes ... ok
+test required_features_unmet_integration_helper_does_not_expose ... ok
+test test_false_integration_helper_does_not_expose ... ok
+test returned_helper_panic_assertion_exposes_even_when_result_is_discarded ... ok
+test src_tests_module_check_helper_does_not_expose ... ok
+test undeclared_integration_helper_with_autotests_false_does_not_expose ... ok
+test test_false_parent_path_spelling_helper_does_not_expose ... ok
+test returned_helper_keeps_execution_binding_and_value_refusals ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+     Running tests/native_path_roots.rs (/workspace/ripr-swarm/target/debug/deps/native_path_roots-40824fa390a38169)
+
+running 5 tests
+test common::fixture_git::tests::resolves_the_subcommand_past_global_options ... ok
+test common::fixture_git::tests::zero_deadline_reports_timeouts_without_retrying_state ... ok
+test spaced_root_check_and_file_fact_cache_round_trip ... ok
+test long_root_check_round_trips_or_names_the_windows_path_limit ... ok
+test unicode_root_check_and_file_fact_cache_round_trip ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+     Running tests/private_inherent_receiver.rs (/workspace/ripr-swarm/target/debug/deps/private_inherent_receiver-c1a76b19eeb89de7)
+
+running 8 tests
+test public_inherent_method_keeps_cross_target_receiver_attribution ... ok
+test raw_call_line_comment_cannot_supply_inherent_receiver ... ok
+test expired_inner_binding_cannot_type_outer_inherent_receiver ... ok
+test module_assertion_shadow_and_standard_positive_have_consistent_diff_relations ... ok
+test expired_foreign_shadow_cannot_hide_actual_outer_receiver ... ok
+test unique_private_inherent_receiver_keeps_real_calls_and_refuses_serde_decoys ... ok
+test while_let_pattern_cannot_borrow_outer_inherent_receiver_type ... ok
+test scope_items_and_assertion_operand_items_cannot_borrow_outer_receiver_type ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.30s
+

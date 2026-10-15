@@ -1,0 +1,133 @@
+## Summary
+
+Refs #7415. Direct attribution to a parser-established inherent method with `self` requires bounded evidence about the actual receiver. A unique workspace-indexed method name cannot establish that identity when dependencies contain same-named methods.
+
+The cumulative repair covers direct calls in diff and detailed/compact repository reports, refuses comment/expired-binding/item-shadow evidence, and removes declaration-name helper self edges. This repair wave additionally makes the scope-aware AST receiver check authoritative: the legacy text matcher incorrectly vetoed a qualified unit variant and a live outer receiver after a foreign inner shadow expired.
+
+## Swarm / Source Boundary
+
+- [x] Repair/follow-up for the existing same-repo swarm PR.
+- No source-release, publishing, deployment, credential or protection change.
+
+## Source-of-truth Links
+
+- Governing issue: #7415, which remains open.
+- Specs: `RIPR-SPEC-0001`, `RIPR-SPEC-0005`; verdict observations use `RIPR-SPEC-0219`.
+- ADR/plan: existing analyzer ownership; no new architectural decision.
+- Acceptance delta: preserve actual bounded receiver evidence while refusing name-only attribution and recording unsupported-shape accuracy losses honestly.
+
+## Candidate Relationships
+
+- Existing branch: `rook/7415-private-target-attribution`; no replacement PR.
+- Frozen published head: `43f00b54eeb239c240bb71553c30a7bde3a4e080`.
+- Tree: `b520b108591cf046c3498e6558604c9f6101eac7`.
+- Repair commit: `cd141db8d0f10c30d8fd2dea764a4ccac3966a05`, descendant of the preserved `15ca898` candidate.
+- Integration commit parents: repair `cd141db8` + inspected main `67866bc95a72462840c3eedac0f213ed658474b4`.
+- Main had one actual conflict: independent test appends, including landed #7973. The resolution preserves the byte-identical common prefix and both complete additions; its upstream collection-field suite passes.
+- Later main `42b064feae6f1faf3ee3370882f2f6c9ea891d1f` changes TypeScript mock guards, its spec/test/corpus row and traceability. Rust receiver owners/consumers are unchanged. Textual composition succeeds as tree `3ee0987fe590695c7b646d58a19f2ef8f684926c`; execution remains bound to frozen head `43f00b54`. No behind-only restack.
+
+## Scope
+
+One bounded receiver-admission seam, its production consumers, regression evidence and observation snapshots.
+
+## Scope Classification
+
+- [x] One production behavior / architectural seam.
+- Production delta this wave: remove scope-unaware vetoes from inherent receiver admission in both consumers; retain the AST's existing refusals.
+- Evidence delta: paired live/expired-shadow controls, a boundary matrix, production integration coverage, five observed corpus rows and associated spec/traceability/changelog updates.
+- Single criterion: real supported receiver calls retain attribution; unsupported or wrong receivers do not acquire identity from a unique method name.
+- Non-goals: general type/Cargo-target identity, arbitrary factory/value flow, parameter/import resolution, complete macro expansion and helper last-hop identity.
+
+## Support-tier Impact
+
+- No support-tier expansion. The bounded analyzer claim and its accuracy limitations are documented.
+
+## Policy Impact
+
+- Existing spec, fixture and corpus artifact surfaces only. No gate, oracle floor, dependency, process/network allowance, schema or policy exception is relaxed.
+- Changelog: `changelog.d/7415-inherent-receiver-admission.md`, canonical Fixed marker, bullet and trailing issue/PR reference; no exemption or deferred entry.
+
+## Proof
+
+### Five hosted corpus changes
+
+| Cases | Receiver evidence adjudication |
+|---|---|
+| `bytesize-as-kib-div`, `bytesize-as-mb-div` | `ByteSize::gb(43)` / `ByteSize::kib(938948)` are arbitrary lowercase associated factories, outside the constructor-naming admission. |
+| `lib-rstest-fixture-injected-receiver` | `account: Account` is a real typed parameter, but parameter evidence is outside this bounded local-binding contract. |
+| `serde-derive-rename-field-upper`, `serde-derive-rename-variant-lower` | Bare `UpperCase` / `LowerCase` come from `use self::RenameRule::*` inside table loops; import/variant binding and those pattern scopes are unsupported. |
+
+Exact base `89ac47a603092ba7f9f55cf74999b88649621abf` and pristine `15ca898` binaries were executed on identical retained inputs. All five move from `exposed`/credited to `weakly_exposed`/gap. Their runtime truth, ideal verdicts and acceptable verdict lists are unchanged. Only observed rows were refreshed: all five remain scored `false_actionable`. Withholding unsupported identity is conservative attribution; the resulting test advice is still an accuracy loss.
+
+### Executed local proof at frozen head
+
+Rust/Cargo 1.95, one build job, incremental disabled, dev/test debug 0. Rust checks use default features; the corpus helper also builds `lang-perl` then restores default. Test invocations use `--locked`; xtask internal builds use the unchanged repository lockfile without forcing that flag.
+
+- Old-guard red: new matrix rejects the qualified-unit-variant veto; full/compact production control rejects the lost outer receiver. One pass / two intended assertion failures retained.
+- Repaired receiver units: 3 passed; inherited collection-field suite: 1 passed.
+- Production receiver integration: 7 passed; Linux native-path suite: 5 passed; CLI rerun selection: 17 passed. No failures/ignored subjects in these selections.
+- `cargo xtask verdict-corpus check-all`: all 4 corpora pass (36 Perl, 69 Python, 485 Rust, 169 TypeScript cases). Rust oracle accuracy 44/44, zero overclaims; false-actionable verdicts remain visible.
+- `check-fast`: all 15 gates pass, no skips, including strict workspace/all-target Clippy. Independent three-dot inventory: 24 paths, merge-base `67866bc9`.
+- Goldens: one inherited `owner_return_pin_fallible_literal` semantic drift and its two human renders; zero fixture errors. Exact base89, head15ca and final43 binaries produce identical complete parsed JSON on unchanged inputs. No golden was re-blessed. This is retained local failure, not latest-head full-golden clearance.
+- Dogfood passes with nonempty analyzer/action/report controls. Honesty, traceability, doc-artifact and spec-format checks pass.
+
+The earlier hosted run [38660627400](https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38660627400) actually checked out `2fa3df5b4eca7cfb8376a676b2380a59aaf02c35` (head `15ca898` + main `9543a9b`) and failed the corpus step. Its logs report 15,980 tests run/passed **and 2 skipped**, plus a doctest result with **1 ignored**; the earlier “no skips” handoff was incorrect. Artifacts 11939958384 / 11940815369 remain historical evidence, not qualification of this new head.
+
+## Claim Boundary
+
+Draft / REVIEW_INCOMPLETE. Fresh independent exact-head review and new hosted qualification remain required. Existing external threads are not resolved by this handoff: module-level assertion-macro shadowing, foreign helper last-hop attribution and same-named wrapper reach still require explicit adjudication. The repeated-parse cost follow-up remains #8005. The expired-shadow finding has source/test repair here; no external thread was resolved.
+
+No full local workspace-test, latest-head hosted, native Windows, release or UB-review-adoption claim.
+
+## Rollback
+
+Revert the bounded admission/self-edge changes with their tests/fixture/docs together; this restores the demonstrated over-attribution. Reverting this wave's AST-authority fix restores the demonstrated under-attribution. Corpus rows are observations, not changes to runtime truth.
+
+## Spec-Test-Code Traceability
+
+- Spec: `RIPR-SPEC-0005` receiver admission and `RIPR-SPEC-0001` exposure loop.
+- Tests: `inherent_receiver_corpus_boundary_and_live_scope`, full/compact receiver matrix and `private_inherent_receiver` integration suite, registered in `.ripr/traceability.toml`.
+- Code: shared classify receiver authority and detailed/compact relation consumer.
+- Golden outputs: existing `inherent_receiver_operand_item_shadow` fixture/honesty corpus retained and passes; the only golden drift is the separately reproduced inherited fixture above.
+- Metrics: five corpus rows preserve false-actionable accounting.
+- Learning: existing #7415 receiver-attribution learning retained.
+
+## Static Language Check
+
+- [x] Static exposure vocabulary remains conservative.
+- [x] Unsupported evidence is not promoted into proof of test adequacy.
+
+## CI Economics
+
+No workflow or protection change. Existing required lanes remain required. Repeated parsing is not benchmarked or claimed faster; #8005 remains separate. No publishing/on-demand release lane was invoked.
+
+## Engineering Check
+
+- [x] No new panic-family shortcut in production or tests.
+- [x] No new non-Rust programming, dependency, process-spawn or network surface.
+- [x] Public JSON/schema shape unchanged.
+- [x] Original candidate and unique prior evidence preserved.
+
+## Gates
+
+- [x] Focused semantic/integration checks above.
+- [x] Verdict corpus check-all.
+- [x] check-fast / strict workspace-all-target Clippy.
+- [x] Dogfood, honesty, traceability, doc-artifacts and spec format.
+- [ ] Full goldens: one reproduced inherited fixture drift remains; no re-bless.
+- [ ] Fresh independent published-head review.
+- [ ] Required hosted checks for this head.
+
+Broad workspace tests, docs/package/release checks and extension checks were not rerun as a substitute for hosted qualification.
+
+## Retained Evidence and Continuation
+
+Historical immutable packets remain available:
+[original](https://github.com/EffortlessMetrics/ripr-swarm/tree/fd044edea302d38fba7b8e6e8ba81cee9a78f804/evidence/8004/receiver-attribution),
+[follow-up red/composition](https://github.com/EffortlessMetrics/ripr-swarm/tree/7dafbebe35d5e3c2cd0b66331969cb300623d463/evidence/8004/followup),
+[item-guard repair](https://github.com/EffortlessMetrics/ripr-swarm/tree/faff142b4607c65bf02e431a73562ad21ba23766/evidence/8004/item-guard).
+
+[Current immutable corpus/source repair packet](https://github.com/EffortlessMetrics/ripr-swarm/tree/afbcaaf4c2c2d4d4919484ba0112fde281b03337/evidence/8004/corpus-repair): 93 files / 3,947,535 bytes. Manifest SHA256 `b5b126500547af5e90b52d3ad22e6d72e524c3950c1863916d9fbf1a5c94a51c`; remote manifest downloaded and rehashed successfully. It retains exact base/head/final raw reports, red controls, all terminal logs, conflict-byte identity, historical hosted checkout/skip correction and inherited-golden equality. This evidence-only branch has no rival PR.
+
+The canonical [PR-native continuation record](https://github.com/EffortlessMetrics/ripr-swarm/pull/8004#issuecomment-6186356861) binds the frozen candidate, review gaps, terminal validation, retained resources and next owner/resume condition. Keep Draft while the named concerns, fresh independent review and required hosted proof are reconciled. The source candidate is clean and published; there is no unpublished repair delta or execution-recovery blocker.
+

@@ -1,0 +1,6 @@
+    Finished `dev` profile [unoptimized] target(s) in 0.46s
+     Running `target/debug/xtask dogfood`
+$ cargo build -p ripr
+    Finished `dev` profile [unoptimized] target(s) in 0.53s
+$ cargo build -p ripr
+    Finished `dev` profile [unoptimized] target(s) in 0.66s

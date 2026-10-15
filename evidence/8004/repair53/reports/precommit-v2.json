@@ -1,0 +1,617 @@
+{
+  "schema_version": "0.2",
+  "composition": "local_precommit",
+  "status": "pass",
+  "failure_kind": null,
+  "repository_root": "$REPO",
+  "head_sha": "53e22999d19d07a28a355b740d62c01c25aea541",
+  "merge_base_ref": "origin/main",
+  "merge_base_sha": "67866bc95a72462840c3eedac0f213ed658474b4",
+  "change_set": {
+    "changes": [
+      {
+        "kind": "added",
+        "path": "changelog.d/7415-inherent-receiver-admission.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "crates/ripr/tests/private_inherent_receiver.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_foreign_helper/SPEC.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_foreign_helper/controls/local-helper.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_foreign_helper/controls/shadowed-owner-type.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_foreign_helper/diff.patch",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_foreign_helper/expected/CHANGELOG.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_foreign_helper/expected/check.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_foreign_helper/expected/human-full.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_foreign_helper/expected/human.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_foreign_helper/input/Cargo.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_foreign_helper/input/src/lib.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_local_wrapper/SPEC.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_local_wrapper/controls/foreign-entry.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_local_wrapper/controls/foreign-last-hop.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_local_wrapper/diff.patch",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_local_wrapper/expected/CHANGELOG.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_local_wrapper/expected/check.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_local_wrapper/expected/human-full.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_local_wrapper/expected/human.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_local_wrapper/input/Cargo.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_local_wrapper/input/src/lib.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_macro_discard/SPEC.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_macro_discard/controls/sibling-shadow.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_macro_discard/controls/standard.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_macro_discard/diff.patch",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_macro_discard/expected/CHANGELOG.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_macro_discard/expected/check.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_macro_discard/expected/human-full.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_macro_discard/expected/human.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_macro_discard/input/Cargo.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_macro_discard/input/src/lib.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_operand_item_shadow/SPEC.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_operand_item_shadow/diff.patch",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_operand_item_shadow/expected/CHANGELOG.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_operand_item_shadow/expected/check.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_operand_item_shadow/expected/human-full.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_operand_item_shadow/expected/human.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_operand_item_shadow/input/Cargo.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/inherent_receiver_operand_item_shadow/input/src/lib.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": ".ripr/traceability.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/mod.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/owner_pin.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/related_tests.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/test_grip_evidence/related_tests.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/test_grip_evidence/tests.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "docs/LEARNINGS.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "fixtures/evidence-promotion-honesty-corpus/corpus.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "fixtures/rust-verdict-corpus/expected/rows/bytesize-as-kib-div.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "fixtures/rust-verdict-corpus/expected/rows/bytesize-as-mb-div.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "fixtures/rust-verdict-corpus/expected/rows/lib-rstest-fixture-injected-receiver.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "fixtures/rust-verdict-corpus/expected/rows/serde-derive-rename-field-upper.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "fixtures/rust-verdict-corpus/expected/rows/serde-derive-rename-variant-lower.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      }
+    ],
+    "complete": true,
+    "limitations": []
+  },
+  "impact_plan": {
+    "impacted_packages": [
+      "ripr",
+      "xtask"
+    ],
+    "workspace_clippy": false,
+    "workspace_widening_reason": null,
+    "skipped_reason": null
+  },
+  "commands": [
+    {
+      "command": "cargo metadata --format-version 1 --manifest-path $REPO/Cargo.toml",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": null
+    },
+    {
+      "command": "existing repository policy precommit",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": null
+    },
+    {
+      "command": "git diff --check 67866bc95a72462840c3eedac0f213ed658474b4...HEAD",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "git",
+        "argv": [
+          "-C",
+          "$REPO",
+          "diff",
+          "--check",
+          "67866bc95a72462840c3eedac0f213ed658474b4...HEAD"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "elapsed_ms": 100,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": null
+      }
+    },
+    {
+      "command": "git diff --cached --check",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "git",
+        "argv": [
+          "-C",
+          "$REPO",
+          "diff",
+          "--cached",
+          "--check"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "elapsed_ms": 100,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": null
+      }
+    },
+    {
+      "command": "git diff --check",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "git",
+        "argv": [
+          "-C",
+          "$REPO",
+          "diff",
+          "--check"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "elapsed_ms": 100,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": null
+      }
+    },
+    {
+      "command": "cargo clippy --manifest-path $REPO/Cargo.toml -p ripr --all-targets -- -D warnings",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "cargo",
+        "argv": [
+          "clippy",
+          "--manifest-path",
+          "$REPO/Cargo.toml",
+          "-p",
+          "ripr",
+          "--all-targets",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "elapsed_ms": 601,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": null
+      }
+    },
+    {
+      "command": "cargo clippy --manifest-path $REPO/Cargo.toml -p xtask --all-targets -- -D warnings",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "cargo",
+        "argv": [
+          "clippy",
+          "--manifest-path",
+          "$REPO/Cargo.toml",
+          "-p",
+          "xtask",
+          "--all-targets",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "elapsed_ms": 295413,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": {
+          "compiling_lines": null,
+          "checking_lines": 9,
+          "fresh_lines": null
+        }
+      }
+    }
+  ],
+  "skipped": [],
+  "limitations": [],
+  "report_digest": "sha256:e548f00543d2a365f99aaf74aaffdfa75541123cde88368ba568912118b48ea9"
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": "0.1",
+  "status": "pass",
+  "drift_count": 0,
+  "provenance": {
+    "binary": "/workspace/ripr-swarm/target/debug/ripr",
+    "ripr_version": "ripr 0.11.0 (53e22999d19d07a28a355b740d62c01c25aea541)",
+    "revision": "53e22999d19d07a28a355b740d62c01c25aea541"
+  },
+  "entries": [
+
+  ],
+  "violations": []
+}

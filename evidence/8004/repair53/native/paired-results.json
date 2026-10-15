@@ -1,0 +1,17 @@
+[
+  {
+    "case": "macro-standard",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "case": "macro-standard-mutant",
+    "compile_exit": 0,
+    "test_exit": 101
+  },
+  {
+    "case": "qualified-null-mutant",
+    "compile_exit": 0,
+    "test_exit": 101
+  }
+]

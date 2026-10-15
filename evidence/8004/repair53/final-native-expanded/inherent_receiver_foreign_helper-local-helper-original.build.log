@@ -1,0 +1,25 @@
+warning: variant `Null` is never constructed
+ --> /workspace/repair8004-evidence/final-native-expanded/inherent_receiver_foreign_helper-local-helper-original.rs:2:42
+  |
+2 | pub(crate) enum JsonValue { Object(u32), Null }
+  |                 ---------                ^^^^
+  |                 |
+  |                 variant in this enum
+  |
+  = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `Foreign` is never constructed
+  --> /workspace/repair8004-evidence/final-native-expanded/inherent_receiver_foreign_helper-local-helper-original.rs:11:8
+   |
+11 | struct Foreign;
+   |        ^^^^^^^
+
+warning: trait `ForeignView` is never used
+  --> /workspace/repair8004-evidence/final-native-expanded/inherent_receiver_foreign_helper-local-helper-original.rs:12:7
+   |
+12 | trait ForeignView { fn as_object(&self) -> Option<u32> { Some(7) } }
+   |       ^^^^^^^^^^^
+
+warning: 3 warnings emitted
+

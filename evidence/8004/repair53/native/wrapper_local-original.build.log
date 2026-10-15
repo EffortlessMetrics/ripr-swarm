@@ -1,0 +1,21 @@
+warning: variant `Null` is never constructed
+ --> /workspace/repair8004-evidence/native/wrapper_local-original.rs:2:42
+  |
+2 | pub(crate) enum JsonValue { Object(u32), Null }
+  |                 ---------                ^^^^
+  |                 |
+  |                 variant in this enum
+  |
+  = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `inner` is never read
+  --> /workspace/repair8004-evidence/native/wrapper_local-original.rs:11:18
+   |
+11 | struct Wrapper { inner: JsonValue }
+   |        -------   ^^^^^
+   |        |
+   |        field in this struct
+
+warning: 2 warnings emitted
+

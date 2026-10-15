@@ -1,0 +1,41 @@
+[
+  {
+    "argv": [
+      "git",
+      "show",
+      "-s",
+      "--format=%H %T %P",
+      "HEAD"
+    ],
+    "exit": 0,
+    "stdout": "53e22999d19d07a28a355b740d62c01c25aea541 07100736ea448043831337f64d45c7a26b6d1b79 43f00b54eeb239c240bb71553c30a7bde3a4e080\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "status",
+      "--porcelain=v1"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "diff",
+      "--name-only",
+      "HEAD^",
+      "HEAD",
+      "--",
+      "Cargo.lock",
+      "Cargo.toml",
+      ".github",
+      ".allow"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  }
+]

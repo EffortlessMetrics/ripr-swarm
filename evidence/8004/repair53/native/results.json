@@ -1,0 +1,72 @@
+[
+  {
+    "case": "wrapper_local",
+    "mutant": false,
+    "compile_exit": 0,
+    "test_exit": 0,
+    "source": "/workspace/repair8004-evidence/native/wrapper_local-original.rs"
+  },
+  {
+    "case": "wrapper_local",
+    "mutant": true,
+    "compile_exit": 0,
+    "test_exit": 101,
+    "source": "/workspace/repair8004-evidence/native/wrapper_local-mutant.rs"
+  },
+  {
+    "case": "helper_foreign",
+    "mutant": false,
+    "compile_exit": 0,
+    "test_exit": 0,
+    "source": "/workspace/repair8004-evidence/native/helper_foreign-original.rs"
+  },
+  {
+    "case": "helper_foreign",
+    "mutant": true,
+    "compile_exit": 0,
+    "test_exit": 0,
+    "source": "/workspace/repair8004-evidence/native/helper_foreign-mutant.rs"
+  },
+  {
+    "case": "macro_discard",
+    "mutant": false,
+    "compile_exit": 0,
+    "test_exit": 0,
+    "source": "/workspace/repair8004-evidence/native/macro_discard-original.rs"
+  },
+  {
+    "case": "macro_discard",
+    "mutant": true,
+    "compile_exit": 0,
+    "test_exit": 0,
+    "source": "/workspace/repair8004-evidence/native/macro_discard-mutant.rs"
+  },
+  {
+    "case": "qualified",
+    "mutant": false,
+    "compile_exit": 0,
+    "test_exit": 0,
+    "source": "/workspace/repair8004-evidence/native/qualified-original.rs"
+  },
+  {
+    "case": "qualified",
+    "mutant": true,
+    "compile_exit": 0,
+    "test_exit": 0,
+    "source": "/workspace/repair8004-evidence/native/qualified-mutant.rs"
+  },
+  {
+    "case": "live",
+    "mutant": false,
+    "compile_exit": 0,
+    "test_exit": 0,
+    "source": "/workspace/repair8004-evidence/native/live-original.rs"
+  },
+  {
+    "case": "live",
+    "mutant": true,
+    "compile_exit": 0,
+    "test_exit": 101,
+    "source": "/workspace/repair8004-evidence/native/live-mutant.rs"
+  }
+]

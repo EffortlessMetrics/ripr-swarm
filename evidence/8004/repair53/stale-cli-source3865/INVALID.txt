@@ -1,0 +1,1 @@
+Invalid for baseline43: CLI --version reports 3865a4d07e28c67be720c32692ed9896875bfda9. xtask check-fast built the library but did not refresh the old standalone binary before its fmt failure. Retained outputs establish no baseline43 observation.

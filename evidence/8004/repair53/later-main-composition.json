@@ -1,0 +1,9 @@
+{
+  "main": "37a31f949791827e6f29532d35ca980c19a3d70a",
+  "candidate": "53e22999d19d07a28a355b740d62c01c25aea541",
+  "exit": 0,
+  "stdout": "665505641bd21f018359268ed614a34b205bf45b\n",
+  "stderr": "",
+  "execution": "not run; execution remains bound to frozen main7dee composition72e",
+  "inspection": "two commits: MCP id-aware outer response budget, transitive reach limitation beyond five hops. Latter names unresolved weak/opaque reach after existing witnesses, does not add direct/helper/high receiver edges or change bounded inherent helper authority. Candidate control subjects are within the existing bound; no source restack."
+}

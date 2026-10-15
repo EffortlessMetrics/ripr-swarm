@@ -1,0 +1,158 @@
+[
+  {
+    "case": "inherent_receiver_macro_discard",
+    "format": "json",
+    "rows": [
+      {
+        "classification": "weakly_exposed",
+        "related": [
+          {
+            "name": "ignored_operand",
+            "reason": "weak_token_substring",
+            "confidence": "low"
+          }
+        ]
+      },
+      {
+        "classification": "reachable_unrevealed",
+        "related": [
+          {
+            "name": "ignored_operand",
+            "reason": "weak_token_substring",
+            "confidence": "low"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case": "inherent_receiver_macro_discard",
+    "format": "repo-exposure-json",
+    "rows": [
+      {
+        "expression": "match self",
+        "grip_class": "activation_unknown",
+        "reach": "weak"
+      },
+      {
+        "expression": "Self::Object(value) =>",
+        "grip_class": "activation_unknown",
+        "reach": "weak"
+      },
+      {
+        "expression": "Some(*value)",
+        "grip_class": "activation_unknown",
+        "reach": "weak"
+      },
+      {
+        "expression": "_ =>",
+        "grip_class": "activation_unknown",
+        "reach": "weak"
+      }
+    ]
+  },
+  {
+    "case": "inherent_receiver_foreign_helper",
+    "format": "json",
+    "rows": [
+      {
+        "classification": "weakly_exposed",
+        "related": [
+          {
+            "name": "foreign_helper",
+            "reason": "same_test_file",
+            "confidence": "medium"
+          }
+        ]
+      },
+      {
+        "classification": "weakly_exposed",
+        "related": [
+          {
+            "name": "foreign_helper",
+            "reason": "same_test_file",
+            "confidence": "medium"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case": "inherent_receiver_foreign_helper",
+    "format": "repo-exposure-json",
+    "rows": [
+      {
+        "expression": "match self",
+        "grip_class": "opaque",
+        "reach": "weak"
+      },
+      {
+        "expression": "Self::Object(value) =>",
+        "grip_class": "opaque",
+        "reach": "weak"
+      },
+      {
+        "expression": "Some(*value)",
+        "grip_class": "opaque",
+        "reach": "weak"
+      },
+      {
+        "expression": "_ =>",
+        "grip_class": "opaque",
+        "reach": "weak"
+      }
+    ]
+  },
+  {
+    "case": "inherent_receiver_local_wrapper",
+    "format": "json",
+    "rows": [
+      {
+        "classification": "weakly_exposed",
+        "related": [
+          {
+            "name": "wrapper_route",
+            "reason": "weak_token_substring",
+            "confidence": "low"
+          }
+        ]
+      },
+      {
+        "classification": "weakly_exposed",
+        "related": [
+          {
+            "name": "wrapper_route",
+            "reason": "weak_token_substring",
+            "confidence": "low"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case": "inherent_receiver_local_wrapper",
+    "format": "repo-exposure-json",
+    "rows": [
+      {
+        "expression": "match self",
+        "grip_class": "strongly_gripped",
+        "reach": "yes"
+      },
+      {
+        "expression": "Self::Object(value) =>",
+        "grip_class": "strongly_gripped",
+        "reach": "yes"
+      },
+      {
+        "expression": "Some(*value)",
+        "grip_class": "strongly_gripped",
+        "reach": "yes"
+      },
+      {
+        "expression": "_ =>",
+        "grip_class": "strongly_gripped",
+        "reach": "yes"
+      }
+    ]
+  }
+]

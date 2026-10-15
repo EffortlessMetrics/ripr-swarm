@@ -1,0 +1,26 @@
+[
+  {
+    "case": "inherent_receiver_macro_discard",
+    "source_digest": "sha256:126643acb3205eadba43dfa535e8214cade4ae5145dae5ebbae5ac75fc64b7a2",
+    "base_repair_source_subject_equal": true,
+    "base_run_status": "complete",
+    "repair_run_status": "complete",
+    "owner_seams": 4
+  },
+  {
+    "case": "inherent_receiver_foreign_helper",
+    "source_digest": "sha256:3624fa91072c595d16150b6ee0ffad48731ecb88dc493c1f1573bede5ee70648",
+    "base_repair_source_subject_equal": true,
+    "base_run_status": "complete",
+    "repair_run_status": "complete",
+    "owner_seams": 4
+  },
+  {
+    "case": "inherent_receiver_local_wrapper",
+    "source_digest": "sha256:a58ee04c413dc8672102e9937c1bf16deafb107c9d2ef6da50e765a20a0be56a",
+    "base_repair_source_subject_equal": true,
+    "base_run_status": "complete",
+    "repair_run_status": "complete",
+    "owner_seams": 4
+  }
+]

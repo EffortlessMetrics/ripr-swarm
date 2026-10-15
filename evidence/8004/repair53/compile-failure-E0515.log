@@ -1,0 +1,13 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+error[E0515]: cannot return value referencing function parameter `facts`
+    --> crates/ripr/src/analysis/classify/related_tests.rs:3358:30
+     |
+3358 |                 .map(|facts| facts.source.as_ref()),
+     |                              -----^^^^^^^^^^^^^^^^
+     |                              |
+     |                              returns a value referencing data owned by the current function
+     |                              `facts` is borrowed here
+
+For more information about this error, try `rustc --explain E0515`.
+error: could not compile `ripr` (lib test) due to 1 previous error
+native_exit=101

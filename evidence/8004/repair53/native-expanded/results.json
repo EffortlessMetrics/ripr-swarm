@@ -1,0 +1,86 @@
+[
+  {
+    "source": "fixtures/inherent_receiver_foreign_helper/controls/local-helper.rs",
+    "mutant": false,
+    "compile_exit": 0,
+    "test_exit": 0,
+    "expected_test_failure": false
+  },
+  {
+    "source": "fixtures/inherent_receiver_foreign_helper/controls/local-helper.rs",
+    "mutant": true,
+    "compile_exit": 0,
+    "test_exit": 101,
+    "expected_test_failure": true
+  },
+  {
+    "source": "fixtures/inherent_receiver_foreign_helper/controls/shadowed-owner-type.rs",
+    "mutant": false,
+    "compile_exit": 0,
+    "test_exit": 0,
+    "expected_test_failure": false
+  },
+  {
+    "source": "fixtures/inherent_receiver_foreign_helper/controls/shadowed-owner-type.rs",
+    "mutant": true,
+    "compile_exit": 0,
+    "test_exit": 0,
+    "expected_test_failure": false
+  },
+  {
+    "source": "fixtures/inherent_receiver_local_wrapper/controls/foreign-entry.rs",
+    "mutant": false,
+    "compile_exit": 0,
+    "test_exit": 0,
+    "expected_test_failure": false
+  },
+  {
+    "source": "fixtures/inherent_receiver_local_wrapper/controls/foreign-entry.rs",
+    "mutant": true,
+    "compile_exit": 0,
+    "test_exit": 0,
+    "expected_test_failure": false
+  },
+  {
+    "source": "fixtures/inherent_receiver_local_wrapper/controls/foreign-last-hop.rs",
+    "mutant": false,
+    "compile_exit": 0,
+    "test_exit": 0,
+    "expected_test_failure": false
+  },
+  {
+    "source": "fixtures/inherent_receiver_local_wrapper/controls/foreign-last-hop.rs",
+    "mutant": true,
+    "compile_exit": 0,
+    "test_exit": 0,
+    "expected_test_failure": false
+  },
+  {
+    "source": "fixtures/inherent_receiver_macro_discard/controls/standard.rs",
+    "mutant": false,
+    "compile_exit": 0,
+    "test_exit": 0,
+    "expected_test_failure": false
+  },
+  {
+    "source": "fixtures/inherent_receiver_macro_discard/controls/standard.rs",
+    "mutant": true,
+    "compile_exit": 0,
+    "test_exit": 101,
+    "expected_test_failure": true
+  },
+  {
+    "source": "fixtures/inherent_receiver_macro_discard/controls/sibling-shadow.rs",
+    "mutant": false,
+    "compile_exit": 0,
+    "test_exit": 0,
+    "expected_test_failure": false
+  },
+  {
+    "source": "fixtures/inherent_receiver_macro_discard/controls/sibling-shadow.rs",
+    "mutant": true,
+    "compile_exit": 0,
+    "test_exit": 101,
+    "expected_test_failure": true
+  }
+]

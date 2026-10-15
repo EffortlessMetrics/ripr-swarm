@@ -1,0 +1,21 @@
+
+running 2 tests
+test tests::expired_inner ... ok
+test tests::live_outer ... FAILED
+
+failures:
+
+---- tests::live_outer stdout ----
+
+thread 'tests::live_outer' (5573) panicked at /workspace/repair8004-evidence/native/live-mutant.rs:19:9:
+assertion `left == right` failed
+  left: None
+ right: Some(7)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::live_outer
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

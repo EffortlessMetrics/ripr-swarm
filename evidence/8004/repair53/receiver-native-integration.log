@@ -1,0 +1,27 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 2m 24s
+     Running tests/native_path_roots.rs (target/debug/deps/native_path_roots-40824fa390a38169)
+
+running 5 tests
+test common::fixture_git::tests::resolves_the_subcommand_past_global_options ... ok
+test common::fixture_git::tests::zero_deadline_reports_timeouts_without_retrying_state ... ok
+test long_root_check_round_trips_or_names_the_windows_path_limit ... ok
+test spaced_root_check_and_file_fact_cache_round_trip ... ok
+test unicode_root_check_and_file_fact_cache_round_trip ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running tests/private_inherent_receiver.rs (target/debug/deps/private_inherent_receiver-c1a76b19eeb89de7)
+
+running 8 tests
+test public_inherent_method_keeps_cross_target_receiver_attribution ... ok
+test expired_foreign_shadow_cannot_hide_actual_outer_receiver ... ok
+test raw_call_line_comment_cannot_supply_inherent_receiver ... ok
+test expired_inner_binding_cannot_type_outer_inherent_receiver ... ok
+test module_assertion_shadow_and_standard_positive_have_consistent_diff_relations ... ok
+test unique_private_inherent_receiver_keeps_real_calls_and_refuses_serde_decoys ... ok
+test while_let_pattern_cannot_borrow_outer_inherent_receiver_type ... ok
+test scope_items_and_assertion_operand_items_cannot_borrow_outer_receiver_type ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.57s
+

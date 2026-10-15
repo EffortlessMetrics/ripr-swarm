@@ -1,0 +1,5 @@
+{
+  "source": "53e22999d19d07a28a355b740d62c01c25aea541",
+  "sha256": "bb3dcf5cf6dfadaa5bdbbc75a2fc20dc26e8b5dd8c855b9523f8bc0fc827d87f",
+  "scope": "fixture runner/normalizer unchanged; main diff in this module only scaffolding new fixture bless guidance and its tests; driver invokes Cargo on actual composition cwd before using CLI"
+}

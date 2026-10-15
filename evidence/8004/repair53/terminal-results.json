@@ -1,0 +1,22 @@
+{
+  "source": "53e22999d19d07a28a355b740d62c01c25aea541",
+  "source_tree": "07100736ea448043831337f64d45c7a26b6d1b79",
+  "composition": "72e25151dd03a669575c57175321072e69b24d42",
+  "composition_tree": "c80d13b636ac00b1fc695c5f41ff42e058183556",
+  "terminal_exit_observed": {
+    "final-head-test-grip-suite": 0,
+    "final-head-related-tests-suite": 0,
+    "final-head-cli-rerun-units": 0,
+    "final-head-verdict-corpus-all": 0,
+    "final-head-goldens": 0,
+    "final-check-fast": 0,
+    "final-precommit": 0,
+    "composition-test-grip-suite": 0,
+    "composition-related-tests-suite": 0,
+    "composition-native-integration": 0,
+    "composition-fixture-macro": 0,
+    "composition-fixture-foreign": 0,
+    "composition-fixture-wrapper": 0
+  },
+  "missing": "fresh independent published-head review, required hosted default-feature qualification; no whole-workspace or Windows claim"
+}

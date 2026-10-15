@@ -1,0 +1,1 @@
+2026-10-15 08:44 UTC: git diff --cached --check stopped the commit (exit 2): fixtures/inherent_receiver_macro_discard/controls/standard.rs:13 trailing whitespace. No commit was created. Removed whitespace on the empty line; native controls are rerun on final bytes.

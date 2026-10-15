@@ -1,0 +1,26 @@
+[
+  {
+    "report": "inherent_receiver_local_wrapper-repo-exposure-json.json",
+    "same_findings_or_seams_as_paired_repair": true
+  },
+  {
+    "report": "inherent_receiver_local_wrapper-json.json",
+    "same_findings_or_seams_as_paired_repair": true
+  },
+  {
+    "report": "inherent_receiver_macro_discard-repo-exposure-json.json",
+    "same_findings_or_seams_as_paired_repair": true
+  },
+  {
+    "report": "inherent_receiver_foreign_helper-json.json",
+    "same_findings_or_seams_as_paired_repair": true
+  },
+  {
+    "report": "inherent_receiver_macro_discard-json.json",
+    "same_findings_or_seams_as_paired_repair": true
+  },
+  {
+    "report": "inherent_receiver_foreign_helper-repo-exposure-json.json",
+    "same_findings_or_seams_as_paired_repair": true
+  }
+]

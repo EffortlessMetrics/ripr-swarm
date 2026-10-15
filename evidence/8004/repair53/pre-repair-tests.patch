@@ -1,0 +1,138 @@
+diff --git a/crates/ripr/src/analysis/test_grip_evidence/tests.rs b/crates/ripr/src/analysis/test_grip_evidence/tests.rs
+index 0bb9bb672..ef1c7cb96 100644
+--- a/crates/ripr/src/analysis/test_grip_evidence/tests.rs
++++ b/crates/ripr/src/analysis/test_grip_evidence/tests.rs
+@@ -19674,3 +19674,79 @@ fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), S
+     }
+     Ok(())
+ }
++
++/// Independent review #8004: each source is also a real native mutation control.
++#[test]
++fn inherent_receiver_review_last_hop_and_wrapper_controls() -> Result<(), String> {
++    for (source, name, expected) in [
++        (
++            include_str!(
++                "../../../../../fixtures/inherent_receiver_local_wrapper/input/src/lib.rs"
++            ),
++            "wrapper_route",
++            Some(RelationReason::HelperOwnerCall),
++        ),
++        (
++            include_str!(
++                "../../../../../fixtures/inherent_receiver_foreign_helper/input/src/lib.rs"
++            ),
++            "foreign_helper",
++            None,
++        ),
++        (
++            include_str!(
++                "../../../../../fixtures/inherent_receiver_macro_discard/input/src/lib.rs"
++            ),
++            "ignored_operand",
++            None,
++        ),
++    ] {
++        let path = PathBuf::from("src/lib.rs");
++        let index = index_from_files(&[(path.clone(), source)])?;
++        let seams: Vec<_> = inventory_seams_from_index(&[path], &index)
++            .into_iter()
++            .filter(|seam| seam.owner() == "src/lib.rs::impl JsonValue::as_object")
++            .collect();
++        assert_eq!(seams.len(), 4, "all owner seams must exist");
++        let context = CompactGripContext::new(&index);
++        for seam in &seams {
++            let full = evidence_for_seam(seam, &index);
++            let compact = find_related_tests_with_context(seam, &context);
++            let full_rows: BTreeMap<_, _> = full
++                .related_tests
++                .iter()
++                .map(|t| (t.test_name.as_str(), t.relation_reason))
++                .collect();
++            let compact_rows: BTreeMap<_, _> = compact
++                .iter()
++                .map(|(t, r)| (t.test.name.as_str(), *r))
++                .collect();
++            assert_eq!(full_rows, compact_rows);
++            assert!(
++                full_rows.contains_key(name),
++                "retain the subject: {name}: {full_rows:?}"
++            );
++            if let Some(expected) = expected {
++                assert_eq!(
++                    full_rows.get(name),
++                    Some(&expected),
++                    "{name}: {full_rows:?}"
++                );
++            } else {
++                assert!(
++                    !matches!(
++                        full_rows.get(name),
++                        Some(RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall)
++                    ),
++                    "{name}: {full_rows:?}"
++                );
++                assert_ne!(
++                    full.reach.state,
++                    StageState::Yes,
++                    "negative must not reach: {name}"
++                );
++            }
++        }
++    }
++    Ok(())
++}
+diff --git a/crates/ripr/tests/private_inherent_receiver.rs b/crates/ripr/tests/private_inherent_receiver.rs
+index 36e391950..627a4b086 100644
+--- a/crates/ripr/tests/private_inherent_receiver.rs
++++ b/crates/ripr/tests/private_inherent_receiver.rs
+@@ -411,3 +411,49 @@ fn scope_items_and_assertion_operand_items_cannot_borrow_outer_receiver_type() -
+     }
+     Ok(())
+ }
++
++#[test]
++fn module_assertion_shadow_and_standard_positive_have_consistent_diff_relations()
++-> Result<(), String> {
++    let discarded =
++        include_str!("../../../fixtures/inherent_receiver_macro_discard/input/src/lib.rs");
++    let shadow = "macro_rules! assert_eq { ($($tokens:tt)*) => {}; }";
++    assert!(
++        discarded.contains(shadow),
++        "the control must contain the discarded macro"
++    );
++    for (source, expected) in [
++        (discarded.to_owned(), RelationReason::WeakTokenSubstring),
++        (
++            discarded.replace(shadow, ""),
++            RelationReason::DirectOwnerCall,
++        ),
++    ] {
++        let fixture = Fixture::create()?;
++        std::fs::write(fixture.0.join("src/reader.rs"), source).map_err(|e| e.to_string())?;
++        let diff = include_str!("../../../fixtures/inherent_receiver_macro_discard/diff.patch")
++            .replace("src/lib.rs", "src/reader.rs");
++        std::fs::write(fixture.0.join("diff.patch"), diff).map_err(|e| e.to_string())?;
++        let output = check_workspace(CheckInput {
++            root: fixture.0.clone(),
++            diff_file: Some(fixture.0.join("diff.patch")),
++            mode: Mode::Ready,
++            format: OutputFormat::Json,
++            include_unchanged_tests: true,
++            ..CheckInput::default()
++        })?;
++        assert!(
++            !output.findings.is_empty(),
++            "changed owner findings must exist"
++        );
++        for finding in &output.findings {
++            let related = finding
++                .related_tests
++                .iter()
++                .find(|test| test.name == "ignored_operand")
++                .ok_or("missing retained macro control")?;
++            assert_eq!(related.relation_reason, Some(expected));
++        }
++    }
++    Ok(())
++}

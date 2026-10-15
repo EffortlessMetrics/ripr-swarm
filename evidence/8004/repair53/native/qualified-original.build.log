@@ -1,0 +1,13 @@
+warning: variant `Object` is never constructed
+ --> /workspace/repair8004-evidence/native/qualified-original.rs:2:29
+  |
+2 | pub(crate) enum JsonValue { Object(u32), Null }
+  |                 ---------   ^^^^^^
+  |                 |
+  |                 variant in this enum
+  |
+  = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: 1 warning emitted
+

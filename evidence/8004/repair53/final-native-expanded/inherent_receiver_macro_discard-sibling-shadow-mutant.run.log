@@ -1,0 +1,20 @@
+
+running 1 test
+test discarded::evaluated_operand ... FAILED
+
+failures:
+
+---- discarded::evaluated_operand stdout ----
+
+thread 'discarded::evaluated_operand' (54622) panicked at /workspace/repair8004-evidence/final-native-expanded/inherent_receiver_macro_discard-sibling-shadow-mutant.rs:16:9:
+assertion `left == right` failed
+  left: None
+ right: Some(7)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    discarded::evaluated_operand
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

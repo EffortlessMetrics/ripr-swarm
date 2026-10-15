@@ -1,0 +1,6 @@
+{
+  "baseline-prepared-golden.json": "73ca73763791620f287c2fcf045d9abeaa3ae018e7fa82b33700b839d3fac51d",
+  "repair-prepared-golden.json": "73ca73763791620f287c2fcf045d9abeaa3ae018e7fa82b33700b839d3fac51d",
+  "complete_parsed_json_equal": true,
+  "findings_and_summary_match_expected": true
+}

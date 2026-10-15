@@ -1,0 +1,10 @@
+tree c80d13b636ac00b1fc695c5f41ff42e058183556
+parent 7dee26dd330fd648ed4f8ba46225cc78276fb147
+parent 53e22999d19d07a28a355b740d62c01c25aea541
+author Steven Zimmerman <steven@stevenzim.com> 1792056443 +0000
+committer Steven Zimmerman <steven@stevenzim.com> 1792056443 +0000
+
+Local integration evidence for PR #8004
+
+Frozen main 7dee26dd330fd648ed4f8ba46225cc78276fb147 plus source candidate 53e22999d19d07a28a355b740d62c01c25aea541.
+No source branch or main ref is moved.

@@ -1,0 +1,5 @@
+ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; warm reruns reuse the seam-facts cache and are much faster.
+ripr progress: loading_input [repo]
+ripr progress: analyzing [repo]
+ripr progress: building_output [repo]
+ripr progress: completed [repo]
