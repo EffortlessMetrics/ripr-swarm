@@ -553,22 +553,22 @@ jobs:
       - name: Run lsp::gap_artifacts subset (advisory, #4921)
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo test -p ripr --lib lsp::gap_artifacts 2>&1 | tee target/subset-gap-artifacts.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-gap-artifacts.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-gap-artifacts.log" >&2; exit 1; fi; exit 0
+          mkdir -p target || exit 1; set +e; cargo test -p ripr --lib lsp::gap_artifacts 2>&1 | tee target/subset-gap-artifacts.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-gap-artifacts.status || { echo "subset evidence status write failed: subset-gap-artifacts" >&2; exit 1; }; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-gap-artifacts.log" >&2; exit 1; fi; exit 0
 
       - name: Run Cargo-home identity subset (advisory, #7748)
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo test -p ripr --lib analysis::workspace::cargo_input_identity::tests 2>&1 | tee target/subset-cargo-home.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-cargo-home.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-cargo-home.log" >&2; exit 1; fi; exit 0
+          mkdir -p target || exit 1; set +e; cargo test -p ripr --lib analysis::workspace::cargo_input_identity::tests 2>&1 | tee target/subset-cargo-home.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-cargo-home.status || { echo "subset evidence status write failed: subset-cargo-home" >&2; exit 1; }; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-cargo-home.log" >&2; exit 1; fi; exit 0
 
       - name: Run cache-warning smoke subset (advisory, #4918)
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build 2>&1 | tee target/subset-cache-warning.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-cache-warning.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-cache-warning.log" >&2; exit 1; fi; exit 0
+          mkdir -p target || exit 1; set +e; cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build 2>&1 | tee target/subset-cache-warning.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-cache-warning.status || { echo "subset evidence status write failed: subset-cache-warning" >&2; exit 1; }; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-cache-warning.log" >&2; exit 1; fi; exit 0
 
       - name: Run clippy subset (advisory, #4337)
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo clippy -p ripr --all-targets -- -D warnings 2>&1 | tee target/subset-clippy.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-clippy.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-clippy.log" >&2; exit 1; fi; exit 0
+          mkdir -p target || exit 1; set +e; cargo clippy -p ripr --all-targets -- -D warnings 2>&1 | tee target/subset-clippy.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-clippy.status || { echo "subset evidence status write failed: subset-clippy" >&2; exit 1; }; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-clippy.log" >&2; exit 1; fi; exit 0
 
       # #5252/#5581: real stock-environment PowerShell recovery, not argv recording.
       - name: Produce and replay exact-head selector recovery (advisory)
@@ -1025,9 +1025,9 @@ jobs:
               print(json.dumps(receipt), flush=True)
           sys.exit(0 if receipt["state"] == "PASS" else 1)
           '@
-          $consumer | python - 2>&1 | Tee-Object -FilePath target/subset-selector-literal.log
-          $nativeExit = $LASTEXITCODE
-          Set-Content -LiteralPath target/subset-selector-literal.status -Value $nativeExit
+          try { $consumer | python - 2>&1 | Tee-Object -FilePath target/subset-selector-literal.log -ErrorAction Stop
+            $nativeExit = $LASTEXITCODE; Set-Content -LiteralPath target/subset-selector-literal.status -Value $nativeExit -ErrorAction Stop
+          } catch { [Console]::Error.WriteLine($_); exit 1 }
           # Preserve the advisory verdict; missing receipt/log/status remains a hard failure.
           exit 0
 
@@ -1066,11 +1066,18 @@ jobs:
         shell: bash
         run: |
           for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy; do
-            test -f "target/${label}.status" || exit 1
-            test -f "target/${label}.log" || exit 1
-          done
-          for label in subset-gap-artifacts subset-cargo-home subset-cache-warning; do
-            if [ "$(cat "target/${label}.status")" = "0" ]; then
+            for suffix in status log; do
+              if [ ! -f "target/${label}.${suffix}" ] || [ ! -s "target/${label}.${suffix}" ]; then
+                echo "${label}: missing or empty ${suffix} evidence" >&2
+                exit 1
+              fi
+            done
+            if ! LC_ALL=C awk 'NR != 1 || $0 !~ /^(0|[1-9][0-9]*)$/ || length($0) > 3 || $0 + 0 > 255 { exit 1 } END { if (NR != 1) exit 1 }' "target/${label}.status"; then
+              echo "${label}: malformed native exit status" >&2
+              exit 1
+            fi
+            status="$(cat "target/${label}.status")" || exit 1
+            if [ "$label" != subset-clippy ] && [ "$status" = "0" ]; then
               executed="$(awk '/^test result:/{for (i = 1; i <= NF; i++) if ($i == "passed;" || $i == "failed;" || $i == "measured;") executed += $(i - 1)} END {print executed + 0}' "target/${label}.log")"
               if [ "$executed" -eq 0 ]; then
                 echo "${label}: cargo exited 0 but no test executed; the name filter no longer matches any test" >&2

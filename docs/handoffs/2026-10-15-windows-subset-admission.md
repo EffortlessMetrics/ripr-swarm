@@ -212,3 +212,59 @@ free). Original 851 source and independent negative witnesses are retained in Gi
 and `older-review-independent` / `cancel-independent` proof directories for the
 parent's review/rehearsal. No frozen executable copies, product build or unrelated
 cleanup are needed; source and proof stay retained with that consumer.
+
+## Companion repair: subset evidence integrity
+
+The independent review of `4eebbc6e6c3c078170790d52bca5877a0bda6d54`
+identified a concrete evidence gap, recorded on
+[#4987](https://github.com/EffortlessMetrics/ripr-swarm/issues/4987#issuecomment-6183220409).
+This companion starts from that exact candidate on
+`fix/4987-reject-empty-windows-evidence`; the original owner branch and the
+separate documentation integration remain unchanged.
+
+The four-pair guard checked only file existence. Empty status files skipped
+the `status == 0` executed-test check, so four empty status/log pairs could
+produce a successful reusable job. The four Bash producers also ignored a
+failed status write under `set +e` before their advisory `exit 0`.
+
+Native Windows reproduction used Git-for-Windows Bash and standalone std-only
+Rust tests, with Cargo mocked rather than executed. Against the unchanged input,
+six tests yielded two passes and four intended failures: all empty pairs,
+one empty component among valid pairs, malformed status, and hidden status-write
+failure. The positive advisory and zero-test controls passed.
+
+The guard now requires nonempty regular status/log files and one canonical
+decimal native Bash exit status in `0..255`. It validates the file before command
+substitution, rejecting embedded NULs and extra blank lines too. Nonzero native
+test/lint verdicts remain advisory. Successful test subsets still require an
+executed-test denominator; Clippy does not acquire a test-count requirement.
+Target creation and status/log capture errors fail explicitly. The selector's
+PowerShell capture uses explicit `try/catch` plus terminating cmdlet errors:
+the focused native control showed that adding `-ErrorAction Stop` alone did
+not prevent the isolated script's final `exit 0` after a failed status write.
+The selector receipt validator, native commands, source admission, cleanup,
+workflow events, permissions and required-result identity remain unchanged.
+
+Permanent tests in `xtask/tests/windows_subset_evidence.rs` extract and execute
+the actual production bodies. Seven tests cover 99 controlled replays: valid
+success and advisory failure, every missing/empty/nonfile component, malformed
+and out-of-range statuses, zero executed tests, Bash capture failures, and native
+PowerShell capture failures. The PowerShell test mocks the consumer, not its
+capture cmdlets. The seven existing admission/parity tests also pass. Their
+comparison recognizes only the explicit evidence-hardening delta; the historical
+prototype remains frozen and every native payload/selector oracle is compared.
+
+Focused execution uses `rustc --edition=2024 --test` on those two test files,
+without compiling the product or xtask dependency graph. `actionlint` passes
+with external ShellCheck/Pyflakes disabled. The production policy checker is
+run separately as `cargo run --offline --locked -p repo-policy -- check-workflows`;
+only that small utility is built. The PowerShell repair fits the existing inline
+line budget; the policy allowance is unchanged. Logs and the original failing
+test executable are retained by the desktop task for independent review.
+
+This establishes the controlled evidence guard/capture behavior on Windows,
+not a hosted producer run. Real product test/Clippy execution, selector consumer
+build/replay/receipt/cleanup, API/token/check association, cancellation delivery,
+sequential duplicate readback and freshness races remain unrehearsed as described
+above. No workflow is activated, PR opened, protection changed or runtime/release
+qualification claimed by this companion.
