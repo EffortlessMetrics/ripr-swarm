@@ -228,7 +228,8 @@ fn bind_route_root(route: &str, bound: Option<&str>) -> String {
 /// The paired PowerShell form of one rendered route for plain-text paste
 /// surfaces: the same shared translator as every other command surface
 /// ([`crate::output::markdown::powershell_text_variant`]). `None` when
-/// PowerShell runs the bash spelling unchanged.
+/// PowerShell runs the bash spelling unchanged; the shared disclosure when
+/// no honest translation exists.
 fn powershell_pair_line(route: &str) -> Option<String> {
     crate::output::markdown::powershell_text_variant(route)
         .map(|form| format!("  (PowerShell) {form}"))

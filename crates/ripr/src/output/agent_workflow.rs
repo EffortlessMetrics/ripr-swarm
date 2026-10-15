@@ -424,4 +424,29 @@ mod tests {
         assert!(rendered.contains("Does not edit source files."));
         assert!(rendered.contains("Does not call an LLM API."));
     }
+
+    /// Plain-text Missing Inputs used `powershell_text_variant`, which used to
+    /// collapse `Unavailable` into silence. A compound or untranslatable
+    /// command must still name the disclosure; a same-as-Bash command must not.
+    #[test]
+    fn missing_inputs_disclose_when_powershell_form_is_unavailable() {
+        let mut value = manifest();
+        value.missing_inputs[0].command = "ripr check --root . --mode draft && true".to_string();
+        let rendered = render_agent_workflow_commands_md(&value);
+        let missing = rendered
+            .split("## Missing Inputs")
+            .nth(1)
+            .unwrap_or(&rendered);
+        assert!(
+            missing.contains(&format!(
+                "  (PowerShell) `{POWERSHELL_UNAVAILABLE_DISCLOSURE}`"
+            )),
+            "{missing}"
+        );
+
+        value.missing_inputs[0].command = "ripr check --root . --mode draft".to_string();
+        let same = render_agent_workflow_commands_md(&value);
+        let missing_same = same.split("## Missing Inputs").nth(1).unwrap_or(&same);
+        assert!(!missing_same.contains("(PowerShell)"), "{missing_same}");
+    }
 }

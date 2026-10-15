@@ -89,6 +89,8 @@ Amendment (#4549): the config is read as JSONC, matching `tsc`. `//` and
 string literals, then the text is parsed strictly. An unterminated block
 comment or string literal, and any other syntax error, still fails closed
 with the `ConfigUnparseable` gap; the advice no longer asks for strict JSON.
+Line comments end at LF or CR, including CRLF, so each of those config line
+endings preserves supported alias and `tsconfig.json` build-output mappings.
 
 ### 3. Resolver threading
 
@@ -366,6 +368,8 @@ result:    NO typescript_path_alias_unresolved limitation emitted
 - `crates/ripr/src/analysis/language/typescript/tsconfig/precedence_tests.rs::direct_and_barrel_relations_do_not_borrow_a_same_named_fallback_owner`
 
 - `crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::jsonc_tsconfig_with_comments_and_trailing_commas_resolves`
+- `crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::jsonc_line_comment_endings_preserve_alias_resolution`
+- `crates/ripr/src/analysis/language/typescript/tsconfig/out_dir_tests.rs::jsonc_line_comment_endings_preserve_out_dir_resolution`
 - `crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::unterminated_block_comment_fails_closed_as_unparseable`
 
 ## Implementation Mapping

@@ -68,7 +68,7 @@ impl McpServer {
         Ok(server)
     }
 
-    async fn status_tool(&self) -> Result<CallToolResponse, ErrorData> {
+    async fn status_tool(&self, max_envelope_bytes: usize) -> Result<CallToolResponse, ErrorData> {
         let session = self.session.lock().await;
         let envelope = match protocol::status_tool_result(
             &self.status,
@@ -76,6 +76,7 @@ impl McpServer {
             &self.profile,
             super::MAX_MESSAGE_BYTES,
             super::MAX_RESPONSE_BYTES,
+            max_envelope_bytes,
         ) {
             Ok(envelope) => envelope,
             // The envelope builder fails closed when even the compact text
@@ -97,10 +98,11 @@ impl McpServer {
             workspace::SESSION_SCHEMA_VERSION,
             "serialize workspace status",
             workspace::RECOVERY_STATUS_TOO_LARGE,
+            max_envelope_bytes,
         )
     }
 
-    async fn refresh_tool(&self) -> Result<CallToolResponse, ErrorData> {
+    async fn refresh_tool(&self, max_envelope_bytes: usize) -> Result<CallToolResponse, ErrorData> {
         let root = match workspace::available_root(self.analysis_root.as_deref()) {
             Ok(root) => root.to_path_buf(),
             Err(failure) => {
@@ -155,12 +157,14 @@ impl McpServer {
             workspace::REFRESH_SCHEMA_VERSION,
             "serialize refresh result",
             workspace::RECOVERY_REFRESH_TOO_LARGE,
+            max_envelope_bytes,
         )
     }
 
     async fn list_gaps_tool(
         &self,
         arguments: Option<serde_json::Map<String, Value>>,
+        max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
         reject_unknown_arguments(
             &arguments,
@@ -194,12 +198,14 @@ impl McpServer {
                 language,
                 repair_ready,
             },
+            max_envelope_bytes,
         ) {
             Ok(document) => self.bounded_tool_result(
                 document,
                 gaps::GAP_LIST_SCHEMA_VERSION,
                 "serialize gap list",
                 workspace::RECOVERY_GAP_LIST_TOO_LARGE,
+                max_envelope_bytes,
             ),
             Err(failure) => self.typed_failure(failure, gaps::GAP_LIST_SCHEMA_VERSION),
         }
@@ -208,6 +214,7 @@ impl McpServer {
     async fn get_gap_tool(
         &self,
         arguments: Option<serde_json::Map<String, Value>>,
+        max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
         reject_unknown_arguments(&arguments, &["canonical_id", "snapshot_id"])?;
         let canonical_id = required_string_argument(&arguments, "canonical_id")?;
@@ -219,6 +226,7 @@ impl McpServer {
                 gaps::GAP_SCHEMA_VERSION,
                 "serialize gap evidence",
                 workspace::RECOVERY_GAP_ITEM_TOO_LARGE,
+                max_envelope_bytes,
             ),
             Err(failure) => self.typed_failure(failure, gaps::GAP_SCHEMA_VERSION),
         }
@@ -227,6 +235,7 @@ impl McpServer {
     async fn prepare_repair_tool(
         &self,
         arguments: Option<serde_json::Map<String, Value>>,
+        max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
         reject_unknown_arguments(&arguments, &["canonical_id", "snapshot_id"])?;
         let canonical_id = required_string_argument(&arguments, "canonical_id")?;
@@ -242,6 +251,7 @@ impl McpServer {
                 repair::REPAIR_PACKET_SCHEMA_VERSION,
                 "serialize repair packet",
                 workspace::RECOVERY_REPAIR_TOO_LARGE,
+                max_envelope_bytes,
             ),
             Err(failure) => self.typed_failure(failure, repair::REPAIR_PACKET_SCHEMA_VERSION),
         }
@@ -250,20 +260,16 @@ impl McpServer {
     async fn list_repair_attempts_tool(
         &self,
         arguments: Option<serde_json::Map<String, Value>>,
-        request_id: &RequestId,
+        max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
         reject_unknown_arguments(&arguments, &["inventory_id", "offset", "limit"])?;
         let requested = optional_string_argument(&arguments, "inventory_id")?;
         let offset = optional_nonnegative_argument(&arguments, "offset")?.unwrap_or(0);
         let limit = optional_positive_argument(&arguments, "limit")?;
-        // Pinned rmcp adds JSON-RPC fields and modern resultType after the
-        // tool envelope is measured. Reserve those, the delimiter, and the
-        // actual JSON-escaped ID so near-cap pages keep structuredContent.
-        let id_bytes = serde_json::to_vec(request_id)
-            .map_err(|_error| ErrorData::internal_error("serialize inventory request id", None))?
-            .len();
-        let max_envelope_bytes =
-            super::MAX_RESPONSE_BYTES.saturating_sub(id_bytes.saturating_add(128));
+        // `max_envelope_bytes` reserves the JSON-escaped request ID plus the
+        // fixed outer overhead (#7768): the pinned rmcp adds the JSON-RPC
+        // fields and the modern resultType after the tool envelope is
+        // measured, so near-cap pages keep structuredContent.
         let root = self.analysis_root.clone();
         let root_identity = self.root_identity.clone();
         let result = blocking_repair_read(move || {
@@ -283,6 +289,7 @@ impl McpServer {
                 super::attempt_inventory::SCHEMA_VERSION,
                 "serialize durable attempt inventory",
                 super::attempt_inventory::RECOVERY_TOO_LARGE,
+                max_envelope_bytes,
             ),
             Err(failure) => self.typed_failure(failure, super::attempt_inventory::SCHEMA_VERSION),
         }
@@ -291,6 +298,7 @@ impl McpServer {
     async fn get_repair_attempt_tool(
         &self,
         arguments: Option<serde_json::Map<String, Value>>,
+        max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
         reject_unknown_arguments(&arguments, &["attempt_id"])?;
         let attempt_id = required_string_argument(&arguments, "attempt_id")?;
@@ -300,6 +308,7 @@ impl McpServer {
                 repair::REPAIR_ATTEMPT_SCHEMA_VERSION,
                 "serialize repair attempt",
                 workspace::RECOVERY_REPAIR_TOO_LARGE,
+                max_envelope_bytes,
             ),
             Err(failure) => self.typed_failure(failure, repair::REPAIR_ATTEMPT_SCHEMA_VERSION),
         }
@@ -308,6 +317,7 @@ impl McpServer {
     async fn get_receipt_status_tool(
         &self,
         arguments: Option<serde_json::Map<String, Value>>,
+        max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
         reject_unknown_arguments(&arguments, &["receipt_id"])?;
         let receipt_id = required_string_argument(&arguments, "receipt_id")?;
@@ -317,6 +327,7 @@ impl McpServer {
                 repair::RECEIPT_STATUS_SCHEMA_VERSION,
                 "serialize receipt status",
                 workspace::RECOVERY_REPAIR_TOO_LARGE,
+                max_envelope_bytes,
             ),
             Err(failure) => self.typed_failure(failure, repair::RECEIPT_STATUS_SCHEMA_VERSION),
         }
@@ -376,6 +387,7 @@ impl McpServer {
     async fn get_repair_card_tool(
         &self,
         arguments: Option<serde_json::Map<String, Value>>,
+        max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
         reject_unknown_arguments(&arguments, &["canonical_id", "snapshot_id"])?;
         let canonical_id = required_string_argument(&arguments, "canonical_id")?;
@@ -391,6 +403,7 @@ impl McpServer {
                 repair_card::REPAIR_CARD_SCHEMA_VERSION,
                 "serialize repair card",
                 workspace::RECOVERY_REPAIR_TOO_LARGE,
+                max_envelope_bytes,
             ),
             Err(failure) => self.typed_failure(failure, repair_card::REPAIR_CARD_SCHEMA_VERSION),
         }
@@ -409,9 +422,10 @@ impl McpServer {
     }
 
     /// Wrap a document in the tool envelope. The envelope builder measures
-    /// the final form before it ships (#6021): the compact text always fits
+    /// the final form against the caller's id-aware response budget before
+    /// it ships (#6021, #7768): the compact text always fits
     /// guard-approved documents, `structuredContent` is dropped past the
-    /// bound instead of failing an approved response, and a document that
+    /// budget instead of failing an approved response, and a document that
     /// cannot fit even as compact text fails closed with the typed
     /// `result_too_large` here rather than as an over-cap wire response.
     fn bounded_tool_result(
@@ -420,8 +434,9 @@ impl McpServer {
         failure_version: &'static str,
         serialize_context: &'static str,
         recovery: &'static str,
+        max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
-        let envelope = match protocol::tool_result(document) {
+        let envelope = match protocol::tool_result(document, max_envelope_bytes) {
             Ok(envelope) => envelope,
             Err(detail) => {
                 let failure = workspace::AttemptFailure::new(
@@ -432,26 +447,36 @@ impl McpServer {
                 return self.typed_failure(failure, failure_version);
             }
         };
-        self.bounded_tool_envelope(envelope, failure_version, serialize_context, recovery)
+        self.bounded_tool_envelope(
+            envelope,
+            failure_version,
+            serialize_context,
+            recovery,
+            max_envelope_bytes,
+        )
     }
 
     /// The shared response bound for an already-built tool envelope, used
     /// by tools whose envelope comes from the protocol layer instead of
-    /// [`tool_result`](protocol::tool_result).
+    /// [`tool_result`](protocol::tool_result). The budget is the caller's
+    /// id-aware envelope budget (#7768), so the final re-measurement after
+    /// a wrapper added text (the status recovery sentence) still cannot
+    /// pass an envelope the wire would have to replace.
     fn bounded_tool_envelope(
         &self,
         envelope: Value,
         failure_version: &'static str,
         serialize_context: &'static str,
         recovery: &'static str,
+        max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
         let bytes = serde_json::to_vec(&envelope)
             .map_err(|_error| ErrorData::internal_error(serialize_context, None))?;
-        if bytes.len() > super::MAX_RESPONSE_BYTES {
+        if bytes.len() > max_envelope_bytes {
             let failure = workspace::AttemptFailure::new(
                 workspace::CODE_RESULT_TOO_LARGE,
                 format!(
-                    "tool response is {} bytes; the MCP response bound is {}",
+                    "tool response is {} bytes; the id-aware MCP response envelope budget is {max_envelope_bytes} of the {}-byte bound",
                     bytes.len(),
                     super::MAX_RESPONSE_BYTES
                 ),
@@ -661,6 +686,10 @@ impl ServerHandler for McpServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
+        // Every producer measures against this one id-aware budget (#7768):
+        // the response bound minus the JSON-escaped request id of the call
+        // being answered minus the fixed outer reserve.
+        let max_envelope_bytes = super::outer_envelope_budget(&context.id);
         match request.name.as_ref() {
             protocol::STATUS_TOOL_NAME => {
                 if request
@@ -673,7 +702,7 @@ impl ServerHandler for McpServer {
                         None,
                     ));
                 }
-                self.status_tool().await
+                self.status_tool(max_envelope_bytes).await
             }
             protocol::REFRESH_TOOL_NAME => {
                 if request
@@ -686,22 +715,34 @@ impl ServerHandler for McpServer {
                         None,
                     ));
                 }
-                self.refresh_tool().await
+                self.refresh_tool(max_envelope_bytes).await
             }
-            protocol::LIST_GAPS_TOOL_NAME => self.list_gaps_tool(request.arguments).await,
-            protocol::GET_GAP_TOOL_NAME => self.get_gap_tool(request.arguments).await,
-            protocol::PREPARE_REPAIR_TOOL_NAME => self.prepare_repair_tool(request.arguments).await,
+            protocol::LIST_GAPS_TOOL_NAME => {
+                self.list_gaps_tool(request.arguments, max_envelope_bytes)
+                    .await
+            }
+            protocol::GET_GAP_TOOL_NAME => {
+                self.get_gap_tool(request.arguments, max_envelope_bytes)
+                    .await
+            }
+            protocol::PREPARE_REPAIR_TOOL_NAME => {
+                self.prepare_repair_tool(request.arguments, max_envelope_bytes)
+                    .await
+            }
             protocol::GET_REPAIR_ATTEMPT_TOOL_NAME => {
-                self.get_repair_attempt_tool(request.arguments).await
+                self.get_repair_attempt_tool(request.arguments, max_envelope_bytes)
+                    .await
             }
             protocol::GET_RECEIPT_STATUS_TOOL_NAME => {
-                self.get_receipt_status_tool(request.arguments).await
+                self.get_receipt_status_tool(request.arguments, max_envelope_bytes)
+                    .await
             }
             repair_card::GET_REPAIR_CARD_TOOL_NAME => {
-                self.get_repair_card_tool(request.arguments).await
+                self.get_repair_card_tool(request.arguments, max_envelope_bytes)
+                    .await
             }
             super::attempt_inventory::TOOL_NAME => {
-                self.list_repair_attempts_tool(request.arguments, &context.id)
+                self.list_repair_attempts_tool(request.arguments, max_envelope_bytes)
                     .await
             }
             _other => Err(ErrorData::new(
@@ -726,8 +767,11 @@ impl ServerHandler for McpServer {
     async fn read_resource(
         &self,
         request: ReadResourceRequestParams,
-        _: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
+        // The same id-aware budget the tool path uses (#7768): a resource
+        // read answers one request whose echoed id rides the same wire cap.
+        let max_envelope_bytes = super::outer_envelope_budget(&context.id);
         if request.uri == protocol::STATUS_RESOURCE_URI {
             let session = self.session.lock().await;
             let result = protocol::status_resource_result(
@@ -738,6 +782,16 @@ impl ServerHandler for McpServer {
                 super::MAX_RESPONSE_BYTES,
             )
             .map_err(|_error| ErrorData::internal_error("serialize workspace status", None))?;
+            let bytes = serde_json::to_vec(&result)
+                .map_err(|_error| ErrorData::internal_error("serialize resource", None))?
+                .len();
+            if bytes > max_envelope_bytes {
+                return Err(resource_budget_failure(
+                    bytes,
+                    max_envelope_bytes,
+                    workspace::RECOVERY_STATUS_TOO_LARGE,
+                ));
+            }
             let result: ReadResourceResult = typed(result)?;
             return Ok(ReadResourceResult::new(result.contents)
                 .with_ttl_ms(0)
@@ -751,6 +805,7 @@ impl ServerHandler for McpServer {
                     document,
                     &request.uri,
                     workspace::RECOVERY_SNAPSHOT_TOO_LARGE,
+                    max_envelope_bytes,
                 ),
                 Err(failure) => Err(resource_failure(
                     "snapshot",
@@ -769,6 +824,7 @@ impl ServerHandler for McpServer {
                     document,
                     &request.uri,
                     workspace::RECOVERY_GAP_ITEM_TOO_LARGE,
+                    max_envelope_bytes,
                 ),
                 Err(failure) => Err(resource_failure("gap", &failure, None)),
             };
@@ -779,6 +835,7 @@ impl ServerHandler for McpServer {
                     document,
                     &request.uri,
                     workspace::RECOVERY_REPAIR_TOO_LARGE,
+                    max_envelope_bytes,
                 ),
                 Err(failure) => Err(resource_failure("repair-attempt", &failure, None)),
             };
@@ -789,6 +846,7 @@ impl ServerHandler for McpServer {
                     document,
                     &request.uri,
                     workspace::RECOVERY_REPAIR_TOO_LARGE,
+                    max_envelope_bytes,
                 ),
                 Err(failure) => Err(resource_failure("receipt", &failure, None)),
             };
@@ -801,6 +859,7 @@ impl ServerHandler for McpServer {
                     document,
                     &request.uri,
                     workspace::RECOVERY_REPAIR_TOO_LARGE,
+                    max_envelope_bytes,
                 ),
                 Err(failure) => Err(resource_failure("repair-card", &failure, None)),
             };
@@ -832,6 +891,7 @@ impl McpServer {
         document: Value,
         uri: &str,
         recovery: &'static str,
+        max_envelope_bytes: usize,
     ) -> Result<ReadResourceResponse, ErrorData> {
         // Resources pretty-print their document text while tool payloads
         // serialize compact (`bounded_tool_envelope`): the encodings differ
@@ -842,18 +902,10 @@ impl McpServer {
             .map_err(|_error| ErrorData::internal_error("serialize resource", None))?;
         let envelope = json_envelope(uri, text);
         let bytes = serde_json::to_vec(&envelope)
-            .map_err(|_error| ErrorData::internal_error("serialize resource", None))?;
-        if bytes.len() > super::MAX_RESPONSE_BYTES {
-            let failure = workspace::AttemptFailure::new(
-                workspace::CODE_RESULT_TOO_LARGE,
-                format!(
-                    "resource response is {} bytes; the MCP response bound is {}",
-                    bytes.len(),
-                    super::MAX_RESPONSE_BYTES
-                ),
-                recovery,
-            );
-            return Err(resource_failure("bounded", &failure, None));
+            .map_err(|_error| ErrorData::internal_error("serialize resource", None))?
+            .len();
+        if bytes > max_envelope_bytes {
+            return Err(resource_budget_failure(bytes, max_envelope_bytes, recovery));
         }
         let result: ReadResourceResult = typed(envelope)?;
         Ok(ReadResourceResult::new(result.contents)
@@ -861,6 +913,26 @@ impl McpServer {
             .with_cache_scope(CacheScope::Private)
             .into())
     }
+}
+
+/// The typed resource refusal for an envelope that cannot fit the caller's
+/// id-aware response budget (#7768): the same `result_too_large` code and
+/// per-surface recovery the tool path returns, rendered through the
+/// standard resource failure shape.
+fn resource_budget_failure(
+    bytes: usize,
+    max_envelope_bytes: usize,
+    recovery: &'static str,
+) -> ErrorData {
+    let failure = workspace::AttemptFailure::new(
+        workspace::CODE_RESULT_TOO_LARGE,
+        format!(
+            "resource response is {bytes} bytes; the id-aware MCP response envelope budget is {max_envelope_bytes} of the {}-byte bound",
+            super::MAX_RESPONSE_BYTES
+        ),
+        recovery,
+    );
+    resource_failure("bounded", &failure, None)
 }
 
 fn json_envelope(uri: &str, text: String) -> Value {
