@@ -234,6 +234,11 @@ fn changed_call_under_a_top_level_braceless_branch() {
         "  (ok)",
         // `else` must follow a `;` or a `}`.
         "  if (!ok) log(1)\n  else",
+        // Another word after a `;` is not a branch head: `return` ends the
+        // statement, so the line after it never runs.
+        "  log(1);\n  return",
+        // A loop heading the branch may run it more than once.
+        "  for (const l of lines)\n  if (ok)",
         // Inside a callback the branch may run once per item.
         "  lines.forEach((l) => { if (ok)",
     ] {
