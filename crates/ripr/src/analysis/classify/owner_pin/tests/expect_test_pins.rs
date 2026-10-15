@@ -377,7 +377,7 @@ fn a_golden_path_stays_in_tree_and_fs_renames_refuse() {
         "pub use std::fs as files;",
         "mod tests { use std::fs::write as save; }",
         "fn a() {}\nuse std::fs::write as save;",
-        "#[allow(unused_imports)] use std::fs::write as save;",
+        "#[cfg(test)] use std::fs::write as save;",
         "pub(crate) use std::fs::write as save;",
     ] {
         assert!(file_renames_fs_or_env_import(source), "{source}");
