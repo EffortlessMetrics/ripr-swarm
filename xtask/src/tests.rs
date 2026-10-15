@@ -53965,8 +53965,12 @@ fn gh_pr_status_provider_quota_observations_preserve_evidence() -> Result<(), St
     });
     let pr = super::collect_gh_pr_status_with(42, |program, args| {
         assert_eq!(program, "gh");
+        if args.first().is_some_and(|arg| arg == "api") {
+            return Ok(gh_pr_status_identity_response(&fixture));
+        }
         assert_eq!(args.len(), 5);
         assert_eq!(&args[..4], &["pr", "view", "42", "--json"]);
+        assert!(!args[4].split(',').any(|field| field == "baseRefOid"));
         let fields: std::collections::BTreeSet<_> = args[4].split(',').collect();
         for required in ["comments", "headRefOid", "latestReviews"] {
             assert!(fields.contains(required), "collector omitted {required}");
@@ -54052,9 +54056,16 @@ fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Resu
                 reads += 1;
                 super::collect_gh_pr_status_json_with(42, |program, args| {
                     assert_eq!(program, "gh");
+                    if args.first().is_some_and(|arg| arg == "api") {
+                        return Ok(gh_pr_status_identity_response(if reads == 1 {
+                            &first
+                        } else {
+                            &last
+                        }));
+                    }
                     assert_eq!(&args[..4], ["pr", "view", "42", "--json"]);
                     let fields = args[4].split(',').collect::<Vec<_>>();
-                    assert!(fields.contains(&"headRefOid") && fields.contains(&"baseRefOid"));
+                    assert!(fields.contains(&"headRefOid") && !fields.contains(&"baseRefOid"));
                     Ok(if reads == 1 {
                         first.to_string()
                     } else {
@@ -54087,4 +54098,12 @@ fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Resu
         assert!(markdown.contains("not atomic"));
     }
     Ok(())
+}
+
+fn gh_pr_status_identity_response(fixture: &Value) -> String {
+    let mut identity = fixture.clone();
+    if identity.get("baseRefOid").is_none() {
+        identity["baseRefOid"] = serde_json::json!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    }
+    serde_json::json!({"data":{"repository":{"pullRequest":identity}}}).to_string()
 }

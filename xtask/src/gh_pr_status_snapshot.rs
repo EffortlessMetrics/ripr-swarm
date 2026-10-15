@@ -42,6 +42,102 @@ impl Subject {
     }
 }
 
+// Keep full-fact collection on gh's existing shape/pagination path. gh 2.46 supports
+// headRefOid here, but baseRefOid is a GraphQL field, not a pr-view JSON field.
+pub(crate) const VIEW_FIELDS: &str = "number,title,isDraft,mergeStateStatus,headRefName,headRefOid,baseRefName,reviewDecision,latestReviews,comments,statusCheckRollup";
+const IDENTITY_QUERY: &str = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){number headRefOid baseRefOid baseRefName}}}";
+
+fn collect_identity(
+    number: u64,
+    run: &mut impl FnMut(&str, &[String]) -> Result<String, String>,
+) -> Result<Value, String> {
+    let output = run(
+        "gh",
+        &[
+            "api".to_string(),
+            "graphql".to_string(),
+            "-F".to_string(),
+            "owner={owner}".to_string(),
+            "-F".to_string(),
+            "name={repo}".to_string(),
+            "-F".to_string(),
+            format!("number={number}"),
+            "-f".to_string(),
+            format!("query={IDENTITY_QUERY}"),
+        ],
+    )?;
+    let response: Value = serde_json::from_str(&output)
+        .map_err(|error| format!("failed to parse PR identity GraphQL JSON: {error}"))?;
+    if response
+        .get("errors")
+        .is_some_and(|errors| !errors.as_array().is_some_and(|errors| errors.is_empty()))
+    {
+        return Err(
+            "PR identity GraphQL response contains errors; refusing partial data".to_string(),
+        );
+    }
+    let identity = response
+        .pointer("/data/repository/pullRequest")
+        .ok_or("missing PR identity GraphQL data")?
+        .clone();
+    Subject::read(&identity, number)?;
+    Ok(identity)
+}
+
+pub(crate) fn collect_snapshot(
+    number: u64,
+    mut run: impl FnMut(&str, &[String]) -> Result<String, String>,
+) -> Result<Value, String> {
+    let first = collect_identity(number, &mut run)?;
+    let before = Subject::read(&first, number)?;
+    let output = run(
+        "gh",
+        &[
+            "pr".to_string(),
+            "view".to_string(),
+            number.to_string(),
+            "--json".to_string(),
+            VIEW_FIELDS.to_string(),
+        ],
+    )?;
+    let mut pr: Value = serde_json::from_str(&output)
+        .map_err(|error| format!("failed to parse gh PR JSON: {error}"))?;
+    let last = collect_identity(number, &mut run)?;
+    let after = Subject::read(&last, number)?;
+    unchanged(number, &before, &after)?;
+    // Do not associate a newer base with old merge/check facts. Both identity
+    // reads must agree, and the intervening full response must name that PR/head/target.
+    if pr
+        .get("baseRefOid")
+        .is_some_and(|base| base.as_str() != Some(before.base.as_str()))
+    {
+        return Err("full PR response base disagrees with identity bracket".to_string());
+    }
+    pr.as_object_mut()
+        .ok_or("full PR response must be an object")?
+        .insert("baseRefOid".to_string(), Value::String(before.base.clone()));
+    let full_subject = Subject::read(&pr, number)?;
+    unchanged(number, &before, &full_subject)?;
+    Ok(pr)
+}
+
+fn unchanged(number: u64, before: &Subject, after: &Subject) -> Result<(), String> {
+    if before == after {
+        return Ok(());
+    }
+    let affected = if before.head != after.head {
+        "refresh affected head-bound proof/review and integration judgment"
+    } else if before.target != after.target {
+        "refresh target protection and integration judgment; retain unchanged-head proof/review"
+    } else {
+        "refresh integration judgment; retain unchanged-head proof/review"
+    };
+    Err(format!(
+        "PR #{number} subject changed during collection: head {} -> {}, base {} -> {}, target {} -> {}; no current readiness published; {affected}",
+        before.head, after.head, before.base, after.base, before.target, after.target
+    ))
+}
+
 pub(crate) fn collect_current(
     number: u64,
     mut collect: impl FnMut() -> Result<Value, String>,
@@ -63,19 +159,7 @@ pub(crate) fn collect_current(
     let pr = collect().map_err(|error| format!("final PR snapshot unavailable: {error}"))?;
     let after = Subject::read(&pr, number)
         .map_err(|error| format!("final PR snapshot identity unavailable: {error}"))?;
-    if before != after {
-        let affected = if before.head != after.head {
-            "refresh affected head-bound proof/review and integration judgment"
-        } else if before.target != after.target {
-            "refresh target protection and integration judgment; retain unchanged-head proof/review"
-        } else {
-            "refresh integration judgment; retain unchanged-head proof/review"
-        };
-        return Err(format!(
-            "PR #{number} subject changed during collection: head {} -> {}, base {} -> {}, target {} -> {}; no current readiness published; {affected}",
-            before.head, after.head, before.base, after.base, before.target, after.target
-        ));
-    }
+    unchanged(number, &before, &after)?;
     warnings.push(format!(
         "Observed PR #{number} head {} and base {} ({}) in the final snapshot; this read is not atomic with a later merge and does not authorize one",
         after.head, after.base, after.target
@@ -228,6 +312,144 @@ mod tests {
         assert!(observation.contexts.is_empty());
         assert_eq!(observation.warnings.len(), 2);
         assert!(observation.warnings[0].contains("denied"));
+        Ok(())
+    }
+
+    fn graphql(identity: Value) -> Value {
+        json!({"data":{"repository":{"pullRequest":identity}}})
+    }
+
+    fn bracket(responses: Vec<Value>) -> Result<Value, String> {
+        let mut responses = responses.into_iter();
+        let mut calls = 0;
+        let result = collect_snapshot(42, |program, args| {
+            assert_eq!(program, "gh");
+            calls += 1;
+            if calls == 2 {
+                assert_eq!(&args[..4], ["pr", "view", "42", "--json"]);
+                assert!(!args[4].split(',').any(|field| field == "baseRefOid"));
+            } else {
+                assert_eq!(&args[..2], ["api", "graphql"]);
+                assert!(args.iter().any(|arg| arg == "owner={owner}"));
+                assert!(args.iter().any(|arg| arg == "name={repo}"));
+                assert!(args.iter().any(|arg| arg.contains("baseRefOid")));
+            }
+            responses
+                .next()
+                .map(|value| value.to_string())
+                .ok_or("unexpected command".to_string())
+        });
+        assert!(
+            responses.next().is_none(),
+            "collection did not consume the expected bracket"
+        );
+        result
+    }
+
+    #[test]
+    fn gh_pr_status_bracket_preserves_full_facts_without_view_base_field() -> Result<(), String> {
+        let identity = snapshot();
+        let mut full = identity.clone();
+        full.as_object_mut()
+            .ok_or("fixture must be an object")?
+            .remove("baseRefOid");
+        full["comments"] = json!([{"body":"raw provider notice","url":"fixture-url"}]);
+        full["statusCheckRollup"][0]["status"] = json!("IN_PROGRESS");
+        let observed = bracket(vec![
+            graphql(identity.clone()),
+            full.clone(),
+            graphql(identity),
+        ])?;
+        full["baseRefOid"] = json!(B1);
+        assert_eq!(observed, full);
+        Ok(())
+    }
+
+    #[test]
+    fn gh_pr_status_bracket_refuses_base_head_and_target_movement() {
+        for (field, value) in [
+            ("headRefOid", H2),
+            ("baseRefOid", B2),
+            ("baseRefName", "release"),
+        ] {
+            let first = snapshot();
+            let mut last = first.clone();
+            last[field] = json!(value);
+            let error = bracket(vec![graphql(first.clone()), first, graphql(last)])
+                .expect_err("moved identity accepted");
+            assert!(
+                error.contains("subject changed during collection"),
+                "{field}: {error}"
+            );
+            if field != "headRefOid" {
+                assert!(error.contains("retain unchanged-head proof/review"));
+            }
+        }
+    }
+
+    #[test]
+    fn gh_pr_status_bracket_refuses_full_response_identity_mismatch() {
+        for field in ["number", "headRefOid", "baseRefName", "baseRefOid"] {
+            let identity = snapshot();
+            let mut full = identity.clone();
+            full[field] = match field {
+                "number" => json!(43),
+                "baseRefName" => json!("release"),
+                _ => json!(H2),
+            };
+            assert!(
+                bracket(vec![graphql(identity.clone()), full, graphql(identity)]).is_err(),
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn gh_pr_status_bracket_refuses_graphql_partial_errors_and_missing_subject() {
+        for response in [
+            json!({"errors":[{"message":"denied"}],"data":{"repository":{"pullRequest":snapshot()}}}),
+            json!({"errors":"malformed", "data":{"repository":{"pullRequest":snapshot()}}}),
+            json!({"data":{"repository":null}}),
+            graphql(Value::Null),
+        ] {
+            assert!(bracket(vec![response.clone()]).is_err());
+            assert!(bracket(vec![graphql(snapshot()), snapshot(), response]).is_err());
+        }
+    }
+
+    /// Explicit capability proof, without credentials/network: gh reports its real
+    /// field registry before attempting a request for the deliberately unknown field.
+    #[test]
+    #[ignore = "requires real gh; set RIPR_TEST_GH to the supported gh 2.46 binary and run --ignored"]
+    fn gh_pr_status_real_cli_schema() -> Result<(), String> {
+        let gh = std::env::var_os("RIPR_TEST_GH").unwrap_or_else(|| "gh".into());
+        let output = std::process::Command::new(gh)
+            .args(["pr", "view", "--json", "riprUnsupportedSchemaControl"])
+            .output()
+            .map_err(|error| error.to_string())?;
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !output.status.success(),
+            "unknown-field control unexpectedly succeeded"
+        );
+        assert!(
+            text.contains("Unknown JSON field: \"riprUnsupportedSchemaControl\""),
+            "{text}"
+        );
+        let (_, registry) = text
+            .split_once("Available fields:")
+            .ok_or("real gh did not expose its field registry")?;
+        let available: std::collections::BTreeSet<_> = registry.lines().map(str::trim).collect();
+        for field in VIEW_FIELDS.split(',') {
+            assert!(
+                available.contains(field),
+                "real gh rejects production field {field}: {text}"
+            );
+        }
         Ok(())
     }
 }

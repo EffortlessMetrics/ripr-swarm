@@ -3175,40 +3175,15 @@ fn collect_gh_pr_status(number: u64) -> Result<Value, String> {
 
 fn collect_gh_pr_status_json_with(
     number: u64,
-    run: impl FnOnce(&str, &[String]) -> Result<String, String>,
+    run: impl FnMut(&str, &[String]) -> Result<String, String>,
 ) -> Result<Value, String> {
-    let fields = [
-        "number",
-        "title",
-        "isDraft",
-        "mergeStateStatus",
-        "headRefName",
-        "headRefOid",
-        "baseRefName",
-        "baseRefOid",
-        "reviewDecision",
-        "latestReviews",
-        "comments",
-        "statusCheckRollup",
-    ]
-    .join(",");
-    let output = run(
-        "gh",
-        &[
-            "pr".to_string(),
-            "view".to_string(),
-            number.to_string(),
-            "--json".to_string(),
-            fields,
-        ],
-    )?;
-    serde_json::from_str(&output).map_err(|error| format!("failed to parse gh PR JSON: {error}"))
+    gh_pr_status_snapshot::collect_snapshot(number, run)
 }
 
 #[cfg(test)]
 fn collect_gh_pr_status_with(
     number: u64,
-    run: impl FnOnce(&str, &[String]) -> Result<String, String>,
+    run: impl FnMut(&str, &[String]) -> Result<String, String>,
 ) -> Result<GhPrStatusPullRequest, String> {
     let value = collect_gh_pr_status_json_with(number, run)?;
     parse_gh_pr_status_pull_request(&value.to_string())

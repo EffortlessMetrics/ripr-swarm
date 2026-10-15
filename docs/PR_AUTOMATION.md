@@ -486,6 +486,15 @@ bound to the rechecked SHA (`--force-with-lease=<ref>:<sha>`, never plain
 changed, and failed branch. No CI or scheduled job runs the apply path.
 
 `gh-pr-status --pr <number>` is the per-PR merge-readiness packet.
+Each full response uses the `gh 2.46` compatible `pr view` fields, bracketed by
+`gh api graphql` reads of PR/head/base/target identity. The bracket identities
+must agree and the full response must match their PR/head/target before its
+base OID is attached. An independently moving branch-tip lookup cannot supply
+that identity. GraphQL errors/partial or missing identity refuse collection.
+Set `RIPR_TEST_GH` to a real supported CLI binary and run
+`cargo test -p xtask --bin xtask gh_pr_status_real_cli_schema -- --ignored`
+to check the production view fields against its actual offline field registry;
+this opt-in capability test needs the tool but no credentials or network.
 It reads the full PR snapshot again after required-context lookup. Both reads
 must identify the requested PR and the same full head/base commits and target
 branch. Movement or unavailable identity returns an error before publishing a
