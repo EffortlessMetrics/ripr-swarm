@@ -13,6 +13,8 @@ tests = [
   "crates/ripr/tests/cli_smoke/diff_pairing.rs",
   "crates/ripr/tests/cli_smoke/sample_output.rs::retained_oracles_reject_wrong_contract_shape_count_and_refusal",
   "crates/ripr/tests/cli_smoke/sample_output.rs::parallel_fixture_state_and_cleanup_are_independent",
+  "crates/ripr/tests/cli_smoke.rs::check_no_unchanged_tests_restates_the_recall_tradeoff_on_stderr",
+  "crates/ripr/tests/cli_smoke/recall_tradeoff.rs::retained_recall_warning_oracles_reject_wrong_output",
   "crates/ripr/tests/cli_smoke.rs::check_human_output_reports_sample_findings",
   "crates/ripr/tests/cli_smoke.rs::check_json_output_has_stable_contract_fields",
   "crates/ripr/tests/cli_smoke.rs::check_badge_json_output_has_native_badge_shape",
