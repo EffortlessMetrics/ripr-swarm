@@ -46,6 +46,9 @@ mod human_full_shared;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/implicit_git_root.rs"]
 mod implicit_git_root;
+#[cfg(any(feature = "lang-rust", feature = "lang-typescript"))]
+#[path = "cli_smoke/structural_workspace_markers.rs"]
+mod structural_workspace_markers;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/init_followups.rs"]
 mod init_followups;

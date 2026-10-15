@@ -1573,8 +1573,11 @@ The evidence-first fields are additive in schema `0.2`:
     contains a `package.json` (relative to the repo root). Absent when no
     `package.json` is found.
   - `typescript_workspace_root: <path>` — nearest ancestor with a
-    `pnpm-workspace.yaml` or a `package.json` `"workspaces"` field; falls
-    back to `package_root`. Absent when `package_root` is unresolved.
+    `pnpm-workspace.yaml` or an array or object `package.json` `"workspaces"`
+    field. Scalar values (string, number, Boolean, or `null`) do not mark a
+    workspace. Array/object recognition includes Yarn object forms without
+    member/glob/schema validation or package-manager execution. Falls back to
+    `package_root`; absent when `package_root` is unresolved.
   - `typescript_framework_hint: <jest|vitest|bun|mocha|node_test|ava>` — test
     framework detected from `package.json` deps/devDeps. Absent when no
     evidence-backed framework is found.
