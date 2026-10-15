@@ -9,9 +9,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 enum Expected {
     Open,
     Clear(u64),
-    Refused(&'static [&'static str]),
+    Refused(&'static [&'static str], usize),
     WrongFilter,
     WrongFirstPage,
+    WrongCursorGuard,
 }
 
 struct Case {
@@ -55,7 +56,7 @@ fn run_fixtures(strict: bool) -> Result<(), String> {
         return Err("fixture must supply two pages".to_string());
     }
     let cases = fixture_cases(&pages, &recipe)?;
-    if cases.len() != 16 {
+    if cases.len() != 27 {
         return Err("fixture case inventory changed without updating its denominator".to_string());
     }
     let stamp = SystemTime::now()
@@ -137,28 +138,28 @@ fn fixture_cases(pages: &Value, recipe: &str) -> Result<Vec<Case>, String> {
     cases.push(case(
         "truncated",
         json!([pages[0].clone()]),
-        Expected::Refused(&["Incomplete conversation pagination"]),
+        Expected::Refused(&["Conversation lookup failed (1)"], 2),
     ));
     let mut moved = pages.clone();
     moved[1]["data"]["repository"]["pullRequest"]["headRefOid"] = json!("c".repeat(40));
     cases.push(case(
         "head-moved",
         moved,
-        Expected::Refused(&["PR head changed"]),
+        Expected::Refused(&["PR head changed"], 2),
     ));
     let mut errors = pages.clone();
     errors[0]["errors"] = json!([{"message": "partial GraphQL error"}]);
     cases.push(case(
         "partial-error",
         errors,
-        Expected::Refused(&["Incomplete or wrong-subject"]),
+        Expected::Refused(&["Incomplete or wrong-subject"], 1),
     ));
     let mut inaccessible = pages.clone();
     inaccessible[0]["data"]["repository"] = Value::Null;
     cases.push(case(
         "inaccessible",
         inaccessible,
-        Expected::Refused(&["Incomplete or wrong-subject", "pullRequest"]),
+        Expected::Refused(&["Incomplete or wrong-subject", "pullRequest"], 1),
     ));
     let mut missing_nodes = pages.clone();
     connection(&mut missing_nodes, 0)
@@ -168,7 +169,7 @@ fn fixture_cases(pages: &Value, recipe: &str) -> Result<Vec<Case>, String> {
     cases.push(case(
         "missing-nodes",
         missing_nodes,
-        Expected::Refused(&["Incomplete or wrong-subject", "nodes"]),
+        Expected::Refused(&["Incomplete or wrong-subject", "nodes"], 1),
     ));
     let mut missing_resolution = pages.clone();
     connection(&mut missing_resolution, 0)["nodes"][1]
@@ -178,26 +179,26 @@ fn fixture_cases(pages: &Value, recipe: &str) -> Result<Vec<Case>, String> {
     cases.push(case(
         "missing-resolution",
         missing_resolution,
-        Expected::Refused(&["Incomplete or duplicate", "isResolved"]),
+        Expected::Refused(&["Incomplete or duplicate", "isResolved"], 1),
     ));
     let mut duplicate = pages.clone();
     connection(&mut duplicate, 1)["nodes"][0]["id"] = json!("open-outdated");
     cases.push(case(
         "duplicate-id",
         duplicate,
-        Expected::Refused(&["Incomplete or duplicate"]),
+        Expected::Refused(&["Incomplete or duplicate"], 2),
     ));
     let mut missing_link = pages.clone();
     connection(&mut missing_link, 1)["nodes"][0]["comments"]["nodes"][0]["url"] = Value::Null;
     cases.push(case(
         "missing-link",
         missing_link,
-        Expected::Refused(&["Unresolved thread has no conversation link"]),
+        Expected::Refused(&["Unresolved thread has no conversation link"], 2),
     ));
     let mut native_failure = case(
         "native-exit",
         pages.clone(),
-        Expected::Refused(&["Conversation lookup failed (1)"]),
+        Expected::Refused(&["Conversation lookup failed (1)"], 1),
     );
     native_failure.cli_exit = 1;
     cases.push(native_failure);
@@ -208,10 +209,7 @@ fn fixture_cases(pages: &Value, recipe: &str) -> Result<Vec<Case>, String> {
     );
     cases.push(wrong_filter);
     let mut wrong_first_page = case("wrong-first-page", pages.clone(), Expected::WrongFirstPage);
-    wrong_first_page.recipe = recipe.replace(
-        "for ($conversationIndex = 0;",
-        "$conversationPages = @($conversationPages[0]); $conversationPages[0].data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage = $false; for ($conversationIndex = 0;",
-    );
+    wrong_first_page.recipe = recipe.replace("while ($conversationMore)", "while ($false)");
     cases.push(wrong_first_page);
     let mut alias = case("case-alias", pages.clone(), Expected::Open);
     alias.recipe = recipe.replace(
@@ -227,23 +225,100 @@ fn fixture_cases(pages: &Value, recipe: &str) -> Result<Vec<Case>, String> {
     cases.push(case(
         "wrong-repository",
         wrong_repo,
-        Expected::Refused(&["Incomplete or wrong-subject"]),
+        Expected::Refused(&["Incomplete or wrong-subject"], 1),
     ));
     let mut empty = json!([pages[0].clone()]);
     connection(&mut empty, 0)["nodes"] = json!([]);
     connection(&mut empty, 0)["pageInfo"]["hasNextPage"] = json!(false);
     cases.push(case("empty", empty, Expected::Clear(0)));
+    for (name, cursor) in [("missing-cursor", Value::Null), ("empty-cursor", json!(""))] {
+        let mut invalid = pages.clone();
+        connection(&mut invalid, 0)["pageInfo"]["endCursor"] = cursor;
+        cases.push(case(
+            name,
+            invalid,
+            Expected::Refused(&["Incomplete or repeated conversation cursor"], 1),
+        ));
+    }
+    let mut repeated = pages.clone();
+    connection(&mut repeated, 1)["pageInfo"] =
+        json!({"hasNextPage": true, "endCursor": "page-two"});
+    cases.push(case(
+        "repeated-nonterminal-cursor",
+        repeated.clone(),
+        Expected::Refused(&["Incomplete or repeated conversation cursor"], 2),
+    ));
+    let mut wrong_guard = case(
+        "wrong-cursor-guard",
+        repeated.clone(),
+        Expected::WrongCursorGuard,
+    );
+    wrong_guard.recipe =
+        recipe.replace(" -or -not $conversationCursors.Add($conversationNext)", "");
+    cases.push(wrong_guard);
+    let mut third = repeated[1].clone();
+    connection(&mut repeated, 1)["pageInfo"]["endCursor"] = json!("page-three");
+    third["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0]["id"] =
+        json!("third-page");
+    repeated
+        .as_array_mut()
+        .ok_or_else(|| "fixture pages must be an array".to_string())?
+        .push(third);
+    cases.push(case(
+        "cursor-cycle",
+        repeated,
+        Expected::Refused(&["Incomplete or repeated conversation cursor"], 3),
+    ));
+    let mut terminal_repeat = pages.clone();
+    connection(&mut terminal_repeat, 1)["pageInfo"]["endCursor"] = json!("page-two");
+    cases.push(case("terminal-repeat", terminal_repeat, Expected::Open));
+    let mut terminal_missing = pages.clone();
+    connection(&mut terminal_missing, 1)["pageInfo"] = json!({"hasNextPage": false});
+    cases.push(case("terminal-missing", terminal_missing, Expected::Open));
+    for (name, cursor) in [
+        ("opaque-file", "@not-a-file"),
+        ("opaque-null", "null"),
+        ("opaque-number", "00123"),
+        ("opaque-characters", "quote\"\\`$(not-a-command)\u{00e9}"),
+    ] {
+        let mut opaque = pages.clone();
+        connection(&mut opaque, 0)["pageInfo"]["endCursor"] = json!(cursor);
+        cases.push(case(name, opaque, Expected::Open));
+    }
     Ok(cases)
 }
 
 fn check_result(result: &Value, expected: &Expected) -> Result<(), String> {
-    if let Expected::Refused(reasons) = expected {
+    let calls = match expected {
+        Expected::Open | Expected::WrongFilter => 2,
+        Expected::Clear(0) | Expected::WrongFirstPage => 1,
+        Expected::Clear(_) => 2,
+        Expected::Refused(_, calls) => *calls,
+        Expected::WrongCursorGuard => 3,
+    };
+    if result["requests"] != json!(calls) {
+        return Err(format!("expected exactly {calls} page requests: {result}"));
+    }
+    if let Expected::Refused(reasons, _) = expected {
         let message = result["error"].as_str().unwrap_or_default();
         if result["ok"] != false
             || result.get("packet").is_some()
             || !reasons.iter().any(|reason| message.contains(*reason))
         {
             return Err(format!("expected named refusal with no packet: {result}"));
+        }
+        return Ok(());
+    }
+    if let Expected::WrongCursorGuard = expected {
+        if result["ok"] != false
+            || result.get("packet").is_some()
+            || !result["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("Conversation lookup failed (1)"))
+        {
+            return Err(format!(
+                "cursor guard removal did not reach the distinct request limit: {result}"
+            ));
         }
         return Ok(());
     }
@@ -278,7 +353,8 @@ fn check_result(result: &Value, expected: &Expected) -> Result<(), String> {
             }
             Ok(())
         }
-        Expected::Refused(_) => Err("refusal branch was not inspected".to_string()),
+        Expected::Refused(_, _) => Err("refusal branch was not inspected".to_string()),
+        Expected::WrongCursorGuard => Err("cursor control branch was not inspected".to_string()),
     }
 }
 
@@ -311,24 +387,44 @@ const MOCK_CLI: &str = r#"
 param([string]$RecipePath, [string]$PagesPath, [int]$MockExit, [switch]$Strict)
 $ErrorActionPreference = 'Stop'
 if ($Strict) { Set-StrictMode -Version Latest }
-$global:conversationMockRaw = Get-Content -LiteralPath $PagesPath -Raw
+$global:conversationMockPages = @(Get-Content -LiteralPath $PagesPath -Raw | ConvertFrom-Json)
 $global:conversationMockExit = $MockExit
+$global:conversationMockCalls = 0
 function global:gh {
-    if ($args[0] -ne 'api' -or $args[1] -ne 'graphql' -or $args -notcontains '--paginate' -or $args -notcontains '--slurp') { throw 'Wrong API/pagination invocation' }
+    $index = $global:conversationMockCalls
+    $global:conversationMockCalls++
+    if ($args[0] -ne 'api' -or $args[1] -ne 'graphql' -or $args -contains '--paginate' -or $args -contains '--slurp') { throw 'Wrong per-page API invocation' }
     $queries = @($args | Where-Object { $_ -like 'query=*' })
     if ($queries.Count -ne 1 -or $queries[0] -notmatch 'reviewThreads\(first: 100, after: \$endCursor\)' -or $queries[0] -notmatch 'pageInfo \{ hasNextPage endCursor \}' -or $queries[0] -match '\bmutation\b') { throw 'Wrong read-only query' }
+    $cursors = @()
+    for ($i = 0; $i -lt $args.Count; $i++) {
+        if ([string]$args[$i] -clike 'endCursor=*') {
+            if ($i -eq 0 -or $args[$i - 1] -cne '-f') { throw 'Cursor must use a raw field' }
+            $cursors += $args[$i].Substring(10)
+        }
+    }
+    if ($index -eq 0) {
+        if ($cursors.Count) { throw 'Unexpected initial cursor' }
+    } elseif ($index -le $global:conversationMockPages.Count) {
+        $prior = $global:conversationMockPages[$index - 1].data.repository.pullRequest.reviewThreads.pageInfo.endCursor
+        if ($cursors.Count -ne 1 -or $cursors[0] -cne $prior) { throw 'Cursor changed in transport' }
+    }
+    if ($index -ge $global:conversationMockPages.Count) {
+        $global:LASTEXITCODE = 1
+        return
+    }
     $global:LASTEXITCODE = $global:conversationMockExit
-    $global:conversationMockRaw
+    $global:conversationMockPages[$index] | ConvertTo-Json -Depth 20
 }
 try {
     $raw = & ([scriptblock]::Create((Get-Content -LiteralPath $RecipePath -Raw)))
     $packet = ($raw -join "`n") | ConvertFrom-Json -ErrorAction Stop
-    $result = [pscustomobject]@{ok=$true; packet=$packet}
+    $result = [pscustomobject]@{ok=$true; packet=$packet; requests=$global:conversationMockCalls}
 } catch {
-    $result = [pscustomobject]@{ok=$false; error=$_.Exception.Message}
+    $result = [pscustomobject]@{ok=$false; error=$_.Exception.Message; requests=$global:conversationMockCalls}
 } finally {
     Remove-Item Function:\gh
-    Remove-Variable conversationMockRaw,conversationMockExit -Scope Global
+    Remove-Variable conversationMockPages,conversationMockExit,conversationMockCalls -Scope Global
 }
 $result | ConvertTo-Json -Depth 20
 exit 0

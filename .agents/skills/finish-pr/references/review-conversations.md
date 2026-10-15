@@ -36,16 +36,19 @@ query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
   }
 }
 '@
-$conversationRaw = & gh api graphql --paginate --slurp -f "query=$conversationQuery" -F "owner=$($conversationParts[0])" -F "name=$($conversationParts[1])" -F "number=$conversationPr"
-$conversationExit = $LASTEXITCODE
-if ($null -eq $conversationExit -or $conversationExit -ne 0) { throw "Conversation lookup failed ($conversationExit); readiness remains unknown" }
-$conversationPages = @(($conversationRaw -join "`n") | ConvertFrom-Json -ErrorAction Stop)
-if ($conversationPages.Count -eq 0) { throw 'No conversation pages; readiness remains unknown' }
 $conversationHead = $null
 $conversationThreads = @()
 $conversationIds = [System.Collections.Generic.HashSet[string]]::new()
-for ($conversationIndex = 0; $conversationIndex -lt $conversationPages.Count; $conversationIndex++) {
-    $conversationPage = $conversationPages[$conversationIndex]
+$conversationCursors = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+$conversationCursor = $null
+do {
+    $conversationArgs = @('api', 'graphql', '-f', "query=$conversationQuery", '-f', "owner=$($conversationParts[0])", '-f', "name=$($conversationParts[1])", '-F', "number=$conversationPr")
+    if ($null -ne $conversationCursor) { $conversationArgs += @('-f', "endCursor=$conversationCursor") }
+    $conversationRaw = & gh @conversationArgs
+    $conversationExit = $LASTEXITCODE
+    if ($null -eq $conversationExit -or $conversationExit -ne 0) { throw "Conversation lookup failed ($conversationExit); readiness remains unknown" }
+    $conversationPage = ($conversationRaw -join "`n") | ConvertFrom-Json -ErrorAction Stop
+    if ($null -eq $conversationPage) { throw 'No conversation page; readiness remains unknown' }
     $conversationRepo = $conversationPage.data.repository
     $conversationSubject = $conversationRepo.pullRequest
     $conversationConnection = $conversationSubject.reviewThreads
@@ -53,7 +56,12 @@ for ($conversationIndex = 0; $conversationIndex -lt $conversationPages.Count; $c
     if ($null -eq $conversationHead) { $conversationHead = $conversationSubject.headRefOid }
     if ($conversationSubject.headRefOid -cne $conversationHead) { throw 'PR head changed during pagination; recollect' }
     $conversationMore = $conversationConnection.pageInfo.hasNextPage
-    if ($conversationMore -isnot [bool] -or $conversationMore -ne ($conversationIndex -lt $conversationPages.Count - 1)) { throw 'Incomplete conversation pagination; recollect' }
+    if ($conversationMore -isnot [bool]) { throw 'Incomplete conversation pagination; recollect' }
+    if ($conversationMore) {
+        $conversationNext = $conversationConnection.pageInfo.endCursor
+        if ($conversationNext -isnot [string] -or [string]::IsNullOrEmpty($conversationNext) -or -not $conversationCursors.Add($conversationNext)) { throw 'Incomplete or repeated conversation cursor; recollect' }
+        $conversationCursor = $conversationNext
+    }
     foreach ($conversationThread in $conversationConnection.nodes) {
         if (-not $conversationThread.id -or $conversationThread.isResolved -isnot [bool] -or $conversationThread.isOutdated -isnot [bool] -or -not $conversationIds.Add($conversationThread.id)) { throw 'Incomplete or duplicate thread; recollect' }
         if (-not $conversationThread.isResolved) {
@@ -71,7 +79,7 @@ for ($conversationIndex = 0; $conversationIndex -lt $conversationPages.Count; $c
             }
         }
     }
-}
+} while ($conversationMore)
 [pscustomobject]@{
     repository = $conversationRepository
     pr = $conversationPr
@@ -92,6 +100,14 @@ and on the final merge gate refresh. The recipe never replies, resolves, changes
 readiness, alters protections, or merges. Outdated unresolved threads remain in
 the action list; outdated is not resolved.
 
+Each query fetches one page. Before another request, the recipe validates the
+page and requires a nonempty, previously unseen nonterminal cursor using ordinal
+comparison. This prevents repeated-cursor and cursor-cycle loops inside opaque
+CLI auto-pagination. Cursors are raw `-f` values, preserving special characters
+and strings such as `null` or `@file`; terminal cursors are unused. Individual
+network requests and a server issuing endlessly unique cursors are not bounded
+by this progress check. No success packet is emitted until collection completes.
+
 ## Fixture verification
 
 On native Windows with PowerShell 7, run the committed Rust fixture harness:
@@ -100,7 +116,7 @@ On native Windows with PowerShell 7, run the committed Rust fixture harness:
 cargo test -p xtask --bin xtask review_conversations
 ```
 
-Two tests each exercise 16 scenarios against the actual Markdown code block,
+Two tests each exercise 27 scenarios against the actual Markdown code block,
 including normal and inherited StrictMode sessions. Rust owns inputs and packet
 assertions; each bounded child process provides only a read-only CLI mock and
 runs the recipe. The mock cannot leak into a later live CLI call. Generated
@@ -115,9 +131,11 @@ For manual exploration, the same fixture and expected outcomes follow.
 
 The adjacent [fixture](review-conversations.fixture.json) is a synthetic two-page
 response, not live GitHub evidence: a resolved thread, an outdated unresolved
-thread, and a current unresolved thread on the second page. Run the collection
-block with a test-only `gh` function returning the fixture's `pages` JSON and
-setting `$global:LASTEXITCODE = 0`; inspect the emitted JSON. Expect 3 inspected,
+thread, and a current unresolved thread on the second page. For each invocation,
+have a test-only `gh` function return one successive fixture page and set
+`$global:LASTEXITCODE = 0`. Verify the next raw cursor equals the prior page's
+nonterminal cursor; on exhausted pages return native failure rather than replaying
+the last response. Inspect the final JSON. Expect 3 inspected,
 2 unresolved, both open IDs and links, the pinned head, and blocked preparation.
 Remove that function after the test so live commands use the actual CLI.
 
@@ -130,6 +148,9 @@ Challenge the same block with each fixture variant:
 | Empty complete inventory | 0 inspected, 0 unresolved; review/check/protection obligations remain |
 | Resolve both open threads | 3 inspected, 0 unresolved; next action still requires review/checks/protections |
 | Keep only page 1 (`hasNextPage=true`) | Error, no success packet |
+| Missing/empty or repeated nonterminal cursor; a cursor cycle | Error before another request, no success packet |
+| Repeated or absent terminal cursor | Accepted; terminal cursors are unused |
+| Opaque cursors with special characters or typed-field spellings | Exact raw value reaches the next query |
 | Change page 2 head | Error, no success packet |
 | Add GraphQL `errors` with partial `data` | Error, no success packet |
 | Set `repository` to null | Error, no success packet |
@@ -142,3 +163,6 @@ A wrong filter that discards `isOutdated=true` must fail the two-open-thread
 assertion. A wrong first-page-only collector must fail the second-page ID
 assertion. Fixtures verify the recipe's selection, refusal and output; they do
 not establish live authentication, server pagination or protection enforcement.
+Removing the cursor guard must trigger the mock's distinct failure after a third
+request, rather than the expected cursor refusal after two. That transport
+failure is a negative control, not credited as a successful cursor guard.
