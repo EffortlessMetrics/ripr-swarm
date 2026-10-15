@@ -58,6 +58,122 @@ fn flat_object_keys(object_text: &str) -> Option<Vec<String>> {
     Some(keys)
 }
 
+/// RIPR-SPEC-0250 rule 1 (amended 2026-10-15): a test-body
+/// `const <name> = { key: literal, ... };` that `toMatchObject(<name>)` may
+/// read in place of the name. `const` stops reassignment, not mutation, so
+/// the body must name `<name>` exactly twice, in its binding and in the one
+/// matcher argument: any write (`grown.adult = false`), alias, helper call,
+/// closure or second assertion spells the name a third time and withholds
+/// it. A body containing `eval`, `with` or a `\u` escape can reach the
+/// object without spelling it, so it reads no object `const`.
+#[derive(Clone, Debug)]
+pub(crate) struct MatchObjectConst {
+    name: String,
+    text: String,
+    declared_end: u32,
+}
+
+/// The test body's [`MatchObjectConst`]s.
+pub(crate) fn match_object_consts(
+    statements: &oxc_allocator::Vec<'_, Statement<'_>>,
+    source: &str,
+) -> Vec<MatchObjectConst> {
+    let (Some(first), Some(last)) = (statements.first(), statements.last()) else {
+        return Vec::new();
+    };
+    let Some(body) = source.get(first.span().start as usize..last.span().end as usize) else {
+        return Vec::new();
+    };
+    if whole_word_count(body, "eval") > 0
+        || whole_word_count(body, "with") > 0
+        || body.contains("\\u")
+    {
+        return Vec::new();
+    }
+    let mut consts = Vec::new();
+    for stmt in statements {
+        let Statement::VariableDeclaration(declaration) = stmt else {
+            continue;
+        };
+        if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const || declaration.declare {
+            continue;
+        }
+        for declarator in &declaration.declarations {
+            let oxc_ast::ast::BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                continue;
+            };
+            let Some(Expression::ObjectExpression(object)) = declarator
+                .init
+                .as_ref()
+                .map(Expression::get_inner_expression)
+            else {
+                continue;
+            };
+            if !safe_mock_expected_object(object) || whole_word_count(body, &id.name) != 2 {
+                continue;
+            }
+            let Some(text) = source.get(object.span.start as usize..object.span.end as usize)
+            else {
+                continue;
+            };
+            consts.push(MatchObjectConst {
+                name: id.name.to_string(),
+                text: text.to_string(),
+                declared_end: declaration.span.end,
+            });
+        }
+    }
+    consts
+}
+
+/// The literal object `expr`'s `expect(...).toMatchObject(<name>)` argument
+/// stands for, when `<name>` is one of `consts` declared before the call.
+/// `.not`, `.resolves` and `.rejects` chains read nothing.
+pub(crate) fn match_object_const_argument(
+    consts: &[MatchObjectConst],
+    expr: &Expression<'_>,
+) -> Option<String> {
+    let Expression::CallExpression(call) = expr.get_inner_expression() else {
+        return None;
+    };
+    let member = call.callee.as_member_expression()?;
+    if member.static_property_name()? != "toMatchObject" {
+        return None;
+    }
+    let Expression::CallExpression(subject) = member.object().get_inner_expression() else {
+        return None;
+    };
+    if !matches!(subject.callee.get_inner_expression(), Expression::Identifier(callee) if callee.name == "expect")
+    {
+        return None;
+    }
+    let [argument] = call.arguments.as_slice() else {
+        return None;
+    };
+    let Some(Expression::Identifier(ident)) = argument
+        .as_expression()
+        .map(Expression::get_inner_expression)
+    else {
+        return None;
+    };
+    consts
+        .iter()
+        .find(|known| known.name == ident.name.as_str() && known.declared_end <= call.span.start)
+        .map(|known| known.text.clone())
+}
+
+/// How many times `word` occurs in `text` as a whole identifier word,
+/// strings and comments included (an extra mention only withholds).
+fn whole_word_count(text: &str, word: &str) -> usize {
+    let part =
+        |ch: Option<char>| ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric());
+    text.match_indices(word)
+        .filter(|(at, _)| {
+            !part(text[..*at].chars().next_back()) && !part(text[at + word.len()..].chars().next())
+        })
+        .count()
+}
+
 /// The key of the changed field when `line_text` is a top-level
 /// `key: value` line of the one object literal the owner returns
 /// (`return {` ... `};`), and nothing else in that literal sets `key`.
@@ -268,7 +384,8 @@ pub(crate) fn ts_match_object_facts(
         assertion.matcher == "toMatchObject"
             && matches!(assertion.oracle_kind, OracleKind::RelationalCheck)
             && assertion.error_payload.is_none()
-            && assertion.expected_value_or_variant.is_some()
+            && (assertion.expected_value_or_variant.is_some()
+                || assertion.expected_object_const.is_some())
     };
     if !candidates
         .iter()
@@ -296,6 +413,7 @@ pub(crate) fn ts_match_object_facts(
             let lists_key = assertion
                 .expected_value_or_variant
                 .as_deref()
+                .or(assertion.expected_object_const.as_deref())
                 .and_then(flat_object_keys)
                 .is_some_and(|keys| keys.contains(&key));
             if lists_key
