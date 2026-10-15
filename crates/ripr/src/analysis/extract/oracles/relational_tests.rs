@@ -860,6 +860,9 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         ("assert!(foo(matches!(x, A)).is_ok());", &exact),
         ("assert_eq!(is_valid(x), expected);", &exact),
         ("assert_eq!(xs.iter().any(|x| *x == 1), expected);", &exact),
+        // A bitwise `&` over plain values pins a value (review of 49bc452).
+        ("assert_eq!(flags & MASK, 0);", &exact),
+        ("assert_eq!(flags & Flags::A, Flags::A);", &exact),
         // A relation-only conjunct beside a pinning `==` lends no kind: the
         // pinning conjunct decides it (#7947).
         (
@@ -1051,7 +1054,9 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!(matches!(r, Err(E::Bad)).eq(&true), expected);",
         "assert_eq!(!matches!(r, Err(E::Bad)).eq(&true), expected);",
         "assert_eq!(r == Err(E::Bad), expected);",
-        "assert_ne!(expected, r == Err(E::Bad));",
+        "assert!(expected == (r == Err(E::Bad)));",
+        "assert_eq!((r == Err(E::Bad)) ^ flag, expected);",
+        "assert_eq!(flag | (r == Err(E::Bad)), expected);",
         "assert!((r == Err(E::Bad)) == expected);",
     ] {
         if !is_inequality_assertion(text) {

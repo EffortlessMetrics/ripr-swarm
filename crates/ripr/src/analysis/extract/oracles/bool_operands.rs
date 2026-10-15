@@ -514,10 +514,6 @@ fn conjunct_states_relation(conjunct: &str) -> bool {
             == Some("!=")
 }
 
-/// The non-literal operand of a comparison with a boolean literal, whether
-/// the assertion states that operand is true, and whether the comparison is
-/// a boolean assertion's whole condition rather than an equality macro's
-/// operands.
 /// Whether an equality macro, or a boolean assertion whose whole condition
 /// is an `==` or `!=`, compares a boolean-valued test with a side that is no
 /// boolean literal (`assert_eq!(r == Err(E::Bad), expected)`,
@@ -549,21 +545,31 @@ fn compares_test_with_non_literal(line: &str) -> bool {
     !literal(left) && !literal(right) && (is_bool_test(left) || is_bool_test(right))
 }
 
-/// Whether `side`, through any `!`, `.not()` or literal comparison, is a
-/// test: a top-level comparison, `||` or `&&`, a comparison call, or a whole
-/// `matches!`.
+/// Whether `side`, through the spellings `strip_negations` peels, is a
+/// test: a top-level comparison, `||` or `&&`, a comparison call, a whole
+/// `matches!`, or a `^`, `|` or `&` over a comparison or pattern
+/// (`(r == Err(E::Bad)) ^ flag`). A bitwise operator over plain values is
+/// no test (`flags & MASK`, `n & (n - 1)` pin a value).
 fn is_bool_test(side: &str) -> bool {
     let (core, _, _) = strip_negations(side);
-    let conjoined = conjoin_single_ampersands(core);
-    let core = conjoined.as_str();
+    let masked = mask_comments_and_strings(core);
+    let holds_test = masked.contains("matches!")
+        || masked.contains("==")
+        || masked.contains("!=")
+        || holds_comparison_call(&masked);
     top_level_comparison_operator(core).is_some()
         || has_top_level_relational_operator(core)
         || has_top_level_disjunction(core)
         || split_top_level_conjuncts(core).len() > 1
         || method_comparison(core).is_some()
         || is_whole_pattern(core)
+        || (holds_test && has_top_level_bitwise_operator(core))
 }
 
+/// The non-literal operand of a comparison with a boolean literal, whether
+/// the assertion states that operand is true, and whether the comparison is
+/// a boolean assertion's whole condition rather than an equality macro's
+/// operands.
 fn compared_with_bool_literal(line: &str) -> Option<(String, bool, bool)> {
     let literal = |side: &str| literal_spelling_value(&mask_comments_and_strings(side));
     let pick = |left: &str, right: &str, not_equal: bool| match (literal(left), literal(right)) {

@@ -295,8 +295,9 @@ Two pattern terms are used below.
    the call. Peeling a spelling can raise a doubled negation to the
    comparison's own reading (`assert_eq!((r == Err(E::Bad)) == false as bool,
    false)` and `assert_eq!(&(r == Err(E::Bad)) == &false, false)` assert
-   `r == Err(E::Bad)`). A test (a comparison, `||`, `&&`, comparison call or
-   whole `matches!`, through any `!`, `.not()` or literal comparison)
+   `r == Err(E::Bad)`). A test (a comparison, `||`, `&&`, comparison call, whole
+   `matches!`, or `^`, `|` or `&` over a comparison or pattern, through the
+   spellings above; a bitwise operator over plain values is no test)
    compared by an equality macro or a whole `==` or `!=` condition with a
    side that is no boolean literal caps, because that side may be `false`
    (`assert_eq!(r == Err(E::Bad), expected)`,
