@@ -349,6 +349,11 @@ covered-by warmup/list children, and `check-fast.md` records fmt and workspace
 Clippy children. Other commands are outside this bounded capture scope. Reused
 selectors and skipped warmups create no execution rows. Precommit diagnostics
 remain bound by its report digest; they add no acceptance or waiver authority.
+The nullable numeric `exit_code` comes directly from the observed native status;
+missing status, capture/status-call errors and Unix signals keep it null. It is
+independent of `outcome`: a timed-out call stays `timed_out` even if its observed
+exit code is zero. Human diagnostics render a missing code as `unavailable`.
+No environment values or new artifact locations are captured.
 Structured argv preserves argument boundaries (`$REPO` substitutes the repository
 root in precommit). Captured elapsed time runs from runner start through observed
 exit, with polling. Enforced timeout duration includes termination and reaping,
