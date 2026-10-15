@@ -181,3 +181,14 @@ opt-level = 3
 # debug assertions in the normal dev and inherited test profiles.
 [profile.dev.package.serde_json]
 opt-level = 3
+
+# Policy scans retain complete Rust syntax trees and diagnostics. Optimize the
+# measured parser/tree dependencies while repository code keeps dev settings.
+[profile.dev.package.ra_ap_parser]
+opt-level = 3
+
+[profile.dev.package.ra_ap_syntax]
+opt-level = 3
+
+[profile.dev.package.rowan]
+opt-level = 3
