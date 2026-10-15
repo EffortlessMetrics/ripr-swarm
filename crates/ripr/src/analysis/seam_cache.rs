@@ -450,8 +450,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.74`: the guarded-match scan reads the RIPR-SPEC-0175 accepted-Err
 /// form (one quiet `Err(Type::Variant) => {}` arm, every other arm loud).
 /// Old entries keep those error-path seams unconfirmed.
-/// `1.75`: eagerly invoked explicit-return check helpers lend panic assertions (#7818).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.75";
+/// `1.75`: a literal variant-field pattern on the owner's result pins the
+/// changed field (#6578). Old entries keep the unconfirmed discriminator.
+/// `1.76`: compose the variant-field pattern evidence with explicit-return
+/// panic-assertion helper loans (#7818); neither standalone `1.75` is reusable.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.76";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -570,8 +573,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.75";
 /// `0.78`: same string-colon probe boundary as full `1.72`.
 /// `0.79`: same composed match-head coverage as full `1.73` (#5604).
 /// `0.80`: same accepted-Err guarded-match pins as full `1.74`.
-/// `0.81`: same explicit-return panic-assertion loans as full `1.75`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.81";
+/// `0.81`: same variant-field pattern evidence as full `1.75`.
+/// `0.82`: same composed helper/pattern evidence as full `1.76`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.82";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -692,8 +696,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.81";
 /// `0.78`: same string-colon probe boundary as full `1.72`.
 /// `0.79`: same composed match-head coverage as full `1.73` (#5604).
 /// `0.80`: same accepted-Err guarded-match pins as full `1.74`.
-/// `0.81`: same explicit-return panic-assertion loans as full `1.75`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.81";
+/// `0.81`: same variant-field pattern evidence as full `1.75`.
+/// `0.82`: same composed helper/pattern evidence as full `1.76`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.82";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4454,8 +4459,9 @@ mod tests {
         // 1.71 -> 1.72: string colons mint no field probe (#6578).
         // 1.72 -> 1.73: retain match-head coverage after the colon repair.
         // 1.73 -> 1.74: accepted-Err guarded-match pins (RIPR-SPEC-0175).
-        // 1.74 -> 1.75: explicit-return panic-assertion loans (#7818).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.75");
+        // 1.74 -> 1.75: literal variant-field patterns pin the field (#6578).
+        // 1.75 -> 1.76: compose both independently allocated 1.75 semantics (#7818).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.76");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4522,9 +4528,10 @@ mod tests {
         // 0.77 -> 0.78: same evidence as full 1.72.
         // 0.78 -> 0.79: same composed evidence as full 1.73.
         // 0.79 -> 0.80: same evidence as full 1.74.
-        // 0.80 -> 0.81: same evidence as full 1.75 (#7818).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.81");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.81");
+        // 0.80 -> 0.81: same evidence as full 1.75.
+        // 0.81 -> 0.82: same composed evidence as full 1.76 (#7818).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.82");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.82");
     }
 
     #[test]
