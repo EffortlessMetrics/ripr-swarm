@@ -17842,7 +17842,7 @@ fn seam_reached_by_no_test_path_stays_ungripped() -> Result<(), String> {
 
 #[test]
 fn seam_behind_a_helper_chain_past_five_hops_is_opaque_not_ungripped() -> Result<(), String> {
-    // RIPR-SPEC-0230 rule 1 with RIPR-SPEC-0114 step 5 (#8047): the test
+    // RIPR-SPEC-0230 rule 5 with RIPR-SPEC-0114 step 5 (#8047): the test
     // enters a chain six helper hops from the owner, past the bounded walk.
     let (reach, class) = unresolved_reach_case(&[
         (
