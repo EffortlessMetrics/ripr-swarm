@@ -5993,6 +5993,21 @@ fn has_explicit_planned_test_mapping(text: &str) -> bool {
             }
             continue;
         }
+        if !comment
+            && fence_indent <= 3
+            && (fence_text.starts_with("```") || fence_text.starts_with("~~~"))
+        {
+            let delimiter = if fence_text.starts_with('`') {
+                '`'
+            } else {
+                '~'
+            };
+            fence = Some((
+                delimiter,
+                fence_text.chars().take_while(|ch| *ch == delimiter).count(),
+            ));
+            continue;
+        }
         let mut remainder = line;
         let mut comment_line = comment;
         loop {
@@ -6012,18 +6027,6 @@ fn has_explicit_planned_test_mapping(text: &str) -> bool {
             }
         }
         if comment_line {
-            continue;
-        }
-        if fence_indent <= 3 && (fence_text.starts_with("```") || fence_text.starts_with("~~~")) {
-            let delimiter = if fence_text.starts_with('`') {
-                '`'
-            } else {
-                '~'
-            };
-            fence = Some((
-                delimiter,
-                fence_text.chars().take_while(|ch| *ch == delimiter).count(),
-            ));
             continue;
         }
         if line.trim_end() == "## Test Mapping" {
