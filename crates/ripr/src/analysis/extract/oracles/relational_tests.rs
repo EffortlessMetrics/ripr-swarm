@@ -1145,6 +1145,17 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             &weak,
         ),
         ("assert_eq!(flags | (a == b), X);", &weak),
+        // Review of e2f22d1: a parenthesized type inside the conversion's
+        // path, and a const-generic block or `->` inside a turbofish.
+        (
+            "assert_eq!(<u8 as From<(bool)>>::from(r == Err(E::Bad)), 0);",
+            &weak,
+        ),
+        ("assert!(foo::<{ 2 > 1 }>(matches!(x, A)).is_ok());", &exact),
+        (
+            "assert!(foo::<fn() -> u8>(matches!(x, A)).is_ok());",
+            &exact,
+        ),
         ("assert_eq!(flag ^ Into::<u8>::into(a == b), x);", &weak),
         (
             "assert_eq!(flag ^ <bool as From<bool>>::from(a == b), x);",

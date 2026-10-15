@@ -14790,6 +14790,7 @@ fixtures = [
   "fixtures/bool_compared_inequality_not_exact",
   "fixtures/test_compared_with_non_literal_not_exact",
   "fixtures/test_cast_to_integer_not_exact",
+  "fixtures/test_from_trait_conversion_not_exact",
 ]
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",

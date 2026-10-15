@@ -519,7 +519,9 @@ fn bool_preserving_operand(text: &str) -> Option<&str> {
 /// conversion of a `bool` keeps whether it is a test.
 fn conversion_call_argument(text: &str) -> Option<&str> {
     let masked = mask_comments_and_strings(text);
-    let open = masked.find('(')?;
+    // The call's own argument list closes the text; an earlier parenthesis
+    // may sit inside the path (`<u8 as From<(bool)>>::from(x)`).
+    let open = final_group_open(masked.trim_end())?;
     let callee = masked.get(..open)?.trim_end();
     let head = callee
         .strip_suffix("from")
@@ -528,7 +530,11 @@ fn conversion_call_argument(text: &str) -> Option<&str> {
     let names_conversion = path.contains("From")
         || path.contains("Into")
         || BOOL_CARRYING_TYPES.iter().any(|ty| {
-            path.trim_end().ends_with(ty) && path.trim_end().ends_with(&format!("::{ty}"))
+            let path = path.trim_end();
+            path == *ty
+                || path
+                    .strip_suffix(ty)
+                    .is_some_and(|rest| rest.ends_with("::"))
         });
     if !names_conversion || !is_path_head(head) {
         return None;
@@ -685,9 +691,7 @@ fn blank_call_arguments(text: &str) -> String {
             '(' => {
                 depth += 1;
                 let head = text.get(..index).unwrap_or_default();
-                if strip_grouping_opens(&format!("{head}(")).ends_with('(')
-                    && !carries_test_through(head)
-                {
+                if opens_call_after(head) && !carries_test_through(head) {
                     call_depth = depth;
                 }
             }
@@ -1206,11 +1210,7 @@ fn strip_grouping_opens(before: &str) -> &str {
             text = rest.trim_end();
         } else if let Some(rest) = text.strip_suffix('(') {
             let head = rest.trim_end();
-            let callee = (head
-                .ends_with(|ch: char| ch.is_alphanumeric() || matches!(ch, '_' | ')' | ']' | '?'))
-                && !ends_with_keyword(head))
-                || closes_turbofish(head);
-            if callee {
+            if opens_call_after(head) {
                 return text;
             }
             text = head;
@@ -1218,6 +1218,16 @@ fn strip_grouping_opens(before: &str) -> &str {
             return text;
         }
     }
+}
+
+/// Whether a parenthesis right after `head` (masked) opens a call's
+/// arguments: `head` ends with a callee (a name, a call or index result, or
+/// a turbofish such as `foo::<T>`) and not with a keyword.
+fn opens_call_after(head: &str) -> bool {
+    let head = head.trim_end();
+    (head.ends_with(|ch: char| ch.is_alphanumeric() || matches!(ch, '_' | ')' | ']' | '?'))
+        && !ends_with_keyword(head))
+        || closes_turbofish(head)
 }
 
 /// Whether `text` ends with a keyword after which a parenthesis groups an
@@ -1238,10 +1248,17 @@ fn closes_turbofish(text: &str) -> bool {
     if !text.ends_with('>') {
         return false;
     }
+    let bytes = text.as_bytes();
     let mut depth = 0usize;
-    for (index, byte) in text.bytes().enumerate().rev() {
+    // A const-generic block (`foo::<{ N > 1 }>`) is one argument, and the
+    // `>` of a `->` closes no angle (as in `is_path_head`).
+    let mut blocks = 0usize;
+    for (index, &byte) in bytes.iter().enumerate().rev() {
         match byte {
-            b'>' => depth += 1,
+            b'}' => blocks += 1,
+            b'{' => blocks = blocks.saturating_sub(1),
+            _ if blocks > 0 => {}
+            b'>' if index == 0 || bytes.get(index - 1) != Some(&b'-') => depth += 1,
             b'<' => {
                 depth = depth.saturating_sub(1);
                 if depth == 0 {
