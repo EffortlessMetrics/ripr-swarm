@@ -69,14 +69,29 @@ fn array(value: &Value) -> Result<&Vec<Value>, String> {
 
 #[derive(Default)]
 struct Section {
-    rows: Vec<String>,
+    rows: Vec<EvidenceRow>,
     missing: usize,
 }
+
+struct EvidenceRow {
+    detail: String,
+    missing: bool,
+}
+
 impl Section {
+    fn row(&mut self, detail: impl Into<String>) {
+        self.rows.push(EvidenceRow {
+            detail: detail.into(),
+            missing: false,
+        });
+    }
+
     fn gap(&mut self, detail: impl AsRef<str>) {
         self.missing += 1;
-        self.rows
-            .push(format!("MISSING EVIDENCE: {}", detail.as_ref()));
+        self.rows.push(EvidenceRow {
+            detail: format!("MISSING EVIDENCE: {}", detail.as_ref()),
+            missing: true,
+        });
     }
 }
 
@@ -94,13 +109,21 @@ fn section(
     if section.rows.is_empty() {
         report.push_str("- No entries recorded. This is not executed proof.\n");
     }
-    for row in section.rows.iter().take(MAX_ROWS) {
-        report.push_str(&format!("- {}\n", text(row)));
+    for row in section
+        .rows
+        .iter()
+        .filter(|row| row.missing)
+        .chain(section.rows.iter().filter(|row| !row.missing))
+        .take(MAX_ROWS)
+    {
+        report.push_str(&format!("- {}\n", text(&row.detail)));
     }
     if section.rows.len() > MAX_ROWS {
+        let omitted = section.rows.len() - MAX_ROWS;
+        let omitted_missing = section.missing.saturating_sub(MAX_ROWS);
         report.push_str(&format!(
-            "- {} additional rows withheld by the display bound; inspect the artifact.\n",
-            section.rows.len() - MAX_ROWS
+            "- {omitted} additional rows withheld by the display bound ({omitted_missing} missing-evidence, {} other); inspect the artifact.\n",
+            omitted - omitted_missing
         ));
     }
     (report, section.missing)
@@ -124,9 +147,9 @@ fn render(root: &Path) -> String {
                     return Err("invalid or duplicate sensor ID".into());
                 }
                 match sensor["run"].as_bool() {
-                    Some(false) => section
-                        .rows
-                        .push(format!("{id}: not planned ({})", field(sensor, "reason")?)),
+                    Some(false) => {
+                        section.row(format!("{id}: not planned ({})", field(sensor, "reason")?))
+                    }
                     Some(true) => {
                         let relative = format!("sensors/{id}/ub-review-sensor-status.json");
                         let receipt = read_json(root, &relative).and_then(|r| {
@@ -152,7 +175,7 @@ fn render(root: &Path) -> String {
                                 {
                                     section.gap(detail);
                                 } else {
-                                    section.rows.push(detail);
+                                    section.row(detail);
                                 }
                             }
                             Err(error) => section
@@ -208,9 +231,7 @@ fn render(root: &Path) -> String {
                     row["target"].as_str().unwrap_or("not recorded")
                 );
                 if matches!(status, "resolved" | "deduplicated" | "requested") {
-                    section
-                        .rows
-                        .push(format!("{detail}; resolution is not execution"));
+                    section.row(format!("{detail}; resolution is not execution"));
                 } else {
                     section.gap(detail);
                 }
@@ -224,15 +245,17 @@ fn render(root: &Path) -> String {
         "Recorded proof results",
         "review/proof_receipts.json",
         |values, section| {
+            let mut staged = BTreeMap::new();
             for row in array(values)? {
                 if row["schema"] != "ub-review.proof_receipt.v1" {
                     return Err("unknown proof receipt schema".into());
                 }
                 let id = field(row, "id")?;
-                if receipts.contains_key(id) {
+                if staged.contains_key(id) {
                     return Err("duplicate proof receipt ID".into());
                 }
                 let result = field(row, "result")?;
+                let reason = field(row, "reason")?;
                 let commands = array(&row["commands"])?;
                 let mut outcomes = Vec::new();
                 for cmd in commands {
@@ -267,19 +290,19 @@ fn render(root: &Path) -> String {
                             && base[0]["status"] == "failed"
                             && base[0]["exit_code"].as_i64() != Some(0)));
                 let kind = field(row, "kind")?;
-                receipts.insert(
+                staged.insert(
                     id.to_owned(),
                     (satisfied, kind.to_owned(), result.to_owned()),
                 );
                 let detail = format!(
                     "{id}: producer result={result}; kind={kind}; {}; {}",
                     outcomes.join("; "),
-                    field(row, "reason")?
+                    reason
                 );
                 if !satisfied {
                     section.gap(detail);
                 } else {
-                    section.rows.push(
+                    section.row(
                         detail
                             + if result == "head_passed" {
                                 "; HEAD-only success does not establish red/green discrimination"
@@ -289,6 +312,9 @@ fn render(root: &Path) -> String {
                     );
                 }
             }
+            // The portfolio may consume only a fully admitted receipt artifact.
+            // A later duplicate or malformed row invalidates the staged join.
+            receipts = staged;
             Ok(())
         },
     ));
@@ -300,7 +326,7 @@ fn render(root: &Path) -> String {
             if portfolio["schema"] != "ub-review.proof_portfolio.v1" {
                 return Err("unknown portfolio schema".into());
             }
-            section.rows.push(format!(
+            section.row(format!(
                 "Packet subject head={}; phase={}; not current-head qualification",
                 field(portfolio, "head")?,
                 field(portfolio, "phase")?
@@ -342,30 +368,30 @@ fn render(root: &Path) -> String {
                     field(decision, "reason")?,
                     recorded.len()
                 );
+                let has_matching_proof = recorded.iter().any(|id| {
+                    receipts
+                        .get(*id)
+                        .is_some_and(|(satisfied, receipt_kind, result)| {
+                            *satisfied
+                                && receipt_kind == kind
+                                && matches!(
+                                    kind,
+                                    "focused-head" | "focused-build" | "focused-red-green"
+                                )
+                                && (kind != "focused-red-green" || result == "discriminating")
+                        })
+                });
                 if !matches!(
                     status,
                     "selected_with_lease"
                         | "answered_by_existing_receipt"
                         | "satisfied_by_existing_evidence"
-                ) || recorded.is_empty()
-                    || recorded.iter().any(|id| {
-                        receipts
-                            .get(*id)
-                            .is_none_or(|(satisfied, receipt_kind, result)| {
-                                !satisfied
-                                    || receipt_kind != kind
-                                    || !matches!(
-                                        kind,
-                                        "focused-head" | "focused-build" | "focused-red-green"
-                                    )
-                                    || (kind == "focused-red-green" && result != "discriminating")
-                            })
-                    })
+                ) || !has_matching_proof
                     || linked.iter().any(|id| !receipts.contains_key(*id))
                 {
                     section.gap(detail);
                 } else {
-                    section.rows.push(detail);
+                    section.row(detail);
                 }
             }
             if decisions
@@ -617,6 +643,139 @@ mod tests {
         Ok(())
     }
 
+    fn linked_head_portfolio(receipts: &[&str]) -> Value {
+        let mut task = portfolio(&["snippet"], "satisfied_by_existing_evidence", receipts);
+        task["candidate_tasks"][0]["kind"] = json!("focused-head");
+        task["decisions"][0]["kind"] = json!("focused-head");
+        task
+    }
+
+    #[test]
+    fn malformed_receipt_cannot_seed_a_portfolio_join() -> Result<(), String> {
+        let p = Packet::new()?;
+        p.write(
+            "review/proof_portfolio.json",
+            linked_head_portfolio(&["shared"]),
+        )?;
+        let mut malformed = receipt("shared", "head_passed");
+        malformed
+            .as_object_mut()
+            .ok_or("receipt object")?
+            .remove("reason");
+        p.write("review/proof_receipts.json", json!([malformed]))?;
+        let report = render(&p.0);
+        assert!(report.contains("invalid reason"));
+        assert!(report.contains("MISSING EVIDENCE: snippet:"));
+        Ok(())
+    }
+
+    #[test]
+    fn later_invalid_receipt_rejects_all_staged_join_entries() -> Result<(), String> {
+        let p = Packet::new()?;
+        p.write(
+            "review/proof_portfolio.json",
+            linked_head_portfolio(&["shared"]),
+        )?;
+        let duplicate = receipt("shared", "head_passed");
+        let mut unknown = receipt("other", "head_passed");
+        unknown["schema"] = json!("future-receipt-schema");
+        let mut malformed = receipt("other", "head_passed");
+        malformed
+            .as_object_mut()
+            .ok_or("receipt object")?
+            .remove("reason");
+        for invalid in [duplicate, unknown, malformed] {
+            p.write(
+                "review/proof_receipts.json",
+                json!([receipt("shared", "head_passed"), invalid]),
+            )?;
+            let report = render(&p.0);
+            assert!(report.contains("unavailable or invalid"));
+            assert!(report.contains("MISSING EVIDENCE: snippet:"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn compatible_success_answers_task_without_hiding_failed_attempt() -> Result<(), String> {
+        let p = Packet::new()?;
+        let mut failed = receipt("attempt-failed", "head_failed");
+        failed["commands"][0]["status"] = json!("failed");
+        failed["commands"][0]["exit_code"] = json!(1);
+        p.write(
+            "review/proof_receipts.json",
+            json!([failed, receipt("attempt-passed", "head_passed")]),
+        )?;
+        p.write(
+            "review/proof_portfolio.json",
+            linked_head_portfolio(&["attempt-failed", "attempt-passed"]),
+        )?;
+        let report = render(&p.0);
+        assert!(report.contains("INCOMPLETE"));
+        assert!(report.contains("MISSING EVIDENCE: attempt-failed:"));
+        assert!(!report.contains("MISSING EVIDENCE: snippet:"));
+        assert!(report.contains("matching recorded receipts=2"));
+        p.write(
+            "review/proof_portfolio.json",
+            linked_head_portfolio(&["attempt-failed", "attempt-passed", "absent"]),
+        )?;
+        assert!(render(&p.0).contains("MISSING EVIDENCE: snippet:"));
+        Ok(())
+    }
+
+    #[test]
+    fn gap_rows_precede_success_prose_within_the_total_display_bound() -> Result<(), String> {
+        let p = Packet::new()?;
+        let ids: Vec<_> = (0..MAX_ROWS)
+            .map(|id| format!("MISSING EVIDENCE: successful-prose-{id}"))
+            .collect();
+        let mut all_ids: Vec<_> = ids.iter().map(String::as_str).collect();
+        all_ids.push("late-missing-task");
+        let mut tasks = portfolio(&all_ids, "answered_by_existing_receipt", &[]);
+        for (index, id) in ids.iter().enumerate() {
+            tasks["candidate_tasks"][index]["kind"] = json!("focused-head");
+            tasks["decisions"][index]["kind"] = json!("focused-head");
+            tasks["decisions"][index]["receipt_ids"] = json!([id]);
+        }
+        tasks["decisions"][MAX_ROWS]["status"] = json!("deferred_by_safe_wind_down");
+        p.write("review/proof_portfolio.json", tasks)?;
+        p.write(
+            "review/proof_receipts.json",
+            json!(
+                ids.iter()
+                    .map(|id| receipt(id, "head_passed"))
+                    .collect::<Vec<_>>()
+            ),
+        )?;
+        let report = render(&p.0);
+        let displayed = report
+            .split("### Portfolio task disposition")
+            .nth(1)
+            .ok_or("portfolio section")?;
+        assert!(displayed.contains("MISSING EVIDENCE: late-missing-task:"));
+        assert!(displayed.contains("2 additional rows withheld"));
+        assert!(displayed.contains("0 missing-evidence, 2 other"));
+        let mut previous = displayed.find("late-missing-task").ok_or("visible gap")?;
+        for id in 0..MAX_ROWS - 2 {
+            let position = displayed
+                .find(&format!("successful-prose-{id}:"))
+                .ok_or("visible success row")?;
+            assert!(
+                position > previous,
+                "producer order within the success class"
+            );
+            previous = position;
+        }
+        assert_eq!(
+            displayed
+                .lines()
+                .filter(|row| row.starts_with("- ") && !row.contains("additional rows withheld"))
+                .count(),
+            MAX_ROWS
+        );
+        Ok(())
+    }
+
     #[test]
     fn head_only_or_wrong_kind_receipt_cannot_answer_a_red_green_task() -> Result<(), String> {
         let p = Packet::new()?;
@@ -751,6 +910,7 @@ mod tests {
         p.write("review/proof_intents.json",json!((0..205).map(|id| json!({"id":format!("intent-{id}"),"status":"unsupported_target","resolution_reason":"<script>\n[forged](https://invalid) | text"})).collect::<Vec<_>>()))?;
         let report = render(&p.0);
         assert!(report.contains("5 additional rows withheld"));
+        assert!(report.contains("5 missing-evidence, 0 other"));
         assert!(report.contains("&lt;script&gt;"));
         assert!(!report.contains("<script>"));
         let file =
