@@ -483,9 +483,6 @@ fn ts_observed_local_aliases_owner(
     if !ident_is_bare {
         return false;
     }
-    if ts_test_local_is_mutated(test, ident) {
-        return false;
-    }
     let test_body = test.body_text.as_str();
     let body = test_body.as_bytes();
     let mut search_from = 0;
@@ -521,7 +518,13 @@ fn ts_observed_local_aliases_owner(
                         .iter()
                         .any(|tok| ts_references_identifier(rhs, tok))
                 {
-                    return true;
+                    // #7497: a local the test rewrites or escapes observes
+                    // the test's own write, so the one-hop credit stays
+                    // unavailable. The scan runs here — after the
+                    // owner-initialized assignment matched — so a bare
+                    // observed identifier with no such assignment never
+                    // pays the mutation-scan cost.
+                    return !ts_test_local_is_mutated(test, ident);
                 }
             }
         }
@@ -2621,15 +2624,28 @@ fn later_reassigns_ident(body: &str, ident: &str, from: usize) -> bool {
 /// #7497: `true` when the test body mutates or escapes the bare local
 /// `ident`, so an assertion on the bare local observes the test's own write
 /// rather than the owner call (`bo.adult = true`,
-/// `Object.assign(bo, { adult: true })`, or `fix(bo)` that sets `p.adult`).
+/// `bo["adult"] = true`, `bo!["adult"] = true`,
+/// `Object.assign(bo, { adult: true })`, `Object["assign"](bo, ...)`, or
+/// `fix(bo)` / `this.fix(bo)` / `fix<Profile>(bo)` that sets `p.adult`).
 ///
 /// Fail-closed: a member write, a `delete` of the local, or passing the
 /// local to any call other than the test's own assertions withholds the
 /// whole-result credit — including a pass to a pure helper, which is
-/// statically indistinguishable from the mutating `fix(bo)` shape. The scan
-/// runs over [`ts_mask_literals_and_comments`] output, so strings and
-/// comments never count as writes or calls. A bare read (`expect(bo)`,
-/// `bo.tags`, `{ ...bo }`) is not a mutation.
+/// statically indistinguishable from the mutating `fix(bo)` shape, and a
+/// callee whose name does not statically resolve (computed
+/// `Object["assign"](...)`, parenthesized `(mutate)(bo)`), whose argument
+/// list alone then decides. The scan runs over
+/// [`ts_mask_literals_and_comments`] output, so strings and comments never
+/// count as writes or calls. A bare read (`expect(bo)`, `bo.tags`,
+/// `{ ...bo }`) is not a mutation.
+///
+/// The scan is position-blind: a write anywhere in the body refuses the
+/// credit, including a write textually AFTER the assertion. That is
+/// deliberate: JavaScript hoists function declarations, so textual order
+/// does not prove execution order (`hoisted(); expect(bo)…; function
+/// hoisted() { bo.adult = true; }`), and sound write-order analysis needs
+/// control flow this guard does not model. The refusal lands in the
+/// conservative `weakly_exposed` direction.
 ///
 /// The asserting call itself is exempt: `expect(...)` by root name, the
 /// `test(...)` / `it(...)` / `specify(...)` / `describe(...)` registration
@@ -2693,12 +2709,16 @@ fn ts_test_local_is_mutated(test: &TypeScriptTest, ident: &str) -> bool {
     /// The `(root, last)` callee chain of the call opening at byte offset
     /// `open` (`(fix, fix)` in `fix(bo)`, `(console, log)` in
     /// `console.log(bo)`, `(expect, poll)` in `expect.poll(bo)`), or `None`
-    /// when the paren opens no call (grouping, a keyword condition, a
-    /// missing callee). Member punctuation (`?.`, `!.`) and surrounding
-    /// whitespace are skipped; a spread or double dot is not a call.
-    fn call_callee(masked: &str, open: usize) -> Option<(String, String)> {
-        let chars: Vec<(usize, char)> = masked.char_indices().collect();
-        let mut idx = chars.iter().position(|(off, _)| *off == open)?;
+    /// when the paren opens no resolvable call (grouping, a keyword
+    /// condition, a missing callee, a computed/parenthesized callee — the
+    /// caller decides what an unresolvable prefix means). One balanced
+    /// TypeScript type-argument list is skipped (`fix<Profile>(bo)` still
+    /// resolves `(fix, fix)`). Member punctuation (`?.`, `!.`) and
+    /// surrounding whitespace are skipped; a spread or double dot is not a
+    /// call. `chars` is the precomputed `masked.char_indices()` table so
+    /// repeated paren scans do not re-collect the whole body.
+    fn call_callee(chars: &[(usize, char)], open: usize) -> Option<(String, String)> {
+        let mut idx = chars.binary_search_by_key(&open, |(off, _)| *off).ok()?;
         let mut segments: Vec<String> = Vec::new();
         // The finished chain, nearest-paren-first: `segments[0]` is the
         // final member (`last`), the final element is the chain root.
@@ -2720,6 +2740,32 @@ fn ts_test_local_is_mutated(test: &TypeScriptTest, ident: &str) -> bool {
                 start -= 1;
             }
             if start == idx {
+                // TypeScript type arguments (`fix<Profile>(bo)`): skip one
+                // balanced `<...>` list directly before the paren and
+                // resume at the callee name. Only a balanced list whose
+                // left edge touches an identifier qualifies; anything else
+                // stays unresolvable.
+                if segments.is_empty() && idx >= 1 && chars[idx - 1].1 == '>' {
+                    let mut depth = 0usize;
+                    let mut j = idx;
+                    while j > 0 {
+                        j -= 1;
+                        match chars[j].1 {
+                            '>' => depth += 1,
+                            '<' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if depth == 0 && j > 0 && is_ident_char(chars[j - 1].1) {
+                        idx = j;
+                        continue;
+                    }
+                }
                 // No identifier directly before the paren: allow an
                 // optional-call punctuator (`fix?.(bo)`) and stop otherwise.
                 if idx >= 2 && chars[idx - 1].1 == '.' && matches!(chars[idx - 2].1, '?' | '!') {
@@ -2756,10 +2802,8 @@ fn ts_test_local_is_mutated(test: &TypeScriptTest, ident: &str) -> bool {
     fn call_args_span(masked: &str, open: usize) -> Option<(usize, usize)> {
         let mut depth = 0usize;
         let mut start = None;
-        for (index, c) in masked.char_indices() {
-            if index < open {
-                continue;
-            }
+        for (rel, c) in masked[open..].char_indices() {
+            let index = open + rel;
             match c {
                 '(' | '[' | '{' => {
                     if index == open {
@@ -2853,6 +2897,15 @@ fn ts_test_local_is_mutated(test: &TypeScriptTest, ident: &str) -> bool {
                     break;
                 }
                 rest = &after[len..];
+                chained = true;
+            } else if let Some(after) = trimmed
+                .strip_prefix('!')
+                .filter(|after| after.starts_with('['))
+            {
+                // A TypeScript non-null assertion before computed access
+                // (`bo!['adult'] = true`) chains into the same bracket; a
+                // `!` followed by anything else is a negation, not a chain.
+                rest = after;
                 chained = true;
             } else if let Some(after) = trimmed.strip_prefix('[') {
                 let Some(tail) = bracket_tail(after) else {
@@ -2955,17 +3008,49 @@ fn ts_test_local_is_mutated(test: &TypeScriptTest, ident: &str) -> bool {
         .iter()
         .map(|assertion| assertion.matcher.as_str())
         .collect();
+    // One shared char table for every paren scan below: `call_callee`
+    // locates each `(` by offset instead of re-collecting the whole body
+    // once per paren.
+    let chars: Vec<(usize, char)> = masked.char_indices().collect();
     let mut search_from = 0usize;
     while let Some(rel) = masked[search_from..].find('(') {
         let open = search_from + rel;
         search_from = open + 1;
-        let Some((root, last)) = call_callee(&masked, open) else {
+        let Some((root, last)) = call_callee(&chars, open) else {
+            // No resolvable callee name. A `]` or `)` directly before the
+            // paren is still a call — a computed callee
+            // (`Object['assign'](bo, ...)`) or a parenthesized one
+            // (`(mutate)(bo)`) — so the argument list alone decides,
+            // fail-closed: the local's presence in the arguments escapes,
+            // and no matcher exemption can apply because the callee name
+            // is unreadable through the masked literal. Any other
+            // unresolvable prefix (`(bo) => ...` grouping, a stray
+            // punctuator) opens no call at all.
+            let before = masked[..open].chars().next_back();
+            if !matches!(before, Some(']') | Some(')')) {
+                continue;
+            }
+            let Some((args_start, args_end)) = call_args_span(&masked, open) else {
+                continue;
+            };
+            // A computed method definition (`['key'](bo) { ... }`) is not
+            // a call: the closer is followed by its body block.
+            if masked[args_end + 1..].trim_start().starts_with('{') {
+                continue;
+            }
+            if contains_ident(&masked[args_start..args_end], ident) {
+                return true;
+            }
             continue;
         };
+        // Control-keyword roots are reads (`if (bo)`, `typeof(bo)`) — but
+        // only while the keyword IS the whole callee. A member call rooted
+        // in one (`this.fix(bo)`) is an ordinary escape and must reach the
+        // argument check below.
         if root == "expect"
             || last == "expect"
             || WRAPPER_CALLEES.contains(&root.as_str())
-            || CALL_KEYWORDS.contains(&root.as_str())
+            || (root == last && CALL_KEYWORDS.contains(&root.as_str()))
         {
             continue;
         }

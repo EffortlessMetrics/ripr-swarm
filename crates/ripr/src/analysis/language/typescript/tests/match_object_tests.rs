@@ -373,7 +373,12 @@ fn match_object_facts_read_field_construction_changes_only() -> Result<(), Strin
 /// the whole-result credit stays unavailable. Every shape below read
 /// `exposed` before the fix (false exposed); all must downgrade now — for
 /// the `toMatchObject` pin and for the `toEqual` whole-object reading,
-/// which shares the whole-result reader.
+/// which shares the whole-result reader. The later review round widened
+/// the guard to keyword-rooted member calls (`this.fix(bo)`), computed and
+/// parenthesized callee escapes (`Object["assign"](bo, ...)`,
+/// `(fix)(bo)`), generic type arguments (`fix<any>(bo)`), and non-null
+/// bracket writes (`bo!["adult"] = true`); those pins keep each widened
+/// branch honest.
 #[test]
 fn rewritten_owner_local_is_not_the_owner_result() -> Result<(), String> {
     for (label, body) in [
@@ -406,20 +411,53 @@ fn rewritten_owner_local_is_not_the_owner_result() -> Result<(), String> {
             "  function fix(p: any) { p.adult = true; }\n  const bo = buildProfile(\"bo\", 18);\n  fix(bo);\n  expect(bo).toEqual({ name: \"bo\", adult: true, tags: [] });",
         ),
         (
+            "rewritten-this-escape",
+            "  const bo = buildProfile(\"bo\", 18);\n  this.fix(bo);\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-computed-object-assign",
+            "  const bo = buildProfile(\"bo\", 18);\n  Object[\"assign\"](bo, { adult: true });\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-computed-object-assign-to-equal",
+            "  const bo = buildProfile(\"bo\", 18);\n  Object[\"assign\"](bo, { adult: true });\n  expect(bo).toEqual({ name: \"bo\", adult: true, tags: [] });",
+        ),
+        (
+            "rewritten-parenthesized-escape",
+            "  const bo = buildProfile(\"bo\", 18);\n  (fix)(bo);\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-generic-escape",
+            "  const bo = buildProfile(\"bo\", 18);\n  fix<any>(bo);\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-nonnull-bracket-assign",
+            "  const bo = buildProfile(\"bo\", 18);\n  bo![\"adult\"] = true;\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-nonnull-bracket-assign-to-equal",
+            "  const bo = buildProfile(\"bo\", 18);\n  bo![\"adult\"] = true;\n  expect(bo).toEqual({ name: \"bo\", adult: true, tags: [] });",
+        ),
+        (
             "rebound-bare-let",
             "  let bo = buildProfile(\"bo\", 18);\n  bo = { name: \"bo\", adult: true, tags: [] };\n  expect(bo).toMatchObject({ adult: true });",
         ),
         (
+            // No seeding `bo.count = 0;` line: a plain member assign would
+            // trip the guard before the compound branch is reached, and the
+            // case would pass even with `+=` detection deleted.
             "rewritten-compound-assign",
-            "  const bo = buildProfile(\"bo\", 18);\n  bo.count = 0;\n  bo.count += 1;\n  expect(bo).toMatchObject({ adult: true });",
+            "  const bo = buildProfile(\"bo\", 18);\n  bo.count += 1;\n  expect(bo).toMatchObject({ adult: true });",
         ),
         (
             "rewritten-delete-field",
             "  const bo = buildProfile(\"bo\", 18);\n  delete bo.adult;\n  expect(bo).toMatchObject({ adult: true });",
         ),
         (
+            // Seeding assignment removed for the same reason: this case
+            // must exercise the postfix `++` branch itself.
             "rewritten-postfix-incr",
-            "  const bo = buildProfile(\"bo\", 18);\n  bo.count = 0;\n  bo.count++;\n  expect(bo).toMatchObject({ adult: true });",
+            "  const bo = buildProfile(\"bo\", 18);\n  bo.count++;\n  expect(bo).toMatchObject({ adult: true });",
         ),
     ] {
         let finding = profile_finding(label, &profile_test(body))?;
@@ -468,6 +506,24 @@ fn rewritten_owner_local_is_not_the_owner_result() -> Result<(), String> {
             finding.class,
             ExposureClass::Exposed,
             "{label}: {:?}",
+            finding.missing
+        );
+    }
+    // Preservation through keyword-rooted reads: `if (bo)` keeps the
+    // whole-result credit. The keyword exemption still applies while the
+    // keyword is the whole callee (`root == last`), so only member calls
+    // rooted in one (`this.fix(bo)`) reach the escape check.
+    {
+        let finding = profile_finding(
+            "keyword-condition-read",
+            &profile_test(
+                "  const bo = buildProfile(\"bo\", 18);\n  if (bo) {\n    console.log(\"kept\");\n  }\n  expect(bo).toMatchObject({ adult: true });",
+            ),
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "keyword-condition-read: {:?}",
             finding.missing
         );
     }
