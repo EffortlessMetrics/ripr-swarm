@@ -55,8 +55,11 @@ match and allocated LLVM profile data and counter sections. A structurally
 parsed executable without those sections is a definitive noncandidate and does
 not make unmatched IDs unavailable. Unreadable, malformed, unsupported,
 rebound, or over-budget inputs remain unavailable and prevent a definitive
-negative result for unmatched IDs. Duplicate candidate paths remain
-ambiguous. This evidence records identifiers and bounded file metadata only;
+negative result for unmatched IDs. Distinct instrumented candidates with the
+same matching ID remain ambiguous; duplicate directory entries of one
+executable, such as cargo's hard-linked `debug/<name>` copy of
+`debug/deps/<name>-<hash>`, collapse to one candidate by `(device, inode)`
+file identity. This evidence records identifiers and bounded file metadata only;
 it makes no test-ownership, process-termination, or root-cause claim.
 
 The scan retains its existing limits: 1,024 entries, 256 files, 2 MiB total
@@ -109,6 +112,9 @@ The committed controls in
 - `wrong_id_and_same_id_without_instrumentation_do_not_match` and
   `exact_instrumented_matches_preserve_duplicate_ambiguity`: exact identity,
   noncandidates and ambiguity.
+- `cargo_hardlinked_root_entry_is_one_candidate_not_duplicate_ambiguity`:
+  cargo's hard-linked root and `deps` entries of one executable collapse to a
+  single unambiguous candidate while both entries stay inspected.
 - `malformed_and_platform_elf_headers_and_notes_are_bounded`,
   `every_scan_limit_is_visible_even_without_a_successful_candidate`,
   `outside_roots_symlinks_and_changed_file_identity_are_refused`,

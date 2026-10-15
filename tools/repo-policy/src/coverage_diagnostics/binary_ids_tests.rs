@@ -306,6 +306,19 @@ fn exact_instrumented_matches_preserve_duplicate_ambiguity() -> Result<()> {
     Ok(())
 }
 #[test]
+fn cargo_hardlinked_root_entry_is_one_candidate_not_duplicate_ambiguity() -> Result<()> {
+    let f = fixture()?;
+    let id = [0x42; 20];
+    write_executable(&f.0.join("debug/deps/one-abc123"), &elf_bytes(&id, true))?;
+    std::fs::hard_link(&f.0.join("debug/deps/one-abc123"), &f.0.join("debug/one"))?;
+    let report = associate_with_limits(&f.0, &ids(&id), LIMITS);
+    assert_eq!(report["ids"][0]["status"], "matched");
+    assert_eq!(report["ids"][0]["ambiguous"], false);
+    assert_eq!(report["candidates"].as_array().map(Vec::len), Some(1));
+    assert_eq!(report["files_inspected"], 2);
+    Ok(())
+}
+#[test]
 fn wrong_id_and_same_id_without_instrumentation_do_not_match() -> Result<()> {
     let f = fixture()?;
     let id = [0x42; 20];

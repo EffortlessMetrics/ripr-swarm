@@ -473,6 +473,7 @@ fn scan(build: &Path, ids: &[String], limits: Limits, deadline: Instant) -> Valu
     let mut root_errors = Vec::new();
     let mut errors = Vec::new();
     let mut matches = Vec::new();
+    let mut matched_identities: Vec<(u64, u64)> = Vec::new();
     let mut truncated = false;
     'roots: for root in ROOTS {
         if Instant::now() >= deadline || entries >= limits.entries || inspected >= limits.files {
@@ -550,14 +551,24 @@ fn scan(build: &Path, ids: &[String], limits: Limits, deadline: Instant) -> Valu
             inspected += 1;
             match elf::inspect(&path, &metadata, &mut budget) {
                 Ok((found, machine)) if found.iter().any(|id| ids.contains(id)) => {
+                    let identity = file_identity(&metadata);
+                    // Cargo hard-links debug/<name> to debug/deps/<name>-<hash>
+                    // (likewise under release), so one executable can appear as
+                    // direct entries in two scanned roots. One distinct
+                    // executable is one candidate; only genuinely different
+                    // files with the same ID stay ambiguous.
+                    if matched_identities.contains(&(identity.device, identity.inode)) {
+                        continue;
+                    }
                     if matches.len() == limits.matches {
                         truncated = true;
                         break 'roots;
                     }
+                    matched_identities.push((identity.device, identity.inode));
                     matches.push(json!({"relative_path": display_bytes(raw), "relative_path_hex": hex(raw),
                         "gnu_build_ids": found, "llvm_profile_sections": true, "elf_machine": machine,
-                        "bytes": metadata.len(), "device": file_identity(&metadata).device,
-                        "inode": file_identity(&metadata).inode}));
+                        "bytes": metadata.len(), "device": identity.device,
+                        "inode": identity.inode}));
                 }
                 Ok(_) => (),
                 Err(reason) => {

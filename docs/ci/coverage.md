@@ -61,7 +61,10 @@ build IDs in instrumented Linux ELF files found only as direct entries in the
 coverage target's `debug`, `debug/deps`, `release`, and `release/deps`
 directories. It captures bounded
 identifiers and file metadata, never whole binaries. Exact ID equality and LLVM
-profile sections are required; multiple candidate paths remain ambiguous.
+profile sections are required; distinct instrumented candidates with the same
+ID remain ambiguous, while duplicate directory entries of one executable
+(cargo's hard-linked `debug/<name>` copy of `debug/deps/<name>-<hash>`) collapse
+to a single candidate by file identity.
 Unavailable, unmatched within the inspected scope, and truncated results remain
 explicit. Inspection is limited to 1,024 directory entries, 256 files, 2 MiB of
 reads (64 KiB per file), 16 matches, 32 KiB of mapping JSON, and two seconds.
