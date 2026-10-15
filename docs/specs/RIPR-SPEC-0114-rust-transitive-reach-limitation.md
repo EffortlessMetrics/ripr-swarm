@@ -211,7 +211,7 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
   — a test named like a deep chain function does not stop the walk short of a real
   caller (#8047)
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::seam_behind_a_helper_chain_past_five_hops_is_opaque_not_ungripped`
-  — the same witness keeps a repo seam `opaque` (RIPR-SPEC-0230 rule 1, #8047)
+  — the same witness keeps a repo seam `opaque` (RIPR-SPEC-0230 rule 5, #8047)
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_chain_past_five_hops_does_not_displace_the_macro_witness`
   — a one-macro-hop witness stays named beside a seven-hop chain; without the macro, the
   chain names the transitive limit (#8047)

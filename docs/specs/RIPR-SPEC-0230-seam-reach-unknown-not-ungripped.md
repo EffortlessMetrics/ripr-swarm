@@ -47,10 +47,7 @@ unresolved candidate path, in this order:
 
 1. A bounded transitive witness (RIPR-SPEC-0114/0118): a test calls an
    in-crate entry point whose name-matched call chain reaches the owner's
-   name within `MAX_TRANSITIVE_DEPTH` hops, or, when no test enters a chain
-   that short, through the walk past the bound (RIPR-SPEC-0114 step 5,
-   #8047). A seam whose owner a test reaches only past five hops therefore
-   reads `opaque`, not `ungripped`.
+   name within `MAX_TRANSITIVE_DEPTH` hops.
 2. A macro-reach witness (the existing `no_static_path` macro check).
 3. Trait dispatch. The owner is a trait-impl method (`impl Trait for T`),
    a test body, or production code a test may run, names `T`, and the trait
@@ -63,6 +60,11 @@ unresolved candidate path, in this order:
    named type's trait method delegates to (`self.inner.fmt(f)`).
    Each such method's callees join the test-reached set, so a type they
    name can root a further method, up to `MAX_TRANSITIVE_DEPTH` rounds.
+5. The walk past the bound (RIPR-SPEC-0114 step 5, #8047), tried last: a
+   test enters a name-matched chain that reaches the owner's name in more
+   than `MAX_TRANSITIVE_DEPTH` hops. A seam whose owner a test reaches only
+   that way therefore reads `opaque`, not `ungripped`, and a shallower
+   witness from rules 1-4 is always named first.
 
 "Production code a test may run" is the forward closure, by name over
 non-macro call facts, of every test's callees within `MAX_TRANSITIVE_DEPTH`
