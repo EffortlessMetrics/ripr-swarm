@@ -12,6 +12,26 @@ const TESTS: &str = "tests/buf_tests.rs";
 const HELPERS: &str = "src/helpers.rs";
 const CHILD: &str = "src/helpers/stack_tests.rs";
 
+#[test]
+fn owner_lexical_facts_are_shared_across_syntax_owners() {
+    let index = index(&[(LIB, "fn helper() {}\n#[test] fn subject() { helper(); }\n")]);
+    let first = OwnerPinSyntax::default()
+        .file_scopes(&index, Path::new(LIB))
+        .expect("scope table");
+    let second = OwnerPinSyntax::default()
+        .file_scopes(&index, Path::new(LIB))
+        .expect("scope table");
+    assert!(
+        std::ptr::eq(&*first, &*second),
+        "a source snapshot must share lexical facts across owners"
+    );
+    let cloned = index.clone();
+    let other_index = OwnerPinSyntax::default()
+        .file_scopes(&cloned, Path::new(LIB))
+        .expect("scope table");
+    assert!(!std::ptr::eq(&*first, &*other_index));
+}
+
 /// The bytes 7930d93 shape: a trait default method whose changed tail is
 /// the only `Ok(..)` and whose `?` exits early with an `Err(..)`.
 const BUF_LIB: &str = r#"pub struct TryGetError;

@@ -20,3 +20,6 @@
   credit at entry, assertion operand, intermediate or last-hop traversal.
   Genuine synchronous and mixed helper routes retain their bounded credit;
   polling inference remains unsupported (#7415, #8004).
+- Complete-source declaration and lexical facts are reused within each source
+  snapshot across helper candidates and owners, retaining ambiguous/unknown
+  declaration refusal and conservative scope boundaries (#7415, #8004).

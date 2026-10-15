@@ -412,6 +412,11 @@ id = "RIPR-SPEC-0005"
 name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::owner_lexical_facts_are_shared_across_syntax_owners",
+  "crates/ripr/src/analysis/syntax/source_snapshot.rs::tests::source_snapshot_reuses_parse_and_scopes_across_threads_and_owners",
+  "crates/ripr/src/analysis/syntax/source_snapshot.rs::tests::source_snapshot_preserves_qualifiers_ambiguity_and_complete_query_identity",
+  "crates/ripr/src/analysis/syntax/source_snapshot.rs::tests::source_snapshot_keeps_same_line_lexical_ambiguity_and_scope_refusals",
+  "crates/ripr/src/analysis/syntax/source_snapshot.rs::tests::source_snapshot_replacement_clone_and_removal_cannot_reuse_stale_facts",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_receiver_corpus_boundary_and_live_scope",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::unique_inherent_receiver_refuses_decoys_in_full_and_compact_repo_evidence",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::public_inherent_receiver_keeps_cross_target_full_and_compact_repo_evidence",
@@ -776,6 +781,7 @@ code = [
   "crates/ripr/src/analysis/test_grip_evidence/owner_result_binding.rs",
   "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs::function_declaration_is_async",
+  "crates/ripr/src/analysis/syntax/source_snapshot.rs",
   "crates/ripr/src/analysis/classify/related_tests.rs",
   "crates/ripr/src/analysis/classify/call_identity.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs",

@@ -66,7 +66,7 @@ use crate::analysis::facts::{
 };
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::{
-    AssertionContextRefusal, GeneratedTestPins, HelperLoan, MacroBindingCandidates,
+    AssertionContextRefusal, GeneratedTestPins, HelperLoan, ItemNesting, MacroBindingCandidates,
     MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins, TRUSTED_MACRO_NAMES,
     attribute_settles_test_outcome, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
     err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
@@ -82,7 +82,7 @@ use rayon::prelude::*;
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// The owner-side half of the pin, established once per probe.
 pub(in crate::analysis) struct OwnerReturnPin {
@@ -194,9 +194,6 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// probe, test and assertion, and each input below scans the workspace,
     /// so every answer is kept for the run under the key it depends on.
     path_memo: RefCell<PathCallMemo>,
-    /// #7097: per-file module scopes (direct `use`s and value-taking
-    /// items), parsed once per run; `None` when the file does not parse.
-    file_scopes: RefCell<BTreeMap<PathBuf, Option<Rc<FileScopes>>>>,
     /// #7097: bare-call binding verdicts per [`BareCallKey`].
     bare_call_memo: RefCell<BTreeMap<BareCallKey, bool>>,
     /// #7097: out-of-line module children per (parent file, `mod` name):
@@ -354,7 +351,7 @@ impl OwnerPinSyntax {
             return false;
         }
         let (Some(owner_scope), Some(test_scope)) = (
-            item_nesting_with_impl(&facts.source, &owner.name, owner.start_line, true),
+            indexed_item_nesting(index, &owner.file, &owner.name, owner.start_line, true),
             self.item_nesting(index, &test.file, &test.name, test.start_line),
         ) else {
             return false;
@@ -393,10 +390,7 @@ impl OwnerPinSyntax {
         if let Some(known) = self.path_memo.borrow().nesting.get(&key) {
             return known.clone();
         }
-        let nesting = index
-            .files()
-            .get(file)
-            .and_then(|facts| item_nesting(&facts.source, name, line));
+        let nesting = indexed_item_nesting(index, file, name, line, false);
         self.path_memo
             .borrow_mut()
             .nesting
@@ -2644,18 +2638,14 @@ impl OwnerReturnPin {
             (PinCall::Associated { type_name }, CallShape::Associated(named)) => {
                 helper.is_none()
                     && named == type_name
-                    && index
-                        .files()
-                        .get(&self.owner_file)
-                        .and_then(|facts| {
-                            item_nesting_with_impl(
-                                &facts.source,
-                                &self.name,
-                                self.owner_start_line,
-                                true,
-                            )
-                        })
-                        .is_some_and(|owner| !owner.cfg_gated)
+                    && indexed_item_nesting(
+                        index,
+                        &self.owner_file,
+                        &self.name,
+                        self.owner_start_line,
+                        true,
+                    )
+                    .is_some_and(|owner| !owner.cfg_gated)
                     && !syntax.file_cfg_gated(index, &self.owner_file)
                     && !bound_by_macro(&masked_body, type_name)
                     && !body_rebinds_type(&masked_body, type_name)
@@ -3415,39 +3405,10 @@ pub(in crate::analysis) fn function_declaration_is_async(
     owner: &FunctionSummary,
     index: &RustIndex,
 ) -> Option<bool> {
-    let facts = index.files().get(&owner.file)?;
-    let source: &str = &facts.source;
-    let parse = parse_clean_source_file(source)?;
-    let line_of = |offset: ra_ap_syntax::TextSize| {
-        let at = (u32::from(offset) as usize).min(source.len());
-        source.as_bytes()[..at]
-            .iter()
-            .filter(|byte| **byte == b'\n')
-            .count()
-            + 1
-    };
-    let mut matches = parse
-        .tree()
-        .syntax()
-        .descendants()
-        .filter_map(ast::Fn::cast)
-        .filter(|function| {
-            function
-                .name()
-                .is_some_and(|name| name.text() == owner.name.as_str())
-        })
-        .filter(|function| {
-            let Some(fn_token) = function.fn_token() else {
-                return false;
-            };
-            (line_of(function.syntax().text_range().start())
-                ..=line_of(fn_token.text_range().start()))
-                .contains(&owner.start_line)
-        });
-    match (matches.next(), matches.next()) {
-        (Some(function), None) => Some(function.async_token().is_some()),
-        _ => None,
-    }
+    index
+        .source_syntax
+        .get(index, &owner.file)?
+        .declaration_is_async(owner)
 }
 
 /// The operand as a complete call of `name`: `name(..)` or `recv.name(..)`
@@ -3663,90 +3624,17 @@ fn test_crate_may_bind(
     })
 }
 
-/// #6974: the inline modules enclosing the one `fn name` item that starts
-/// on `line` (1-based) in `source`, outermost first, with `r#` dropped.
-/// `None` when the file does not parse, no single such item is found, or
-/// it sits anywhere but directly in a module (a fn body, an `impl`).
-/// Where a `fn` sits among its file's inline modules (#6974).
-#[derive(Clone, Debug)]
-struct ItemNesting {
-    /// The inline modules enclosing the `fn`, outermost first.
-    modules: Vec<String>,
-    /// Whether the `fn` or an enclosing inline module carries a `cfg` or
-    /// `cfg_attr` attribute. A complementary cfg may then compile a
-    /// same-named `static`, `const`, `use` or module in its place, so a path
-    /// to the module no longer has to reach the `fn` (#7061 review).
-    cfg_gated: bool,
-}
-
-fn item_nesting(source: &str, name: &str, line: usize) -> Option<ItemNesting> {
-    item_nesting_with_impl(source, name, line, false)
-}
-
-fn item_nesting_with_impl(
-    source: &str,
+fn indexed_item_nesting(
+    index: &RustIndex,
+    file: &Path,
     name: &str,
     line: usize,
     allow_impl: bool,
 ) -> Option<ItemNesting> {
-    let parse = parse_clean_source_file(source)?;
-    let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
-    let base = |text: String| text.strip_prefix("r#").map_or(text.clone(), str::to_string);
-    let wanted = name.strip_prefix("r#").unwrap_or(name);
-    let mut found = parse
-        .tree()
-        .syntax()
-        .descendants()
-        .filter_map(ast::Fn::cast)
-        .filter(|function| {
-            function
-                .name()
-                .is_some_and(|ident| base(ident.text().to_string()) == wanted)
-                && {
-                    let range = function.syntax().text_range();
-                    let start = line_of(range.start().into());
-                    let end = line_of(range.end().into());
-                    start <= line && line <= end
-                }
-        });
-    let function = found.next()?;
-    if found.next().is_some() {
-        return None;
-    }
-    let mut modules = Vec::new();
-    // An inner `#![cfg]` in the body gates the whole fn too.
-    let mut cfg_gated = has_cfg_attr(&function)
-        || function
-            .body()
-            .and_then(|body| body.stmt_list())
-            .is_some_and(|statements| has_cfg_attr(&statements));
-    for ancestor in function.syntax().ancestors().skip(1) {
-        if let Some(module) = ast::Module::cast(ancestor.clone()) {
-            cfg_gated |= has_cfg_attr(&module)
-                || module.item_list().is_some_and(|items| has_cfg_attr(&items));
-            modules.push(base(module.name()?.text().to_string()));
-        } else if allow_impl && let Some(implementation) = ast::Impl::cast(ancestor.clone()) {
-            cfg_gated |= has_cfg_attr(&implementation);
-        } else if !(ast::ItemList::can_cast(ancestor.kind())
-            || ast::SourceFile::can_cast(ancestor.kind())
-            || allow_impl && ast::AssocItemList::can_cast(ancestor.kind()))
-        {
-            return None;
-        }
-    }
-    modules.reverse();
-    Some(ItemNesting { modules, cfg_gated })
-}
-
-/// Whether `node` carries a `cfg` or `cfg_attr` attribute, outer or inner.
-fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
-    // `cfg` and `cfg_attr` parse to their own metas, which have no `path`.
-    node.attrs().any(|attr| {
-        matches!(
-            attr.meta(),
-            Some(ast::Meta::CfgMeta(_) | ast::Meta::CfgAttrMeta(_))
-        )
-    })
+    index
+        .source_syntax
+        .get(index, file)?
+        .item_nesting(name, line, allow_impl)
 }
 
 /// #7082: whether the out-of-line `mod <name>;` that `declaration` names,
@@ -6510,7 +6398,7 @@ fn file_aliases_type(source: &str, name: &str) -> bool {
 /// can take a value call. A bare call resolves through the test's own
 /// scope only, so ancestor scopes are consulted solely as glob targets.
 #[derive(Clone, Debug, Default)]
-struct FileScopes {
+pub(super) struct FileScopes {
     scopes: Vec<ModuleScope>,
     /// Every `fn` in the file, at any depth, for test-fn ancestry.
     fns: Vec<ScopeFn>,
@@ -6572,28 +6460,34 @@ impl OwnerPinSyntax {
         })
     }
 
-    /// #7097: `file`'s scope table, parsed once per run and shared:
-    /// lookups clone the `Rc`, never the table (#7176 review).
-    fn file_scopes(&self, index: &RustIndex, file: &Path) -> Option<Rc<FileScopes>> {
-        if let Some(known) = self.file_scopes.borrow().get(file) {
-            return known.clone();
+    /// Complete-source lexical facts are shared across short-lived syntax
+    /// owners too. Source identity is checked before serving any stored table.
+    fn file_scopes(&self, index: &RustIndex, file: &Path) -> Option<Arc<FileScopes>> {
+        let facts = index.files().get(file)?;
+        let source = &facts.data().source;
+        let compute = || {
+            Some(Arc::new(build_file_scopes(
+                &index.source_syntax.get(index, file)?.tree()?,
+            )))
+        };
+        match index.call_identity_memos.owner_file_scopes.lock() {
+            Ok(mut memo) => {
+                if let Some((known_source, scopes)) = memo.get(file)
+                    && Arc::ptr_eq(known_source, source)
+                {
+                    return scopes.clone();
+                }
+                let scopes = compute();
+                memo.insert(file.to_path_buf(), (Arc::clone(source), scopes.clone()));
+                scopes
+            }
+            Err(_) => compute(),
         }
-        let scopes = index
-            .files()
-            .get(file)
-            .and_then(|facts| build_file_scopes(&facts.source))
-            .map(Rc::new);
-        self.file_scopes
-            .borrow_mut()
-            .insert(file.to_path_buf(), scopes.clone());
-        scopes
     }
 }
 
 /// #7097: the scope table of `source`, or `None` when it does not parse.
-fn build_file_scopes(source: &str) -> Option<FileScopes> {
-    let parse = parse_clean_source_file(source)?;
-    let tree = parse.tree();
+fn build_file_scopes(tree: &ast::SourceFile) -> FileScopes {
     let end: u32 = tree.syntax().text_range().end().into();
     let mut scopes = FileScopes::default();
     scopes.push_scope(tree.syntax(), Vec::new(), 0, end);
@@ -6610,7 +6504,7 @@ fn build_file_scopes(source: &str) -> Option<FileScopes> {
             });
         }
     }
-    Some(scopes)
+    scopes
 }
 
 impl FileScopes {

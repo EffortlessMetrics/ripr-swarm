@@ -7,6 +7,7 @@ mod name_scope;
 mod nesting;
 mod owner_pin;
 mod pattern_pin;
+mod source_snapshot;
 pub(crate) use owner_pin::macro_binding_candidates;
 pub(crate) use owner_pin::{
     AssertionContextRefusal, HelperLoan, MacroBindingCandidates, MacroBindingKind,
@@ -29,9 +30,7 @@ pub(crate) use local_test_macros::{
     GeneratedTestPins, expand_local_test_macros, generated_test_pins,
 };
 pub(crate) use module_tree::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
-pub(crate) use name_scope::{
-    NameScope, NameScopes, UseBinding, function_type_param_names, name_scopes_for_fn,
-};
+pub(crate) use name_scope::{NameScope, NameScopes, UseBinding, function_type_param_names};
 pub(crate) use nesting::{non_code_token_end, parse_clean_source_file, rust_nesting_refusal};
 pub(crate) use ra::drop_in_assertion_leaf;
 pub(crate) use ra::parser_oracles_for_function;
@@ -42,3 +41,4 @@ pub(crate) use ra::{
     GovernedCfgTestModule, ModuleItemScopes, fn_name_binding_count, governed_cfg_test_modules,
     inline_unit_module_layout, module_item_scopes,
 };
+pub(crate) use source_snapshot::{ItemNesting, SourceSyntaxMemos};

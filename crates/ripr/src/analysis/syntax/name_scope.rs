@@ -13,6 +13,7 @@
 //! unsettled. An item inside a nested `fn` (or a module nested in the body)
 //! is block-bound the same way.
 
+#[cfg(test)]
 use super::nesting::parse_clean_source_file;
 use super::ra::LineIndex;
 use ra_ap_syntax::{
@@ -109,6 +110,7 @@ pub(crate) fn function_type_param_names(function: &ast::Fn) -> BTreeSet<String> 
 /// The name scopes of the function named `fn_name` whose `fn` keyword sits
 /// on `fn_line`. `None` when the source does not parse cleanly or holds no
 /// such function, so a caller fails closed.
+#[cfg(test)]
 pub(crate) fn name_scopes_for_fn(
     source: &str,
     fn_line: usize,
@@ -117,6 +119,15 @@ pub(crate) fn name_scopes_for_fn(
     let parse = parse_clean_source_file(source)?;
     let line_index = LineIndex::new(source);
     let tree = parse.tree();
+    name_scopes_in_tree(&tree, &line_index, fn_line, fn_name)
+}
+
+pub(super) fn name_scopes_in_tree(
+    tree: &ast::SourceFile,
+    line_index: &LineIndex,
+    fn_line: usize,
+    fn_name: &str,
+) -> Option<NameScopes> {
     let mut functions = tree.syntax().descendants().filter_map(|node| {
         let function = ast::Fn::cast(node)?;
         let token = function.fn_token()?;
