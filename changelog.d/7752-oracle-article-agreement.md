@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Verdict prose now uses the grammatically correct indefinite article before interpolated oracle-kind labels: "an `exact_value` oracle", "an `exact_error_variant` oracle", "an `whole_object_equality` oracle", while consonant-initial kinds keep "a". One shared `indefinite_article` helper in the domain layer decides the article from the first alphanumeric character, and all narrative templates that interpolate an `OracleKind` route through it (#7752).

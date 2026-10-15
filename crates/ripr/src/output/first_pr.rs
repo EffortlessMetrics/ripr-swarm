@@ -1625,7 +1625,11 @@ fn current_evidence_strength_for_card(card: &Value) -> String {
         string_path(card, &["oracle_kind"]),
     ) {
         (Some(strength), Some(kind)) => {
-            format!(" with a `{strength}` `{kind}` related-test oracle")
+            // #7752: the article follows the oracle-kind label ("an `exact_value`").
+            format!(
+                " with {} `{strength}` `{kind}` related-test oracle",
+                crate::domain::indefinite_article(&kind)
+            )
         }
         _ => String::new(),
     };

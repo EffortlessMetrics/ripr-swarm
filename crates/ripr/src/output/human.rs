@@ -2763,7 +2763,7 @@ mod tests {
         let mut finding = sample_finding();
         finding.class = ExposureClass::Exposed;
         finding.missing = vec![
-            "Related test reaches `applyDiscount` with a `exact_value` oracle; behavior observed."
+            "Related test reaches `applyDiscount` with an `exact_value` oracle; behavior observed."
                 .to_string(),
         ];
 

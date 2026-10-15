@@ -54,7 +54,7 @@ pub use diagnostic_witness::{
 pub(crate) use diagnostic_witness::{perl_suggested_related_test, python_suggested_related_test};
 pub use evidence::{
     Confidence, OracleKind, OracleStrength, RelationConfidence, RelationReason, RevealEvidence,
-    RiprEvidence, StageEvidence, StageState,
+    RiprEvidence, StageEvidence, StageState, indefinite_article,
 };
 pub(crate) use evidence_state::EvidenceState;
 pub(crate) use executed_control::{
