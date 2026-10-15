@@ -361,7 +361,6 @@ fn render(root: &Path) -> String {
                     .map(|v| v.as_str().ok_or_else(|| "invalid receipt ID".to_owned()))
                     .collect::<Result<BTreeSet<_>, _>>()?;
                 let mut recorded = linked.clone();
-                recorded.insert(id);
                 recorded.retain(|id| receipts.contains_key(*id));
                 let detail = format!(
                     "{id}: {status}; kind={kind}; {}; matching recorded receipts={}",
@@ -786,6 +785,66 @@ mod tests {
         p.write(
             "review/proof_portfolio.json",
             portfolio(&["snippet"], "answered_by_existing_receipt", &["snippet"]),
+        )?;
+        assert!(render(&p.0).contains("MISSING EVIDENCE: snippet:"));
+        Ok(())
+    }
+
+    #[test]
+    fn same_id_receipt_requires_an_explicit_portfolio_link() -> Result<(), String> {
+        let p = Packet::new()?;
+        p.write(
+            "review/proof_receipts.json",
+            json!([receipt("snippet", "head_passed")]),
+        )?;
+        for status in [
+            "selected_with_lease",
+            "answered_by_existing_receipt",
+            "satisfied_by_existing_evidence",
+        ] {
+            let mut task = linked_head_portfolio(&["snippet"]);
+            task["decisions"][0]["status"] = json!(status);
+            p.write("review/proof_portfolio.json", task.clone())?;
+            let linked = render(&p.0);
+            assert!(!linked.contains("MISSING EVIDENCE: snippet:"));
+            assert!(linked.contains("matching recorded receipts=1"));
+            task["decisions"][0]["receipt_ids"] = json!([]);
+            p.write("review/proof_portfolio.json", task)?;
+            let unlinked = render(&p.0);
+            assert!(unlinked.contains("MISSING EVIDENCE: snippet:"));
+            assert!(unlinked.contains("matching recorded receipts=0"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn wrong_kind_discriminating_receipt_cannot_answer_red_green() -> Result<(), String> {
+        let p = Packet::new()?;
+        let mut row = receipt("shared", "discriminating");
+        row["kind"] = json!("focused-build");
+        let mut base = row["commands"][0].clone();
+        base["side"] = json!("base-plus-tests");
+        base["status"] = json!("failed");
+        base["exit_code"] = json!(101);
+        row["commands"] = json!([row["commands"][0], base]);
+        p.write("review/proof_receipts.json", json!([row]))?;
+        p.write(
+            "review/proof_portfolio.json",
+            portfolio(&["snippet"], "satisfied_by_existing_evidence", &["shared"]),
+        )?;
+        assert!(render(&p.0).contains("MISSING EVIDENCE: snippet:"));
+        Ok(())
+    }
+
+    #[test]
+    fn same_kind_head_only_receipt_cannot_answer_red_green() -> Result<(), String> {
+        let p = Packet::new()?;
+        let mut row = receipt("shared", "head_passed");
+        row["kind"] = json!("focused-red-green");
+        p.write("review/proof_receipts.json", json!([row]))?;
+        p.write(
+            "review/proof_portfolio.json",
+            portfolio(&["snippet"], "satisfied_by_existing_evidence", &["shared"]),
         )?;
         assert!(render(&p.0).contains("MISSING EVIDENCE: snippet:"));
         Ok(())
