@@ -307,7 +307,10 @@ Two pattern terms are used below.
    other integer `From` calls, carries the test, and an integer is no boolean
    literal, so `0`, `1` or a variable on the other side caps
    (`assert_eq!((r == Err(E::Bad)) as u8, 0)`,
-   `assert_eq!(u8::from(r == Err(E::Bad)), n)`; #8093); a cast of a value
+   `assert_eq!(u8::from(r == Err(E::Bad)), n)`; #8093), and so do the
+   `From`/`Into` path spellings of that conversion (`From::from(..)`,
+   `<u8 as From<bool>>::from(..)`, `Into::<u8>::into(..)`,
+   `std::primitive::u8::from(..)`; #8101); a cast of a value
    still pins (`assert_eq!(x as u8, 3)`). Such a comparison asserted by a
    boolean literal caps the same way (`assert_eq!((r == Err(E::Bad)) as u8
    == 0, true)`, `assert_eq!((r == Err(E::Bad)) == flag, true)`), and a
@@ -342,7 +345,11 @@ Two pattern terms are used below.
    condition; asserted false, behind a call or inside a chain it caps), an
    argument at any position of a call that is the whole condition
    (`std::ops::Not::not(matches!(..))`, `check::<bool>(1, matches!(..))`,
-   directly or through nested calls), or inside the condition or
+   directly or through nested calls; a call's own parenthesis, turbofish
+   included, is no grouping, so `foo::<T>(matches!(..)).is_ok()` reads as
+   `foo(matches!(..)).is_ok()` does, and a comparison inside a call's
+   arguments is not the operand's own test, so `flags | compute(|v| v == 1)`
+   still pins; #8101), or inside the condition or
    scrutinee of an `if`, `while` or `match` anywhere in the condition
    (`flag == if ready && matches!(..) { false } else { true }`; a guard
    inside an earlier `matches!(..)` and a raw `r#match` are not such

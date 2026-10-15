@@ -1092,6 +1092,11 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         // Any path call named `not` reads as a negation (review of 1ae0c07).
         "assert_eq!(MyNot::not(r == Err(E::Bad)), true);",
         "assert_eq!(bool::not(r == Err(E::Bad)), true);",
+        // #8101: `From`/`Into` conversion paths carry the test as an integer.
+        "assert_eq!(From::from(r == Err(E::Bad)), n);",
+        "assert_eq!(<u8 as From<bool>>::from(r == Err(E::Bad)), 0);",
+        "assert_eq!(Into::<u8>::into(r == Err(E::Bad)), n);",
+        "assert_eq!(std::primitive::u8::from(r == Err(E::Bad)), 0);",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
@@ -1109,10 +1114,81 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert!(foo(matches!(x, A)).is_ok());",
         "assert!(foo(|| { matches!(x, A) }).is_ok());",
         "assert!(matches!(r, Err(E::Bad)).eq(&true));",
+        "assert!(foo::<T>(matches!(x, A)).is_ok());",
+        "assert_eq!(flags | compute(|v| v == 1), EXPECTED);",
     ] {
         if is_inequality_assertion(text) {
             return Err(format!("{text}: must not read as an inequality"));
         }
+    }
+    // #8101: a turbofish call and a comparison nested inside a call's
+    // arguments read as a pinned value, while a call that carries the test
+    // through, a grouping parenthesis and a keyword's parenthesis still cap.
+    for (text, expected) in [
+        ("assert!(foo::<T>(matches!(x, A)).is_ok());", &exact),
+        ("assert_eq!(flags | compute(|v| v == 1), EXPECTED);", &exact),
+        ("assert_eq!(mask & lookup(a == b), X);", &exact),
+        ("assert_eq!(flags | compute(v), EXPECTED);", &exact),
+        ("assert_eq!(<u8 as From<bool>>::from(x), 1);", &exact),
+        ("assert_eq!(Into::<u8>::into(c), 97);", &exact),
+        (
+            "assert_eq!(flag ^ bool::from(r == Err(E::Bad)), expected);",
+            &weak,
+        ),
+        ("assert_eq!(flags | u8::from(a == b), x);", &weak),
+        (
+            "assert_eq!(flag ^ std::ops::Not::not(r == Err(E::Bad)), expected);",
+            &weak,
+        ),
+        (
+            "assert_eq!(flag & From::from(r == Err(E::Bad)), expected);",
+            &weak,
+        ),
+        ("assert_eq!(flags | (a == b), X);", &weak),
+        // Review of e2f22d1: a parenthesized type inside the conversion's
+        // path, and a const-generic block or `->` inside a turbofish.
+        (
+            "assert_eq!(<u8 as From<(bool)>>::from(r == Err(E::Bad)), 0);",
+            &weak,
+        ),
+        ("assert!(foo::<{ 2 > 1 }>(matches!(x, A)).is_ok());", &exact),
+        (
+            "assert!(foo::<fn() -> u8>(matches!(x, A)).is_ok());",
+            &exact,
+        ),
+        ("assert_eq!(flag ^ Into::<u8>::into(a == b), x);", &weak),
+        (
+            "assert_eq!(flag ^ <bool as From<bool>>::from(a == b), x);",
+            &weak,
+        ),
+        ("assert_eq!(flags | &mut (a == b), X);", &weak),
+        // A multi-byte identifier character before a callee's last word
+        // (review of e7a56e8: a byte offset past it is no char boundary).
+        ("assert_eq!(flag ^ x\u{b7}y(a == b), x);", &exact),
+        ("assert_eq!(flag ^ x\u{b7}not(a == b), x);", &exact),
+        (
+            "assert!(flag == if (ready && matches!(r, Ok(3))) { false } else { true });",
+            &weak,
+        ),
+    ] {
+        require_classification(text, expected)?;
+    }
+    for (text, plain) in [
+        (
+            "assert!(foo::<T>(matches!(x, A)).is_ok());",
+            "assert!(foo(matches!(x, A)).is_ok());",
+        ),
+        (
+            "assert_eq!(flags | compute(|v| v == 1), EXPECTED);",
+            "assert_eq!(flags | compute(v), EXPECTED);",
+        ),
+        (
+            "assert_eq!(mask & lookup(a == b), X);",
+            "assert_eq!(mask & lookup(c), X);",
+        ),
+    ] {
+        let plain = classify_assertion(plain);
+        require_classification(text, &(plain.kind, plain.strength))?;
     }
     Ok(())
 }

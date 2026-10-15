@@ -1642,7 +1642,24 @@ reaches the ordinary token rule and reads `weakly_exposed`, still a gap.
   mention of a trusted name in another macro's arguments stays ambiguous,
   a plain `assert_eq!(..)` included: to that macro it is only tokens, and
   `define!(assert_eq!(mod tests;))` can emit `macro_rules! assert_eq`
-  together with the module whose tests then compile against it.
+  together with the module whose tests then compile against it. The one
+  exception is a call to a wrapper that cannot bind a name at all (#6648):
+  an unqualified call to a `macro_rules!` this file defines exactly once,
+  without an attribute and never names in a `use`. The definition sits at
+  file level, or in an inline module whose textual scope can be bounded and
+  contains the call, and ends before the call. Neither the definition nor
+  the call's arguments hold a binding word (`macro_rules`, `macro`, `use`,
+  `extern`, `mod`, `include`, `macro_use`, `macro_export`,
+  `no_implicit_prelude`) or an attribute other than a built-in test, lint,
+  `cfg` or `doc` attribute. The definition holds no `!` at all and captures
+  no `tt` fragment (the only fragment that can lift a lone `!` or `#` out of
+  the arguments and splice it after another name), and the arguments hold a
+  `!` only as a bare trusted `name!` (a unary `!` fails closed, since a `tt`
+  fragment or a repetition can splice it after a name). No module item sits
+  between the definition and the call, and every macro call there is another
+  such call of the same wrapper (even a trusted name may be a local macro
+  there), so nothing can bring in a shadowing definition. Attribute proc
+  macros elsewhere in the file stay invisible, as for every other site.
   `macro_use` or `no_implicit_prelude` anywhere in a non-trusted macro's
   arguments makes every trusted name ambiguous (stricter than the same
   attribute written on an item, which a resolved module can admit). A
@@ -2120,6 +2137,8 @@ assertions. This repair shares the existing callback without that larger migrati
   mutant fails; `raw_path_shadow_module_keeps_the_mutant_green` (#7098
   review) loads a rival `Unit` from a `#[r#path]`-named non-`.rs` module,
   and the mutant passes while the finding refuses.
+- Binding-free local wrappers (#6648): `owner_pin/tests.rs`
+  `a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted`.
 - Short-circuit tail propagation (#8037): `propagation_witness.rs`
   `short_circuit_owner_tail_completes_only_an_admitted_chain`;
   `crates/ripr/tests/short_circuit_or_tail.rs`

@@ -182,11 +182,13 @@ pub(crate) fn collect_callback_assertions(
     returns_to_runner: bool,
 ) -> Vec<TypeScriptAssertion> {
     let literal_consts = loose_literal_consts(statements, source);
+    let match_object_consts = match_object_consts(statements, source);
     let context = AssertionContext {
         receiver,
         bindings,
         returns_to_runner,
         literal_consts: &literal_consts,
+        match_object_consts: &match_object_consts,
     };
     let mut out = Vec::new();
     for stmt in statements {
@@ -206,6 +208,9 @@ pub(crate) struct AssertionContext<'a> {
     /// (RIPR-SPEC-0247 rule 2). Empty inside a nested statement, where a
     /// block could redeclare the name.
     literal_consts: &'a [LooseLiteralConst],
+    /// The test body's top-level object `const`s a `toMatchObject` argument
+    /// may read (RIPR-SPEC-0250 rule 1). Empty inside a nested statement.
+    match_object_consts: &'a [MatchObjectConst],
 }
 
 impl<'a> AssertionContext<'a> {
@@ -217,6 +222,7 @@ impl<'a> AssertionContext<'a> {
             bindings: self.bindings,
             returns_to_runner: self.returns_to_runner,
             literal_consts: &[],
+            match_object_consts: &[],
         }
     }
 }
@@ -271,9 +277,10 @@ pub(crate) fn collect_expect_assertions_in_statement(
             collect_expect_assertions_from_statement_vec(&block.body, source, &nested, out);
         }
         Statement::ExpressionStatement(expr_stmt) => {
-            if let Some(assertion) =
+            if let Some(mut assertion) =
                 assertion_from_expression_any(&expr_stmt.expression, source, context)
             {
+                attach_match_object_const(&mut assertion, &expr_stmt.expression, context);
                 out.push(assertion);
             } else {
                 collect_nested_callback_assertions(
@@ -287,7 +294,10 @@ pub(crate) fn collect_expect_assertions_in_statement(
         }
         Statement::ReturnStatement(return_stmt) => {
             if let Some(argument) = &return_stmt.argument {
-                if let Some(assertion) = assertion_from_expression_any(argument, source, context) {
+                if let Some(mut assertion) =
+                    assertion_from_expression_any(argument, source, context)
+                {
+                    attach_match_object_const(&mut assertion, argument, context);
                     out.push(assertion);
                 } else {
                     collect_nested_callback_assertions(
@@ -357,6 +367,22 @@ pub(crate) fn collect_expect_assertions_in_statement(
             collect_expect_assertions_in_statement(&with_stmt.body, source, &nested, out);
         }
         _ => {}
+    }
+}
+
+/// RIPR-SPEC-0250 rule 1: a Jest `toMatchObject(<name>)` whose argument
+/// names one of the body's [`MatchObjectConst`]s reads that literal object.
+fn attach_match_object_const(
+    assertion: &mut TypeScriptAssertion,
+    expr: &Expression<'_>,
+    context: &AssertionContext<'_>,
+) {
+    if assertion.matcher == "toMatchObject"
+        && assertion.expected_value_or_variant.is_none()
+        && assertion.error_payload.is_none()
+    {
+        assertion.expected_object_const =
+            match_object_const_argument(context.match_object_consts, expr);
     }
 }
 
@@ -518,11 +544,13 @@ fn collect_nested_callback_assertions(
                 return;
             };
             let literal_consts = loose_literal_consts(statements, source);
+            let match_object_consts = match_object_consts(statements, source);
             let subtest = AssertionContext {
                 receiver: first_plain_parameter(callback),
                 bindings: context.bindings,
                 returns_to_runner: true,
                 literal_consts: &literal_consts,
+                match_object_consts: &match_object_consts,
             };
             collect_expect_assertions_from_statement_vec(statements, source, &subtest, out);
         }
@@ -756,6 +784,7 @@ pub(crate) fn expect_assertion_from_expression(
         rendered_call,
         loose_number_expected: false,
         compares_reference_identity,
+        expected_object_const: None,
     })
 }
 
@@ -824,6 +853,7 @@ pub(crate) fn ava_assertion_from_expression(
         oracle_confidence,
         rendered_call: None,
         loose_number_expected: false,
+        expected_object_const: None,
         compares_reference_identity: TypeScriptAssertion::ava_compares_reference_identity(method),
     })
 }
@@ -1471,6 +1501,7 @@ fn assert_call_assertion(
         oracle_confidence,
         rendered_call: Some(rendered_call),
         loose_number_expected,
+        expected_object_const: None,
         compares_reference_identity: TypeScriptAssertion::node_assert_compares_reference_identity(
             method,
         ),
@@ -1769,6 +1800,7 @@ pub(crate) fn chai_expect_assertion_from_expression(
         oracle_confidence,
         rendered_call: Some(rendered),
         loose_number_expected: false,
+        expected_object_const: None,
         compares_reference_identity: false,
     })
 }
