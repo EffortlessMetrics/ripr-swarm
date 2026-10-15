@@ -66,6 +66,21 @@ mod article_tests {
     }
 
     #[test]
+    fn vowel_initial_oracle_kinds_take_an() {
+        // Closed set: every vowel-initial member must keep taking "an" so the
+        // narrative templates below stay grammatical. "unknown" starts with a
+        // vowel letter: "an unknown oracle".
+        for kind in [
+            OracleKind::ExactValue,
+            OracleKind::ExactErrorVariant,
+            OracleKind::WholeObjectEquality,
+            OracleKind::Unknown,
+        ] {
+            assert_eq!(indefinite_article(kind.as_str()), "an", "{kind:?}");
+        }
+    }
+
+    #[test]
     fn consonant_initial_oracle_kinds_take_a() {
         for kind in [
             OracleKind::Snapshot,
@@ -74,7 +89,6 @@ mod article_tests {
             OracleKind::SmokeOnly,
             OracleKind::MockExpectation,
             OracleKind::GuardedResultMatch,
-            OracleKind::Unknown,
         ] {
             assert_eq!(indefinite_article(kind.as_str()), "a", "{kind:?}");
         }
@@ -83,7 +97,7 @@ mod article_tests {
     #[test]
     fn article_skips_leading_non_alphanumerics() {
         assert_eq!(indefinite_article("`exact_value`"), "an");
-        assert_eq!(indefinite_article("a snapshot"), "a");
+        assert_eq!(indefinite_article("`snapshot`"), "a");
         assert_eq!(indefinite_article(""), "a");
     }
 }
