@@ -828,6 +828,41 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         // Controls: a comparison asserted true, a bare value or call, a
         // pinning chain and a pattern in a closure keep today's reading.
         ("assert_eq!(r == Err(E::Bad), true);", &err),
+        // #7931 controls: an `eq` method or a literal spelling asserted true
+        // pins like `==`, and a method after a call that takes the pattern
+        // belongs to the call.
+        ("assert_eq!(r.eq(&Err(E::Bad)), true);", &err),
+        ("assert_eq!(r == Err(E::Bad), true as bool);", &err),
+        ("assert_eq!({ r == Err(E::Bad) }, true);", &err),
+        ("assert_eq!(score(2).eq(&6), bool::from(true));", &exact),
+        ("assert_eq!((r == Err(E::Bad)).eq(&true), true);", &err),
+        (
+            "assert_eq!(std::cmp::PartialEq::eq(&r, &Err(E::Bad)), true);",
+            &err,
+        ),
+        ("assert_eq!(flag.eq(&false), true);", &exact),
+        // An `eq`/`ne` chain against literals that keeps a pattern's
+        // polarity asserts the pattern (review of #7992).
+        ("assert!(matches!(r, Err(E::Bad)).eq(&true));", &err),
+        ("assert!(matches!(r, Err(E::Bad)).ne(&false));", &err),
+        (
+            "assert!((matches!(r, Err(E::Bad))).eq(&false).eq(&false));",
+            &err,
+        ),
+        ("assert!((matches!(r, Err(E::Bad)).eq(&true)));", &err),
+        ("assert_eq!(r == Err(E::Bad), (true as bool));", &err),
+        ("assert_eq!(&(r == Err(E::Bad)) == &false, false);", &err),
+        // A double negation through literal spellings asserts the
+        // comparison itself, like `(r == Err(E::Bad)) == false` asserted
+        // false.
+        (
+            "assert_eq!((r == Err(E::Bad)) == false as bool, false);",
+            &err,
+        ),
+        (
+            "assert!(xs.iter().filter(|x| matches!(x, Some(3))).count() == 2);",
+            &exact,
+        ),
         ("assert_eq!(true, score(2) == 6);", &exact),
         ("assert_eq!(!is_valid(x), true);", &exact),
         ("assert_eq!(is_valid(x), false);", &exact),
@@ -876,6 +911,65 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!(\"x+\" < s, true);",
         "assert_eq!((r != Err(E::Bad)) & flag, true);",
         "assert!(ready | matches!(r, Err(E::Bad)));",
+        // #7931: method-call, combinator, cast, call and block spellings.
+        "assert!(matches!(r, Err(E::Bad)).eq(&false));",
+        "assert_eq!(r.eq(&Err(E::Bad)), false);",
+        "assert!(matches!(r, Err(E::Bad)).then(|| false).unwrap_or(true));",
+        "assert!((matches!(r, Err(E::Bad))).then(|| false).unwrap_or(true));",
+        "assert_eq!(r == Err(E::Bad), false as bool);",
+        "assert_eq!(r == Err(E::Bad), bool::from(false));",
+        "assert_eq!({ r == Err(E::Bad) }, false);",
+        "assert_eq!(r.ne(&Err(E::Bad)), true);",
+        "assert_eq!(score(2).ne(&0), true);",
+        "assert_eq!(score(2).lt(&3), true);",
+        "assert_eq!(&(r == Err(E::Bad)), &false);",
+        "assert_eq!((r == Err(E::Bad)).eq(&false), true);",
+        "assert_eq!(r.eq(&Err(E::Bad)).eq(&false), true);",
+        "assert_eq!(score(2).eq(&6).ne(&true), true);",
+        "assert_eq!(PartialEq::eq(&r, &Err(E::Bad)), false);",
+        "assert_eq!(std::cmp::PartialOrd::lt(&score(2), &3), true);",
+        "assert_eq!((r == Err(E::Bad)) as bool, false);",
+        "assert_eq!(bool::from(r == Err(E::Bad)), false);",
+        "assert_eq!(flag && r.ne(&Err(E::Bad)), true);",
+        // Review of #7992: grouped literal spellings, a trailing comma,
+        // a trailing comment, and a receiver or path call after `&&`.
+        "assert_eq!(r == Err(E::Bad), (false as bool));",
+        "assert_eq!(r == Err(E::Bad), (bool::from(false)));",
+        "assert_eq!(PartialEq::eq(&r, &Err(E::Bad),), false);",
+        "assert_eq!(PartialEq::eq(&HashMap::<u8, u8>::new(), &m), false);",
+        "assert_eq!(r.eq(&Err(E::Bad)) /* checked */, false);",
+        "assert_eq!(flag && r.eq(&Err(E::Bad)).eq(&false), false);",
+        "assert_eq!(flag && (r == Err(E::Bad)).eq(&false), false);",
+        "assert_eq!(flag && PartialEq::eq(&(r == Err(E::Bad)), &false), false);",
+        "assert_eq!(PartialEq::eq(&HashMap::<Vec<u8>, u8>::new(), &m), false);",
+        // `^` and `|` over a comparison call, and a pattern method behind a
+        // one-expression block or an odd literal-call chain.
+        "assert_eq!(r.eq(&Err(E::Bad)) ^ true, true);",
+        "assert_eq!(flag ^ r.ne(&Err(E::Bad)), true);",
+        "assert_eq!(flag ^ r.eq(&Err(E::Bad)), false);",
+        "assert_eq!(flag | score(2).lt(&3), true);",
+        "assert_eq!(flag ^ PartialEq::ne(&r, &Err(E::Bad)), true);",
+        "assert_eq!(ready && (flag ^ r.ne(&Err(E::Bad))), true);",
+        "assert!(({ matches!(r, Err(E::Bad)) }).then(|| false).unwrap_or(true));",
+        "assert!(matches!(r, Err(E::Bad)).eq(&false));",
+        "assert!(matches!(r, Err(E::Bad)).ne(&true));",
+        "assert!(matches!(r, Err(E::Bad)).eq(&true).then(|| false).unwrap_or(true));",
+        "assert!(matches!(r, Err(E::Bad)).eq(&true) ^ flag);",
+        // A polarity-keeping literal chain asserts the pattern only as the
+        // whole condition (review of abe9f96).
+        "assert_eq!(matches!(r, Err(E::Bad)).eq(&true), false);",
+        "assert_eq!(!matches!(r, Err(E::Bad)).eq(&true), true);",
+        "assert_eq!(false, matches!(r, Err(E::Bad)).ne(&false));",
+        "assert!(std::ops::Not::not(matches!(r, Err(E::Bad)).eq(&true)));",
+        "assert!(check(matches!(r, Err(E::Bad)).eq(&true)));",
+        "assert!(!(flag || matches!(r, Err(E::Bad)).eq(&true)));",
+        "assert!(!(flag && matches!(r, Err(E::Bad)).eq(&true)));",
+        "assert!((matches!(r, Err(E::Bad)).eq(&true)) ^ flag);",
+        "assert_eq!(PartialEq::eq(&f::<{ A < B }>(), &x), false);",
+        "assert_eq!(/* c */ matches!(r, Err(E::Bad)).eq(&true), false);",
+        "assert_eq!(matches!(r, Err(E::Bad)) /* c */ .eq(&true), false);",
+        "assert_eq!((matches!(r, Err(E::Bad)) /* c */).eq(&true), false);",
+        "assert_eq!(matches!(matches!(r, Err(E::Bad)), true).eq(&true), false);",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
@@ -891,6 +985,8 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "ensure!(check(matches!(r, Ok(3))) && score == 4);",
         "assert!(matches!(build(matches!(k, Kind::A)), Ok(Mode::Dark)));",
         "assert!(foo(matches!(x, A)).is_ok());",
+        "assert!(foo(|| { matches!(x, A) }).is_ok());",
+        "assert!(matches!(r, Err(E::Bad)).eq(&true));",
     ] {
         if is_inequality_assertion(text) {
             return Err(format!("{text}: must not read as an inequality"));
