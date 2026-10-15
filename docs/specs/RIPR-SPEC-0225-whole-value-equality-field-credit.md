@@ -20,7 +20,7 @@ Linked plan:
 
 Linked issues:
 
-- None yet
+- #7858 (fields of a returned array element; decision 8)
 
 Linked PRs:
 
@@ -266,6 +266,38 @@ rejected alternative. Any can be reversed later without touching the rest.
    kill both runtime mutants (spec0225-wv-expected-helper,
    spec0225-wv-functional-update-default).
 
+8. **Fields of a returned array element (2026-10-15, #7858).** When the
+   owner's whole body is one array literal of struct literals of the same
+   type, none with a `..base`, and the changed field `f` is built in exactly
+   one element `k`, a related test pins `f` of element `k` when all of these
+   hold:
+
+   - the receiver is a direct call of the owner by name (or `super::`,
+     `crate::`), or a plain immutable `let` binding of that call that the
+     whole test body binds nowhere else;
+   - the assertion is a top-level statement of a test whose only attribute
+     is `#[test]` and whose body has no `return`, `?`, `break` or item;
+   - it is `assert_eq!(recv[k].f, literal)`, in either order, with `k` an
+     integer literal; or `assert!(recv.iter().any(|r| r.f == literal))`
+     (`into_iter`, literal first, no message), where every other element
+     builds `f` from an integer literal different from `literal`.
+
+   The membership needs the last condition because it holds through any
+   element: with `[Row { total: 33 }, Row { total: a + b }]`,
+   `rows(30, 3).iter().any(|r| r.total == 33)` passes whatever the second
+   element holds, so it observes nothing. A computed sibling, an index of
+   another element, `all`, `!=`, an ordering, a negated membership, a typed
+   or pattern closure parameter, a `let mut` or shadowed receiver, a
+   `#[should_panic]` or `#[ignore]` test and an assertion message all keep
+   the `FieldValue` missing discriminator. Owner calls get the same
+   same-name import and cross-package defeats as reveal's owner pins. A
+   `vec![..]` owner, a `let r = &rows[1]` or `let [_, r] = rows` read and a
+   collected scalar owner are not covered. Rejected: crediting any
+   `.any(|r| r.f == literal)` on the owner's result, which credits the
+   decoy. Verdict-corpus case `spec0231-oracle-any-field-eq-literal`
+   (RIPR-SPEC-0231 example 28's membership on a returned array) moves from
+   gap to credited.
+
 ## Required Evidence
 
 - The reproduction above reads `exposed`.
@@ -352,6 +384,11 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
   `fixtures/evidence-promotion-honesty-corpus/corpus.json`, the
   should-stay-`weakly_exposed` control for the `String::from` shadow
   refusal (#7066 review).
+- Decision 8: `crates/ripr/tests/returned_element_field_pin.rs` (the
+  membership and index pins read `exposed`; the `total: 33` decoy, a
+  computed sibling, another element's index and a shadowed receiver keep
+  the gap) and the unit tests in
+  `crates/ripr/src/analysis/classify/element_field_pin.rs`.
 - Planned: oracle classifier unit tests for braces outside struct-literal
   operands.
 
@@ -370,6 +407,11 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
   `an_unwrapped_ok_tail_with_early_err_returns_pins_its_field`. Decision 7
   adds `expected_item_literal` in `expected_binding.rs`, covered by
   `an_expected_helper_or_default_base_reads_as_its_literal`.
+
+- `crates/ripr/src/analysis/classify/element_field_pin.rs`: decision 8
+  (`observes_returned_element_field`), consumed in
+  `crates/ripr/src/analysis/classifier/evidence.rs` where it clears the
+  `FieldValue` missing discriminator next to reveal's owner-pin credit.
 
 ## Metrics
 

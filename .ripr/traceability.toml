@@ -14314,6 +14314,12 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_unwrapped_ok_tail_with_early_err_returns_pins_its_field",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_expected_helper_or_default_base_reads_as_its_literal",
   "crates/ripr/src/analysis/classify/activation.rs::field_reads_count_only_on_the_owner_result",
+  "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::a_test_pinning_the_probed_element_observes_its_field",
+  "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::a_membership_another_element_may_satisfy_observes_nothing",
+  "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::a_test_that_does_not_pin_the_element_alone_observes_nothing",
+  "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::an_owner_that_is_not_one_array_of_one_struct_is_not_read",
+  "crates/ripr/tests/returned_element_field_pin.rs::a_test_pinning_the_changed_element_exposes_its_field",
+  "crates/ripr/tests/returned_element_field_pin.rs::a_membership_or_read_another_element_may_satisfy_keeps_the_gap",
 ]
 fixtures = []
 code = [
@@ -14322,6 +14328,8 @@ code = [
   "crates/ripr/src/analysis/extract/oracles/patterns.rs",
   "crates/ripr/src/analysis/classify/activation.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs",
+  "crates/ripr/src/analysis/classify/element_field_pin.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0225-whole-value-equality-field-credit.md",
