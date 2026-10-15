@@ -30,7 +30,10 @@ fn job(name: &str) -> TestResult<&str> {
 }
 
 fn shell(name: &str) -> TestResult<String> {
-    let source = job(name)?;
+    shell_body(job(name)?)
+}
+
+fn shell_body(source: &str) -> TestResult<String> {
     assert_eq!(source.matches("        run: |\n").count(), 1);
     let (_, body) = source.split_once("        run: |\n").ok_or("shell block")?;
     let script = body
@@ -185,6 +188,13 @@ impl Fixture {
         let output = self.run(
             script,
             &[
+                ("LABEL", "merge-ready"),
+                ("ADMISSION_RESULT", "success"),
+                ("EXECUTE", "true"),
+                ("PRIOR_RESULT", "none"),
+                ("WINDOWS_RESULT", "success"),
+                ("PASTE_RESULT", "success"),
+                ("CI_RESULT", "success"),
                 ("EVENT_NAME", event),
                 ("BASE_SHA", base),
                 ("HEAD_SHA", head),
@@ -411,6 +421,8 @@ fn invalid_identities_empty_diff_and_non_pr_events_use_full_proof() -> TestResul
     fixture.write("src/mixed.rs", "fn mixed() {}\n")?;
     let mixed = fixture.commit()?;
     assert!(!fixture.detect(&production, "pull_request", &base, &mixed, None)?);
+    // Branch-isolation controls for the aggregate body, not admission events.
+    // Native admission separately refuses these as qualification requests.
     for event in ["push", "workflow_dispatch"] {
         assert!(
             !fixture.detect(&production, event, &base, &head, None)?,
@@ -487,7 +499,15 @@ fn routed_result(
     docs_gate: &str,
     heavy: &str,
 ) -> TestResult<bool> {
-    let source = job("result")?;
+    // Admission and cancellation have separate boundary tests. Exercise this
+    // named aggregate step, rather than the job's earlier live API refresh.
+    let source = job("result")?
+        .split_once("      - name: Summarize routed result\n")
+        .ok_or("named aggregate step exists")?
+        .1
+        .split("      - name:")
+        .next()
+        .ok_or("aggregate body exists")?;
     let (setup, _) = source.split_once("        run: |\n").ok_or("result step")?;
     let (_, bindings) = setup.split_once("        env:\n").ok_or("result env")?;
     let mut env = bindings
@@ -500,6 +520,13 @@ fn routed_result(
         .collect::<Vec<_>>();
     assert!(env.len() >= 20, "actual result env is initialized");
     env.extend([
+        ("LABEL", "merge-ready"),
+        ("ADMISSION_RESULT", "success"),
+        ("EXECUTE", "true"),
+        ("PRIOR_RESULT", "none"),
+        ("WINDOWS_RESULT", "success"),
+        ("PASTE_RESULT", "success"),
+        ("CI_RESULT", "success"),
         ("EVENT_NAME", event),
         ("DOCS_DETECT_RESULT", detector),
         ("DOCS_ONLY", docs),
@@ -508,7 +535,7 @@ fn routed_result(
         ("ROUTE_RESULT", "success"),
         ("GITHUB_RESULT", heavy),
     ]);
-    let output = fixture.run(&shell("result")?, &env, None)?;
+    let output = fixture.run(&shell_body(source)?, &env, None)?;
     let summary = fs::read_to_string(fixture.root.join(".git/actions-summary"))?;
     assert!(
         summary.contains("- status:"),
@@ -551,6 +578,8 @@ fn actual_result_block_requires_successful_detection_and_selected_proof() -> Tes
             "success"
         )?);
     }
+    // Branch-isolation controls for the aggregate body, not admission events.
+    // Native admission separately refuses these as qualification requests.
     for event in ["push", "workflow_dispatch"] {
         for docs in ["false", "true"] {
             assert!(!routed_result(

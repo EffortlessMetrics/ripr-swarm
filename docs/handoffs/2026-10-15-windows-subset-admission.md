@@ -462,3 +462,15 @@ three-OS payload execution, complete wheel graph, broad local preflight and
 rehearsal/economics remain unqualified. Keep PR8082 Draft; parent integrates the
 remaining reviewed wheel leaf and completes full-graph review before any
 separately authorized activation transition.
+
+
+The refreshed PR discussion exposed a stale `docs_only_routing` test adapter.
+Reproduced on the composed candidate:5pass/1fail, native101 at the aggregate-env
+setup assertion. It read the newly preceding readiness-refresh step rather than
+the intended result decision. The repair selects the actual named summary step,
+retains the exactly-one-run-body invariant, seeds successful native admission and
+three-child prerequisites, and keeps every detector/docs/Rust negative assertion.
+Push/manual inputs are explicitly branch-isolation controls, not admitted events.
+The repaired suite executes6/6; logs `docs-routing-before.log` and
+`docs-routing-after.log` bind setup failure and restored decision coverage. This
+is a test-adapter repair, not a production routing behavior change.
