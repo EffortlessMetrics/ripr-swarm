@@ -139,10 +139,21 @@ documented decisions and proceed"). Recorded on #6654.
   length, so its keys are not read. The limit is on source spelling, not
   the decoded value: `"Jos\u00e9"` is read, and the pin still compares the
   decoded value exactly.
-- A local bound once to the owner call is not checked for later field
-  writes (`bo.adult = true`, `Object.assign(bo, ...)`, or a helper that
-  mutates `bo`). The same gap applies to `toEqual` through the shared
-  whole-result reader; filed as #7497.
+- A local bound once to the owner call is checked for test-own rewrites
+  and escapes (#7497, landed): a member, bracket or non-null-bracket
+  write, a bare rebinding, `++`/`--`, a compound assignment, `delete`,
+  and an escape through any non-assertion call (`fix(bo)`,
+  `this.fix(bo)`, `fix<Profile>(bo)`, a computed callee spelled
+  `Object["assign"]`, or a parenthesized callee) withhold the
+  whole-result credit for the local — for `toMatchObject` and for
+  `toEqual` through the shared whole-result reader. Residuals: the scan
+  is position-blind (a write anywhere in the body refuses the credit,
+  including after the assertion — fail-closed, because hoisted
+  declarations make textual order unsound); an aliased `expect` import
+  stays withheld; a non-assertion call that shares an assertion matcher's
+  name is still credited; bracket-spelled assertions (`assert["deepEqual"]`)
+  are refused; destructuring-target writes (`[bo.x] = ...`) and
+  `for (bo.x of ...)` rebinding are not modeled.
 
 ## Required Evidence
 

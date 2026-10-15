@@ -777,8 +777,9 @@ fn json_has_workspaces_field(pkg_json: &str) -> bool {
 /// relative to `package_root` so the command is runnable from there.
 ///
 /// Fail-closed: when neither a framework nor a runner resolves, returns
-/// `None` so the caller emits the named limitation
-/// `typescript_test_runner_unresolved` instead of an invented command.
+/// `None`. The caller emits `typescript_test_runner_unresolved` only in
+/// that unknown-runner case; it does not reuse the name when a runner is
+/// known but no related test exists to target (#7646).
 pub(crate) fn verify_command_for_discovery(
     discovery: &PackageDiscovery,
     test_file: &Path,

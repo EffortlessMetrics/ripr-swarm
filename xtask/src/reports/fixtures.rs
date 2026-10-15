@@ -2144,6 +2144,25 @@ pub(crate) fn fixtures_with_args(args: &[String]) -> Result<(), String> {
     fixtures_impl(args.first())
 }
 
+/// Live spec id cited by the `fixtures new` step-4 bless command (#7398).
+/// `goldens bless` rejects reasons that do not cite an existing spec; this id
+/// exists in `docs/specs/` so the printed command is copy-pasteable. Replace it
+/// with the spec the new fixture proves (`cargo xtask specs next` allocates).
+const FIXTURES_NEW_BLESS_EXAMPLE_SPEC: &str = "RIPR-SPEC-0001";
+
+fn fixtures_new_bless_reason(spec_id: &str) -> String {
+    format!("{spec_id}: initial scaffold")
+}
+
+/// Step 4 of the `fixtures new` next-actions list. Kept as one production
+/// string so the printed command and the reason-validator test cannot drift.
+fn fixtures_new_step4(name: &str) -> String {
+    let reason = fixtures_new_bless_reason(FIXTURES_NEW_BLESS_EXAMPLE_SPEC);
+    format!(
+        "  4. Run: cargo xtask goldens bless {name} --reason \"{reason}\"\n     Replace {FIXTURES_NEW_BLESS_EXAMPLE_SPEC} with the spec this fixture proves (`cargo xtask specs next` to allocate). Bless rejects reasons that do not cite an existing spec id."
+    )
+}
+
 /// Scaffold a new fixture directory with a seeded golden (#2445).
 fn fixtures_new(name: &str) -> Result<(), String> {
     if name.is_empty() || name.contains('/') || name.contains('\\') {
@@ -2236,10 +2255,7 @@ fn fixtures_new(name: &str) -> Result<(), String> {
         "  3. Edit {}/SPEC.md to fill in the Given/When/Then/Must Not.",
         name
     );
-    println!(
-        "  4. Run: cargo xtask goldens bless {} --reason \"initial scaffold\"",
-        name
-    );
+    println!("{}", fixtures_new_step4(name));
     println!("  5. Run: cargo xtask fixtures {} to verify.", name);
 
     Ok(())
@@ -2664,5 +2680,52 @@ mod tests {
     #[test]
     fn fixture_cache_pin_names_the_variable_ripr_resolves() {
         assert_eq!(FIXTURE_CACHE_DIR_ENV, "RIPR_CACHE_DIR");
+    }
+
+    #[test]
+    fn fixtures_new_printed_bless_reason_passes_the_reason_validator() -> Result<(), String> {
+        // #7398: the scaffold used to print `--reason "initial scaffold"`, which
+        // `validate_bless_reason` / `parse_reason` reject because they require a
+        // live spec id. The printed step-4 reason must be the same string the
+        // validator accepts.
+        let step4 = fixtures_new_step4("example_fixture");
+        let reason = bless_reason_quoted_in_step4(&step4)?;
+        if reason == "initial scaffold" {
+            return Err("step 4 still suggests a reason with no spec id".to_string());
+        }
+        if validate_bless_reason("initial scaffold").is_ok() {
+            return Err(
+                "control: bare \"initial scaffold\" must still fail the validator".to_string(),
+            );
+        }
+        if !step4.contains("cargo xtask specs next") {
+            return Err(format!(
+                "step 4 must point at `cargo xtask specs next` so the example spec can be replaced:\n{step4}"
+            ));
+        }
+        if !step4.contains("cargo xtask goldens bless example_fixture --reason") {
+            return Err(format!(
+                "step 4 must cite the fixture name in the bless command:\n{step4}"
+            ));
+        }
+        validate_bless_reason(&reason).map_err(|error| {
+            format!("printed step-4 reason {reason:?} must pass validate_bless_reason: {error}")
+        })
+    }
+
+    fn bless_reason_quoted_in_step4(step4: &str) -> Result<String, String> {
+        const NEEDLE: &str = "--reason \"";
+        let Some(start) = step4.find(NEEDLE) else {
+            return Err(format!("step 4 does not quote a --reason: {step4}"));
+        };
+        let rest = step4
+            .get(start.saturating_add(NEEDLE.len())..)
+            .ok_or_else(|| format!("step 4 --reason needle split a character: {step4}"))?;
+        let Some(end) = rest.find('"') else {
+            return Err(format!("step 4 --reason is not closed: {step4}"));
+        };
+        rest.get(..end)
+            .map(str::to_string)
+            .ok_or_else(|| format!("step 4 --reason quote split a character: {step4}"))
     }
 }

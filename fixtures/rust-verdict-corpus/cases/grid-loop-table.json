@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "loop_accumulator",
   "test_shape": "table_driven_loop",
-  "hard_case": "The loop assert_eq! is admitted, but the accumulator probe reads observation_unverified because no assertion text names the changed expression (#5328).",
+  "hard_case": "The loop assert_eq! is admitted, but before #8027 the accumulator line read as call_deletion and stayed observation_unverified because no assertion text names the changed expression (#5328). Since #8027 a bare local accumulator update reads static_unknown like its call-free siblings; crediting it needs loop-count reasoning RIPR-SPEC-0197 leaves out.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

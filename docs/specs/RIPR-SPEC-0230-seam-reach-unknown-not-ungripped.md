@@ -60,6 +60,11 @@ unresolved candidate path, in this order:
    named type's trait method delegates to (`self.inner.fmt(f)`).
    Each such method's callees join the test-reached set, so a type they
    name can root a further method, up to `MAX_TRANSITIVE_DEPTH` rounds.
+5. The walk past the bound (RIPR-SPEC-0114 step 5, #8047), tried last: a
+   test enters a name-matched chain that reaches the owner's name in more
+   than `MAX_TRANSITIVE_DEPTH` hops. A seam whose owner a test reaches only
+   that way therefore reads `opaque`, not `ungripped`, and a shallower
+   witness from rules 1-4 is always named first.
 
 "Production code a test may run" is the forward closure, by name over
 non-macro call facts, of every test's callees within `MAX_TRANSITIVE_DEPTH`
@@ -231,6 +236,8 @@ stay `ungripped`. humantime moves 8 of 8 (trait dispatch).
 
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::seam_reached_by_no_test_path_stays_ungripped`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::seam_behind_an_unresolved_transitive_path_is_opaque_not_ungripped`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::seam_behind_a_helper_chain_past_five_hops_is_opaque_not_ungripped`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::seam_reach_past_five_hops_does_not_displace_a_macro_witness`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::trait_method_of_a_type_tests_use_is_opaque_not_ungripped`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::trait_method_of_a_type_no_test_reaches_stays_ungripped`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::helper_run_only_through_trait_dispatch_is_opaque_not_ungripped`

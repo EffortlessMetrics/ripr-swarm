@@ -12,7 +12,8 @@
   "followed_retarget": false,
   "changed_since_labeling": true,
   "observed_classifications": [
-    "exposed"
+    "exposed",
+    "propagation_unknown"
   ],
   "outcome": "ideal",
   "contradictions": [],

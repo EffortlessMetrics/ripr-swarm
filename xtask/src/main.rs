@@ -42,6 +42,7 @@ mod public_proof;
 // ripr crate's LSP validator without widening ripr's public API.
 #[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
 mod gap_source_subject_shared;
+mod gh_pr_status_snapshot;
 mod identity_registry;
 mod issue_lifecycle_attempt;
 mod issue_lifecycle_contract_plan;
@@ -3102,18 +3103,15 @@ pub(crate) fn pr_triage_report_impl() -> Result<(), String> {
 
 pub(crate) fn gh_pr_status_impl(args: &[String]) -> Result<(), String> {
     let number = parse_gh_pr_status_args(args)?;
-    let pr = collect_gh_pr_status(number)?;
-    let mut warnings = Vec::new();
-    let (required_contexts, required_contexts_available) =
-        match collect_required_status_contexts(&pr.base_ref_name) {
-            Ok(contexts) => (contexts, true),
-            Err(err) => {
-                warnings.push(format!(
-                    "required status context lookup failed; using status rollup only: {err}"
-                ));
-                (Vec::new(), false)
-            }
-        };
+    let observation = gh_pr_status_snapshot::collect_current(
+        number,
+        || collect_gh_pr_status(number),
+        collect_required_status_contexts,
+    )?;
+    let pr = parse_gh_pr_status_pull_request(&observation.pr.to_string())?;
+    let required_contexts = observation.contexts;
+    let required_contexts_available = observation.contexts_available;
+    let warnings = observation.warnings;
     let readiness = gh_pr_status_readiness(
         &pr,
         &required_contexts,
@@ -3171,41 +3169,25 @@ fn parse_positive_u64(value: &str, label: &str) -> Result<u64, String> {
     Ok(parsed)
 }
 
-fn collect_gh_pr_status(number: u64) -> Result<GhPrStatusPullRequest, String> {
-    collect_gh_pr_status_with(number, run_output_owned)
+fn collect_gh_pr_status(number: u64) -> Result<Value, String> {
+    collect_gh_pr_status_json_with(number, run_output_owned)
 }
 
+fn collect_gh_pr_status_json_with(
+    number: u64,
+    run: impl FnMut(&str, &[String]) -> Result<String, String>,
+) -> Result<Value, String> {
+    gh_pr_status_snapshot::collect_snapshot(number, run)
+}
+
+#[cfg(test)]
 fn collect_gh_pr_status_with(
     number: u64,
-    run: impl FnOnce(&str, &[String]) -> Result<String, String>,
+    run: impl FnMut(&str, &[String]) -> Result<String, String>,
 ) -> Result<GhPrStatusPullRequest, String> {
-    let fields = [
-        "number",
-        "title",
-        "isDraft",
-        "mergeStateStatus",
-        "headRefName",
-        "headRefOid",
-        "baseRefName",
-        "reviewDecision",
-        "latestReviews",
-        "comments",
-        "statusCheckRollup",
-    ]
-    .join(",");
-    let output = run(
-        "gh",
-        &[
-            "pr".to_string(),
-            "view".to_string(),
-            number.to_string(),
-            "--json".to_string(),
-            fields,
-        ],
-    )?;
-    parse_gh_pr_status_pull_request(&output)
+    let value = collect_gh_pr_status_json_with(number, run)?;
+    parse_gh_pr_status_pull_request(&value.to_string())
 }
-
 fn collect_required_status_contexts(base_ref_name: &str) -> Result<Vec<String>, String> {
     let repo_output = run_output("gh", &["repo", "view", "--json", "owner,name"])?;
     let repo_value: Value = serde_json::from_str(&repo_output)
@@ -13390,6 +13372,12 @@ fn check_doc_index() -> Result<(), String> {
 
 const DOC_ARTIFACT_LEDGER: &str = "policy/doc-artifacts.toml";
 const DOC_ARTIFACT_SCHEMA_VERSION: &str = "1.0";
+/// Count of unregistered RIPR-SPEC files when the reverse-direction ratchet
+/// was added (#1718). Lower this as specs are registered.
+const UNREGISTERED_SPEC_BASELINE: usize = 82;
+/// Newest-first bound for named unregistered specs in the reverse-direction
+/// violation (#7400). Remaining ids are summarized, not dropped silently.
+const UNREGISTERED_SPEC_MESSAGE_LIMIT: usize = 8;
 const SUPPORT_TIERS_PATH: &str = "docs/status/SUPPORT_TIERS.md";
 const RUST_REPAIR_TRUST_CORPUS_PATH: &str = "metrics/rust-repair-trust/corpus.json";
 const RUST_GAP_REPAIR_CAPABILITY: &str = "Rust gap repair loop";
@@ -13447,6 +13435,12 @@ struct DocArtifactEntry {
 }
 
 fn check_doc_artifacts() -> Result<(), String> {
+    check_doc_artifacts_with_unregistered_baseline(UNREGISTERED_SPEC_BASELINE)
+}
+
+fn check_doc_artifacts_with_unregistered_baseline(
+    unregistered_spec_baseline: usize,
+) -> Result<(), String> {
     let mut violations = doc_artifact_violations(Path::new("."), Path::new(DOC_ARTIFACT_LEDGER))?;
     // #1718: reverse-direction check — every RIPR-SPEC on disk must be registered
     // in the ledger. This is ratcheted: the current unregistered count is 82, so
@@ -13484,29 +13478,24 @@ fn check_doc_artifacts() -> Result<(), String> {
         }
         Err(err) => return Err(format!("failed to read {}: {err}", specs_dir.display())),
     };
-    let mut unregistered: Vec<String> = Vec::new();
+    let mut unregistered: Vec<(String, String)> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if let Some(spec_id) = spec_id_from_path(&path)
             && !registered.contains(&spec_id)
         {
-            unregistered.push(spec_id);
+            unregistered.push((spec_id, root_relative_path(Path::new("."), &path)));
         }
     }
     // Ratchet: fail only when the unregistered count GROWS beyond the baseline.
     // The baseline (82) is the count at HEAD when this check was added (#1718).
-    // As specs are registered, the baseline should be lowered in this constant.
-    const UNREGISTERED_SPEC_BASELINE: usize = 82;
-    if unregistered.len() > UNREGISTERED_SPEC_BASELINE
-        && let Some(excess) = unregistered.len().checked_sub(UNREGISTERED_SPEC_BASELINE)
-    {
-        violations.push(format!(
-            "reverse-direction: {excess} new RIPR-SPEC file(s) on disk are not registered in {} \
-             (baseline: {UNREGISTERED_SPEC_BASELINE}, current: {}). \
-             Register the new spec(s) or lower the baseline if the count was intentionally reduced.",
-            DOC_ARTIFACT_LEDGER,
-            unregistered.len()
-        ));
+    // As specs are registered, the baseline should be lowered in UNREGISTERED_SPEC_BASELINE.
+    if let Some(violation) = reverse_direction_unregistered_violation(
+        &unregistered,
+        unregistered_spec_baseline,
+        DOC_ARTIFACT_LEDGER,
+    ) {
+        violations.push(violation);
     }
     finish_policy_report(
         PolicyReportSpec {
@@ -13527,6 +13516,48 @@ fn check_doc_artifacts() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+/// Name unregistered RIPR-SPEC ids when the reverse-direction ratchet trips.
+///
+/// The ratchet cannot tell a newly added spec from the grandfathered
+/// unregistered set, so the message lists unregistered identities. Newest spec
+/// ids are shown first so a typical `RIPR-SPEC-NNNN` addition survives the
+/// display bound; remaining entries are summarized with a truncation marker
+/// (#7400).
+fn reverse_direction_unregistered_violation(
+    unregistered: &[(String, String)],
+    baseline: usize,
+    ledger: &str,
+) -> Option<String> {
+    if unregistered.len() <= baseline {
+        return None;
+    }
+    let excess = unregistered.len().checked_sub(baseline)?;
+    Some(format!(
+        "reverse-direction: {excess} new RIPR-SPEC file(s) on disk are not registered in {ledger} \
+         (baseline: {baseline}, current: {}). \
+         unregistered: {}. \
+         Register the new spec(s) or lower the baseline if the count was intentionally reduced.",
+        unregistered.len(),
+        format_unregistered_spec_entries(unregistered),
+    ))
+}
+
+fn format_unregistered_spec_entries(unregistered: &[(String, String)]) -> String {
+    let mut ordered = unregistered.to_vec();
+    ordered.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    let shown: Vec<String> = ordered
+        .iter()
+        .take(UNREGISTERED_SPEC_MESSAGE_LIMIT)
+        .map(|(id, path)| format!("{id} ({path})"))
+        .collect();
+    match ordered.len().checked_sub(shown.len()) {
+        Some(remaining) if remaining > 0 => {
+            format!("{}, … and {remaining} more", shown.join(", "))
+        }
+        _ => shown.join(", "),
+    }
 }
 
 fn doc_artifact_violations(root: &Path, ledger_path: &Path) -> Result<Vec<String>, String> {

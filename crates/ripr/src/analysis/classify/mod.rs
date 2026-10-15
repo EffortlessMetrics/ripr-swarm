@@ -25,16 +25,22 @@ mod targeted_calls;
 mod text;
 mod transitive_reach;
 mod value_transfer;
+mod variant_field_pattern;
 
 pub(in crate::analysis) use activation::{
-    LocalBoundary, TestValueFacts, activation_and_boundary_input, comparison_operands,
-    computed_input_parameters, literal_operand_value, local_boundary, signature_parameters,
+    LocalBoundary, TestValueFacts, activation_and_boundary_input, call_parameter_names,
+    comparison_operands, computed_input_parameters, literal_operand_value, local_boundary,
+    signature_parameters,
 };
 pub(in crate::analysis) use arm_selection::ArmSelector;
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
 };
-pub(in crate::analysis) use builder_override::{getter_plainly_reads, setter_plainly_writes};
+pub(in crate::analysis) use builder_override::{
+    constructor_starts_empty, function_returns_value, getter_plainly_reads,
+    getter_plainly_reads_key, method_cannot_store, owner_touches_field_only_at, parameter_rebound,
+    setter_plainly_writes,
+};
 pub(in crate::analysis) use call_identity::{
     CallIdentityMemos, CallTarget, OwnerCallIdentity, shared_owner_call_identity,
 };
@@ -60,8 +66,9 @@ pub(in crate::analysis) use infection::infection_evidence_with_boundary_input;
 pub(in crate::analysis) use operand_pin::operand_only_pin;
 pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, direct_call_name,
-    helper_pins_owner_call, pin_scope_needs, targeted_free_call_reaches_owner,
-    targeted_name_is_alias, targeted_type_name_is_unresolved, trait_impl_self_type_names,
+    expected_operand_value, helper_pins_owner_call, pin_scope_needs,
+    targeted_free_call_reaches_owner, targeted_name_is_alias, targeted_type_name_is_unresolved,
+    trait_impl_self_type_names,
 };
 pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
@@ -86,6 +93,7 @@ pub(in crate::analysis) use related_tests::{
     owner_dispatch_trait, package_prefix, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::reveal_outcome;
+pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 pub(in crate::analysis) use reveal::{
     ASSERTION_CONTEXT_UNESTABLISHED, FileUseStatements, oracle_crediting_relations,

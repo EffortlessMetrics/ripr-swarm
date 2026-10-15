@@ -20,7 +20,7 @@ Linked plan:
 
 Linked issues:
 
-- None yet
+- #8042 (same-line returned-predicate owner tail)
 
 Linked PRs:
 

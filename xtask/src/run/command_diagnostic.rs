@@ -13,6 +13,7 @@ pub(crate) struct CommandDiagnostic {
     pub(crate) argv: Vec<String>,
     pub(crate) outcome: &'static str,
     pub(crate) status: Option<String>,
+    pub(crate) exit_code: Option<i32>,
     pub(crate) elapsed_ms: Option<u128>,
     pub(crate) elapsed_scope: &'static str,
     pub(crate) cargo_progress: Option<CargoProgress>,
@@ -45,6 +46,7 @@ impl CommandDiagnostic {
                     }
                 },
                 status: output.status.map(|status| status.to_string()),
+                exit_code: output.status.and_then(|status| status.code()),
                 elapsed_ms: Some(output.duration.as_millis()),
                 elapsed_scope: if output.timed_out {
                     #[cfg(unix)]
@@ -68,6 +70,7 @@ impl CommandDiagnostic {
                 // Capture can fail after launch, polling or pipe draining.
                 outcome: "capture_unavailable",
                 status: None,
+                exit_code: None,
                 elapsed_ms: None,
                 elapsed_scope: "unavailable",
                 cargo_progress: None,
@@ -93,6 +96,7 @@ impl CommandDiagnostic {
                 Ok(status) => Some(status.to_string()),
                 Err(_) => None,
             },
+            exit_code: result.as_ref().ok().and_then(|status| status.code()),
             elapsed_ms: Some(elapsed.as_millis()),
             elapsed_scope: "inherited_status_call_including_launch",
             // Existing inherited streams stay inherited, never inferred fresh.
@@ -113,11 +117,13 @@ impl CommandDiagnostic {
             },
         );
         format!(
-            "program={:?}; argv={:?}; outcome={}; status={}; elapsed_ms={}; elapsed_scope={}; cargo_progress={cargo}",
+            "program={:?}; argv={:?}; outcome={}; status={}; exit_code={}; elapsed_ms={}; elapsed_scope={}; cargo_progress={cargo}",
             self.program,
             self.argv,
             self.outcome,
             self.status.as_deref().unwrap_or("unavailable"),
+            self.exit_code
+                .map_or_else(|| "unavailable".to_string(), |code| code.to_string()),
             self.elapsed_ms
                 .map_or_else(|| "unavailable".to_string(), |ms| ms.to_string()),
             self.elapsed_scope,
@@ -256,6 +262,104 @@ mod tests {
             .ok_or("mixed Cargo progress was lost")?;
         assert_eq!(progress.fresh_lines, Some(1));
         assert_eq!(progress.compiling_lines, Some(1));
+        Ok(())
+    }
+
+    fn native_exit(code: i32) -> ExitStatus {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::ExitStatusExt;
+            ExitStatus::from_raw(code.cast_unsigned())
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            ExitStatus::from_raw(code << 8)
+        }
+    }
+
+    #[test]
+    fn numeric_native_exits_survive_json_and_rendering() -> Result<(), String> {
+        let args = vec!["argument with spaces".to_string()];
+        for code in [0, 7] {
+            let output = TimedOutput {
+                status: Some(native_exit(code)),
+                stdout: "success-looking text is not exit evidence".to_string(),
+                stderr: String::new(),
+                duration: Duration::ZERO,
+                timed_out: false,
+            };
+            for row in [
+                CommandDiagnostic::captured("tool", &args, &Ok(output)),
+                CommandDiagnostic::inherited(
+                    "tool",
+                    &["argument with spaces"],
+                    &Ok(native_exit(code)),
+                    Duration::ZERO,
+                ),
+            ] {
+                let json = serde_json::to_value(&row).map_err(|error| error.to_string())?;
+                assert_eq!(json.get("exit_code"), Some(&serde_json::json!(code)));
+                assert_eq!(json["argv"], serde_json::json!(args));
+                assert_eq!(json["outcome"], if code == 0 { "pass" } else { "failed" });
+                assert!(row.render().contains(&format!("; exit_code={code};")));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn missing_native_exit_is_explicit_and_timeout_keeps_its_outcome() -> Result<(), String> {
+        let missing_status = TimedOutput {
+            status: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            duration: Duration::ZERO,
+            timed_out: false,
+        };
+        let missing = [
+            CommandDiagnostic::captured("tool", &[], &Ok(missing_status)),
+            CommandDiagnostic::captured("tool", &[], &Err("capture failed".to_string())),
+            CommandDiagnostic::inherited(
+                "tool",
+                &[],
+                &Err(std::io::Error::other("status failed")),
+                Duration::ZERO,
+            ),
+        ];
+        for row in missing {
+            let json = serde_json::to_value(&row).map_err(|error| error.to_string())?;
+            assert_eq!(json.get("exit_code"), Some(&serde_json::Value::Null));
+            assert!(row.render().contains("; exit_code=unavailable;"));
+            assert_ne!(row.outcome, "pass");
+        }
+        let timed_out = CommandDiagnostic::captured(
+            "tool",
+            &[],
+            &Ok(TimedOutput {
+                status: Some(native_exit(0)),
+                stdout: String::new(),
+                stderr: String::new(),
+                duration: Duration::ZERO,
+                timed_out: true,
+            }),
+        );
+        let json = serde_json::to_value(&timed_out).map_err(|error| error.to_string())?;
+        assert_eq!(json.get("exit_code"), Some(&serde_json::json!(0)));
+        assert_eq!(json["outcome"], "timed_out");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn signaled_status_has_no_numeric_exit() -> Result<(), String> {
+        use std::os::unix::process::ExitStatusExt;
+        let row =
+            CommandDiagnostic::inherited("tool", &[], &Ok(ExitStatus::from_raw(9)), Duration::ZERO);
+        let json = serde_json::to_value(&row).map_err(|error| error.to_string())?;
+        assert_eq!(json.get("exit_code"), Some(&serde_json::Value::Null));
+        assert_eq!(json["outcome"], "failed");
+        assert!(json["status"].is_string());
         Ok(())
     }
 }

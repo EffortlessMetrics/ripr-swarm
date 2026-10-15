@@ -1216,7 +1216,7 @@ mod tests {
             "successful child outcome missing",
         )?;
         require(
-            json["elapsed_ms"].is_number() && json["status"].is_string(),
+            json["elapsed_ms"].is_number() && json["status"].is_string() && json["exit_code"] == 0,
             "successful child lost measured duration or native status",
         )?;
         require(
@@ -1243,7 +1243,8 @@ mod tests {
         require(
             diagnostic.outcome == "failed"
                 && diagnostic.elapsed_ms.is_some()
-                && diagnostic.status.is_some(),
+                && diagnostic.status.is_some()
+                && diagnostic.exit_code.is_some_and(|code| code != 0),
             "failed child evidence missing",
         )?;
         require(diagnostic.argv == args, "failed child argv changed")?;
@@ -1266,7 +1267,10 @@ mod tests {
         )
         .map_err(|e| e.to_string())?;
         require(
-            json["commands"][0]["diagnostic"]["outcome"] == "failed",
+            json["commands"][0]["diagnostic"]["outcome"] == "failed"
+                && json["commands"][0]["diagnostic"]["exit_code"]
+                    .as_i64()
+                    .is_some_and(|code| code != 0),
             "published report lost failed row",
         )?;
         let mut canonical = report.clone();

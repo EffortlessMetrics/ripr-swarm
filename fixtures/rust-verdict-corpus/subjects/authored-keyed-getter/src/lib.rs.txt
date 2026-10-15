@@ -1,0 +1,127 @@
+//! A shelf of stock counts keyed by SKU, read back through a keyed getter.
+
+use std::collections::BTreeMap;
+
+#[derive(Debug, Default)]
+pub struct Shelf {
+    stock: BTreeMap<String, u32>,
+}
+
+impl Shelf {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the count for `sku`.
+    pub fn restock(&mut self, sku: &str, qty: u32) {
+        self.stock.insert(sku.to_string(), qty);
+    }
+
+    /// Records a delivery for `sku`; the test reads back another SKU only.
+    pub fn deliver(&mut self, sku: &str, qty: u32) {
+        self.stock.insert(sku.to_string(), qty);
+    }
+
+    /// Sets the count for `sku`, refusing an empty delivery.
+    pub fn place(&mut self, sku: &str, qty: u32) -> Result<(), String> {
+        if qty == 0 {
+            return Err(format!("empty delivery for {sku}"));
+        }
+        self.stock.insert(sku.to_string(), qty);
+        Ok(())
+    }
+
+    pub fn count(&self, sku: &str) -> u32 {
+        self.stock.get(sku).copied().unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restock_sets_the_count_for_its_sku() {
+        let mut shelf = Shelf::new();
+        shelf.restock("BOLT", 5);
+        assert_eq!(shelf.count("BOLT"), 5);
+    }
+
+    #[test]
+    fn deliver_leaves_other_skus_alone() {
+        let mut shelf = Shelf::new();
+        shelf.deliver("BOLT", 5);
+        assert_eq!(shelf.count("NUT"), 0);
+    }
+
+    #[test]
+    fn place_refuses_an_empty_delivery() {
+        let mut shelf = Shelf::new(); shelf.restock("BOLT", 2 + 3);
+        shelf.place("BOLT", 0).unwrap_err();
+        assert_eq!(shelf.count("BOLT"), 5);
+    }
+}
+
+/// Received stock and held stock, two maps keyed by SKU.
+#[derive(Debug, Default)]
+pub struct Ledger {
+    stock: BTreeMap<String, u32>,
+    held: BTreeMap<String, u32>,
+}
+
+impl Ledger {
+    /// Records received stock for `sku`; the test reads the held map only.
+    pub fn receive(&mut self, sku: &str, qty: u32) {
+        self.stock.insert(sku.to_string(), qty);
+    }
+
+    pub fn held(&self, sku: &str) -> u32 {
+        self.held.get(sku).copied().unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod ledger_tests {
+    use super::*;
+
+    #[test]
+    fn receive_holds_nothing() {
+        let mut ledger = Ledger::default();
+        ledger.receive("BOLT", 5);
+        assert_eq!(ledger.held("BOLT"), 0);
+    }
+}
+
+/// A bin whose entry the test overwrites before reading it back.
+#[derive(Debug, Default)]
+pub struct Bin {
+    stock: BTreeMap<String, u32>,
+}
+
+impl Bin {
+    /// Fills `sku`; the test sets the entry again before reading it.
+    pub fn fill(&mut self, sku: &str, qty: u32) {
+        self.stock.insert(sku.to_string(), qty);
+    }
+
+    pub fn set(&mut self, sku: &str, qty: u32) {
+        self.stock.insert(sku.to_string(), qty);
+    }
+
+    pub fn count(&self, sku: &str) -> u32 {
+        self.stock.get(sku).copied().unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod bin_tests {
+    use super::*;
+
+    #[test]
+    fn set_replaces_the_fill() {
+        let mut bin = Bin::default();
+        bin.fill("BOLT", 3);
+        bin.set("BOLT", 5);
+        assert_eq!(bin.count("BOLT"), 5);
+    }
+}
