@@ -1765,6 +1765,11 @@ fn a_constant_initialized_through_the_owner_is_not_an_independent_expected_value
             "use crate::weight as w;\npub const EXPECTED: u32 = w(4);\n",
         ),
         (
+            "use demo::other::EXPECTED;",
+            "EXPECTED",
+            "use crate::base::BASE as B;\npub const EXPECTED: u32 = B;\nmod base {\n    pub const BASE: u32 = crate::weight(4);\n}\n",
+        ),
+        (
             "use demo::other::Table;",
             "Table::EXPECTED",
             "pub struct Table;\nimpl Table {\n    pub const EXPECTED: u32 = crate::weight(4);\n}\n",
@@ -1849,7 +1854,7 @@ fn a_constant_initializer_reaches_the_owner_only_in_the_pins_call_shape() {
         ("weight(1)", &method, false),
     ] {
         assert_eq!(
-            initializer_calls_owner(initializer, "weight", shape),
+            initializer_calls_owner(initializer, "weight", Some(shape)),
             calls,
             "{initializer}"
         );

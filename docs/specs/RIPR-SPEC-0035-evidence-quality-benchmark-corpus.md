@@ -413,7 +413,9 @@ directly or through another constant, is self-computed in the same way as a
 `let` binding that does. Constants are matched by name within the test's
 package, the owner's package and any workspace crate the test file names, so a
 same-named constant there also withholds the pin; a
-constant computed through a helper that calls the owner is not followed.
+constant computed through a helper that calls the owner is not followed. The
+reveal-side oracle strength reads the same `let` bindings and constants, in any
+call shape.
 
 Given a changed presentation text constant, the benchmark expects one
 evidence-quality item for the declaration and literal, records visibility and

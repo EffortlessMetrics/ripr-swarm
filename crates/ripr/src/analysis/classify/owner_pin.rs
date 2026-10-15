@@ -2424,7 +2424,7 @@ impl OwnerReturnPin {
                 test,
                 expected,
                 &self.name,
-                &self.call,
+                Some(&self.call),
                 &self.owner_file,
             )
         {
@@ -8017,6 +8017,20 @@ pub(in crate::analysis::classify) fn expected_reaches_owner(
             && expected_binding_calls_owner(test, expected, name))
 }
 
+/// RIPR-SPEC-0035, reveal side: whether the expected `operand` of
+/// `assertion` in `test` holds a value the changed `owner` computed, through
+/// a test `let` binding or a workspace constant, in any call shape.
+pub(in crate::analysis) fn expected_operand_holds_owner_value(
+    index: &RustIndex,
+    test: &TestSummary,
+    assertion: &str,
+    operand: &str,
+    owner: &FunctionSummary,
+) -> bool {
+    expected_reaches_owner(test, assertion, operand, &owner.name)
+        || expected_constant_reaches_owner(index, test, operand, &owner.name, None, &owner.file)
+}
+
 /// RIPR-SPEC-0035: whether an identifier in the expected operand names a
 /// `const` or `static` whose initializer calls the owner, directly or
 /// through further constants (`const EXPECTED: u32 = quota(2);
@@ -8035,7 +8049,7 @@ fn expected_constant_reaches_owner(
     test: &TestSummary,
     expected: &str,
     name: &str,
-    call: &PinCall,
+    call: Option<&PinCall>,
     owner_file: &Path,
 ) -> bool {
     let constants = index
@@ -8070,22 +8084,26 @@ fn expected_constant_reaches_owner(
             }),
         _ => true,
     };
-    let test_renames: Vec<UsePath> = index
-        .files()
-        .get(&test.file)
-        .filter(|facts| facts.source.contains(" as "))
-        .map(|facts| flattened_use_paths(&facts.source))
-        .unwrap_or_default();
+    // `use .. as` renames of the file a text was read from: the test file
+    // for the expected operand, the constant's own file for an initializer.
+    let renames = |file: &Path| -> Vec<UsePath> {
+        index
+            .files()
+            .get(file)
+            .filter(|facts| facts.source.contains(" as "))
+            .map(|facts| flattened_use_paths(&facts.source))
+            .unwrap_or_default()
+    };
     let mut seen = BTreeSet::new();
-    let mut pending = vec![mask_comments_and_strings(expected)];
-    while let Some(text) = pending.pop() {
+    let mut pending = vec![(mask_comments_and_strings(expected), test.file.clone())];
+    while let Some((text, file)) = pending.pop() {
         let mut words: Vec<String> = text
             .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
             .filter(|word| is_plain_identifier(word) && *word != name)
             .map(str::to_string)
             .collect();
-        let renamed: Vec<String> = test_renames
-            .iter()
+        let renamed: Vec<String> = renames(&file)
+            .into_iter()
             .filter(|import| {
                 import
                     .alias
@@ -8110,7 +8128,7 @@ fn expected_constant_reaches_owner(
                 {
                     return true;
                 }
-                pending.push(initializer.clone());
+                pending.push((initializer.clone(), file.clone()));
             }
         }
     }
@@ -8132,11 +8150,12 @@ fn owner_aliases(index: &RustIndex, file: &Path, name: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Whether the masked `initializer` calls `name` in the pin's call shape.
+/// Whether the masked `initializer` calls `name` in the pin's call shape,
+/// or in any shape when there is no pin (`None`, the reveal-side check).
 /// A free function also counts when named as a value (`apply(quota, 2)`,
 /// `let f = quota;`), and a `<..>::name` qualifier the scan cannot read
 /// counts for every shape.
-fn initializer_calls_owner(initializer: &str, name: &str, call: &PinCall) -> bool {
+fn initializer_calls_owner(initializer: &str, name: &str, call: Option<&PinCall>) -> bool {
     whole_word_offsets(initializer, name).into_iter().any(|offset| {
         let after = initializer[offset + name.len()..].trim_start();
         let called = after.starts_with('(') || after.starts_with("::<");
@@ -8158,6 +8177,9 @@ fn initializer_calls_owner(initializer: &str, name: &str, call: &PinCall) -> boo
             return true;
         }
         let type_like = |segment: &str| segment.starts_with(char::is_uppercase);
+        let Some(call) = call else {
+            return called || !before.ends_with('.');
+        };
         match call {
             PinCall::Bare => !before.ends_with('.') && !qualifier.is_some_and(type_like),
             PinCall::Associated { type_name } => {
