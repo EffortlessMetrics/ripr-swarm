@@ -1,0 +1,93 @@
+[
+  {
+    "id": "PRRT_kwDOSiSx0c6sjseL",
+    "path": "crates/ripr/src/analysis/classify/related_tests.rs",
+    "line": 3095,
+    "is_resolved": false,
+    "is_outdated": false,
+    "comments": [
+      {
+        "id": 4277308099,
+        "body": "**🚀 Performance & Scalability** | **🔵 Trivial** | **🏗️ Heavy lift**\n\n**Memoize the syntax-backed receiver check for each test.**\n\n`inherent_receiver_call_resolves` parses the complete `test.body` each time it is called (`parse_clean_source_file(&test.body)`). After the parse, it walks all descendants. For each supported assertion macro, it also formats and parses one synthetic source file per operand.\n\nIn the compact path, `match_direct_owner_call` calls this function inside the loop over `tests_by_call_name[owner.name]`. That loop runs once per seam. Before this change, the receiver check ran only when `same_name_count > 1`. It now runs for every parser-established inherent `&self` owner. The parse work therefore grows as seams × tests that call the name. Several seams can share one owner: the new fixture alone has four `as_object` seams.\n\nThe masked-text precheck filters some calls. It does not filter tests whose receiver the old nominal matcher already resolves. With common inherent method names such as `len`, `get`, `is_empty` or `as_str`, many test bodies are parsed repeatedly. The comment at `OwnerContext::resolve` (`#7716`) already records that the codebase shares per-test parses across seams for this reason.\n\nCache the result per test, keyed by `(method, impl_type)`. Alternatively, cache the parsed `SyntaxNode` per test, for example in a `OnceLock` on `CompactTest`, or in a per-run memo like `shared_owner_call_identity`. Then every seam and every probe reuses one parse.\n\n[details omitted]\n\n<!-- fingerprinting:phantom:medusa:pangolin -->\n\n<!-- cr-indicator-types:nitpick -->\n\n<!-- cr-comment:v1:add4021cbf63defda5c086bd -->\n\n<!-- This is an auto-generated comment by CodeRabbit -->"
+      }
+    ]
+  },
+  {
+    "id": "PRRT_kwDOSiSx0c6skxnp",
+    "path": "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
+    "line": null,
+    "is_resolved": false,
+    "is_outdated": true,
+    "comments": [
+      {
+        "id": 4277766911,
+        "body": "<!-- devin-review-comment {\"id\": \"BUG_pr-review-job-0472b7b123544c0d95ade3bd900c0c40_0001\", \"file_path\": \"crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs\", \"start_line\": 1563, \"end_line\": 1572, \"side\": \"RIGHT\", \"based_on_repo_rules\": false, \"kind\": \"bug\"} -->\n\n🔴 **Foreign helper falsely reaches private owner**\n\nWhen `read_as_object()` calls only a foreign receiver's `as_object`, the helper graph still credits the private inherent owner. `helper_name_carries_owner_token` accepts the name without checking that helper call's receiver. Repository reach evidence then attributes an unrelated test to the owner.\n\n[details omitted]\n\n<!-- devin-review-badge-begin -->\n<a href=\"https://app.devin.ai/review/effortlessmetrics/ripr-swarm/pull/8004\" target=\"_blank\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://static.devin.ai/assets/gh-devin-review-dark.svg?v=4\"><img src=\"https://static.devin.ai/assets/gh-devin-review-light.svg?v=4\" alt=\"Devin Review\"></picture></a>\n<!-- devin-review-badge-end -->\n\n---\n*Was this helpful? React with 👍 or 👎 to provide feedback.*"
+      }
+    ]
+  },
+  {
+    "id": "PRRT_kwDOSiSx0c6skxo-",
+    "path": "crates/ripr/src/analysis/classify/related_tests.rs",
+    "line": 3164,
+    "is_resolved": false,
+    "is_outdated": false,
+    "comments": [
+      {
+        "id": 4277767036,
+        "body": "<!-- devin-review-comment {\"id\": \"BUG_pr-review-job-0472b7b123544c0d95ade3bd900c0c40_0002\", \"file_path\": \"crates/ripr/src/analysis/classify/related_tests.rs\", \"start_line\": 3121, \"end_line\": 3129, \"side\": \"RIGHT\", \"based_on_repo_rules\": false, \"kind\": \"bug\"} -->\n\n🔴 **Shadowed assertion macro falsely credits owner**\n\nWhen a module-level `assert_eq!` ignores its arguments, `inherent_assertion_arguments_resolve` still treats their calls as executed. The shadow check inspects `StmtList` but not module item lists. A test can receive direct-owner credit without running the owner.\n\n[details omitted]\n\n<!-- devin-review-badge-begin -->\n<a href=\"https://app.devin.ai/review/effortlessmetrics/ripr-swarm/pull/8004\" target=\"_blank\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://static.devin.ai/assets/gh-devin-review-dark.svg?v=4\"><img src=\"https://static.devin.ai/assets/gh-devin-review-light.svg?v=4\" alt=\"Devin Review\"></picture></a>\n<!-- devin-review-badge-end -->\n\n---\n*Was this helpful? React with 👍 or 👎 to provide feedback.*"
+      }
+    ]
+  },
+  {
+    "id": "PRRT_kwDOSiSx0c6skxqR",
+    "path": "crates/ripr/src/analysis/classify/related_tests.rs",
+    "line": null,
+    "is_resolved": false,
+    "is_outdated": true,
+    "comments": [
+      {
+        "id": 4277767155,
+        "body": "<!-- devin-review-comment {\"id\": \"BUG_pr-review-job-0472b7b123544c0d95ade3bd900c0c40_0003\", \"file_path\": \"crates/ripr/src/analysis/classify/related_tests.rs\", \"start_line\": 3049, \"end_line\": 3052, \"side\": \"RIGHT\", \"based_on_repo_rules\": false, \"kind\": \"bug\"} -->\n\n🟡 **Expired sibling shadow hides real calls**\n\nAfter an inner block shadows `value`, `inherent_receiver_call_resolves` can reject a genuine later `value.as_object()` call. The text prefilter reads the expired inner `let`, so the scope-aware matcher never runs. Genuine owner tests lose direct-call credit.\n\n[details omitted]\n\n<!-- devin-review-badge-begin -->\n<a href=\"https://app.devin.ai/review/effortlessmetrics/ripr-swarm/pull/8004\" target=\"_blank\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://static.devin.ai/assets/gh-devin-review-dark.svg?v=4\"><img src=\"https://static.devin.ai/assets/gh-devin-review-light.svg?v=4\" alt=\"Devin Review\"></picture></a>\n<!-- devin-review-badge-end -->\n\n---\n*Was this helpful? React with 👍 or 👎 to provide feedback.*"
+      }
+    ]
+  },
+  {
+    "id": "PRRT_kwDOSiSx0c6skxrE",
+    "path": "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
+    "line": null,
+    "is_resolved": false,
+    "is_outdated": true,
+    "comments": [
+      {
+        "id": 4277767243,
+        "body": "<!-- devin-review-comment {\"id\": \"BUG_pr-review-job-0472b7b123544c0d95ade3bd900c0c40_0004\", \"file_path\": \"crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs\", \"start_line\": 1560, \"end_line\": 1564, \"side\": \"RIGHT\", \"based_on_repo_rules\": false, \"kind\": \"bug\"} -->\n\n🟡 **Same-named wrappers lose genuine reach**\n\nWhen `Wrapper::as_object` forwards to `JsonValue::as_object`, the self-name filter removes its real delegation. Tests calling the wrapper cannot pass [match_direct_owner_call](https://github.com/effortlessmetrics/ripr-swarm/blob/15ca898ad1d3571d104ce1ae20b629fe2f55fc86/crates/ripr/src/analysis/test_grip_evidence/related_tests.rs#L257-L278 \"crates/ripr/src/analysis/test_grip_evidence/related_tests.rs:257-278\") either. Repository evidence misses their genuine route to the owner.\n\n[details omitted]\n\n<!-- devin-review-badge-begin -->\n<a href=\"https://app.devin.ai/review/effortlessmetrics/ripr-swarm/pull/8004\" target=\"_blank\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://static.devin.ai/assets/gh-devin-review-dark.svg?v=4\"><img src=\"https://static.devin.ai/assets/gh-devin-review-light.svg?v=4\" alt=\"Devin Review\"></picture></a>\n<!-- devin-review-badge-end -->\n\n---\n*Was this helpful? React with 👍 or 👎 to provide feedback.*"
+      }
+    ]
+  },
+  {
+    "id": "PRRT_kwDOSiSx0c6st_A4",
+    "path": "changelog.d/7415-inherent-receiver-admission.md",
+    "line": 11,
+    "is_resolved": false,
+    "is_outdated": false,
+    "comments": [
+      {
+        "id": 4281627330,
+        "body": "**🎯 Functional Correctness** | **🟡 Minor** | **⚡ Quick win**\n\n[details omitted]\n\n**Scope the wrapper claim to the repository consumer.**\n\nThe local-wrapper fixture produces different attribution: the repository report gives `wrapper_route` `helper_owner_call`, but the diff golden gives it `weak_token_substring`. Update the changelog unless the diff consumer is changed to emit the same helper attribution.\n\n[details omitted]\n\n[details omitted]\n\n<!-- fingerprinting:phantom:medusa:pangolin -->\n\n<!-- cr-indicator-types:potential_issue -->\n\n<!-- cr-comment:v1:cc607ac4d7e35c7bea55707b -->\n\n<!-- This is an auto-generated comment by CodeRabbit -->"
+      }
+    ]
+  },
+  {
+    "id": "PRRT_kwDOSiSx0c6st_BD",
+    "path": "crates/ripr/src/analysis/classify/related_tests.rs",
+    "line": 3060,
+    "is_resolved": false,
+    "is_outdated": false,
+    "comments": [
+      {
+        "id": 4281627347,
+        "body": "**🚀 Performance & Scalability** | **🟠 Major** | **🏗️ Heavy lift**\n\n[details omitted]\n\n**Reuse one `OwnerPinSyntax` for the analysis run.**\n\n`inherent_receiver_call_resolves` creates a fresh `OwnerPinSyntax` for every invocation. Calls that reach targeted macro binding or unit-struct resolution then repeat the workspace scans that `OwnerPinSyntax` is designed to memoize. The full classifier and compact `tests_by_call_name` path can invoke this repeatedly across owner/test matches. Helper traversal can also repeat it for each checked hop. The existing parsed-body work does not cache these scans.\n\nPass a shared run-scoped `OwnerPinSyntax` from the owning analysis context. The assertion and binding gates mean that not every assertion macro reaches both scans, but the reachable repeated workspace work remains material for large workspaces.\n\n[details omitted]\n\n<!-- fingerprinting:phantom:medusa:wombat -->\n\n<!-- cr-indicator-types:potential_issue -->\n\n<!-- cr-comment:v1:4f6964f166c48a2e406bca99 -->\n\n<!-- This is an auto-generated comment by CodeRabbit -->"
+      }
+    ]
+  }
+]

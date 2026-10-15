@@ -1,0 +1,492 @@
+[
+  {
+    "case": "dormant-nested",
+    "outputs": {
+      "json": {
+        "exit": 0,
+        "summary": {
+          "relations": [
+            [
+              "decoy",
+              "direct_owner_call"
+            ]
+          ]
+        },
+        "argv": [
+          "/workspace/review8004-evidence/base43-ripr",
+          "check",
+          "--root",
+          "/workspace/review8004-evidence/baseline43/inputs/dormant-nested",
+          "--mode",
+          "ready",
+          "--format",
+          "json",
+          "--diff",
+          "/workspace/review8004-evidence/baseline43/inputs/dormant-nested/diff.patch"
+        ]
+      },
+      "repo-exposure-json": {
+        "exit": 0,
+        "summary": {
+          "grips": [
+            "strongly_gripped",
+            "strongly_gripped",
+            "strongly_gripped",
+            "strongly_gripped"
+          ],
+          "relations": [
+            [
+              "decoy",
+              "direct_owner_call"
+            ]
+          ]
+        },
+        "argv": [
+          "/workspace/review8004-evidence/base43-ripr",
+          "check",
+          "--root",
+          "/workspace/review8004-evidence/baseline43/inputs/dormant-nested",
+          "--mode",
+          "ready",
+          "--format",
+          "repo-exposure-json"
+        ]
+      },
+      "repo-exposure-summary-json": {
+        "exit": 0,
+        "summary": {
+          "activation_unknown": 0,
+          "discrimination_unknown": 0,
+          "intentional": 0,
+          "observation_unknown": 0,
+          "opaque": 0,
+          "propagation_unknown": 0,
+          "reachable_unrevealed": 0,
+          "strongly_gripped": 4,
+          "suppressed": 0,
+          "ungripped": 0,
+          "weakly_gripped": 0
+        },
+        "argv": [
+          "/workspace/review8004-evidence/base43-ripr",
+          "check",
+          "--root",
+          "/workspace/review8004-evidence/baseline43/inputs/dormant-nested",
+          "--mode",
+          "ready",
+          "--format",
+          "repo-exposure-summary-json"
+        ]
+      }
+    }
+  },
+  {
+    "case": "module-direct-shadow",
+    "outputs": {
+      "json": {
+        "exit": 0,
+        "summary": {
+          "relations": [
+            [
+              "decoy",
+              "weak_token_substring"
+            ]
+          ]
+        },
+        "argv": [
+          "/workspace/review8004-evidence/base43-ripr",
+          "check",
+          "--root",
+          "/workspace/review8004-evidence/baseline43/inputs/module-direct-shadow",
+          "--mode",
+          "ready",
+          "--format",
+          "json",
+          "--diff",
+          "/workspace/review8004-evidence/baseline43/inputs/module-direct-shadow/diff.patch"
+        ]
+      },
+      "repo-exposure-json": {
+        "exit": 0,
+        "summary": {
+          "grips": [
+            "strongly_gripped",
+            "strongly_gripped",
+            "strongly_gripped",
+            "strongly_gripped"
+          ],
+          "relations": [
+            [
+              "decoy",
+              "direct_owner_call"
+            ]
+          ]
+        },
+        "argv": [
+          "/workspace/review8004-evidence/base43-ripr",
+          "check",
+          "--root",
+          "/workspace/review8004-evidence/baseline43/inputs/module-direct-shadow",
+          "--mode",
+          "ready",
+          "--format",
+          "repo-exposure-json"
+        ]
+      },
+      "repo-exposure-summary-json": {
+        "exit": 0,
+        "summary": {
+          "activation_unknown": 0,
+          "discrimination_unknown": 0,
+          "intentional": 0,
+          "observation_unknown": 0,
+          "opaque": 0,
+          "propagation_unknown": 0,
+          "reachable_unrevealed": 0,
+          "strongly_gripped": 4,
+          "suppressed": 0,
+          "ungripped": 0,
+          "weakly_gripped": 0
+        },
+        "argv": [
+          "/workspace/review8004-evidence/base43-ripr",
+          "check",
+          "--root",
+          "/workspace/review8004-evidence/baseline43/inputs/module-direct-shadow",
+          "--mode",
+          "ready",
+          "--format",
+          "repo-exposure-summary-json"
+        ]
+      }
+    }
+  },
+  {
+    "case": "sibling-helper",
+    "outputs": {
+      "json": {
+        "exit": 0,
+        "summary": {
+          "relations": [
+            [
+              "decoy",
+              "same_test_file"
+            ]
+          ]
+        },
+        "argv": [
+          "/workspace/review8004-evidence/base43-ripr",
+          "check",
+          "--root",
+          "/workspace/review8004-evidence/baseline43/inputs/sibling-helper",
+          "--mode",
+          "ready",
+          "--format",
+          "json",
+          "--diff",
+          "/workspace/review8004-evidence/baseline43/inputs/sibling-helper/diff.patch"
+        ]
+      },
+      "repo-exposure-json": {
+        "exit": 0,
+        "summary": {
+          "grips": [
+            "strongly_gripped",
+            "strongly_gripped",
+            "strongly_gripped",
+            "strongly_gripped"
+          ],
+          "relations": [
+            [
+              "decoy",
+              "helper_owner_call"
+            ]
+          ]
+        },
+        "argv": [
+          "/workspace/review8004-evidence/base43-ripr",
+          "check",
+          "--root",
+          "/workspace/review8004-evidence/baseline43/inputs/sibling-helper",
+          "--mode",
+          "ready",
+          "--format",
+          "repo-exposure-json"
+        ]
+      },
+      "repo-exposure-summary-json": {
+        "exit": 0,
+        "summary": {
+          "activation_unknown": 0,
+          "discrimination_unknown": 0,
+          "intentional": 0,
+          "observation_unknown": 0,
+          "opaque": 0,
+          "propagation_unknown": 0,
+          "reachable_unrevealed": 0,
+          "strongly_gripped": 5,
+          "suppressed": 0,
+          "ungripped": 1,
+          "weakly_gripped": 0
+        },
+        "argv": [
+          "/workspace/review8004-evidence/base43-ripr",
+          "check",
+          "--root",
+          "/workspace/review8004-evidence/baseline43/inputs/sibling-helper",
+          "--mode",
+          "ready",
+          "--format",
+          "repo-exposure-summary-json"
+        ]
+      }
+    }
+  },
+  {
+    "case": "local_wrapper",
+    "outputs": {
+      "json": {
+        "exit": 0,
+        "summary": {
+          "relations": [
+            [
+              "wrapper_route",
+              "weak_token_substring"
+            ]
+          ]
+        },
+        "argv": [
+          "/workspace/review8004-evidence/base43-ripr",
+          "check",
+          "--root",
+          "/workspace/review8004-evidence/baseline43/inputs/local_wrapper",
+          "--mode",
+          "ready",
+          "--format",
+          "json",
+          "--diff",
+          "/workspace/review8004-evidence/baseline43/inputs/local_wrapper/diff.patch"
+        ]
+      },
+      "repo-exposure-json": {
+        "exit": 0,
+        "summary": {
+          "grips": [
+            "opaque",
+            "opaque",
+            "opaque",
+            "opaque"
+          ],
+          "relations": [
+            [
+              "wrapper_route",
+              "same_test_file"
+            ]
+          ]
+        },
+        "argv": [
+          "/workspace/review8004-evidence/base43-ripr",
+          "check",
+          "--root",
+          "/workspace/review8004-evidence/baseline43/inputs/local_wrapper",
+          "--mode",
+          "ready",
+          "--format",
+          "repo-exposure-json"
+        ]
+      },
+      "repo-exposure-summary-json": {
+        "exit": 0,
+        "summary": {
+          "activation_unknown": 0,
+          "discrimination_unknown": 0,
+          "intentional": 0,
+          "observation_unknown": 0,
+          "opaque": 4,
+          "propagation_unknown": 0,
+          "reachable_unrevealed": 0,
+          "strongly_gripped": 1,
+          "suppressed": 0,
+          "ungripped": 0,
+          "weakly_gripped": 0
+        },
+        "argv": [
+          "/workspace/review8004-evidence/base43-ripr",
+          "check",
+          "--root",
+          "/workspace/review8004-evidence/baseline43/inputs/local_wrapper",
+          "--mode",
+          "ready",
+          "--format",
+          "repo-exposure-summary-json"
+        ]
+      }
+    }
+  },
+  {
+    "case": "foreign_helper",
+    "outputs": {
+      "json": {
+        "exit": 0,
+        "summary": {
+          "relations": [
+            [
+              "foreign_helper",
+              "same_test_file"
+            ]
+          ]
+        },
+        "argv": [
+          "/workspace/review8004-evidence/base43-ripr",
+          "check",
+          "--root",
+          "/workspace/review8004-evidence/baseline43/inputs/foreign_helper",
+          "--mode",
+          "ready",
+          "--format",
+          "json",
+          "--diff",
+          "/workspace/review8004-evidence/baseline43/inputs/foreign_helper/diff.patch"
+        ]
+      },
+      "repo-exposure-json": {
+        "exit": 0,
+        "summary": {
+          "grips": [
+            "strongly_gripped",
+            "strongly_gripped",
+            "strongly_gripped",
+            "strongly_gripped"
+          ],
+          "relations": [
+            [
+              "foreign_helper",
+              "helper_owner_call"
+            ]
+          ]
+        },
+        "argv": [
+          "/workspace/review8004-evidence/base43-ripr",
+          "check",
+          "--root",
+          "/workspace/review8004-evidence/baseline43/inputs/foreign_helper",
+          "--mode",
+          "ready",
+          "--format",
+          "repo-exposure-json"
+        ]
+      },
+      "repo-exposure-summary-json": {
+        "exit": 0,
+        "summary": {
+          "activation_unknown": 0,
+          "discrimination_unknown": 0,
+          "intentional": 0,
+          "observation_unknown": 0,
+          "opaque": 0,
+          "propagation_unknown": 0,
+          "reachable_unrevealed": 0,
+          "strongly_gripped": 6,
+          "suppressed": 0,
+          "ungripped": 0,
+          "weakly_gripped": 0
+        },
+        "argv": [
+          "/workspace/review8004-evidence/base43-ripr",
+          "check",
+          "--root",
+          "/workspace/review8004-evidence/baseline43/inputs/foreign_helper",
+          "--mode",
+          "ready",
+          "--format",
+          "repo-exposure-summary-json"
+        ]
+      }
+    }
+  },
+  {
+    "case": "macro_discard",
+    "outputs": {
+      "json": {
+        "exit": 0,
+        "summary": {
+          "relations": [
+            [
+              "ignored_operand",
+              "direct_owner_call"
+            ]
+          ]
+        },
+        "argv": [
+          "/workspace/review8004-evidence/base43-ripr",
+          "check",
+          "--root",
+          "/workspace/review8004-evidence/baseline43/inputs/macro_discard",
+          "--mode",
+          "ready",
+          "--format",
+          "json",
+          "--diff",
+          "/workspace/review8004-evidence/baseline43/inputs/macro_discard/diff.patch"
+        ]
+      },
+      "repo-exposure-json": {
+        "exit": 0,
+        "summary": {
+          "grips": [
+            "activation_unknown",
+            "activation_unknown",
+            "activation_unknown",
+            "activation_unknown"
+          ],
+          "relations": [
+            [
+              "ignored_operand",
+              "assertion_target_affinity"
+            ],
+            [
+              "ignored_operand",
+              "same_test_file"
+            ]
+          ]
+        },
+        "argv": [
+          "/workspace/review8004-evidence/base43-ripr",
+          "check",
+          "--root",
+          "/workspace/review8004-evidence/baseline43/inputs/macro_discard",
+          "--mode",
+          "ready",
+          "--format",
+          "repo-exposure-json"
+        ]
+      },
+      "repo-exposure-summary-json": {
+        "exit": 0,
+        "summary": {
+          "activation_unknown": 4,
+          "discrimination_unknown": 0,
+          "intentional": 0,
+          "observation_unknown": 0,
+          "opaque": 0,
+          "propagation_unknown": 0,
+          "reachable_unrevealed": 0,
+          "strongly_gripped": 0,
+          "suppressed": 0,
+          "ungripped": 0,
+          "weakly_gripped": 0
+        },
+        "argv": [
+          "/workspace/review8004-evidence/base43-ripr",
+          "check",
+          "--root",
+          "/workspace/review8004-evidence/baseline43/inputs/macro_discard",
+          "--mode",
+          "ready",
+          "--format",
+          "repo-exposure-summary-json"
+        ]
+      }
+    }
+  }
+]

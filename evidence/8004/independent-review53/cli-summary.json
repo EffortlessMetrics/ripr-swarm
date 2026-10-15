@@ -1,0 +1,503 @@
+[
+  {
+    "case": "dormant-nested",
+    "diff": {
+      "exit": 0,
+      "findings": 2,
+      "relations": [
+        [
+          "decoy",
+          "direct_owner_call",
+          "high"
+        ]
+      ]
+    },
+    "repo": {
+      "exit": 0,
+      "seams": 4,
+      "grips": [
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped"
+      ],
+      "relations": [
+        [
+          "decoy",
+          "direct_owner_call",
+          "high"
+        ]
+      ]
+    }
+  },
+  {
+    "case": "foreign-entry",
+    "diff": {
+      "exit": 0,
+      "findings": 2,
+      "relations": [
+        [
+          "wrapper_route",
+          "weak_token_substring",
+          "low"
+        ]
+      ]
+    },
+    "repo": {
+      "exit": 0,
+      "seams": 4,
+      "grips": [
+        "opaque",
+        "opaque",
+        "opaque",
+        "opaque"
+      ],
+      "relations": [
+        [
+          "wrapper_route",
+          "same_test_file",
+          "medium"
+        ]
+      ]
+    }
+  },
+  {
+    "case": "foreign-last-hop",
+    "diff": {
+      "exit": 0,
+      "findings": 2,
+      "relations": [
+        [
+          "wrapper_route",
+          "weak_token_substring",
+          "low"
+        ]
+      ]
+    },
+    "repo": {
+      "exit": 0,
+      "seams": 4,
+      "grips": [
+        "opaque",
+        "opaque",
+        "opaque",
+        "opaque"
+      ],
+      "relations": [
+        [
+          "wrapper_route",
+          "same_test_file",
+          "medium"
+        ]
+      ]
+    }
+  },
+  {
+    "case": "foreign_helper",
+    "diff": {
+      "exit": 0,
+      "findings": 2,
+      "relations": [
+        [
+          "foreign_helper",
+          "same_test_file",
+          "medium"
+        ]
+      ]
+    },
+    "repo": {
+      "exit": 0,
+      "seams": 4,
+      "grips": [
+        "opaque",
+        "opaque",
+        "opaque",
+        "opaque"
+      ],
+      "relations": [
+        [
+          "foreign_helper",
+          "same_test_file",
+          "medium"
+        ]
+      ]
+    }
+  },
+  {
+    "case": "local-helper",
+    "diff": {
+      "exit": 0,
+      "findings": 2,
+      "relations": [
+        [
+          "local_helper",
+          "same_test_file",
+          "medium"
+        ]
+      ]
+    },
+    "repo": {
+      "exit": 0,
+      "seams": 4,
+      "grips": [
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped"
+      ],
+      "relations": [
+        [
+          "local_helper",
+          "helper_owner_call",
+          "high"
+        ]
+      ]
+    }
+  },
+  {
+    "case": "local_wrapper",
+    "diff": {
+      "exit": 0,
+      "findings": 2,
+      "relations": [
+        [
+          "wrapper_route",
+          "weak_token_substring",
+          "low"
+        ]
+      ]
+    },
+    "repo": {
+      "exit": 0,
+      "seams": 4,
+      "grips": [
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped"
+      ],
+      "relations": [
+        [
+          "wrapper_route",
+          "helper_owner_call",
+          "high"
+        ]
+      ]
+    }
+  },
+  {
+    "case": "macro_discard",
+    "diff": {
+      "exit": 0,
+      "findings": 2,
+      "relations": [
+        [
+          "ignored_operand",
+          "weak_token_substring",
+          "low"
+        ]
+      ]
+    },
+    "repo": {
+      "exit": 0,
+      "seams": 4,
+      "grips": [
+        "activation_unknown",
+        "activation_unknown",
+        "activation_unknown",
+        "activation_unknown"
+      ],
+      "relations": [
+        [
+          "ignored_operand",
+          "assertion_target_affinity",
+          "medium"
+        ],
+        [
+          "ignored_operand",
+          "same_test_file",
+          "medium"
+        ]
+      ]
+    }
+  },
+  {
+    "case": "module-direct-shadow",
+    "diff": {
+      "exit": 0,
+      "findings": 2,
+      "relations": [
+        [
+          "decoy",
+          "weak_token_substring",
+          "low"
+        ]
+      ]
+    },
+    "repo": {
+      "exit": 0,
+      "seams": 4,
+      "grips": [
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped"
+      ],
+      "relations": [
+        [
+          "decoy",
+          "direct_owner_call",
+          "high"
+        ]
+      ]
+    }
+  },
+  {
+    "case": "module-owner-positive",
+    "diff": {
+      "exit": 0,
+      "findings": 2,
+      "relations": [
+        [
+          "actual",
+          "direct_owner_call",
+          "high"
+        ]
+      ]
+    },
+    "repo": {
+      "exit": 0,
+      "seams": 4,
+      "grips": [
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped"
+      ],
+      "relations": [
+        [
+          "actual",
+          "direct_owner_call",
+          "high"
+        ]
+      ]
+    }
+  },
+  {
+    "case": "nested-invoked",
+    "diff": {
+      "exit": 0,
+      "findings": 2,
+      "relations": [
+        [
+          "decoy",
+          "direct_owner_call",
+          "high"
+        ]
+      ]
+    },
+    "repo": {
+      "exit": 0,
+      "seams": 4,
+      "grips": [
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped"
+      ],
+      "relations": [
+        [
+          "decoy",
+          "direct_owner_call",
+          "high"
+        ]
+      ]
+    }
+  },
+  {
+    "case": "qualified-live",
+    "diff": {
+      "exit": 0,
+      "findings": 2,
+      "relations": [
+        [
+          "actual",
+          "direct_owner_call",
+          "high"
+        ]
+      ]
+    },
+    "repo": {
+      "exit": 0,
+      "seams": 4,
+      "grips": [
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped"
+      ],
+      "relations": [
+        [
+          "actual",
+          "direct_owner_call",
+          "high"
+        ]
+      ]
+    }
+  },
+  {
+    "case": "shadowed-owner-type",
+    "diff": {
+      "exit": 0,
+      "findings": 2,
+      "relations": [
+        [
+          "foreign_helper",
+          "same_test_file",
+          "medium"
+        ]
+      ]
+    },
+    "repo": {
+      "exit": 0,
+      "seams": 4,
+      "grips": [
+        "opaque",
+        "opaque",
+        "opaque",
+        "opaque"
+      ],
+      "relations": [
+        [
+          "foreign_helper",
+          "same_test_file",
+          "medium"
+        ]
+      ]
+    }
+  },
+  {
+    "case": "sibling-helper",
+    "diff": {
+      "exit": 0,
+      "findings": 2,
+      "relations": [
+        [
+          "decoy",
+          "same_test_file",
+          "medium"
+        ]
+      ]
+    },
+    "repo": {
+      "exit": 0,
+      "seams": 4,
+      "grips": [
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped"
+      ],
+      "relations": [
+        [
+          "decoy",
+          "helper_owner_call",
+          "high"
+        ]
+      ]
+    }
+  },
+  {
+    "case": "sibling-helper-positive",
+    "diff": {
+      "exit": 0,
+      "findings": 2,
+      "relations": [
+        [
+          "decoy",
+          "same_test_file",
+          "medium"
+        ]
+      ]
+    },
+    "repo": {
+      "exit": 0,
+      "seams": 4,
+      "grips": [
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped"
+      ],
+      "relations": [
+        [
+          "decoy",
+          "helper_owner_call",
+          "high"
+        ]
+      ]
+    }
+  },
+  {
+    "case": "sibling-shadow",
+    "diff": {
+      "exit": 0,
+      "findings": 2,
+      "relations": [
+        [
+          "evaluated_operand",
+          "direct_owner_call",
+          "high"
+        ]
+      ]
+    },
+    "repo": {
+      "exit": 0,
+      "seams": 4,
+      "grips": [
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped"
+      ],
+      "relations": [
+        [
+          "evaluated_operand",
+          "direct_owner_call",
+          "high"
+        ]
+      ]
+    }
+  },
+  {
+    "case": "standard",
+    "diff": {
+      "exit": 0,
+      "findings": 2,
+      "relations": [
+        [
+          "evaluated_operand",
+          "direct_owner_call",
+          "high"
+        ]
+      ]
+    },
+    "repo": {
+      "exit": 0,
+      "seams": 4,
+      "grips": [
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped",
+        "strongly_gripped"
+      ],
+      "relations": [
+        [
+          "evaluated_operand",
+          "direct_owner_call",
+          "high"
+        ]
+      ]
+    }
+  }
+]

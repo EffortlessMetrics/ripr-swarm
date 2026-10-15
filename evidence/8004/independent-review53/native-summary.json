@@ -1,0 +1,210 @@
+[
+  {
+    "case": "foreign_helper",
+    "exits": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        0
+      ]
+    ]
+  },
+  {
+    "case": "local_wrapper",
+    "exits": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        101
+      ]
+    ]
+  },
+  {
+    "case": "macro_discard",
+    "exits": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        0
+      ]
+    ]
+  },
+  {
+    "case": "local-helper",
+    "exits": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        101
+      ]
+    ]
+  },
+  {
+    "case": "shadowed-owner-type",
+    "exits": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        0
+      ]
+    ]
+  },
+  {
+    "case": "foreign-entry",
+    "exits": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        0
+      ]
+    ]
+  },
+  {
+    "case": "foreign-last-hop",
+    "exits": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        0
+      ]
+    ]
+  },
+  {
+    "case": "standard",
+    "exits": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        101
+      ]
+    ]
+  },
+  {
+    "case": "sibling-shadow",
+    "exits": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        101
+      ]
+    ]
+  },
+  {
+    "case": "qualified-live",
+    "exits": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        101
+      ]
+    ]
+  },
+  {
+    "case": "dormant-nested",
+    "exits": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        0
+      ]
+    ]
+  },
+  {
+    "case": "module-direct-shadow",
+    "exits": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        0
+      ]
+    ]
+  },
+  {
+    "case": "sibling-helper",
+    "exits": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        0
+      ]
+    ]
+  },
+  {
+    "case": "nested-invoked",
+    "exits": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        101
+      ]
+    ]
+  },
+  {
+    "case": "module-owner-positive",
+    "exits": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        101
+      ]
+    ]
+  },
+  {
+    "case": "sibling-helper-positive",
+    "exits": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        101
+      ]
+    ]
+  }
+]

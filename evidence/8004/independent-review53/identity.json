@@ -1,0 +1,43 @@
+{
+  "timestamp": "2026-10-15T10:09:45.406039+00:00",
+  "head": "53e22999d19d07a28a355b740d62c01c25aea541",
+  "tree": "07100736ea448043831337f64d45c7a26b6d1b79",
+  "parent": "43f00b54eeb239c240bb71553c30a7bde3a4e080",
+  "source_status": "",
+  "merge_object": "79e7404f09e6c9c602558c9a9508aca10d6b6772 665505641bd21f018359268ed614a34b205bf45b 37a31f949791827e6f29532d35ca980c19a3d70a 53e22999d19d07a28a355b740d62c01c25aea541",
+  "platform": "Linux x86_64",
+  "rust": "1.95.0",
+  "cargo": "1.95.0",
+  "features": "default",
+  "cargo_home": "/workspace/.cargo",
+  "rustup_home": "/workspace/.rustup",
+  "review_target": "/workspace/review8004-target",
+  "source53_cli_sha256": "838003adfe2995a0da8e39b50b339ccf75b37fe5da50ad034284c7e2d478f264",
+  "controls": 16,
+  "native_executions": 32,
+  "no_executor_disconnect": true,
+  "base43_cli_sha256": "f8b896c491109cf5b2b2ab6dd5a48a282f606b3ae6c1df72093e85b0dbf409a5",
+  "checks": {
+    "build53": 0,
+    "test_grip": {
+      "exit": 0,
+      "passed": 383,
+      "ignored": 0
+    },
+    "related_tests": {
+      "exit": 0,
+      "passed": 175,
+      "ignored": 0
+    },
+    "receiver_integration": {
+      "exit": 0,
+      "passed": 8,
+      "ignored": 0
+    },
+    "baseline43_build_and_compare": 0,
+    "native_originals_pass": 16,
+    "native_pairs_compile": 16,
+    "cli_formats": 48,
+    "fresh_compact_inputs": 7
+  }
+}
