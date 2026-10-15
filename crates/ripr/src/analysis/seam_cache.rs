@@ -445,7 +445,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// propagation witness (#6578). Old entries keep those seams unrevealed.
 /// `1.72`: a colon inside a string or comment no longer mints a
 /// `field_construction` probe (#6578). Old entries keep the spurious probe.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.72";
+/// `1.73`: a whole same-line comparison tail reaches its owner's return
+/// (#8042). Old entries can keep a predicate's propagation unknown.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.73";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -562,7 +564,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.72";
 /// `0.76`: same composed evidence as full `1.70`.
 /// `0.77`: same unchanged-closure tail evidence as full `1.71`.
 /// `0.78`: same string-colon probe boundary as full `1.72`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.78";
+/// `0.79`: same returned-comparison transition as full `1.73` (#8042).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.79";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -681,7 +684,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.78";
 /// `0.76`: same composed evidence as full `1.70`.
 /// `0.77`: same unchanged-closure tail evidence as full `1.71`.
 /// `0.78`: same string-colon probe boundary as full `1.72`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.78";
+/// `0.79`: same returned-comparison transition as full `1.73` (#8042).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.79";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4412,7 +4416,8 @@ mod tests {
         // 1.69 -> 1.70: combine JSON and expect-test/format evidence.
         // 1.70 -> 1.71: unchanged closures in returned tails (#6578).
         // 1.71 -> 1.72: string colons mint no field probe (#6578).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.72");
+        // 1.72 -> 1.73: same-line returned comparisons gain a real sink (#8042).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.73");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4477,8 +4482,9 @@ mod tests {
         // 0.75 -> 0.76: composed evidence as full 1.70.
         // 0.76 -> 0.77: same evidence as full 1.71.
         // 0.77 -> 0.78: same evidence as full 1.72.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.78");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.78");
+        // 0.78 -> 0.79: same evidence as full 1.73.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.79");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.79");
     }
 
     #[test]
