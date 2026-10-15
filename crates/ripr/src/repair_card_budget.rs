@@ -504,6 +504,38 @@ mod tests {
     }
 
     #[test]
+    fn detail_family_ordering_borrows_original_sources() -> Result<(), String> {
+        let mut sources = all_family_sources();
+        sources.reverse();
+        let ordered = sources.to_vec_sorted_by_family()?;
+        let expected = [
+            RepairCardDetailFamily::CanonicalPacket,
+            RepairCardDetailFamily::FixInstruction,
+            RepairCardDetailFamily::FocusedProofReceipt,
+            RepairCardDetailFamily::LimitationDetail,
+            RepairCardDetailFamily::MutationCalibration,
+            RepairCardDetailFamily::RelatedTestCandidates,
+            RepairCardDetailFamily::RepairAttemptStatus,
+            RepairCardDetailFamily::StaticMovement,
+            RepairCardDetailFamily::WitnessStageEvidence,
+        ];
+        assert_eq!(ordered.len(), expected.len());
+        for (source, family) in ordered.iter().zip(expected) {
+            let source: &RepairCardDetailSource = source;
+            assert_eq!(source.family, family);
+            let original = sources
+                .iter()
+                .find(|original| original.family == family)
+                .ok_or_else(|| format!("fixture is missing detail family {family:?}"))?;
+            assert!(
+                std::ptr::eq(source, original),
+                "sorting must borrow {family:?} rather than clone its evidence"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn default_budget_routes_every_family_in_deterministic_order() -> Result<(), String> {
         let mut card = minimal_card();
         let sources = all_family_sources();
