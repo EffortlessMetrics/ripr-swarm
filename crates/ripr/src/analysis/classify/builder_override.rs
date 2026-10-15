@@ -1130,12 +1130,14 @@ fn method_touches_field_read_only(
 /// `expected` (`load_defaults` inserting `("K", 5)` before `put("K", 5)`
 /// and `assert_eq!(.., 5)`), must not hand `self` or `&mut self.f` to
 /// other code, and may write `self.<field>` only as
-/// `self.<field>.insert(k, v)` or `*self.<field>.entry(k).or_insert(<literal>)
+/// `self.<field>.insert(k, v)` or `*self.<field>.entry(k).or_insert(0)
 /// += v` with `v` a parameter (optionally `.clone()`d, `.to_owned()`,
 /// `.to_string()` or `.into()`): a constant, another field, or a function
 /// result (`SEED`, `self.base`, `five()`, `self.m = Self::defaults()`)
-/// may hold the expected value under another name. The test passes each
-/// parameter a literal other than `expected`. An unresolved or ambiguous
+/// may hold the expected value under another name. A `mut` or shadowed
+/// parameter (`let qty = SEED;`) does not count, and a helper is followed
+/// only when every argument is a parameter or a literal. The test passes
+/// each parameter a literal other than `expected`. An unresolved or ambiguous
 /// method fails closed. A value summed from several such calls is not
 /// detected (#7988).
 pub(in crate::analysis) fn method_cannot_store(
@@ -1170,13 +1172,29 @@ fn cannot_store_within(
         .into_iter()
         .flat_map(|list| list.params().collect::<Vec<_>>())
         .filter_map(|parameter| match parameter.pat() {
-            Some(ast::Pat::IdentPat(pat)) => pat.name().map(|name| name.text().to_string()),
+            // A `mut` parameter can be reassigned before it is stored.
+            Some(ast::Pat::IdentPat(pat)) if pat.mut_token().is_none() => {
+                pat.name().map(|name| name.text().to_string())
+            }
             _ => None,
         })
         .collect();
     let Some(block) = function.body() else {
         return false;
     };
+    // `let qty = SEED;` (or a `for`/`match`/closure binding) shadows the
+    // parameter, so its name no longer carries the test's literal.
+    let shadows_parameter = block
+        .syntax()
+        .descendants()
+        .filter_map(ast::IdentPat::cast)
+        .any(|pat| {
+            pat.name()
+                .is_some_and(|name| parameters.iter().any(|p| p.as_str() == name.text()))
+        });
+    if shadows_parameter {
+        return false;
+    }
     // `-5` lexes as `-` and `5`; compare magnitudes so the sign never hides
     // a match.
     let magnitude = expected.trim().trim_start_matches('-');
@@ -1220,27 +1238,29 @@ fn cannot_store_within(
         if name == field {
             return field_write_takes_parameter(after, &parameters);
         }
-        !after.starts_with('(')
-            || cannot_store_within(index, impl_type, name, field, expected, hops)
+        if !after.starts_with('(') {
+            return true;
+        }
+        // A helper's parameters carry the test's literals only when this
+        // call passes it parameters or literals (`self.put(sku, SEED)`
+        // does not).
+        super::activation::call_arguments(after, "").is_some_and(|arguments| {
+            arguments.iter().all(|argument| {
+                let argument = argument.trim().trim_start_matches('&');
+                literal_value(argument).is_some() || parameter_value(argument, &parameters)
+            })
+        }) && cannot_store_within(index, impl_type, name, field, expected, hops)
     })
 }
 
 /// Whether `after`, the masked text following `self.<field>`, reads the map
 /// or writes it only with a parameter value: `.get(`, `.contains_key(`,
-/// `.len()`, `.is_empty()`, `.insert(k, v)`, or `.entry(k).or_insert(<lit>)
+/// `.len()`, `.is_empty()`, `.insert(k, v)`, or `.entry(k).or_insert(0)
 /// += v` (`.or_default()` too), `v` a parameter as [`method_cannot_store`]
-/// describes.
+/// describes. A nonzero `or_insert` start could sum with `v` to the expected
+/// value in one call.
 fn field_write_takes_parameter(after: &str, parameters: &[String]) -> bool {
-    let parameter_value = |value: &str| {
-        let mut value = value.trim();
-        while let Some(inner) = [".clone()", ".to_owned()", ".to_string()", ".into()"]
-            .iter()
-            .find_map(|suffix| value.strip_suffix(suffix))
-        {
-            value = inner.trim_end();
-        }
-        parameters.iter().any(|parameter| parameter == value)
-    };
+    let parameter_value = |value: &str| parameter_value(value, parameters);
     if [".get(", ".contains_key(", ".len()", ".is_empty()"]
         .iter()
         .any(|read| after.starts_with(read))
@@ -1277,7 +1297,7 @@ fn field_write_takes_parameter(after: &str, parameters: &[String]) -> bool {
         let Some(end) = rest.find(')') else {
             return false;
         };
-        if literal_value(&rest[..end]).is_none() {
+        if literals_equal(&rest[..end], "0") != Some(true) {
             return false;
         }
         &rest[end + 1..]
@@ -1288,6 +1308,19 @@ fn field_write_takes_parameter(after: &str, parameters: &[String]) -> bool {
         .strip_prefix("+=")
         .and_then(|value| value.split_once(';'))
         .is_some_and(|(value, _)| parameter_value(value))
+}
+
+/// Whether `value` is one of `parameters`, optionally `.clone()`d,
+/// `.to_owned()`, `.to_string()` or `.into()`.
+fn parameter_value(value: &str, parameters: &[String]) -> bool {
+    let mut value = value.trim();
+    while let Some(inner) = [".clone()", ".to_owned()", ".to_string()", ".into()"]
+        .iter()
+        .find_map(|suffix| value.strip_suffix(suffix))
+    {
+        value = inner.trim_end();
+    }
+    parameters.iter().any(|parameter| parameter == value)
 }
 
 /// RIPR-SPEC-0228 keyed reads: whether two plain literals ([`literal_value`])
@@ -1912,6 +1945,7 @@ mod tests {
             "pub fn prime(&mut self, sku: &str, qty: u32) { *self.stock.entry(sku.to_string()).or_insert(0) += qty; self.log.push(qty); }",
             "pub fn prime(&mut self, qty: u32) { self.stock.insert(\"K\".into(), qty.clone()); self.note(); }\nfn note(&mut self) { self.log.push(1); }",
             "pub fn prime(&mut self, k: &str, q: u32) { *self.stock.entry(k.into()).or_default() += q; }",
+            "pub fn prime(&mut self, k: &str, q: u32) { self.put(k, q); self.put(\"K\", 1); }\nfn put(&mut self, k: &str, v: u32) { self.stock.insert(k.into(), v); }",
         ] {
             assert!(cannot_store(methods, "7"), "{methods}");
         }
@@ -1971,6 +2005,36 @@ mod tests {
             ),
             (
                 "pub fn prime(&mut self, k: &str) { *self.stock.entry(k.into()).or_default() += self.stock.len() as u32; }",
+                "7",
+            ),
+            // A shadowed or `mut` parameter, a helper handed a constant, and
+            // a nonzero `or_insert` start summing to the expected value.
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { let q = SEED; self.stock.insert(k.into(), q); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { let q = q + 2; self.stock.insert(k.into(), q); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, mut q: u32) { q += 2; self.stock.insert(k.into(), q); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { for q in [q + 2] { self.stock.insert(k.into(), q); } }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str) { self.put(k, SEED); }\nfn put(&mut self, k: &str, v: u32) { self.stock.insert(k.into(), v); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { self.put(k, q + 2); }\nfn put(&mut self, k: &str, v: u32) { self.stock.insert(k.into(), v); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { *self.stock.entry(k.into()).or_insert(2) += q; }",
                 "7",
             ),
             ("", "7"),

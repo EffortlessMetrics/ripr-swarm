@@ -379,11 +379,15 @@ changes `self.count += 2` to `self.count += 1`.
   any spelling (`7`, `7u32`, `7_u32`), to an inherent method whose body,
   and every `self.m(..)` helper it calls, spells no literal equal to the
   expected value, hands neither `self` nor `&mut self.f` to other code, and
-  writes the map field only as `self.<path>.insert(k, v)` or
-  `*self.<path>.entry(k).or_insert(<literal>) += v` with `v` a parameter
-  (`method_cannot_store` in `builder_override.rs`); a constant, another
+  otherwise only reads it (`.get`, `.contains_key`, `.len`, `.is_empty`) or
+  writes it as `self.<path>.insert(k, v)` or
+  `*self.<path>.entry(k).or_insert(0) += v` (or `.or_default()`) with `v` a
+  parameter that is neither `mut` nor rebound in the body; a helper is
+  followed only when every argument it receives is a parameter or a literal
+  (`method_cannot_store` in `builder_override.rs`). A constant, another
   field or a function result in value position (`SEED`, `self.base`,
-  `five()`, `self.<path> = Self::defaults()`) fails closed: `s.set("K", 5)`,
+  `five()`, `self.<path> = Self::defaults()`, `let qty = SEED;`,
+  `self.put(k, SEED)`) or a nonzero `or_insert` start fails closed: `s.set("K", 5)`,
   `s.set("K", v)`, `seed(&mut s)` or `s.load_defaults()` storing `("K", 5)`
   before `s.put("K", 5)` may already have stored the expected value. The insert must be a top-level statement of the owner
   (`self.<path>.insert(..)` outside any branch, loop, block or closure),
