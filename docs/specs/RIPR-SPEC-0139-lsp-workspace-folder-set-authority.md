@@ -169,13 +169,25 @@ exactly one transition to `selected_single_root`.
 - The `workspace_folder_transitions` framed duplex test suite in
   `crates/ripr/src/lsp/tests.rs` covering the #2036 fixture matrix, with the
   fake client answering every server-originated request.
+- The consuming #1873 real extension-host matrix in
+  `editors/vscode/test/suite/multiroot.test.ts`, using independent two-root
+  Git fixtures and the actual server for ambiguity, root selection/switch,
+  active-root removal, diagnostic/action containment and process teardown.
+  Its execution is distinct from the framed server suite and final installed
+  release-candidate qualification.
+- The #7404 extension consumer's controller tests in
+  `editors/vscode/test/suite/workspace_root_binding.test.ts` separately
+  discriminate rebinding, removal quarantine, stale actions and explicit
+  recovery; instrumented controller execution does not qualify the real host.
 
 ## Non-Goals
 
 - Simultaneous per-root servers or analyzing multiple roots at once.
 - Analyzer evidence changes of any kind.
 - Extension-side restart/session behavior (#2015) and the real two-root
-  client fixture (#1873); those consume this model.
+  client fixture's delivery (#1873); those consume this model. Listing their
+  matrices under Required Evidence names the consuming acceptance surface,
+  not implementation scope owned by this spec.
 - Symlink canonicalization of root identity and any output schema version
   bump.
 - Status payload shape changes; root state disclosure reuses the existing

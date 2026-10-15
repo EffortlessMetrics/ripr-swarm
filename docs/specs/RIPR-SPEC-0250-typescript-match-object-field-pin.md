@@ -76,7 +76,13 @@ written with `toEqual` already read `exposed`.
 own it says nothing about the fields `o` leaves out. When `o` is a flat
 object literal of scalar literals (`{ name: "ana", adult: false }`, the
 shape RIPR-SPEC-0247 reads for mock payloads) the assertion records it as
-its expected value. `.rejects.toMatchObject(o)` keeps its error-payload
+its expected value. Amended 2026-10-15: on a direct
+`expect(x).toMatchObject(o)` statement (not `.not`, `.resolves` or
+`.rejects`), when `o` is a bare identifier naming a `const o = {...}` of
+that flat shape, declared as a top-level statement of the same test or
+callback body before the call, and the body names `o` only in that
+binding and this one argument (and contains no `eval`, `with` or `\u`
+escape), the assertion records the bound literal the same way. `.rejects.toMatchObject(o)` keeps its error-payload
 reading (RIPR-SPEC-0243); one that reading cannot resolve stays `unknown`.
 
 **Rule 1. A match-object pin reads exact for a returned field it lists.**
@@ -88,7 +94,10 @@ these hold:
 - it observes the whole result of one owner call: `owner(...)`,
   `ns.owner(...)`, optionally awaited, or a local bound once to that call
   (not `f(owner(...))` or `owner(...).field`), and the test does not
-  shadow the owner;
+  shadow the owner or, for `ns.owner(...)`, the namespace import `ns`
+  (`const ns = fake()` in the body reaches the shadow, and a body
+  `ns = await import(...)` counts only as one `const` the body uses
+  solely as `ns.x`; amended 2026-10-15);
 - the owner body has one `return` and no arrow or nested `function`;
 - the changed line is `key: value` with `value` on that line (no `{`, `}`,
   `[` or `]` outside literals), found once in the owner;
@@ -105,6 +114,17 @@ these hold:
   with ASCII source text only (an object holding a non-ASCII string keeps
   the weak reading; an ASCII escape such as `"\u00e9"` is read; see Known
   limits).
+
+Amended 2026-10-15 (#6654, identity helper): a pin on
+`f(owner(...))` also observes the whole result of the owner call when `f`
+is a test-local identity helper under the conditions RIPR-SPEC-0249
+rule 1 lists in its 2026-10-15 amendment: a top-level, unexported
+`function f(p) { return p; }` or `const f = (p) => p;` in the same test
+file, with one plain identifier parameter, a body of exactly `return p;`,
+a name used nowhere else in the file but as a direct call `f(`, and a call
+whose one argument is the owner call itself. A helper that rebuilds or
+transforms its argument (`return { ...p, adult: true }`) is not an
+identity and keeps the weak reading.
 
 ### Decisions
 
@@ -158,7 +178,10 @@ documented decisions and proceed"). Recorded on #6654.
 ## Required Evidence
 
 - On the TypeScript verdict corpus, `jest-mined-tomatchobject-field` moves
-  from `gap` to `credited` and no other row moves.
+  from `gap` to `credited` and no other row moves. Amended 2026-10-15:
+  `jest-spec0250-ex04-normalized-result` and
+  `jest-spec0250-ex05-non-literal-expected` each move from `gap` to
+  `credited` with their amendments.
 - `cargo xtask goldens check` reports no drift.
 
 ## Non-Goals
@@ -178,9 +201,20 @@ documented decisions and proceed"). Recorded on #6654.
 3. As example 1 asserting `toMatchObject({ name: "bo" })` only: not
    `exposed`.
 4. As example 1 with `expect(normalize(buildProfile(...)))` or
-   `expect(buildProfile(...).meta)`: not `exposed`.
+   `expect(buildProfile(...).meta)`: not `exposed`. Amended 2026-10-15:
+   `expect(normalize(buildProfile(...)))` is `exposed` when `normalize`
+   is a test-local identity helper
+   (`function normalize<T>(value: T): T { return value; }`); a helper that
+   rebuilds its argument, or a `let` binding of it, stays not
+   `exposed`.
 5. As example 1 with a non-literal argument (`toMatchObject(expected)`) or
-   `.rejects.toMatchObject(...)`: not `exposed`.
+   `.rejects.toMatchObject(...)`: not `exposed`. Amended 2026-10-15:
+   `const grown = { name: "bo", adult: true };
+   expect(buildProfile("bo", 18)).toMatchObject(grown);` is `exposed` when
+   the body names `grown` nowhere else; a `let` binding, a second mention
+   (`grown.adult = false`, `fix(grown)`), a nested or spread literal, an
+   argument bound outside the test body, or a body with `eval`, `with` or
+   a `\u` escape stays not `exposed`.
 6. As example 1 with a second `return`, the field in a nested literal, a
    spread, a later `adult:`, `"adult":` or `["adult"]:` entry (on its
    own line, after another entry, or on the changed line), an accessor,
@@ -192,9 +226,14 @@ documented decisions and proceed"). Recorded on #6654.
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs`
-  pins examples 1 to 6 and the owner-side conditions.
+  pins examples 1 to 6 and the owner-side conditions;
+  `match_object_pin_looks_through_a_test_local_identity_helper` pins the
+  amended example 4; `match_object_pin_reads_a_test_body_object_const`
+  pins the amended example 5.
 - `fixtures/typescript-verdict-corpus` pins example 1:
-  `jest-mined-tomatchobject-field` reads `credited`.
+  `jest-mined-tomatchobject-field` reads `credited`; the amended example
+  4: `jest-spec0250-ex04-normalized-result` reads `credited`; the amended
+  example 5: `jest-spec0250-ex05-non-literal-expected` reads `credited`.
 
 ## Implementation Mapping
 
@@ -207,6 +246,19 @@ documented decisions and proceed"). Recorded on #6654.
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`:
   `strongest_family_matching_oracle`, `project_credited_pin_rows`,
   `ts_changed_value_is_observed`.
+- Amended 2026-10-15 (identity helper):
+  `crates/ripr/src/analysis/language/typescript/classifier.rs`:
+  `ts_observes_whole_owner_result_through_identity`, called by
+  `ts_match_object_facts`; the helper list comes from
+  `crates/ripr/src/analysis/language/typescript/tests_extract.rs`:
+  `identity_helpers`.
+- Amended 2026-10-15 (object const argument):
+  `crates/ripr/src/analysis/language/typescript/match_object_guard.rs`:
+  `match_object_consts`, `match_object_const_argument`; attached in
+  `crates/ripr/src/analysis/language/typescript/oracle.rs`:
+  `attach_match_object_const`; a read argument no longer lists
+  `typescript_dynamic_assertion_unresolved` in
+  `crates/ripr/src/analysis/language/typescript/static_limit.rs`.
 
 ## Metrics
 

@@ -2895,6 +2895,14 @@ fn build_seam_from_shape(
     crlf_pairs: &CrlfPairPositions,
 ) -> Option<RepoSeam> {
     let kind = seam_kind_from_probe_shape(shape.kind)?;
+    // RIPR-SPEC-0228 field assignments are diff-scope probes only: repo-scope
+    // seam grading does not know their read rule, so it would grade a
+    // well-tested write as weakly gripped.
+    if kind == SeamKind::FieldConstruction
+        && crate::analysis::classify::field_assignment_target(&shape.text).is_some()
+    {
+        return None;
+    }
     // A call whose value feeds a consumer cannot be deleted without breaking
     // the build, so no mutant asks whether tests notice it is gone. The
     // consumer's predicate, return or error seam carries that behavior

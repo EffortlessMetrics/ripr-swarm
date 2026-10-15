@@ -84,6 +84,12 @@ impl Fixture {
         Ok(fixture)
     }
 
+    pub(super) fn suppression_policy(&self, text: &str) -> Result<PathBuf, std::io::Error> {
+        let path = self.scratch.join("suppression-policy.toml");
+        std::fs::write(&path, text)?;
+        Ok(path)
+    }
+
     pub(super) fn root(&self) -> &std::path::Path {
         &self.root
     }

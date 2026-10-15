@@ -692,19 +692,34 @@ fn oracle_fixture() -> Result<PathBuf, String> {
 #[test]
 fn oracle_committed_rates_keep_labeled_and_unlabeled_cases() -> Result<(), String> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/rust-verdict-corpus");
-    let expected_ids: BTreeSet<_> = super::super::verdict_corpus::load_corpus(&dir)?
+    let corpus = super::super::verdict_corpus::load_corpus(&dir)?;
+    let expected_ids: BTreeSet<_> = corpus
         .cases
-        .into_iter()
-        .map(|case| case.case_id)
+        .iter()
+        .map(|case| case.case_id.clone())
         .collect();
+    let labeled = corpus
+        .cases
+        .iter()
+        .filter(|case| case.expected_oracle.is_some())
+        .count();
+    assert!(labeled > 0, "control needs labeled oracle cases");
     assert!(
-        expected_ids.len() > 44,
+        expected_ids.len() > labeled,
         "control needs unlabeled source cases"
     );
+    // `match_floor` / `overclaim_ceiling` remain the reviewed ratchets in
+    // spec-coverage.toml; this test does not pin the labeled total.
+    let gate = super::super::verdict_corpus::coverage::load_ledger(&dir)?
+        .oracle
+        .ok_or("no [oracle] table")?;
     let records = population::Records::load(&dir)?;
-    for (rate, numerator) in [("oracle_accuracy", 44), ("oracle_overclaim_rate", 0)] {
+    for (rate, numerator) in [
+        ("oracle_accuracy", gate.match_floor as u64),
+        ("oracle_overclaim_rate", gate.overclaim_ceiling as u64),
+    ] {
         let population = records.population(&format!("oracle_accuracy.{rate}"))?;
-        assert_eq!(population.totals()?, (numerator, 44));
+        assert_eq!(population.totals()?, (numerator, labeled as u64));
         assert_eq!(
             population
                 .cases
@@ -719,7 +734,7 @@ fn oracle_committed_rates_keep_labeled_and_unlabeled_cases() -> Result<(), Strin
                 .iter()
                 .filter(|case| case.denominator == 0)
                 .count(),
-            expected_ids.len() - 44
+            expected_ids.len() - labeled
         );
         assert_eq!(
             population
@@ -727,7 +742,7 @@ fn oracle_committed_rates_keep_labeled_and_unlabeled_cases() -> Result<(), Strin
                 .iter()
                 .filter(|c| c.denominator == 1)
                 .count(),
-            44
+            labeled
         );
         assert!(
             population
