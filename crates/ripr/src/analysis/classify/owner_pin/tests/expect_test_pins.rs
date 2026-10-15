@@ -360,7 +360,7 @@ fn a_golden_path_stays_in_tree_and_fs_renames_refuse() {
     for path in [
         "\"/tmp/w.txt\"",
         "\"~/w.txt\"",
-        "\"C:\\\\w.txt\"",
+        "\"C:w.txt\"",
         "\"\\\\\\\\host\\\\w.txt\"",
         "\"../w.txt\"",
         "\"a/../../w.txt\"",

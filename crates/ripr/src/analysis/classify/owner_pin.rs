@@ -5994,8 +5994,8 @@ pub(in crate::analysis) fn inline_expect_operands(text: &str) -> Option<[String;
 
 /// #6578 review: `expect_file!` resolves its path against the test's own
 /// source directory, so a relative path without `..` names a file under the
-/// crate, which the commit fixes. An absolute path (`/tmp/x`, `C:\\x`, a
-/// UNC `\\\\host`), a home-relative `~` or any `..` segment may name text
+/// crate, which the commit fixes. An absolute path (`/tmp/x`, a drive-letter
+/// path, a UNC `\\\\host`), a home-relative `~` or any `..` segment may name text
 /// produced outside the commit, so it lends no pin. `path` is the literal's
 /// source text, quotes and any raw-string hashes included.
 fn is_in_tree_relative_path(path: &str) -> bool {
