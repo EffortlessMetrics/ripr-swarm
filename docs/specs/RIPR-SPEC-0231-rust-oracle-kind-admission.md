@@ -295,7 +295,19 @@ Two pattern terms are used below.
    the call. Peeling a spelling can raise a doubled negation to the
    comparison's own reading (`assert_eq!((r == Err(E::Bad)) == false as bool,
    false)` and `assert_eq!(&(r == Err(E::Bad)) == &false, false)` assert
-   `r == Err(E::Bad)`).
+   `r == Err(E::Bad)`). A test (a comparison, `||`, `&&`, comparison call or
+   whole `matches!`, through any `!`, `.not()` or literal comparison)
+   compared by an equality macro or a whole `==` or `!=` condition with a
+   side that is no boolean literal caps, because that side may be `false`
+   (`assert_eq!(r == Err(E::Bad), expected)`,
+   `assert_eq!(matches!(r, Err(E::Bad)).eq(&true), expected)`; #8006); a
+   bool value compared with one still pins (`assert_eq!(is_valid(x),
+   expected)`). A negation of a whole boolean assertion condition that holds
+   a `matches!`, through grouping, a one-expression block, `.not()` or a
+   negating literal call on any wrapper, caps (`!(flag || matches!(..))`,
+   `!{ matches!(..) }`, `Some(matches!(..)).unwrap().not()`,
+   `(matches!(..),).0.eq(&false)`; #8006), and a one-expression block
+   passes a pattern through to `^` or `|` (`flag ^ { matches!(..) }`).
    `^` and a
    single `|` over an operand holding a `matches!` or a comparison, in
    operator or call spelling, with no top-level comparison of their own,

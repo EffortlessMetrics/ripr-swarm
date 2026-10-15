@@ -8,9 +8,9 @@ use super::arguments::{
     is_complete_macro_invocation, split_top_level_commas,
 };
 use super::patterns::{
-    boolean_literal_value, has_top_level_disjunction, has_top_level_exact_equality,
-    pattern_conjunct_assertions, pattern_invocation_spans, split_top_level_conjuncts,
-    strip_not_call, top_level_comparison_operator, unwrap_parentheses,
+    boolean_literal_value, contains_negated_pattern, has_top_level_disjunction,
+    has_top_level_exact_equality, pattern_conjunct_assertions, pattern_invocation_spans,
+    split_top_level_conjuncts, strip_not_call, top_level_comparison_operator, unwrap_parentheses,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 
@@ -48,6 +48,9 @@ pub(super) enum BoolOperandReading {
 /// it), or a comparison asserted true that may pin (`assert_eq!(a == b,
 /// true)`).
 pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandReading> {
+    if compares_test_with_non_literal(line) {
+        return Some(BoolOperandReading::Capped);
+    }
     let (operand, mut positive, in_condition) = compared_with_bool_literal(line)?;
     // An operand that feeds a `matches!` to an unread call or operator, in
     // any conjunct, may invert it (`assert_eq!(f(matches!(r, Ok(3))), true)`).
@@ -515,6 +518,52 @@ fn conjunct_states_relation(conjunct: &str) -> bool {
 /// the assertion states that operand is true, and whether the comparison is
 /// a boolean assertion's whole condition rather than an equality macro's
 /// operands.
+/// Whether an equality macro, or a boolean assertion whose whole condition
+/// is an `==` or `!=`, compares a boolean-valued test with a side that is no
+/// boolean literal (`assert_eq!(r == Err(E::Bad), expected)`,
+/// `assert_eq!(matches!(r, Err(E::Bad)).eq(&true), expected)`; #8006). The
+/// other side may be `false`, so the test may be asserted false: like a
+/// `matches!` compared with a non-literal, it fails closed.
+fn compares_test_with_non_literal(line: &str) -> bool {
+    let literal = |side: &str| literal_spelling_value(&mask_comments_and_strings(side)).is_some();
+    let sides = match assertion_comparison(line) {
+        Some(AssertionComparison::Operands { left, right, .. }) => (left, right),
+        Some(AssertionComparison::Condition(condition)) => {
+            let condition = unwrap_parentheses(condition.trim());
+            if has_top_level_disjunction(condition)
+                || split_top_level_conjuncts(condition).len() > 1
+            {
+                return false;
+            }
+            let Some((at, width)) = top_level_comparison_operator(condition) else {
+                return false;
+            };
+            match (condition.get(..at), condition.get(at + width..)) {
+                (Some(left), Some(right)) => (left.to_string(), right.to_string()),
+                _ => return false,
+            }
+        }
+        None => return false,
+    };
+    let (left, right) = (sides.0.trim(), sides.1.trim());
+    !literal(left) && !literal(right) && (is_bool_test(left) || is_bool_test(right))
+}
+
+/// Whether `side`, through any `!`, `.not()` or literal comparison, is a
+/// test: a top-level comparison, `||` or `&&`, a comparison call, or a whole
+/// `matches!`.
+fn is_bool_test(side: &str) -> bool {
+    let (core, _, _) = strip_negations(side);
+    let conjoined = conjoin_single_ampersands(core);
+    let core = conjoined.as_str();
+    top_level_comparison_operator(core).is_some()
+        || has_top_level_relational_operator(core)
+        || has_top_level_disjunction(core)
+        || split_top_level_conjuncts(core).len() > 1
+        || method_comparison(core).is_some()
+        || is_whole_pattern(core)
+}
+
 fn compared_with_bool_literal(line: &str) -> Option<(String, bool, bool)> {
     let literal = |side: &str| literal_spelling_value(&mask_comments_and_strings(side));
     let pick = |left: &str, right: &str, not_equal: bool| match (literal(left), literal(right)) {
@@ -670,6 +719,16 @@ pub(super) fn contains_unread_pattern_operand(line: &str) -> bool {
     if spans.is_empty() {
         return false;
     }
+    // A negation of the whole condition, through any grouping, block,
+    // `.not()` or negating literal call, excludes whatever pattern it holds
+    // (`!(flag || matches!(..))`, `!{ matches!(..) }`,
+    // `Some(matches!(..)).unwrap().not()`, `(matches!(..),).0.eq(&false)`;
+    // #8006). A `!` or `.not()` directly on the pattern is the
+    // negated-pattern rules' to read, so a negated conjunct still drops.
+    let (_, negated, _) = strip_negations(&condition);
+    if negated && !contains_negated_pattern(line) {
+        return true;
+    }
     let head = unwrap_parentheses(masked.trim());
     if ["if", "while", "match"].iter().any(|keyword| {
         head.strip_prefix(keyword)
@@ -682,12 +741,16 @@ pub(super) fn contains_unread_pattern_operand(line: &str) -> bool {
     }
     spans.into_iter().any(|(start, end)| {
         let before = masked.get(..start).unwrap_or_default().trim_end();
+        // Grouping parentheses and one-expression blocks pass the pattern
+        // through (`flag ^ { matches!(..) }`; #8006).
+        let unopened =
+            before.trim_end_matches(|ch: char| ch.is_whitespace() || ch == '(' || ch == '{');
         let after = masked
             .get(end..)
             .unwrap_or_default()
-            .trim_start_matches(|ch: char| ch.is_whitespace() || ch == ')');
-        unread_operator_before(before)
-            || binary_bar_before(before)
+            .trim_start_matches(|ch: char| ch.is_whitespace() || ch == ')' || ch == '}');
+        unread_operator_before(unopened)
+            || binary_bar_before(unopened)
             || in_keyword_condition(before)
             || after.starts_with(['^', '<', '>'])
             || (after.starts_with('|') && !after.starts_with("||"))
