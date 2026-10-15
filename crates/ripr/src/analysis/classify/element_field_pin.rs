@@ -16,74 +16,103 @@
 //! of a plain `#[test]` that cannot leave before it.
 
 use super::super::rust_index::{FunctionSummary, TestSummary};
+use crate::analysis::facts::FunctionContainer;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::Probe;
 use ra_ap_syntax::{
-    AstNode, AstToken,
-    ast::{self, HasArgList, HasGenericArgs, HasName},
+    AstNode, AstToken, SyntaxKind,
+    ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasName},
 };
 
 /// Whether `test` pins the field `probe` constructs inside the array `owner`
-/// returns, through that element alone.
+/// returns, through that element alone. `admitted` is the shared assertion
+/// context validator (macro rebinding, escapes, module composition) for the
+/// assertion on a test line; this reading never stands in for it.
 pub(in crate::analysis) fn observes_returned_element_field(
     probe: &Probe,
     owner: &FunctionSummary,
     test: &TestSummary,
+    admitted: &dyn Fn(usize) -> bool,
 ) -> bool {
+    // A bare `rows(..)` call names a free function; a method owner is
+    // never called that way, so the call would be some other `rows`.
+    if owner.item.container != FunctionContainer::Free {
+        return false;
+    }
     let Some(array) = ReturnedArray::read(probe, owner) else {
         return false;
     };
-    if !test.attrs.iter().all(|attr| attr.trim() == "#[test]") {
+    // Exactly `#[test]`: the lexical fallback and harness-registered tests
+    // carry no attributes, so an empty list cannot vouch for the test.
+    if !matches!(test.attrs.as_slice(), [only] if only.trim() == "#[test]") {
         return false;
     }
-    let Some(parse) = parse_clean_source_file(test.body.as_str()) else {
+    let source = test.body.as_str();
+    let Some(parse) = parse_clean_source_file(source) else {
         return false;
     };
     let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
         return false;
     };
+    if function
+        .attrs()
+        .any(|attr| squeeze(&attr.syntax().text().to_string()) != "#[test]")
+    {
+        return false;
+    }
     let Some(body) = function.body() else {
         return false;
     };
-    // A test that can leave before its assertion, or declares an item that
-    // may shadow the owner, is not read.
-    if body.syntax().descendants().any(|node| {
-        ast::ReturnExpr::can_cast(node.kind())
-            || ast::TryExpr::can_cast(node.kind())
-            || ast::BreakExpr::can_cast(node.kind())
-            || (ast::Item::can_cast(node.kind()) && !ast::MacroCall::can_cast(node.kind()))
+    // A test that may leave early, through syntax or inside any macro's
+    // tokens, or declares an item that may shadow the owner, is not read.
+    if body.syntax().descendants_with_tokens().any(|element| {
+        matches!(
+            element.kind(),
+            SyntaxKind::RETURN_KW
+                | SyntaxKind::BREAK_KW
+                | SyntaxKind::CONTINUE_KW
+                | SyntaxKind::QUESTION
+        ) || element.as_node().is_some_and(|node| {
+            ast::Item::can_cast(node.kind()) && !ast::MacroCall::can_cast(node.kind())
+        })
     }) {
         return false;
     }
     let Some(statements) = body.stmt_list() else {
         return false;
     };
-    let mut receiver: Option<String> = None;
-    for statement in statements.statements() {
-        match statement {
-            ast::Stmt::LetStmt(binding) => {
-                if let Some(name) = owner_binding(&binding, &owner.name) {
-                    if receiver.is_some() || binds_more_than_once(&body, &name) {
-                        return false;
-                    }
-                    receiver = Some(name);
-                }
-            }
-            ast::Stmt::ExprStmt(statement) => {
-                let Some(ast::Expr::MacroExpr(call)) = statement.expr() else {
-                    continue;
-                };
-                let Some(call) = call.macro_call() else {
-                    continue;
-                };
-                if array.pinned_by(&call, receiver.as_deref(), &owner.name) {
-                    return true;
-                }
-            }
-            ast::Stmt::Item(_) => return false,
+    // The pinning assertion runs first: before it the test may only bind
+    // the owner's result, so nothing can rebind the receiver, settle the
+    // test or leave before the assertion is evaluated.
+    let mut rest = statements.statements().peekable();
+    let mut receiver = None;
+    if let Some(ast::Stmt::LetStmt(binding)) = rest.peek()
+        && let Some(name) = owner_binding(binding, &owner.name)
+    {
+        if binds_more_than_once(&body, &name) {
+            return false;
         }
+        receiver = Some(name);
+        rest.next();
     }
-    false
+    let first = match rest.next() {
+        Some(ast::Stmt::ExprStmt(statement)) => statement.expr(),
+        Some(_) => return false,
+        None => statements.tail_expr(),
+    };
+    let Some(ast::Expr::MacroExpr(call)) = first.map(unwrap_parens) else {
+        return false;
+    };
+    let Some(call) = call.macro_call() else {
+        return false;
+    };
+    let Some(line) = source
+        .get(..usize::from(call.syntax().text_range().start()))
+        .map(|before| test.start_line + before.matches('\n').count())
+    else {
+        return false;
+    };
+    array.pinned_by(&call, receiver.as_deref(), &owner.name) && admitted(line)
 }
 
 /// The owner's whole body is one array of struct literals, and the probe
@@ -183,7 +212,15 @@ impl ReturnedArray {
     /// `assert!(recv.iter().any(|r| r.field == literal))` when no other
     /// element can hold that literal.
     fn pinned_by(&self, call: &ast::MacroCall, receiver: Option<&str>, owner: &str) -> bool {
-        let Some(name) = call.path().and_then(|path| path.segment()) else {
+        // A bare macro name only: a qualified path may name any crate's
+        // macro, and the shared validator decides what a bare name binds.
+        let Some(path) = call.path() else {
+            return false;
+        };
+        if path.qualifier().is_some() || path.coloncolon_token().is_some() {
+            return false;
+        }
+        let Some(name) = path.segment() else {
             return false;
         };
         let Some(arguments) = macro_arguments(call) else {
@@ -323,8 +360,22 @@ fn owner_binding(binding: &ast::LetStmt, owner: &str) -> Option<String> {
     is_owner_call(&call, owner).then(|| pattern.name().map(|name| name.text().to_string()))?
 }
 
-/// A direct call of the owner by its own name, or through `super::`/`crate::`.
+/// A direct call of the owner by its own name, or through `super::`/`crate::`,
+/// with literal or path arguments only, so evaluating them cannot leave the
+/// test or settle it before the assertion.
 fn is_owner_call(call: &ast::CallExpr, owner: &str) -> bool {
+    let plain_arguments = call.arg_list().is_some_and(|list| {
+        list.args().all(|argument| {
+            integer_literal(&argument).is_some()
+                || matches!(
+                    unwrap_parens(argument),
+                    ast::Expr::Literal(_) | ast::Expr::PathExpr(_)
+                )
+        })
+    });
+    if !plain_arguments {
+        return false;
+    }
     let Some(ast::Expr::PathExpr(path)) = call.expr() else {
         return false;
     };
@@ -491,7 +542,12 @@ mod tests {
             .iter()
             .find(|test| test.name == "pins")
             .ok_or("test indexed")?;
-        Ok(Some(observes_returned_element_field(&probe(), owner, test)))
+        Ok(Some(observes_returned_element_field(
+            &probe(),
+            owner,
+            test,
+            &|_| true,
+        )))
     }
 
     #[test]
@@ -504,6 +560,7 @@ mod tests {
             "        let rows = rows(30, 3);\n        assert_eq!(33, rows[1].total);",
             "        assert_eq!(rows(30, 3)[1].total, 33);",
             "        assert!(super::rows(30, 3).iter().any(|r| r.total == 33));",
+            "        let rows = crate::rows(30, 3);\n        assert_eq!(rows[1].total, 33)",
         ] {
             if pinned(ARRAY, "#[test]", test)? != Some(true) {
                 return Err(format!("expected a pin: {test}"));
@@ -522,6 +579,20 @@ mod tests {
             if pinned(array, "#[test]", ANY)? != Some(false) {
                 return Err(format!("expected no pin: {array}"));
             }
+        }
+        // A negative sibling literal is compared by value: `-33` equal to
+        // the expected `-33` refuses, `-33` beside an expected 33 does not.
+        let negative = "[Row { total: -33 }, Row { total: a + b + 0 }]";
+        let expect = |literal: &str| {
+            format!(
+                "        let rows = rows(30, 3);\n        assert!(rows.iter().any(|r| r.total == {literal}));"
+            )
+        };
+        if pinned(negative, "#[test]", &expect("-33"))? != Some(false) {
+            return Err("a sibling equal to the negative literal still pins".to_string());
+        }
+        if pinned(negative, "#[test]", &expect("33"))? != Some(true) {
+            return Err("a sibling of the opposite sign refused the pin".to_string());
         }
         Ok(())
     }
@@ -585,6 +656,34 @@ mod tests {
                 "#[test]",
                 "        let other = other(30, 3);\n        assert_eq!(other[1].total, 33);",
             ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        assert_eq!(rows[1].total, 33, \"sum\");",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        fake!(rows);\n        assert_eq!(rows[1].total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        std::process::exit(0);\n        assert_eq!(rows[1].total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        assert_eq!(rows[1].total, 33);\n        settle!(return);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        lenient::assert_eq!(rows[1].total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows({ std::process::exit(0) }, 3);\n        assert_eq!(rows[1].total, 33);",
+            ),
+            (
+                "#[test]",
+                "        assert_eq!(rows(30, { std::process::exit(0) })[1].total, 33);",
+            ),
             ("#[test]\n    #[should_panic]", ANY),
             ("#[test]\n    #[ignore]", ANY),
         ];
@@ -592,6 +691,88 @@ mod tests {
             if pinned(ARRAY, attrs, test)? != Some(false) {
                 return Err(format!("expected no pin: {attrs} {test}"));
             }
+        }
+        Ok(())
+    }
+
+    /// The lexical fallback and harness-registered tests carry no
+    /// attributes, and the shared validator decides for the assertion line.
+    #[test]
+    fn an_unattributed_test_or_a_refused_assertion_context_observes_nothing() -> Result<(), String>
+    {
+        let facts = crate::analysis::rust_index::summarize_file(
+            PathBuf::from("src/lib.rs"),
+            source(ARRAY, "#[test]", ANY),
+        );
+        let owner = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "rows")
+            .ok_or("owner indexed")?;
+        let test = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "pins")
+            .ok_or("test indexed")?;
+        let asked = std::cell::Cell::new(None);
+        let admitted = |line: usize| {
+            asked.set(Some(line));
+            true
+        };
+        if !observes_returned_element_field(&probe(), owner, test, &admitted) {
+            return Err("premise: the attributed test pins the element".to_string());
+        }
+        // `assert!` sits on file line 16, after `let rows = rows(30, 3);`.
+        if asked.get() != Some(16) {
+            return Err(format!(
+                "validator asked for {:?}, not line 16",
+                asked.get()
+            ));
+        }
+        if observes_returned_element_field(&probe(), owner, test, &|_| false) {
+            return Err("a refused assertion context still pins".to_string());
+        }
+        let mut bare = test.clone();
+        bare.attrs.clear();
+        if observes_returned_element_field(&probe(), owner, &bare, &|_| true) {
+            return Err("a test without attributes still pins".to_string());
+        }
+        Ok(())
+    }
+
+    /// A method owner: the test's bare `rows(..)` calls the free function
+    /// of the same name, which is not the owner (#8059 review).
+    #[test]
+    fn a_bare_call_never_reaches_a_method_owner() -> Result<(), String> {
+        let source = "pub struct Row {\n    pub total: u32,\n}\npub struct Table;\n\
+             impl Table {\n    pub fn rows(a: u32, b: u32) -> [Row; 2] {\n        \
+             [Row { total: 0 }, Row { total: a + b + 0 }]\n    }\n}\n\
+             pub fn rows(_: u32, _: u32) -> [Row; 2] { [Row { total: 33 }, Row { total: 33 }] }\n\n\
+             #[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn pins() {\n\
+             ANY\n    }\n}\n"
+            .replace("ANY", ANY);
+        let facts =
+            crate::analysis::rust_index::summarize_file(PathBuf::from("src/lib.rs"), source);
+        let mut probe = probe();
+        probe.location.line = 7;
+        let owner = facts
+            .functions
+            .iter()
+            .find(|function| {
+                function.name == "rows"
+                    && matches!(function.item.container, FunctionContainer::Inherent { .. })
+            })
+            .ok_or("method owner indexed")?;
+        if ReturnedArray::read(&probe, owner).is_none() {
+            return Err("premise: the method's array reads".to_string());
+        }
+        let test = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "pins")
+            .ok_or("test indexed")?;
+        if observes_returned_element_field(&probe, owner, test, &|_| true) {
+            return Err("a bare call credited a method owner".to_string());
         }
         Ok(())
     }

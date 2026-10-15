@@ -617,7 +617,12 @@ impl ClassifiedProbeEvidence {
                 context.related_tests.iter().any(|(test, _)| {
                     !import_defeats(test, &owner.name)
                         && !cross_package_defeats(test, &owner.name)
-                        && observes_returned_element_field(context.probe, owner, test)
+                        && observes_returned_element_field(context.probe, owner, test, &|line| {
+                            test.assertions.iter().any(|assertion| {
+                                assertion.line == line
+                                    && pin_syntax.admits(test, assertion, context.index)
+                            })
+                        })
                 })
             });
         if matches!(context.probe.family, ProbeFamily::FieldConstruction)

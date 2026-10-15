@@ -267,20 +267,30 @@ rejected alternative. Any can be reversed later without touching the rest.
    spec0225-wv-functional-update-default).
 
 8. **Fields of a returned array element (2026-10-15, #7858).** When the
-   owner's whole body is one array literal of struct literals of the same
-   type, none with a `..base`, and the changed field `f` is built in exactly
-   one element `k`, a related test pins `f` of element `k` when all of these
-   hold:
+   owner is a free function whose whole body is one array literal of struct
+   literals of the same type, none with a `..base`, and the changed field
+   `f` is built in exactly one element `k`, a related test pins `f` of
+   element `k` when all of these hold:
 
-   - the receiver is a direct call of the owner by name (or `super::`,
-     `crate::`), or a plain immutable `let` binding of that call that the
-     whole test body binds nowhere else;
-   - the assertion is a top-level statement of a test whose only attribute
-     is `#[test]` and whose body has no `return`, `?`, `break` or item;
+   - the test's only attribute is exactly `#[test]` (an empty attribute
+     list, as the lexical fallback and harness-registered tests carry,
+     gives no credit), and no token of its body, macro arguments included,
+     is `return`, `break`, `continue` or `?`, and it declares no item;
+   - the pinning assertion is the test's first statement (or its tail),
+     preceded at most by a plain immutable `let` of the owner call that the
+     whole test body binds nowhere else, so nothing can rebind the receiver,
+     exit or settle the test before it runs;
+   - the receiver is that binding or a direct call of the owner by name (or
+     `super::`, `crate::`), and the call's arguments are literals or paths;
+   - the macro is a bare `assert_eq!` or `assert!` (a qualified path may be
+     any crate's macro), and the shared assertion-context validator that
+     owner pins use admits the assertion on that line (a local or imported
+     rebinding of the macro, an unresolved module composition or an escape
+     the oracle scan models refuses it);
    - it is `assert_eq!(recv[k].f, literal)`, in either order, with `k` an
      integer literal; or `assert!(recv.iter().any(|r| r.f == literal))`
      (`into_iter`, literal first, no message), where every other element
-     builds `f` from an integer literal different from `literal`.
+     builds `f` from a decimal integer literal different from `literal`.
 
    The membership needs the last condition because it holds through any
    element: with `[Row { total: 33 }, Row { total: a + b }]`,
@@ -288,8 +298,10 @@ rejected alternative. Any can be reversed later without touching the rest.
    element holds, so it observes nothing. A computed sibling, an index of
    another element, `all`, `!=`, an ordering, a negated membership, a typed
    or pattern closure parameter, a `let mut` or shadowed receiver, a
-   `#[should_panic]` or `#[ignore]` test and an assertion message all keep
-   the `FieldValue` missing discriminator. Owner calls get the same
+   `#[should_panic]` or `#[ignore]` test, an assertion message, a statement
+   before the assertion (a macro that may rebind the receiver,
+   `std::process::exit`), a locally defined `assert_eq!` and a method owner
+   all keep the `FieldValue` missing discriminator. Owner calls get the same
    same-name import and cross-package defeats as reveal's owner pins. A
    `vec![..]` owner, a `let r = &rows[1]` or `let [_, r] = rows` read and a
    collected scalar owner are not covered. Rejected: crediting any

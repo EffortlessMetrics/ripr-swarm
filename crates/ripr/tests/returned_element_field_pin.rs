@@ -13,6 +13,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// `src/lib.rs` with the returned array on line 6, built from `first` and
 /// the changed `total: a + b + 0`, then one test with `body`.
 fn source(first: &str, body: &str) -> String {
+    source_with(first, "", body)
+}
+
+/// [`source`] with `items` declared in the test module before the test.
+fn source_with(first: &str, items: &str, body: &str) -> String {
     format!(
         "pub struct Row {{
     pub total: u32,
@@ -25,7 +30,7 @@ pub fn rows(a: u32, b: u32) -> [Row; 2] {{
 #[cfg(test)]
 mod tests {{
     use super::*;
-
+{items}
     #[test]
     fn rows_carry_the_sum() {{
 {body}
@@ -103,7 +108,11 @@ impl Drop for TempRepo {
 /// The class of the `field_construction` finding on line 6. The premise is
 /// that the finding exists and the related test reaches the owner.
 fn field_class(first: &str, body: &str) -> Result<ExposureClass, String> {
-    let findings = TempRepo::create(&source(first, body), &diff(first))?.findings()?;
+    field_class_with(first, "", body)
+}
+
+fn field_class_with(first: &str, items: &str, body: &str) -> Result<ExposureClass, String> {
+    let findings = TempRepo::create(&source_with(first, items, body), &diff(first))?.findings()?;
     let field = findings
         .iter()
         .find(|finding| {
@@ -152,6 +161,37 @@ fn a_membership_or_read_another_element_may_satisfy_keeps_the_gap() -> Result<()
     ] {
         assert_eq!(
             field_class(first, body)?,
+            ExposureClass::WeaklyExposed,
+            "{label}"
+        );
+    }
+    Ok(())
+}
+
+/// Each of these tests passes without running a check of the changed
+/// element, so none observes it (#8059 review).
+#[test]
+fn a_test_that_may_skip_or_fake_the_assertion_keeps_the_gap() -> Result<(), String> {
+    const INDEX: &str = "        assert_eq!(rows[1].total, 33);";
+    for (items, body, label) in [
+        (
+            "    macro_rules! fake {\n        ($n:ident) => { let $n = [Row { total: 33 }, Row { total: 33 }]; };\n    }\n",
+            format!("        let rows = rows(1, 1);\n        fake!(rows);\n{INDEX}"),
+            "a macro statement rebinds the receiver",
+        ),
+        (
+            "    macro_rules! assert_eq {\n        ($a:expr, $b:expr) => { let _ = (&$a, &$b); };\n    }\n",
+            format!("        let rows = rows(1, 1);\n{INDEX}"),
+            "a local assert_eq! that checks nothing",
+        ),
+        (
+            "",
+            format!("        let rows = rows(1, 1);\n        std::process::exit(0);\n{INDEX}"),
+            "process::exit before the assertion",
+        ),
+    ] {
+        assert_eq!(
+            field_class_with("0", items, &body)?,
             ExposureClass::WeaklyExposed,
             "{label}"
         );
