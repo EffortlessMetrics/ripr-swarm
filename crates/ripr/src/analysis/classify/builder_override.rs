@@ -807,9 +807,11 @@ const MAX_KEYED_HOPS: usize = 4;
 /// `field` to an empty std collection (`BTreeMap::new()`,
 /// `HashMap::default()`, `Default::default()`), or leaving it to a
 /// `..Self::default()` spread; or a delegation (`Self::default()`,
-/// `Shelf::with_capacity(4)`) to a constructor that does. `default` resolves
-/// to an inherent `default`, then a manual `impl Default`, then a derived
-/// `Default` whose field type is such a collection. A nested path, a
+/// `Shelf::with_capacity(4)`) to a constructor that does. The field must be
+/// declared as such a collection. `default` (`T::default()`) resolves to an
+/// inherent `default`, then a manual `impl Default`, then a derived
+/// `Default`; [`TRAIT_DEFAULT`] (`Default::default()`) skips the inherent
+/// method, which the trait call never runs. A nested path, a
 /// statement in the body, an unresolved or ambiguous constructor and
 /// anything else give `false`.
 pub(in crate::analysis) fn constructor_starts_empty(
@@ -854,6 +856,10 @@ fn declared_structs(index: &RustIndex, impl_type: &str) -> Option<Vec<ast::Struc
     Some(found)
 }
 
+/// The `ctor` naming `Default::default()`, which always runs the trait
+/// implementation even when the type also has an inherent `default`.
+pub(in crate::analysis) const TRAIT_DEFAULT: &str = "Default::default";
+
 fn starts_empty_within(
     index: &RustIndex,
     impl_type: &str,
@@ -864,7 +870,7 @@ fn starts_empty_within(
     let Some(hops) = hops.checked_sub(1) else {
         return false;
     };
-    if ctor != "default" {
+    if ctor != "default" && ctor != TRAIT_DEFAULT {
         return inherent_method_body(index, impl_type, ctor)
             .is_some_and(|body| body_starts_empty(index, impl_type, body, field, hops));
     }
@@ -883,8 +889,14 @@ fn starts_empty_within(
             .map(|function| function.body.as_str())
             .collect::<Vec<_>>()
     };
-    // An inherent `default` shadows the trait method at `T::default()`.
-    match (candidates(true).as_slice(), candidates(false).as_slice()) {
+    // An inherent `default` shadows the trait method at `T::default()`, but
+    // never at `Default::default()`.
+    let inherent = if ctor == TRAIT_DEFAULT {
+        Vec::new()
+    } else {
+        candidates(true)
+    };
+    match (inherent.as_slice(), candidates(false).as_slice()) {
         ([body], _) | ([], [body]) => body_starts_empty(index, impl_type, body, field, hops),
         ([], []) => derived_default_starts_empty(index, impl_type, field),
         _ => false,
@@ -933,17 +945,26 @@ fn body_starts_empty(
             if let Some(entry) = named.next() {
                 // A shorthand `Self { stock }` reads a local, never an empty
                 // collection path.
+                // `Default::default()` builds whatever the field's type
+                // defaults to, so the declaration must name a std collection.
                 return entry
                     .expr()
-                    .is_some_and(|value| is_empty_collection(&compact(value.syntax())));
+                    .is_some_and(|value| is_empty_collection(&compact(value.syntax())))
+                    && field_declared_as_std_collection(index, impl_type, field);
             }
             fields.spread().is_some_and(|spread| {
                 let spread = compact(spread.syntax());
-                (spread == "Default::default()"
-                    || spread
-                        .strip_suffix("::default()")
-                        .is_some_and(names_self_type))
-                    && starts_empty_within(index, impl_type, "default", field, hops)
+                let ctor = if spread == "Default::default()" {
+                    TRAIT_DEFAULT
+                } else if spread
+                    .strip_suffix("::default()")
+                    .is_some_and(names_self_type)
+                {
+                    "default"
+                } else {
+                    return false;
+                };
+                starts_empty_within(index, impl_type, ctor, field, hops)
             })
         }
         Some(ast::Expr::CallExpr(call)) => {
@@ -963,9 +984,7 @@ fn body_starts_empty(
 /// Whether `impl_type`, declared once in the index, derives `Default` and
 /// declares `field` as a std map or set, whose derived default is empty.
 fn derived_default_starts_empty(index: &RustIndex, impl_type: &str, field: &str) -> bool {
-    let Ok([item]) =
-        <[ast::Struct; 1]>::try_from(declared_structs(index, impl_type).unwrap_or_default())
-    else {
+    let Some(item) = declared_once(index, impl_type) else {
         return false;
     };
     let derives_default = item.attrs().any(|attr| {
@@ -983,18 +1002,32 @@ fn derived_default_starts_empty(index: &RustIndex, impl_type: &str, field: &str)
                 .split(',')
                 .any(|name| name == "Default" || name.ends_with("::Default"))
     });
+    derives_default && struct_declares_std_collection(&item, field)
+}
+
+/// The one `struct impl_type` in the index, if exactly one parses.
+fn declared_once(index: &RustIndex, impl_type: &str) -> Option<ast::Struct> {
+    let [item] = <[ast::Struct; 1]>::try_from(declared_structs(index, impl_type)?).ok()?;
+    Some(item)
+}
+
+/// Whether `impl_type`, declared once, declares `field` as a std map or set.
+fn field_declared_as_std_collection(index: &RustIndex, impl_type: &str, field: &str) -> bool {
+    declared_once(index, impl_type).is_some_and(|item| struct_declares_std_collection(&item, field))
+}
+
+fn struct_declares_std_collection(item: &ast::Struct, field: &str) -> bool {
     let Some(ast::FieldList::RecordFieldList(fields)) = item.field_list() else {
         return false;
     };
-    derives_default
-        && fields.fields().any(|entry| {
-            entry.name().is_some_and(|name| name.text() == field)
-                && entry.ty().is_some_and(|ty| {
-                    let ty = ty.syntax().text().to_string();
-                    let name = ty.split('<').next().unwrap_or_default().trim();
-                    EMPTY_COLLECTIONS.contains(&name.rsplit("::").next().unwrap_or_default())
-                })
-        })
+    fields.fields().any(|entry| {
+        entry.name().is_some_and(|name| name.text() == field)
+            && entry.ty().is_some_and(|ty| {
+                let ty = ty.syntax().text().to_string();
+                let name = ty.split('<').next().unwrap_or_default().trim();
+                EMPTY_COLLECTIONS.contains(&name.rsplit("::").next().unwrap_or_default())
+            })
+    })
 }
 
 /// Std maps and sets, whose `new()` and `default()` are empty. Matched by
@@ -1136,8 +1169,10 @@ fn method_touches_field_read_only(
 /// result (`SEED`, `self.base`, `five()`, `self.m = Self::defaults()`)
 /// may hold the expected value under another name. A `mut` or shadowed
 /// parameter (`let qty = SEED;`) does not count, and a helper is followed
-/// only when every argument is a parameter or a literal. The test passes
-/// each parameter a literal other than `expected`. An unresolved or ambiguous
+/// only when every argument is a parameter or a literal. The method and its
+/// helpers may write the field at most once, with no macro, loop or closure
+/// in any body. The test passes each parameter a literal other than
+/// `expected`. An unresolved or ambiguous
 /// method fails closed. A value summed from several such calls is not
 /// detected (#7988).
 pub(in crate::analysis) fn method_cannot_store(
@@ -1147,15 +1182,28 @@ pub(in crate::analysis) fn method_cannot_store(
     field: &str,
     expected: &str,
 ) -> bool {
-    cannot_store_within(index, impl_type, method, field, expected, MAX_KEYED_HOPS)
+    let writes = std::cell::Cell::new(0);
+    cannot_store_within(
+        index,
+        impl_type,
+        method,
+        field,
+        expected,
+        &writes,
+        MAX_KEYED_HOPS,
+    )
 }
 
+/// `writes` counts the field writes seen across the method and its helpers:
+/// two (`+= 2; += qty`, or one helper called twice) can sum to the expected
+/// value from literals that each differ from it.
 fn cannot_store_within(
     index: &RustIndex,
     impl_type: &str,
     method: &str,
     field: &str,
     expected: &str,
+    writes: &std::cell::Cell<usize>,
     hops: usize,
 ) -> bool {
     let Some(hops) = hops.checked_sub(1) else {
@@ -1193,6 +1241,21 @@ fn cannot_store_within(
                 .is_some_and(|name| parameters.iter().any(|p| p.as_str() == name.text()))
         });
     if shadows_parameter {
+        return false;
+    }
+    // A macro (`shadow!(qty)`) can rebind a parameter out of the parser's
+    // sight, and a loop or closure can repeat a write.
+    let opaque_or_repeating = block.syntax().descendants().any(|node| {
+        matches!(
+            node.kind(),
+            SyntaxKind::MACRO_CALL
+                | SyntaxKind::FOR_EXPR
+                | SyntaxKind::WHILE_EXPR
+                | SyntaxKind::LOOP_EXPR
+                | SyntaxKind::CLOSURE_EXPR
+        )
+    });
+    if opaque_or_repeating {
         return false;
     }
     // `-5` lexes as `-` and `5`; compare magnitudes so the sign never hides
@@ -1236,6 +1299,15 @@ fn cannot_store_within(
         let name_len = member.find(|ch: char| !ident(ch)).unwrap_or(member.len());
         let (name, after) = member.split_at(name_len);
         if name == field {
+            if [".insert", ".entry"]
+                .iter()
+                .any(|write| after.starts_with(write))
+            {
+                writes.set(writes.get() + 1);
+                if writes.get() > 1 {
+                    return false;
+                }
+            }
             return field_write_takes_parameter(after, &parameters);
         }
         if !after.starts_with('(') {
@@ -1249,7 +1321,7 @@ fn cannot_store_within(
                 let argument = argument.trim().trim_start_matches('&');
                 literal_value(argument).is_some() || parameter_value(argument, &parameters)
             })
-        }) && cannot_store_within(index, impl_type, name, field, expected, hops)
+        }) && cannot_store_within(index, impl_type, name, field, expected, writes, hops)
     })
 }
 
@@ -1873,8 +1945,16 @@ mod tests {
             // No `Default` at all, and a constructor that calls itself.
             ("", map, "pub fn new() -> Self { Self::default() }", "new"),
             ("", map, "pub fn new() -> Self { Self::new() }", "new"),
-            // A derived Default over a field that is not a std collection.
+            // A derived Default over a field that is not a std collection, or
+            // `Default::default()` / a std constructor for a field that is not
+            // one (a custom map's default may be seeded).
             (", Default", "stock: Stock", "", "default"),
+            (
+                "",
+                "stock: Stock",
+                "pub fn new() -> Self { Self { stock: Default::default(), low: 1 } }",
+                "new",
+            ),
             // No such constructor.
             (", Default", map, "", "with"),
         ] {
@@ -1907,13 +1987,15 @@ mod tests {
             &seeding_default("pub fn new(low: u32) -> Self { Self { low, ..Self::default() } }"),
             "new"
         ));
-        // An inherent `default` shadows the trait's at `Shelf::default()`.
-        assert!(starts_empty(
-            &seeding_default(
-                "pub fn default() -> Self { Self { stock: BTreeMap::new(), low: 1 } }"
-            ),
-            "default"
-        ));
+        // An inherent `default` shadows the trait's at `Shelf::default()`,
+        // but `Default::default()` (directly or as a spread) runs the trait's.
+        let both = seeding_default(
+            "pub fn default() -> Self { Self { stock: BTreeMap::new(), low: 1 } }\n\
+             pub fn spread(low: u32) -> Self { Self { low, ..Default::default() } }",
+        );
+        assert!(starts_empty(&both, "default"));
+        assert!(!starts_empty(&both, TRAIT_DEFAULT));
+        assert!(!starts_empty(&both, "spread"));
         assert!(!starts_empty(
             &manual(
                 "let mut s = Self { stock: BTreeMap::new() }; s.stock.insert(\"K\".into(), 5); s"
@@ -1945,7 +2027,7 @@ mod tests {
             "pub fn prime(&mut self, sku: &str, qty: u32) { *self.stock.entry(sku.to_string()).or_insert(0) += qty; self.log.push(qty); }",
             "pub fn prime(&mut self, qty: u32) { self.stock.insert(\"K\".into(), qty.clone()); self.note(); }\nfn note(&mut self) { self.log.push(1); }",
             "pub fn prime(&mut self, k: &str, q: u32) { *self.stock.entry(k.into()).or_default() += q; }",
-            "pub fn prime(&mut self, k: &str, q: u32) { self.put(k, q); self.put(\"K\", 1); }\nfn put(&mut self, k: &str, v: u32) { self.stock.insert(k.into(), v); }",
+            "pub fn prime(&mut self, k: &str, q: u32) { self.put(k, q); }\nfn put(&mut self, k: &str, v: u32) { self.stock.insert(k.into(), v); }",
         ] {
             assert!(cannot_store(methods, "7"), "{methods}");
         }
@@ -2035,6 +2117,28 @@ mod tests {
             ),
             (
                 "pub fn prime(&mut self, k: &str, q: u32) { *self.stock.entry(k.into()).or_insert(2) += q; }",
+                "7",
+            ),
+            // Two writes can sum to the expected value; a macro can rebind a
+            // parameter unseen; a loop or closure can repeat a write.
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { self.bump(k, 2); self.bump(k, q); }\nfn bump(&mut self, k: &str, v: u32) { *self.stock.entry(k.into()).or_insert(0) += v; }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, a: u32, b: u32) { *self.stock.entry(k.into()).or_insert(0) += a; *self.stock.entry(k.into()).or_insert(0) += b; }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { shadow!(q); self.stock.insert(k.into(), q); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { for _ in 0..2 { *self.stock.entry(k.into()).or_insert(0) += q; } }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { let mut f = || self.put(k, q); f(); f(); }\nfn put(&mut self, k: &str, v: u32) { *self.stock.entry(k.into()).or_insert(0) += v; }",
                 "7",
             ),
             ("", "7"),

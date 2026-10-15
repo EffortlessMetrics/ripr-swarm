@@ -751,7 +751,7 @@ fn binding_starts_without_expected(
         _ => return false,
     };
     let constructor = if annotated && initializer == "Default::default()" {
-        Some("default")
+        Some(super::builder_override::TRAIT_DEFAULT)
     } else {
         initializer
             .strip_prefix(call.impl_type)

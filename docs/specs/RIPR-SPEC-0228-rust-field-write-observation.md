@@ -351,10 +351,13 @@ changes `self.count += 2` to `self.count += 1`.
   `let s: Shelf = Default::default()`, where the constructor body is one
   struct literal setting the field to an empty std map or set
   (`BTreeMap::new()`, `HashMap::default()`, `Default::default()`) or
-  leaving it to `..Self::default()`, or a delegation such as
-  `Self::default()` to a constructor that does; `default` resolves to an
-  inherent `default`, a manual `impl Default`, or a derived `Default` over
-  a std map or set field (`BTreeMap`, `HashMap`, `BTreeSet`, `HashSet`).
+  leaving it to a `..Self::default()` or `..Default::default()` spread, or
+  a delegation such as `Self::default()` to a constructor that does; the
+  field must be declared as a std map or set (`BTreeMap`, `HashMap`,
+  `BTreeSet`, `HashSet`), since a custom map's `Default` may seed it.
+  `Shelf::default()` resolves to an inherent `default`, then a manual
+  `impl Default`, then a derived `Default`; `Default::default()` always
+  runs the trait implementation, so it skips the inherent method.
   A struct literal in the test, a seeding
   constructor (`Shelf::with("K", 5)`) or any other initializer fails
   closed, and so does a type name declared by more than one `struct` in
@@ -383,8 +386,10 @@ changes `self.count += 2` to `self.count += 1`.
   writes it as `self.<path>.insert(k, v)` or
   `*self.<path>.entry(k).or_insert(0) += v` (or `.or_default()`) with `v` a
   parameter that is neither `mut` nor rebound in the body; a helper is
-  followed only when every argument it receives is a parameter or a literal
-  (`method_cannot_store` in `builder_override.rs`). A constant, another
+  followed only when every argument it receives is a parameter or a literal;
+  the method and its helpers write the field at most once, and no body
+  holds a macro call, loop or closure (`method_cannot_store` in
+  `builder_override.rs`). A constant, another
   field or a function result in value position (`SEED`, `self.base`,
   `five()`, `self.<path> = Self::defaults()`, `let qty = SEED;`,
   `self.put(k, SEED)`) or a nonzero `or_insert` start fails closed: `s.set("K", 5)`,
