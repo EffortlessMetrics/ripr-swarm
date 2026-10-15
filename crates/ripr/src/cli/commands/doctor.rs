@@ -805,10 +805,7 @@ fn language_runtime_probes_for_detected(
         // --features lang-rust (#2418).
         #[cfg(feature = "lang-python")]
         {
-            if analysis::detect_python_test_frameworks(root)
-                .iter()
-                .any(|framework| *framework == "pytest")
-            {
+            if analysis::detect_python_test_frameworks(root).contains(&"pytest") {
                 probes.push((
                     "python",
                     "pytest",
