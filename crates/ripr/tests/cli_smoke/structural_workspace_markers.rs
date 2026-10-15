@@ -2,6 +2,7 @@
 use super::{run_command_with_env, run_git, unique_external_workspace};
 use serde_json::Value;
 use std::fs;
+#[cfg(feature = "lang-rust")]
 use std::path::Path;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -145,11 +146,19 @@ fn scalar_marker_preserves_cargo_uv_git_and_unmarked_root_boundaries() -> TestRe
             member.join("package.json"),
             format!(r#"{{"workspaces":{workspaces}}}"#),
         )?;
-        fs::write(cwd.join("lib.rs"), "pub fn price() -> u32 { 2 }\n")?;
+        // The unmarked fallback selects cwd itself; keep its subject under
+        // src/ so the unchanged production source-role rule admits it.
+        let source_file = if git {
+            cwd.join("lib.rs")
+        } else {
+            fs::create_dir_all(cwd.join("src"))?;
+            cwd.join("src/lib.rs")
+        };
+        fs::write(source_file, "pub fn price() -> u32 { 2 }\n")?;
         let source = if git {
             "packages/member/src/lib.rs"
         } else {
-            "lib.rs"
+            "src/lib.rs"
         };
         let diff = sandbox.join("change.diff");
         fs::write(
