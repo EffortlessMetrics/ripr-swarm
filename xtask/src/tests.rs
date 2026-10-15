@@ -48781,6 +48781,118 @@ fn write_symlink_license_txt_vsix(path: &std::path::Path, body: &str) -> Result<
     Ok(())
 }
 
+/// POSIX / APPNOTE constants used only to craft typed-entry fixtures. The
+/// zip crate's public writer cannot set Unix type bits or the DOS directory
+/// flag on a slash-less name, so tests write a regular LICENSE.txt member
+/// and patch the central-directory metadata.
+const UNIX_S_IFDIR: u32 = 0o040_000;
+const UNIX_S_IFIFO: u32 = 0o010_000;
+const UNIX_S_IFREG: u32 = 0o100_000;
+const DOS_DIRECTORY_ATTRIBUTE: u32 = 0x10;
+const DOS_ARCHIVE_ATTRIBUTE: u32 = 0x20;
+const ZIP_SYSTEM_DOS: u8 = 0;
+const ZIP_SYSTEM_UNIX: u8 = 3;
+const ZIP_CENTRAL_HEADER_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x01, 0x02];
+const ZIP_CENTRAL_VERSION_MADE_BY_OFFSET: usize = 4;
+const ZIP_CENTRAL_EXTERNAL_ATTRIBUTES_OFFSET: usize = 38;
+
+fn write_typed_license_txt_vsix(
+    path: &std::path::Path,
+    body: &str,
+    system: u8,
+    external_attributes: u32,
+) -> Result<(), String> {
+    write_packaging_test_vsix(path, &[("extension/LICENSE.txt", body)])?;
+    let central_header_start = {
+        let file = fs::File::open(path)
+            .map_err(|err| format!("failed to reopen {}: {err}", path.display()))?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+        archive
+            .by_name("extension/LICENSE.txt")
+            .map_err(|err| format!("typed LICENSE.txt fixture missing member: {err}"))?
+            .central_header_start()
+    };
+    let mut bytes =
+        fs::read(path).map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let start = usize::try_from(central_header_start).map_err(|err| {
+        format!("typed LICENSE.txt fixture central-directory offset overflow: {err}")
+    })?;
+    let version_end = start
+        .checked_add(ZIP_CENTRAL_VERSION_MADE_BY_OFFSET + 2)
+        .ok_or_else(|| "typed LICENSE.txt fixture central-directory offset overflow".to_string())?;
+    let attributes_end = start
+        .checked_add(ZIP_CENTRAL_EXTERNAL_ATTRIBUTES_OFFSET + 4)
+        .ok_or_else(|| "typed LICENSE.txt fixture central-directory offset overflow".to_string())?;
+    if bytes.get(start..start + 4) != Some(ZIP_CENTRAL_HEADER_SIGNATURE.as_slice()) {
+        return Err("typed LICENSE.txt fixture lost its central-directory header".to_string());
+    }
+    {
+        let Some(version_bytes) =
+            bytes.get_mut(start + ZIP_CENTRAL_VERSION_MADE_BY_OFFSET..version_end)
+        else {
+            return Err("typed LICENSE.txt fixture is shorter than version-made-by".to_string());
+        };
+        let current: [u8; 2] = version_bytes
+            .try_into()
+            .map_err(|_| "typed LICENSE.txt fixture version-made-by is truncated".to_string())?;
+        let patched = (u16::from(system) << 8) | (u16::from_le_bytes(current) & 0x00ff);
+        version_bytes.copy_from_slice(&patched.to_le_bytes());
+    }
+    let Some(attribute_bytes) =
+        bytes.get_mut(start + ZIP_CENTRAL_EXTERNAL_ATTRIBUTES_OFFSET..attributes_end)
+    else {
+        return Err("typed LICENSE.txt fixture is shorter than external attributes".to_string());
+    };
+    attribute_bytes.copy_from_slice(&external_attributes.to_le_bytes());
+    fs::write(path, bytes).map_err(|err| format!("failed to patch {}: {err}", path.display()))?;
+    assert_typed_license_txt_fixture(path, system, external_attributes)
+}
+
+fn assert_typed_license_txt_fixture(
+    path: &std::path::Path,
+    system: u8,
+    external_attributes: u32,
+) -> Result<(), String> {
+    let file = fs::File::open(path)
+        .map_err(|err| format!("failed to inspect {}: {err}", path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|err| format!("failed to parse typed fixture {}: {err}", path.display()))?;
+    let member = archive
+        .by_name("extension/LICENSE.txt")
+        .map_err(|err| format!("typed LICENSE.txt fixture missing member: {err}"))?;
+    if !member.is_file() {
+        return Err(
+            "typed LICENSE.txt fixture must keep a slash-less name so zip::is_file stays true"
+                .to_string(),
+        );
+    }
+    let actual_attributes =
+        super::read_zip_central_external_attributes(path, member.central_header_start())?;
+    if actual_attributes != external_attributes {
+        return Err(format!(
+            "typed LICENSE.txt fixture attributes {actual_attributes:#010x} != {external_attributes:#010x}"
+        ));
+    }
+    let Some(mode) = member.unix_mode() else {
+        if system == ZIP_SYSTEM_DOS && external_attributes == 0 {
+            return Ok(());
+        }
+        return Err(
+            "typed LICENSE.txt fixture lost unix_mode after the metadata patch".to_string(),
+        );
+    };
+    if system == ZIP_SYSTEM_UNIX {
+        let expected_mode = external_attributes >> 16;
+        if mode != expected_mode {
+            return Err(format!(
+                "typed Unix LICENSE.txt fixture unix_mode {mode:#o} != {expected_mode:#o}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn vsix_entry(name: &str, size: u64) -> super::VsixEntry {
     super::VsixEntry {
         name: name.to_string(),
@@ -49125,6 +49237,115 @@ fn vsix_license_notices_reject_symlink_typed_license_txt() -> Result<(), String>
         };
         assert!(error.contains("extension/LICENSE.txt"), "{error}");
         assert!(error.contains("not a regular file"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_unix_directory_typed_license_txt() -> Result<(), String> {
+    with_temp_cwd("vsix-license-unix-dir", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("unix-dir.vsix");
+        let license_txt = packaged_license_txt(COMPLETE_MIT_NOTICE, COMPLETE_APACHE_NOTICE);
+        write_typed_license_txt_vsix(
+            &vsix,
+            &license_txt,
+            ZIP_SYSTEM_UNIX,
+            (UNIX_S_IFDIR | 0o755) << 16,
+        )?;
+        let Err(error) = super::verify_packaged_vsix_license_notices(&vsix, &notices) else {
+            return Err("a LICENSE.txt member marked Unix directory must be rejected".to_string());
+        };
+        assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        assert!(error.contains("not a regular file"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_fifo_typed_license_txt() -> Result<(), String> {
+    with_temp_cwd("vsix-license-fifo", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("fifo.vsix");
+        let license_txt = packaged_license_txt(COMPLETE_MIT_NOTICE, COMPLETE_APACHE_NOTICE);
+        write_typed_license_txt_vsix(
+            &vsix,
+            &license_txt,
+            ZIP_SYSTEM_UNIX,
+            (UNIX_S_IFIFO | 0o644) << 16,
+        )?;
+        let Err(error) = super::verify_packaged_vsix_license_notices(&vsix, &notices) else {
+            return Err("a LICENSE.txt member marked FIFO must be rejected".to_string());
+        };
+        assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        assert!(error.contains("not a regular file"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_dos_directory_typed_license_txt() -> Result<(), String> {
+    with_temp_cwd("vsix-license-dos-dir", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("dos-dir.vsix");
+        let license_txt = packaged_license_txt(COMPLETE_MIT_NOTICE, COMPLETE_APACHE_NOTICE);
+        write_typed_license_txt_vsix(&vsix, &license_txt, ZIP_SYSTEM_DOS, DOS_DIRECTORY_ATTRIBUTE)?;
+        let Err(error) = super::verify_packaged_vsix_license_notices(&vsix, &notices) else {
+            return Err("a LICENSE.txt member marked DOS directory must be rejected".to_string());
+        };
+        assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        assert!(error.contains("not a regular file"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_dos_directory_bit_on_unix_regular_mode() -> Result<(), String> {
+    with_temp_cwd("vsix-license-dos-dir-on-reg", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("dos-dir-on-reg.vsix");
+        let license_txt = packaged_license_txt(COMPLETE_MIT_NOTICE, COMPLETE_APACHE_NOTICE);
+        // High bits look like a regular Unix file; the DOS directory bit is
+        // still enough to reject. zip::unix_mode prefers the high bits.
+        write_typed_license_txt_vsix(
+            &vsix,
+            &license_txt,
+            ZIP_SYSTEM_DOS,
+            (UNIX_S_IFREG | 0o644) << 16 | DOS_DIRECTORY_ATTRIBUTE,
+        )?;
+        let Err(error) = super::verify_packaged_vsix_license_notices(&vsix, &notices) else {
+            return Err(
+                "a LICENSE.txt member with DOS directory metadata must be rejected".to_string(),
+            );
+        };
+        assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        assert!(error.contains("not a regular file"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_accept_non_unix_and_permission_only_license_txt() -> Result<(), String> {
+    with_temp_cwd("vsix-license-ordinary-types", |root| {
+        let notices = complete_license_notices();
+        let license_txt = packaged_license_txt(COMPLETE_MIT_NOTICE, COMPLETE_APACHE_NOTICE);
+        let cases = [
+            ("zero-attrs.vsix", ZIP_SYSTEM_DOS, 0),
+            ("perm-only.vsix", ZIP_SYSTEM_UNIX, 0o644 << 16),
+            ("dos-archive.vsix", ZIP_SYSTEM_DOS, DOS_ARCHIVE_ATTRIBUTE),
+            (
+                "unix-reg.vsix",
+                ZIP_SYSTEM_UNIX,
+                (UNIX_S_IFREG | 0o644) << 16,
+            ),
+        ];
+        for (name, system, attributes) in cases {
+            let vsix = root.join(name);
+            write_typed_license_txt_vsix(&vsix, &license_txt, system, attributes)?;
+            super::verify_packaged_vsix_license_notices(&vsix, &notices).map_err(|err| {
+                format!("{name} must stay accepted as a regular LICENSE.txt: {err}")
+            })?;
+        }
         Ok(())
     })
 }

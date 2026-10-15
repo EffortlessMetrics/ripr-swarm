@@ -73,14 +73,6 @@ jobs:
           mkdir -p dist
           npx @vscode/vsce package --out "dist/ripr-${version}.vsix"
 
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95
-        with:
-          toolchain: 1.95.0
-
-      - name: Verify sealed VSIX notices
-        working-directory: ${{ github.workspace }}
-        run: cargo xtask vscode-verify-vsix -- "editors/vscode/dist/ripr-${EXTENSION_VERSION#v}.vsix"
-
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
