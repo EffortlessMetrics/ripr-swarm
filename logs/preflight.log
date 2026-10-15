@@ -1,0 +1,8 @@
+   Compiling serde_core v1.0.229
+   Compiling serde_json v1.0.151
+   Compiling memchr v2.8.3
+   Compiling repo-policy v0.1.0 (/workspace/qualification-7915/repo/tools/repo-policy)
+    Finished `dev` profile [unoptimized] target(s) in 2.92s
+     Running `/workspace/qualification-7915/target/debug/repo-policy preflight`
+check-workflows: pass (target/ripr/reports/workflows.md)
+check-agent-skills: pass (target/ripr/reports/agent-skills.md)

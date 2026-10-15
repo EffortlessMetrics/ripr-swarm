@@ -1,0 +1,25 @@
+   Compiling xtask v0.1.0 (/workspace/qualification-7915/repo/xtask)
+    Finished `dev` profile [unoptimized] target(s) in 38.92s
+     Running `/workspace/qualification-7915/target/debug/xtask worktree doctor`
+# ripr worktree doctor
+
+Status: fail
+
+Checks:
+
+- branch is not dirty main
+- branch is current with origin/main
+- generated badge endpoints are not dirty in ordinary work
+- generated target/sample artifacts are not dirty
+- broad source-of-truth diffs have an obvious work item marker
+
+Errors:
+
+- worktree is on a detached HEAD; start PR work from a named branch based on origin/main
+
+Next actions:
+
+- inspect the findings above and rerun `cargo xtask worktree doctor`
+
+xtask: worktree doctor found blocking issues; see target/ripr/reports/worktree-doctor.md
+worktree is on a detached HEAD; start PR work from a named branch based on origin/main

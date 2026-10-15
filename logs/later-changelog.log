@@ -1,0 +1,3 @@
+    Finished `dev` profile [unoptimized] target(s) in 0.11s
+     Running `/workspace/qualification-7915/target/debug/xtask check-changelog-fragments`
+check-changelog-fragments: pass (target/ripr/reports/changelog-fragments.md)

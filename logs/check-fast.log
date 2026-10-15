@@ -1,0 +1,14 @@
+    Finished `dev` profile [unoptimized] target(s) in 0.16s
+     Running `/workspace/qualification-7915/target/debug/xtask check-fast`
+$ cargo fmt --check
+check-static-language: pass (target/ripr/reports/static-language.md)
+check-command-catalog: pass (target/ripr/reports/command-catalog.md)
+check-support-tiers: pass (target/ripr/reports/support-tiers.md)
+check-workflows: pass (target/ripr/reports/workflows.md)
+check-covered-by: pass (target/ripr/reports/covered-by.md)
+check-process-policy: pass (target/ripr/reports/process-policy.md)
+check-network-policy: pass (target/ripr/reports/network-policy.md)
+check-generated: pass (target/ripr/reports/generated.md)
+check-generated-clean: pass (target/ripr/reports/generated-clean.md)
+check-lint-policy: pass (target/ripr/reports/lint-policy.md)
+check-fast: ran 11 gate(s), skipped 5 (check-no-panic-family, check-allow-attributes, check-file-policy, clippy, check-fixture-contracts), base=origin/main, 4 file(s) changed

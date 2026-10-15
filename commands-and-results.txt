@@ -1,0 +1,15 @@
+check-fast: exit=0; cargo xtask check-fast
+ci-policy: exit=0; env RIPR_POLICY_PREFLIGHT_RECEIPT=target/ripr/reports/policy-preflight.json cargo xtask ci-policy
+doctor-named: exit=0; cargo xtask worktree doctor
+doctor: exit=1; cargo xtask worktree doctor
+environment: exit=0; bash -c rustc\ -vV\;\ cargo\ -V\;\ command\ -v\ cc\;\ cc\ --version\;\ git\ rev-parse\ HEAD\ HEAD\^\{tree\}\;\ git\ merge-base\ origin/main\ HEAD\;\ git\ diff\ --name-only\ -z\ origin/main...HEAD\ \|\ tr\ \"\\0\"\ \"\\n\"
+later-changelog: exit=0; cargo xtask check-changelog-fragments
+later-fixture-contracts: exit=0; cargo xtask check-fixture-contracts
+later-fmt: exit=0; cargo fmt --check
+later-spec-format: exit=0; cargo xtask check-spec-format
+later-spec-numbering: exit=0; cargo xtask check-spec-numbering
+later-traceability: exit=0; cargo xtask check-traceability
+later-whitespace: exit=0; git diff --check origin/main...HEAD
+preflight: exit=0; cargo policy preflight
+reporter-tests: exit=0; cargo test --locked -p xtask --example ub_review_evidence_report
+strict-lint: exit=0; cargo clippy --locked -p xtask --all-targets -- -D warnings

@@ -1,0 +1,4 @@
+Initial PATH lacked /workspace/.cargo/bin; `command -v cargo rustc git` resolved only /usr/local/bin/git.
+Direct `/workspace/.cargo/bin/rustc -vV` and `/workspace/.cargo/bin/cargo -V` both failed:
+error: could not create home directory: '/home/agent/.rustup': Read-only file system (os error 30)
+This was toolchain-home setup failure, not a candidate result. Existing /workspace homes selected in run.sh.

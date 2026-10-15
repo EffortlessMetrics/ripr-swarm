@@ -1,0 +1,3 @@
+    Finished `dev` profile [unoptimized] target(s) in 0.10s
+     Running `/workspace/qualification-7915/target/debug/xtask check-fixture-contracts`
+check-fixture-contracts: pass (target/ripr/reports/fixture-contracts.md)

@@ -1,0 +1,7 @@
+.ripr/traceability.toml
+changelog.d/typescript-braceless-if-mock-payload.md
+crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs
+crates/ripr/src/analysis/language/typescript/tests/mock_object_argument_tests.rs
+docs/specs/RIPR-SPEC-0256-typescript-mock-object-argument.md
+fixtures/typescript-verdict-corpus/cases/jest-spec0256-ex04-braceless-if.json
+fixtures/typescript-verdict-corpus/expected/rows/jest-spec0256-ex04-braceless-if.json
