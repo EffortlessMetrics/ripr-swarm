@@ -215,7 +215,40 @@ fn mock_payload_on_a_test_file_factory_mock_is_credited() {
         (
             "parameter",
             file(
-                "function makeDb(write = jest.fn()) {\n  return { write };\n}",
+                "function makeDb(seed: number) {\n  return { write: jest.fn() };\n}",
+                pin,
+            ),
+        ),
+        (
+            "arrow-parameter",
+            file(
+                "const makeDb = (seed: number) => ({ write: jest.fn() });",
+                pin,
+            ),
+        ),
+        (
+            "async-arrow",
+            file("const makeDb = async () => ({ write: jest.fn() });", pin),
+        ),
+        (
+            "generator",
+            file(
+                "function* makeDb() {\n  return { write: jest.fn() };\n}",
+                pin,
+            ),
+        ),
+        // The mock value could record or return another mock's calls.
+        (
+            "implementation",
+            file(
+                "function recordTwo(this: Db) {\n  this.write(2);\n}\nfunction makeDb() {\n  return { write: jest.fn(recordTwo) };\n}",
+                pin,
+            ),
+        ),
+        (
+            "trailing-operator",
+            file(
+                "function makeDb() {\n  return { write: jest.fn() && pre.write };\n}",
                 pin,
             ),
         ),
@@ -272,6 +305,21 @@ fn mock_payload_on_a_test_file_factory_mock_is_credited() {
                 "  const db = makeDb().inner;\n  save(db, 1);\n  expect(db.write).toHaveBeenCalledWith(2);",
             ),
         ),
+        // A line break does not end the statement before `.` or `&&`.
+        (
+            "member-next-line",
+            file(
+                factory,
+                "  const db = makeDb()\n    .inner;\n  save(db, 1);\n  expect(db.write).toHaveBeenCalledWith(2);",
+            ),
+        ),
+        (
+            "operator-next-line",
+            file(
+                factory,
+                "  const db = makeDb()\n    && pre;\n  save(db, 1);\n  expect(db.write).toHaveBeenCalledWith(2);",
+            ),
+        ),
         (
             "argument",
             file(
@@ -282,7 +330,7 @@ fn mock_payload_on_a_test_file_factory_mock_is_credited() {
         (
             "other-factory",
             file(
-                factory,
+                &format!("{factory}\nfunction otherDb() {{\n  return {{ write: shared }};\n}}"),
                 "  const db = otherDb();\n  save(db, 1);\n  expect(db.write).toHaveBeenCalledWith(2);",
             ),
         ),

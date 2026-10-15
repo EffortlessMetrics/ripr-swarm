@@ -85,13 +85,16 @@ all of these hold:
   shadow an outer `p`) with `const|let|var p = jest.fn(...)` or
   `vi.fn(...)`, or to a flat object literal whose `m` is such a call,
   whose keys are plain identifiers, which keys `m` once and which has no
-  spread that could replace it; amended 2026-10-15, `const p = f();`
-  also reads as such a literal when `f` is a top-level, unexported
-  parameterless test-file factory whose whole body returns that literal
-  (`function f() { return { m: jest.fn() }; }` or
-  `const f = () => ({ m: jest.fn() });`), the file names `f` only in its
-  declaration and direct calls `f(`, the call `f()` is the whole
-  initializer, and the file has no `eval`, `with` or `\u` escape;
+  spread that could replace it; amended 2026-10-15, `const|let|var p =
+  f();` also reads as such a literal when `f` is a top-level, unexported,
+  non-async, non-generator parameterless test-file factory whose whole
+  body returns that literal (`function f() { return { m: jest.fn() }; }`
+  or `const f = () => ({ m: jest.fn() });`) with `m` keyed to exactly a
+  bare `jest.fn()` or `vi.fn()` (no implementation argument, nothing
+  after it), the file names `f` only in its declaration and direct calls
+  `f(`, `f()` is the whole initializer closed by `;` or the block's end
+  (a line break alone can continue the expression), and the file has no
+  `eval`, `with` or `\u` escape;
 - the test mentions `p` exactly twice outside `expect(p)` /
   `expect(p.m)`: its declaration and one argument of the test's only
   owner call, at `p`'s parameter position with no spread before it.
@@ -344,9 +347,12 @@ and the rejected alternative. Recorded on #6654.
    `write` key: `weakly_exposed`. Amended 2026-10-15: example 2 with
    `function makeDb() { return { write: jest.fn() }; }` in the test file
    and `const db = makeDb();` is `exposed`; a factory with a parameter, a
-   spread, a second statement, an `export`, `async` or a `let` binding, a
-   file that reassigns, passes on or shadows `makeDb` or calls `eval`, or
-   a binding `makeDb().inner` or `makeDb(1)` stays `weakly_exposed`.
+   spread, a second statement, an `export`, `async`, a generator, a
+   `let makeDb` binding, or a `write` value that is not a bare `jest.fn()`
+   (`jest.fn(function () { this.write(2); })`, `jest.fn() && pre.write`),
+   a file that reassigns, passes on or shadows `makeDb` or calls `eval`,
+   or a binding `makeDb().inner`, `makeDb()` continued on the next line
+   (`.inner`, `&& pre`) or `makeDb(1)` stays `weakly_exposed`.
 5. As example 1 with `send` not an owner parameter, with
    `const send = jest.spyOn(mailer, "send")`, a `jest.mock` factory mock
    or `const send = makeSend()`, with an object payload `{ id: 7 }`, or

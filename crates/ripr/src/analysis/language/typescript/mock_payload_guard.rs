@@ -463,33 +463,49 @@ fn test_local_mock_property(
             };
             let rest = rest.trim_start();
             if let Some(literal) = rest.strip_prefix('{') {
-                return literal_body(literal)
-                    .is_some_and(|literal| keys_mock_once(literal, property));
+                return literal_body(literal).is_some_and(|literal| {
+                    keys_mock_once(literal, property, starts_with_mock_factory)
+                });
             }
             factories.iter().any(|(name, returned)| {
                 factory_call_is_initializer(rest, name)
                     && ts_mask_literals_and_comments(returned)
                         .strip_prefix('{')
                         .and_then(literal_body)
-                        .is_some_and(|literal| keys_mock_once(literal, property))
+                        .is_some_and(|literal| {
+                            keys_mock_once(literal, property, is_bare_mock_factory)
+                        })
             })
         })
     })
 }
 
-/// `true` when `rest` opens with `name()` and the statement ends there.
+/// `true` when `rest` opens with `name()` and an explicit `;` (or the
+/// block's end) closes the statement there. A line break alone does not:
+/// a next line opening with `.`, `[`, `&&` or `?` continues the
+/// expression, so `db` would not be the factory's fresh object.
 fn factory_call_is_initializer(rest: &str, name: &str) -> bool {
     rest.strip_prefix(name)
         .and_then(|rest| rest.strip_prefix("()"))
         .is_some_and(|rest| {
-            let rest = rest.trim_start_matches([' ', '\t']);
-            rest.is_empty() || rest.starts_with([';', '\n', '\r', '}'])
+            let rest = rest.trim_start();
+            rest.is_empty() || rest.starts_with([';', '}'])
         })
+}
+
+/// `true` when a factory literal's value is exactly a bare `jest.fn()` /
+/// `vi.fn()`: an implementation argument can call the mock through `this`
+/// and a trailing operator (`jest.fn() && shared`) can hand back another
+/// mock, so the factory path admits neither.
+fn is_bare_mock_factory(value: &str) -> bool {
+    MOCK_FACTORIES
+        .iter()
+        .any(|factory| value.trim_end().strip_prefix(factory) == Some("()"))
 }
 
 /// `true` when every entry of a flat literal body is `key: value` with a
 /// plain key and `property` is keyed exactly once, to a mock factory call.
-fn keys_mock_once(literal: &str, property: &str) -> bool {
+fn keys_mock_once(literal: &str, property: &str, is_mock: fn(&str) -> bool) -> bool {
     let mut entries = Vec::new();
     for entry in top_level_entries(literal) {
         let Some((key, value)) = entry.split_once(':') else {
@@ -504,7 +520,7 @@ fn keys_mock_once(literal: &str, property: &str) -> bool {
     let mut keyed = entries.iter().filter(|(key, _)| *key == property);
     matches!(
         (keyed.next(), keyed.next()),
-        (Some((_, value)), None) if starts_with_mock_factory(value)
+        (Some((_, value)), None) if is_mock(value)
     )
 }
 
