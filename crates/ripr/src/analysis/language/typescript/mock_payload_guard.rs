@@ -84,7 +84,19 @@ impl MockCallFacts {
     /// on a mock made in `test_body` under the parameter's own name, passed
     /// to the owner's one call in the test at the parameter's position, and
     /// mentioned nowhere else but `expect(...)`.
+    #[cfg(test)]
     pub(crate) fn credits(&self, payload: &TypeScriptMockPayload, test_body: &str) -> bool {
+        self.credits_with_factories(payload, test_body, &[])
+    }
+
+    /// [`Self::credits`], also reading `const p = f();` through the test
+    /// file's mock factories (`TypeScriptTest::mock_factories_in_file`).
+    pub(crate) fn credits_with_factories(
+        &self,
+        payload: &TypeScriptMockPayload,
+        test_body: &str,
+        factories: &[(String, String)],
+    ) -> bool {
         // Jest's recursive equality treats a property set to `undefined` as
         // absent, so an object payload does not pin every field.
         if payload.kind != TypeScriptMockPayloadKind::CalledWith
@@ -121,7 +133,7 @@ impl MockCallFacts {
         };
         let made_in_test = match &call.method {
             None => test_local_mock_binding(scope, local),
-            Some(method) => test_local_mock_property(scope, local, method),
+            Some(method) => test_local_mock_property(scope, local, method, factories),
         };
         made_in_test
             && identifier_mentions_outside_expect(test_body, local) == 2
@@ -423,8 +435,16 @@ fn test_local_mock_binding(body: &str, name: &str) -> bool {
 /// `const db = { write: jest.fn() }`: `object` is bound to an object literal
 /// in the test whose `property` is a mock factory call. A spread, a second
 /// `property` key or a key that is not a plain identifier could replace the
-/// factory, so any of them refuses.
-fn test_local_mock_property(body: &str, object: &str, property: &str) -> bool {
+/// factory, so any of them refuses. `const db = makeDb();` reads the literal
+/// a test-file mock factory returns (`factories`, RIPR-SPEC-0247 rule 1,
+/// amended 2026-10-15): the call is the whole initializer and every call
+/// builds a fresh object.
+fn test_local_mock_property(
+    body: &str,
+    object: &str,
+    property: &str,
+    factories: &[(String, String)],
+) -> bool {
     let masked = ts_mask_literals_and_comments(body);
     ["const", "let", "var"].iter().any(|keyword| {
         masked.match_indices(keyword).any(|(at, _)| {
@@ -441,32 +461,51 @@ fn test_local_mock_property(body: &str, object: &str, property: &str) -> bool {
             let Some(rest) = rest.trim_start().strip_prefix('=') else {
                 return false;
             };
-            let Some(literal) = rest.trim_start().strip_prefix('{') else {
-                return false;
-            };
-            let Some(literal) = literal_body(literal) else {
-                return false;
-            };
-            // Every entry is `key: value` with a plain key, the property is
-            // keyed once, and no spread or other key can replace it.
-            let mut entries = Vec::new();
-            for entry in top_level_entries(literal) {
-                let Some((key, value)) = entry.split_once(':') else {
-                    return false;
-                };
-                let key = key.trim();
-                if !key.starts_with(is_identifier_start) || !key.chars().all(is_identifier_part) {
-                    return false;
-                }
-                entries.push((key, value.trim_start()));
+            let rest = rest.trim_start();
+            if let Some(literal) = rest.strip_prefix('{') {
+                return literal_body(literal)
+                    .is_some_and(|literal| keys_mock_once(literal, property));
             }
-            let mut keyed = entries.iter().filter(|(key, _)| *key == property);
-            matches!(
-                (keyed.next(), keyed.next()),
-                (Some((_, value)), None) if starts_with_mock_factory(value)
-            )
+            factories.iter().any(|(name, returned)| {
+                factory_call_is_initializer(rest, name)
+                    && ts_mask_literals_and_comments(returned)
+                        .strip_prefix('{')
+                        .and_then(literal_body)
+                        .is_some_and(|literal| keys_mock_once(literal, property))
+            })
         })
     })
+}
+
+/// `true` when `rest` opens with `name()` and the statement ends there.
+fn factory_call_is_initializer(rest: &str, name: &str) -> bool {
+    rest.strip_prefix(name)
+        .and_then(|rest| rest.strip_prefix("()"))
+        .is_some_and(|rest| {
+            let rest = rest.trim_start_matches([' ', '\t']);
+            rest.is_empty() || rest.starts_with([';', '\n', '\r', '}'])
+        })
+}
+
+/// `true` when every entry of a flat literal body is `key: value` with a
+/// plain key and `property` is keyed exactly once, to a mock factory call.
+fn keys_mock_once(literal: &str, property: &str) -> bool {
+    let mut entries = Vec::new();
+    for entry in top_level_entries(literal) {
+        let Some((key, value)) = entry.split_once(':') else {
+            return false;
+        };
+        let key = key.trim();
+        if !key.starts_with(is_identifier_start) || !key.chars().all(is_identifier_part) {
+            return false;
+        }
+        entries.push((key, value.trim_start()));
+    }
+    let mut keyed = entries.iter().filter(|(key, _)| *key == property);
+    matches!(
+        (keyed.next(), keyed.next()),
+        (Some((_, value)), None) if starts_with_mock_factory(value)
+    )
 }
 
 /// The non-empty comma-separated entries of a flat literal body, split only
