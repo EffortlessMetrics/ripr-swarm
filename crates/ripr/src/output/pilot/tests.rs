@@ -1701,11 +1701,13 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     // Only TypeScript is enabled among the routed languages here. Python is
     // detected but disabled, so it must not headline (#7665 / enabled gate).
     if typescript_available {
-        let (route, _) = required
-            .supported_headline_route()
-            .expect("enabled TypeScript is a supported headline route");
-        assert_eq!(route.language, LanguageId::TypeScript);
-        assert!(route.enabled);
+        assert!(
+            required
+                .supported_headline_route()
+                .is_some_and(|(route, _)| route.language == LanguageId::TypeScript
+                    && route.enabled),
+            "enabled TypeScript is a supported headline route: {required:?}"
+        );
     } else {
         assert!(required.supported_headline_route().is_none());
     }
@@ -2282,9 +2284,11 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
         &[LanguageId::Python],
         &mixed_files,
     );
-    let (headline_route, _) = mixed
-        .supported_headline_route()
-        .expect("enabled Python is the supported headline when TypeScript is disabled");
+    let Some((headline_route, _)) = mixed.supported_headline_route() else {
+        return Err(
+            "enabled Python is the supported headline when TypeScript is disabled".to_string(),
+        );
+    };
     assert_eq!(headline_route.language, LanguageId::Python);
     let mixed_context = PilotSummaryContext {
         language_routes: Some(&mixed),
