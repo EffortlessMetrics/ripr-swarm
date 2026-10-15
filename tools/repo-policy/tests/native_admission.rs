@@ -270,7 +270,12 @@ fn ordinary_comments_cannot_erase_native_review_dispositions() -> Result<(), Str
     // Admission and final refresh must use exactly the same review reducer.
     let admission = body("Reconcile native request and current readiness")?;
     let reducer = |text: &str| -> Result<String, String> {
-        Ok(text
+        // The diagnostic jq also inspects review pages. Compare the actual
+        // authoritative -s -e command, never its advisory lookalike.
+        let command = "jq -s -e --arg head \"$HEAD_SHA\" --arg author \"$author\" '";
+        assert_eq!(text.matches(command).count(), 1, "unique decision command");
+        let decision = text.split_once(command).ok_or("review decision missing")?.1;
+        Ok(decision
             .split_once("[ .[][] ] as $reviews |")
             .ok_or("review reducer missing")?
             .1
