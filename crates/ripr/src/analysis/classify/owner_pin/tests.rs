@@ -1719,6 +1719,359 @@ fn only_a_plain_assert_eq_against_an_owner_free_value_pins() {
 }
 
 #[test]
+fn a_constant_initialized_through_the_owner_is_not_an_independent_expected_value() {
+    let test = |items: &str| {
+        format!(
+            "use demo::weight;\n{items}\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), EXPECTED);\n}}\n"
+        )
+    };
+    // RIPR-SPEC-0035: the constant moves with the owner, directly, through
+    // a `static`, or through another constant.
+    for items in [
+        "const EXPECTED: u32 = weight(4);",
+        "static EXPECTED: u32 = weight(4);",
+        "pub(crate) static mut EXPECTED: u32 = weight(4);",
+        "const BASE: u32 = weight(2);\nconst EXPECTED: u32 = BASE * 2;",
+        "const BASE: u32 = weight(2);\nconst MID: u32 = BASE + 1;\nconst EXPECTED: u32 = MID * 2;",
+    ] {
+        let tests = test(items);
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+    // The constant may live in another file, be renamed on import, name
+    // the owner through a rename, or be declared by a macro.
+    let across = |import: &str, operand: &str, other: &str| {
+        let tests = format!(
+            "use demo::weight;\n{import}\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), {operand});\n}}\n"
+        );
+        let index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests), ("src/other.rs", other)]);
+        let pin = establish(&index, "weight", "x * 3");
+        assert!(pin.is_some(), "the free owner must establish a pin");
+        pin.map(|pin| admitted_texts(&index, &pin))
+            .unwrap_or_default()
+    };
+    for (import, operand, other) in [
+        (
+            "use demo::other::EXPECTED;",
+            "EXPECTED",
+            "pub const EXPECTED: u32 = crate::weight(4);\n",
+        ),
+        (
+            "use demo::other::E as EXPECTED;",
+            "EXPECTED",
+            "pub const E: u32 = crate::weight(4);\n",
+        ),
+        (
+            "use demo::other::EXPECTED;",
+            "EXPECTED",
+            "use crate::weight as w;\npub const EXPECTED: u32 = w(4);\n",
+        ),
+        (
+            "use demo::other::EXPECTED;",
+            "EXPECTED",
+            "use crate::base::BASE as B;\npub const EXPECTED: u32 = B;\nmod base {\n    pub const BASE: u32 = crate::weight(4);\n}\n",
+        ),
+        (
+            "use demo::other::Table;",
+            "Table::EXPECTED",
+            "pub struct Table;\nimpl Table {\n    pub const EXPECTED: u32 = crate::weight(4);\n}\n",
+        ),
+        (
+            "use demo::other::EXPECTED;",
+            "EXPECTED.with(|e| *e)",
+            "thread_local! {\n    pub static EXPECTED: u32 = crate::weight(4);\n}\n",
+        ),
+        (
+            "use demo::other::EXPECTED;",
+            "*EXPECTED",
+            "lazy_static::lazy_static! {\n    pub static ref EXPECTED: u32 = crate::weight(4);\n}\n",
+        ),
+    ] {
+        assert!(
+            across(import, operand, other).is_empty(),
+            "{import} {operand} {other}"
+        );
+    }
+    // A constant built by some other type's same-named function, a method of
+    // that name, or a literal stays an independent expected value.
+    for other in [
+        "pub const EXPECTED: u32 = 12;\n",
+        "pub const EXPECTED: u32 = Table::weight(4);\n",
+        "pub const EXPECTED: u32 = TABLE.weight(4);\n",
+        "pub const EXPECTED: u32 = TABLE.weight;\n",
+    ] {
+        assert_eq!(
+            across("use demo::other::EXPECTED;", "EXPECTED", other),
+            vec!["assert_eq!(weight(4), EXPECTED);".to_string()],
+            "{other}"
+        );
+    }
+    let tests = test("const EXPECTED: u32 = 12; // not weight(4)");
+    assert_eq!(
+        weight_admitted(&tests),
+        vec!["assert_eq!(weight(4), EXPECTED);".to_string()]
+    );
+}
+
+#[test]
+fn a_constant_initializer_reaches_the_owner_only_in_the_pins_call_shape() {
+    let bare = PinCall::Bare;
+    let associated = PinCall::Associated {
+        type_name: "Table".to_string(),
+    };
+    let method = PinCall::Method {
+        receivers: vec![ReceiverType::Named("Counter".to_string())],
+        trait_scope: None,
+    };
+    for (initializer, shape, calls) in [
+        // A free function: bare, module-path, turbofish and value uses.
+        ("weight(4)", &bare, true),
+        ("crate::weight(4)", &bare, true),
+        ("super::weight (4)", &bare, true),
+        ("weight::<u32>(4)", &bare, true),
+        ("apply(weight, 4)", &bare, true),
+        ("<T as Tr>::weight(4)", &bare, true),
+        // Another type's function, a method, a field or a struct field.
+        ("Table::weight(4)", &bare, false),
+        ("Self::weight(4)", &bare, false),
+        ("TABLE.weight(4)", &bare, false),
+        ("TABLE.weight", &bare, false),
+        ("Limits { weight: 4 }", &bare, false),
+        // A non-ASCII qualifier is read whole, not split mid-character.
+        ("módulo::weight(4)", &bare, true),
+        ("Größe::weight(4)", &bare, false),
+        ("Größe::weight(4)", &associated, false),
+        // An associated function needs its own type, `Self` or an
+        // unreadable `<..>` qualifier.
+        ("Table::weight(4)", &associated, true),
+        ("Self::weight(4)", &associated, true),
+        ("Table::<u8>::weight(4)", &associated, true),
+        ("Other::weight(4)", &associated, false),
+        ("weight(4)", &associated, false),
+        ("Table::weight", &associated, false),
+        // A method needs a method call or its receiver's type.
+        ("COUNTER.weight()", &method, true),
+        ("Counter::weight(&COUNTER)", &method, true),
+        ("Other::weight(1)", &method, false),
+        ("weight(1)", &method, false),
+    ] {
+        assert_eq!(
+            initializer_calls_owner(initializer, "weight", shape),
+            calls,
+            "{initializer}"
+        );
+    }
+}
+
+#[test]
+fn text_declared_constants_read_macro_items_and_skip_non_declarations() {
+    assert_eq!(
+        text_declared_constants(
+            "pub static ref EXP: u32 = quota(2); static mut r#M: u8 = 1; const FOO: u8 = 2;"
+        ),
+        vec![
+            ("FOO".to_string(), ": u8 = 2".to_string()),
+            ("EXP".to_string(), ": u32 = quota(2)".to_string()),
+            ("M".to_string(), ": u8 = 1".to_string()),
+        ]
+    );
+    assert_eq!(
+        text_declared_constants(
+            "extern { static X: u32; } static A: [u32; 2] = [quota(1); 2]; const Y: u8 = 1; \
+             static B: Box<dyn Iterator<Item = u32>> = { let a = 2; quota(a) };"
+        ),
+        vec![
+            ("Y".to_string(), ": u8 = 1".to_string()),
+            ("A".to_string(), ": [u32; 2] = [quota(1); 2]".to_string()),
+            (
+                "B".to_string(),
+                ": Box<dyn Iterator<Item = u32>> = { let a = 2; quota(a) }".to_string()
+            ),
+        ]
+    );
+    for text in [
+        "extern { static X: u32; } const fn f() -> u32 { 1 }",
+        "fn f(p: *const u8, s: &'static str) -> u8 { 0 }",
+        "static ÉTAT: u32 = 1;",
+    ] {
+        assert!(text_declared_constants(text).is_empty(), "{text}");
+    }
+}
+
+#[test]
+fn a_method_owner_is_reached_only_through_a_method_shaped_constant() {
+    let admitted = |other: &str| {
+        let tests = "use demo::Counter;\nuse demo::other::EXPECTED;\n\n#[test]\nfn counts() {\n    let c = Counter::new();\n    assert_eq!(c.tally(), EXPECTED);\n}\n";
+        let index = index(&[(LIB, COUNTER_LIB), (TESTS, tests), ("src/other.rs", other)]);
+        let pin = establish(&index, "tally", "self.n + 1");
+        assert!(pin.is_some(), "tally must establish a pin");
+        pin.map(|pin| admitted_texts(&index, &pin).len())
+            .unwrap_or_default()
+    };
+    assert_eq!(admitted("pub const EXPECTED: usize = 1;\n"), 1);
+    assert_eq!(admitted("pub const EXPECTED: usize = tally(1);\n"), 1);
+    assert_eq!(
+        admitted("pub const EXPECTED: usize = Other::tally(1);\n"),
+        1
+    );
+    assert_eq!(
+        admitted("pub static EXPECTED: usize = crate::Counter::new().tally();\n"),
+        0
+    );
+}
+
+#[test]
+fn a_constant_counts_only_from_a_package_the_test_belongs_to_tests_or_names() {
+    let lib = "crates/core/src/lib.rs";
+    let admitted = |import: &str, constant_file: &str, initializer: &str| {
+        let tests = format!(
+            "use demo::weight;\n{import}\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), EXPECTED);\n}}\n"
+        );
+        let constant = format!("pub const EXPECTED: u32 = {initializer};\n");
+        let index = index(&[
+            (lib, WEIGHT_LIB),
+            ("crates/app/tests/weighs.rs", &tests),
+            (constant_file, &constant),
+        ]);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "weight" && function.file == Path::new(lib));
+        assert!(owner.is_some(), "the owner must be indexed");
+        let Some(owner) = owner else { return 0 };
+        let pin = OwnerReturnPin::establish(&return_probe(owner, "x * 3"), owner, &index);
+        assert!(pin.is_some(), "the free owner must establish a pin");
+        pin.map(|pin| admitted_texts(&index, &pin).len())
+            .unwrap_or_default()
+    };
+    for (import, constant_file) in [
+        // The owner's package, the test's own package, and a named
+        // test-support crate.
+        ("use demo::EXPECTED;", "crates/core/src/expected.rs"),
+        ("use common::EXPECTED;", "crates/app/tests/common.rs"),
+        ("use test_kit::EXPECTED;", "crates/test-kit/src/lib.rs"),
+    ] {
+        // A literal constant there pins; one built by the owner does not.
+        assert_eq!(admitted(import, constant_file, "12"), 1, "{constant_file}");
+        assert_eq!(
+            admitted(import, constant_file, "demo::weight(4)"),
+            0,
+            "{constant_file}"
+        );
+    }
+    // A same-named constant in a package the test never names does not
+    // withhold the pin from the test's own literal constant.
+    assert_eq!(
+        admitted(
+            "const EXPECTED: u32 = 12;",
+            "crates/other/src/lib.rs",
+            "demo::weight(4)"
+        ),
+        1
+    );
+}
+
+#[test]
+fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_constant() {
+    let value = |items: &str, body: &str, operand: &str| -> Option<String> {
+        let tests = format!("use demo::weight;\n{items}\n#[test]\nfn weighs() {{\n{body}\n}}\n");
+        let index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        assert_eq!(index.tests().len(), 1, "fixture must hold exactly one test");
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "weight");
+        assert!(owner.is_some(), "the owner must be indexed");
+        let owner = owner?;
+        expected_operand_value(&index, index.tests().at(0), operand, owner)
+            .map(|value| value.trim().to_string())
+    };
+    // RIPR-SPEC-0035: a readable `let`, a chain of them, or one constant
+    // yields its value.
+    assert_eq!(
+        value("", "let e = weight(2);\nassert_eq!(weight(2), e);", "e"),
+        Some("weight(2)".to_string())
+    );
+    assert_eq!(
+        value(
+            "",
+            "let a = weight(2);\nlet b: u32 = a;\nassert_eq!(weight(2), b);",
+            "b"
+        ),
+        Some("weight(2)".to_string())
+    );
+    assert_eq!(
+        value(
+            "const EXPECTED: u32 = weight(4);",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("weight(4)".to_string())
+    );
+    assert_eq!(
+        value(
+            "const EXPECTED: u32 = ::demo::weight(4);",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("::demo::weight(4)".to_string())
+    );
+    assert_eq!(
+        value(
+            "thread_local! { static EXPECTED: u32 = weight(4); }",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("weight(4)".to_string())
+    );
+    // An operand that is not a plain name, a name the test binds twice or
+    // outside a `let` (a loop variable), the owner's own name, and a name
+    // nothing binds yield nothing to read.
+    for (items, body, operand) in [
+        (
+            "",
+            "let e = weight(2);\nassert_eq!(weight(2), e + 1);",
+            "e + 1",
+        ),
+        (
+            "",
+            "let e = weight(2);\nassert_eq!(weight(2), fixture.e);",
+            "fixture.e",
+        ),
+        (
+            "",
+            "let e = weight(2);\nlet e = 6;\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        ("", "for e in [6] {\n    assert_eq!(weight(2), e);\n}", "e"),
+        (
+            "",
+            "let weight = 6;\nassert_eq!(super::weight(2), weight);",
+            "weight",
+        ),
+        ("", "assert_eq!(weight(2), EXPECTED);", "EXPECTED"),
+        // A `mut` binding may change after its `let`; an attribute may
+        // compile the `let` away; two same-named constants are ambiguous.
+        (
+            "",
+            "let mut e = weight(2);\ne = 6;\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        (
+            "",
+            "#[cfg(any())]\nlet e = weight(2);\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        (
+            "const EXPECTED: u32 = weight(4);\nmod other { pub const EXPECTED: u32 = 12; }",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
+        ),
+    ] {
+        assert_eq!(value(items, body, operand), None, "{body}");
+    }
+}
+
+#[test]
 fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
     for attributes in [
         "use serial_test::serial;\n#[test]\n#[serial]",

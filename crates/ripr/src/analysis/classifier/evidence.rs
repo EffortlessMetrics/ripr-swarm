@@ -6,8 +6,8 @@ use crate::analysis::classify::{
     body_contains_owner_call, call_parameter_names, callee_is_unique,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
     confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness,
-    direct_call_name, direct_collection_mutation_receiver, fallible_check_receipt,
-    fallible_literal_witness, function_returns_value, getter_plainly_reads,
+    direct_call_name, direct_collection_mutation_receiver, expected_operand_value,
+    fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
     helper_pins_owner_call, infection_evidence_with_boundary_input, local_flow_sinks,
     method_cannot_store, operand_only_pin, oracle_crediting_relations, owner_may_be_reached_unseen,
@@ -611,6 +611,11 @@ impl ClassifiedProbeEvidence {
                 },
                 owner_parameters: &owner_parameters,
                 expected_reaches_owner: &expected_reaches_owner,
+                expected_operand_value: &|test, operand| {
+                    context.owner_fn.and_then(|owner| {
+                        expected_operand_value(context.index, test, operand, owner)
+                    })
+                },
                 effect_state_carried: &|test, assertion| {
                     effect_carrier
                         .as_ref()
