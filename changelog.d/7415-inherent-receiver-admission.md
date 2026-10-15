@@ -1,5 +1,6 @@
 <!-- section: Fixed -->
 - Unique indexed inherent method names no longer grant direct test-call
   attribution without bounded receiver evidence. Diff and repository reports
-  refuse comment-only and expired-binding evidence while preserving actual
-  enum receivers and public-library calls (#7415).
+  refuse comment-only, expired-binding and assertion-operand item-shadow
+  evidence while preserving actual enum receivers and public-library calls
+  (#7415, #8004).

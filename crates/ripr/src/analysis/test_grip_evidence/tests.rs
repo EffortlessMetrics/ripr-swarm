@@ -19448,6 +19448,8 @@ impl JsonValue {
         match self { Self::Object(value) => Some(value), _ => None }
     }
 }
+trait ForeignView { fn as_object(&self) -> Option<()> { None } }
+impl<T> ForeignView for T {}
 #[cfg(test)] mod tests {
     use super::*;
     #[test] fn actual_object() {
@@ -19482,6 +19484,12 @@ impl JsonValue {
 }
 "#;
     for decoy in [
+        "let value = JsonValue::Null;\n        assert_eq!({ struct value; value.as_object() }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ struct value(); value.as_object() }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ enum JsonValue { Null } JsonValue::Null.as_object() }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ type JsonValue = serde_json::Value; JsonValue::Null.as_object() }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ fn ripr_receiver_operand(value: serde_json::Value) -> Option<()> { value.as_object(); None } None::<()> }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ struct value; impl value { fn as_object(&self) -> Option<()> { None } } value.as_object() }, None);",
         "assert_eq!(value.as_object().unwrap().len(), 1);",
         "assert_eq!(value.as_object().unwrap().len(), 1); // JsonValue::as_object()",
         "{ let value = JsonValue::Null; assert!(matches!(value, JsonValue::Null)); }\n        assert_eq!(value.as_object().unwrap().len(), 1);",
@@ -19500,7 +19508,10 @@ impl JsonValue {
                 "#[path = \"../src/reader.rs\"] mod reader; fn main() {}",
             ),
         ])?;
-        let seams = inventory_seams_from_index(&[path], &index);
+        let seams: Vec<_> = inventory_seams_from_index(&[path], &index)
+            .into_iter()
+            .filter(|seam| seam.owner() == "src/reader.rs::impl JsonValue::as_object")
+            .collect();
         assert_eq!(seams.len(), 4, "private seams stay nonempty and complete");
         let context = CompactGripContext::new(&index);
         for seam in &seams {
@@ -19524,6 +19535,10 @@ impl JsonValue {
                     "{decoy}: {full_rows:?}"
                 );
             }
+            assert!(
+                full_rows.contains_key("wrong_json_type"),
+                "retain the operand decoy: {full_rows:?}"
+            );
             for wrong in ["wrong_json_type", "unrelated_main_json_object"] {
                 assert!(
                     !matches!(

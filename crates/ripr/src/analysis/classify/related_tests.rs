@@ -3147,23 +3147,18 @@ fn inherent_assertion_arguments_resolve(
             return false;
         };
         let syntax = parse.tree().syntax().clone();
-        // Locals and pattern scopes inside an operand require separate value
-        // flow. Do not resolve their calls using the invocation's outer scope.
+        let Some(wrapper) = syntax.children().find_map(ast::Fn::cast) else {
+            return false;
+        };
+        // Operand-local items can bind value constructors or shadow type names.
+        // Only the actual synthetic wrapper is exempt, never a same-named item.
+        // Locals and pattern scopes also require separate value-flow authority.
         if syntax.descendants().any(|node| {
             ast::ClosureExpr::can_cast(node.kind())
                 || ast::ForExpr::can_cast(node.kind())
                 || ast::MatchArm::can_cast(node.kind())
                 || ast::LetExpr::can_cast(node.kind())
-                || ast::Const::can_cast(node.kind())
-                || ast::Static::can_cast(node.kind())
-                || ast::Use::can_cast(node.kind())
-                || ast::MacroRules::can_cast(node.kind())
-                || ast::MacroDef::can_cast(node.kind())
-                || ast::Fn::cast(node.clone()).is_some_and(|function| {
-                    function
-                        .name()
-                        .is_none_or(|name| name.text() != "ripr_receiver_operand")
-                })
+                || (ast::Item::can_cast(node.kind()) && node != *wrapper.syntax())
                 || ast::LetStmt::cast(node)
                     .is_some_and(|binding| !matches!(binding.pat(), Some(ast::Pat::WildcardPat(_))))
         }) {

@@ -233,6 +233,9 @@ the nearest still-visible simple local declaration. Comments on captured call
 lines and declarations in expired inner blocks cannot supply that evidence.
 Standard assertion macro operands are parsed as expressions using the original
 invocation's scope; diagnostic arguments do not supply receiver evidence.
+Operand-local items, including value constructors and type-name binders, withhold
+that outer-scope evidence. Only the parser's actual synthetic wrapper is exempt;
+a same-named nested function is still an item refusal.
 Unsupported binding/pattern scopes and unresolved receiver value flow withhold
 direct credit. Actual enum-variant receivers and public-library integration
 calls remain admissible. This is an admission narrowing, not exact Rust type or

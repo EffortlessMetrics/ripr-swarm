@@ -356,7 +356,17 @@ fn scope_items_and_assertion_operand_items_cannot_borrow_outer_receiver_type() -
         .find(|(path, _)| *path == "src/reader.rs")
         .ok_or("missing reader fixture")?
         .1;
+    let source = source.replace(
+        "#[cfg(test)]\nmod tests",
+        "trait ForeignView { fn as_object(&self) -> Option<()> { None } }\nimpl<T> ForeignView for T {}\n\n#[cfg(test)]\nmod tests",
+    );
     for decoy in [
+        "let value = JsonValue::Null;\n        assert_eq!({ struct value; value.as_object() }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ struct value(); value.as_object() }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ enum JsonValue { Null } JsonValue::Null.as_object() }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ type JsonValue = serde_json::Value; JsonValue::Null.as_object() }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ fn ripr_receiver_operand(value: serde_json::Value) -> Option<()> { value.as_object(); None } None::<()> }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ struct value; impl value { fn as_object(&self) -> Option<()> { None } } value.as_object() }, None);",
         "let value = JsonValue::Null;\n        { const value: serde_json::Value = serde_json::Value::Null; assert_eq!(value.as_object(), None); }",
         "let value = JsonValue::Null;\n        mod foreign { pub static value: serde_json::Value = serde_json::Value::Null; }\n        { use foreign::value; assert_eq!(value.as_object(), None); }",
         "let value = JsonValue::Null;\n        assert_eq!({ const value: serde_json::Value = serde_json::Value::Null; value.as_object() }, None);",
