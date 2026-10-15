@@ -6042,17 +6042,21 @@ fn has_explicit_planned_test_mapping(text: &str) -> bool {
             .strip_prefix("- ")
             .or_else(|| trimmed.strip_prefix("* "));
         if let Some(item) = item {
-            let item = item.trim();
-            let item = item
-                .strip_prefix("[ ]")
-                .or_else(|| item.strip_prefix("[x]"))
-                .or_else(|| item.strip_prefix("[X]"))
-                .unwrap_or(item);
-            let item = item
-                .trim()
-                .trim_matches(['`', '*', '_', '~'])
-                .trim()
-                .to_ascii_lowercase();
+            let mut name = item.trim();
+            loop {
+                let previous_length = name.len();
+                name = name.trim_matches(['`', '*', '_', '~']).trim();
+                name = name
+                    .strip_prefix("[ ]")
+                    .or_else(|| name.strip_prefix("[x]"))
+                    .or_else(|| name.strip_prefix("[X]"))
+                    .unwrap_or(name)
+                    .trim();
+                if name.len() == previous_length {
+                    break;
+                }
+            }
+            let item = name.to_ascii_lowercase();
             let sentinel = item.trim_end_matches(['.', '!', '?', ';', ':', ',']);
             let placeholder = !sentinel.chars().any(char::is_alphanumeric)
                 || matches!(
