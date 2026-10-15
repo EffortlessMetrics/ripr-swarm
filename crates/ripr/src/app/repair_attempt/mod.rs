@@ -3045,12 +3045,21 @@ pub(crate) const REPAIR_ATTEMPT_CHANGED_UNDERFOOT_TAIL: &str =
 
 /// True when a manifest-commit error is a retryable named refusal (lock
 /// contention or a concurrent commit underfoot) rather than an operational
-/// failure. The matched spans are fixed product sentences carrying no
-/// interpolated user input, so a user-supplied path or id cannot forge
-/// them; the CLI boundary maps these to the typed-refusal exit code 3.
+/// failure. Match the complete product sentence and validate its attempt ID:
+/// operational errors can contain the same text in a user-supplied path.
+/// The CLI boundary maps only these sentences to typed-refusal exit code 3.
 pub(crate) fn repair_attempt_commit_error_is_retry_refusal(error: &str) -> bool {
-    error.contains(REPAIR_ATTEMPT_CONTENTION_TAIL)
-        || error.contains(REPAIR_ATTEMPT_CHANGED_UNDERFOOT_TAIL)
+    let Some((id, tail)) = error
+        .strip_prefix("repair attempt ")
+        .and_then(|sentence| sentence.split_once(' '))
+    else {
+        return false;
+    };
+    RepairAttemptId::parse(id).is_ok()
+        && matches!(
+            tail,
+            REPAIR_ATTEMPT_CONTENTION_TAIL | REPAIR_ATTEMPT_CHANGED_UNDERFOOT_TAIL
+        )
 }
 
 /// Short-held exclusive OS lock over one manifest commit. Released on drop.
@@ -5268,6 +5277,51 @@ mod tests {
         Ok(())
     }
 
+    /// A rejected state check must preserve bytes and release the commit lock,
+    /// so a later after-phase observation and finish can still commit.
+    #[test]
+    fn rejected_manifest_commit_releases_lock_for_retry() -> Result<(), String> {
+        let root = test_repo_root("commit-check-retry")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "commit-check-retry")?;
+        let attempt_id = prepared.manifest.repair_attempt_id.clone();
+        let (_, manifest_path, base_bytes, _) = open_attempt_with_bytes(&root, None, &attempt_id)?;
+        let rejected = commit_manifest_locked(
+            &manifest_path,
+            &attempt_id,
+            &base_bytes,
+            b"must never replace the manifest",
+            |_| Err("injected state-check refusal".to_string()),
+        );
+        if rejected != Err("injected state-check refusal".to_string()) {
+            return Err(format!("state check did not refuse: {rejected:?}"));
+        }
+        let untouched = std::fs::read(&manifest_path)
+            .map_err(|error| format!("read manifest after refusal: {error}"))?;
+        if untouched != base_bytes {
+            return Err("rejected state check changed the manifest".to_string());
+        }
+        record_repair_attempt_after_refusal(&root, &attempt_id, "retry observation")?;
+        let resolved = resolve_awaiting_repair_attempt(&root, Some(attempt_id.as_str()), None)?;
+        finish_repair_attempt(
+            &root,
+            &attempt_id,
+            &resolved.packet_path,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
+        let (_, _, finished) = open_attempt(&root, None, &attempt_id)?;
+        if finished.state == RepairAttemptState::AwaitingEdit
+            || finished.after.is_none()
+            || finished.last_after_refusal.is_some()
+        {
+            return Err(format!(
+                "retry did not finish and clear refusal: {finished:?}"
+            ));
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
     /// A commit whose base predates a concurrent manifest change is refused
     /// without overwriting the newer bytes (#5287).
     #[test]
@@ -5354,6 +5408,32 @@ mod tests {
         ] {
             if repair_attempt_commit_error_is_retry_refusal(&error) {
                 return Err(format!("non-retry error misclassified: {error:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn commit_retry_refusal_rejects_embedded_messages_and_invalid_ids() -> Result<(), String> {
+        let id = "repair-attempt-0123456789abcdef01234567";
+        for tail in [
+            REPAIR_ATTEMPT_CONTENTION_TAIL,
+            REPAIR_ATTEMPT_CHANGED_UNDERFOOT_TAIL,
+        ] {
+            let sentence = format!("repair attempt {id} {tail}");
+            for error in [
+                format!("read /tmp/{sentence}/attempt.json failed: Permission denied"),
+                format!("open /tmp/{tail}/after.lock failed: Permission denied"),
+                format!("{sentence}: Permission denied"),
+                format!("{sentence}\n"),
+                format!("repair attempt invalid {tail}"),
+                format!("repair attempt repair-attempt-0123456789abcdef0123456g {tail}"),
+            ] {
+                if repair_attempt_commit_error_is_retry_refusal(&error) {
+                    return Err(format!(
+                        "operational or malformed error became retryable: {error:?}"
+                    ));
+                }
             }
         }
         Ok(())
