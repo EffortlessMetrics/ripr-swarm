@@ -1,6 +1,7 @@
 //! Source qualification only: execute the literal Bash guard/payload with bounded stubs.
 const WORKFLOW: &str = include_str!("../../../.github/workflows/printed-command-paste.yml");
-const ORIGINAL: &str = include_str!("fixtures/printed-command-paste-original.yml");
+const ORIGINAL: &str =
+    include_str!("../../../fixtures/convergence/printed-command-paste/original.yml");
 
 fn payload(source: &str) -> &str {
     source
