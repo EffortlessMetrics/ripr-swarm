@@ -62,6 +62,8 @@ mod python_source_admission;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_unittest_selectors.rs"]
 mod python_unittest_selectors;
+#[path = "cli_smoke/recall_tradeoff.rs"]
+mod recall_tradeoff;
 #[cfg(unix)]
 #[path = "cli_smoke/receipt_recovery_root.rs"]
 mod receipt_recovery_root;
@@ -1826,42 +1828,14 @@ fn check_human_output_reports_sample_findings() -> sample_output::TestResult {
 }
 
 #[test]
-fn check_no_unchanged_tests_restates_the_recall_tradeoff_on_stderr() {
-    // #4946(a): the flag's recall/cost tradeoff is restated on stderr where
-    // the user waits, and only while the flag is actually active.
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff();
-    assert!(diff.exists());
-    let diff = diff.display().to_string();
-
-    let with_flag = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--no-unchanged-tests",
-    ]);
-    assert_success(&with_flag);
-    let stderr = String::from_utf8_lossy(&with_flag.stderr);
-    assert!(
-        stderr.contains("unchanged tests are excluded from the index"),
-        "the active flag must restate its tradeoff on stderr; got:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("Reach evidence cannot name tests the diff does not touch"),
-        "the note must name the recall effect, not only the speedup; got:\n{stderr}"
-    );
-
-    let without_flag = run_ripr(&["check", "--root", &root, "--diff", &diff]);
-    assert_success(&without_flag);
-    let stderr = String::from_utf8_lossy(&without_flag.stderr);
-    assert!(
-        !stderr.contains("unchanged tests are excluded from the index"),
-        "the default run must not claim the flag is active; got:\n{stderr}"
-    );
+fn check_no_unchanged_tests_restates_the_recall_tradeoff_on_stderr() -> sample_output::TestResult {
+    // #4946(a): keep the real CLI and both recall notes on a small owned root.
+    let fixture = sample_output::Fixture::new()?;
+    let with_flag = fixture.run(&["--no-unchanged-tests"])?;
+    let without_flag = fixture.run(&[])?;
+    recall_tradeoff::check(&with_flag, &without_flag)?;
+    Ok(())
 }
-
 /// Small single-crate fixture with `include_unchanged_tests = false` set in
 /// `ripr.toml` plus a one-file diff, for the config-driven exclusion pins.
 /// The tests analyze the live temp tree and may write caches under it, so
