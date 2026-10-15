@@ -423,6 +423,12 @@ pub enum StaticLimitKind {
     /// against the asserted value. The gap is withheld and the class is
     /// `static_unknown`. See RIPR-SPEC-0231 / #7133.
     RustLogCaptureUnresolved,
+    /// A related `#[should_panic]` test with no assertion calls the owner,
+    /// and the owner can panic at or after the changed line, but ripr does
+    /// not resolve whether the changed code decides the panic the test
+    /// expects. The gap is withheld and the class is `static_unknown`. See
+    /// RIPR-SPEC-0240.
+    RustPanicOutcomeUnresolved,
 }
 
 impl StaticLimitKind {
@@ -463,6 +469,7 @@ impl StaticLimitKind {
             }
             StaticLimitKind::RustAssertionContextUnresolved => "rust_assertion_context_unresolved",
             StaticLimitKind::RustLogCaptureUnresolved => "rust_log_capture_unresolved",
+            StaticLimitKind::RustPanicOutcomeUnresolved => "rust_panic_outcome_unresolved",
         }
     }
 
@@ -571,6 +578,13 @@ impl StaticLimitKind {
                  the captured records, but ripr does not resolve the logger or match the log \
                  format against the asserted text. ripr does not claim a gap; this is a named \
                  limitation, not a coverage claim."
+            }
+            StaticLimitKind::RustPanicOutcomeUnresolved => {
+                "A related Rust `#[should_panic]` test contains a call to this code and passes \
+                 only if something panics, and this code can panic at or after the change, but \
+                 ripr does not resolve whether the panic comes from the changed code or from an \
+                 earlier call. ripr does not claim a gap; this is a named limitation, not a \
+                 coverage claim."
             }
         }
     }
@@ -879,6 +893,10 @@ mod tests {
             StaticLimitKind::RustLogCaptureUnresolved.as_str(),
             "rust_log_capture_unresolved"
         );
+        assert_eq!(
+            StaticLimitKind::RustPanicOutcomeUnresolved.as_str(),
+            "rust_panic_outcome_unresolved"
+        );
     }
 
     #[test]
@@ -905,6 +923,7 @@ mod tests {
             StaticLimitKind::PythonTransitiveReachUnresolved,
             StaticLimitKind::RustAssertionContextUnresolved,
             StaticLimitKind::RustLogCaptureUnresolved,
+            StaticLimitKind::RustPanicOutcomeUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by

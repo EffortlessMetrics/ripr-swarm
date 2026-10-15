@@ -7105,6 +7105,73 @@ fn oracle_metadata_emitted_for_literal_expected_value() {
     );
 }
 
+/// oxc represents `-1` / `+1` as unary operators over a NumericLiteral, not as
+/// a negative NumericLiteral node. Those signed numeric literals are
+/// compile-time constants, so `toBe(-1)` must not be reported as a dynamic
+/// matcher argument (#7647).
+#[test]
+fn oracle_metadata_treats_signed_numeric_literal_as_literal_expected() {
+    for (source, expected) in [
+        ("expect(add(2, 3)).toBe(-1);", "-1"),
+        ("expect(add(2, 3)).toBe(+1);", "+1"),
+    ] {
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(source),
+            None,
+        );
+        assert_eq!(assertions.len(), 1, "{source}");
+        let assertion = &assertions[0];
+        assert_eq!(
+            assertion.expected_value_or_variant.as_deref(),
+            Some(expected),
+            "{source}"
+        );
+        assert!(
+            !assertion.has_dynamic_matcher_arg,
+            "{source}: {assertion:?}"
+        );
+        assert_eq!(
+            assertion.oracle_confidence,
+            OracleConfidence::High,
+            "{source}"
+        );
+    }
+}
+
+/// Unary forms that are not a sign applied directly to a numeric literal stay
+/// dynamic: a negated identifier, a negated call, and boolean not (#7647).
+#[test]
+fn oracle_metadata_keeps_non_literal_unary_matcher_args_dynamic() {
+    for source in [
+        "expect(add(2, 3)).toBe(-x);",
+        "expect(add(2, 3)).toBe(-f());",
+        "expect(flag()).toBe(!true);",
+    ] {
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(source),
+            None,
+        );
+        assert_eq!(assertions.len(), 1, "{source}");
+        let assertion = &assertions[0];
+        assert!(assertion.has_dynamic_matcher_arg, "{source}: {assertion:?}");
+        assert!(
+            assertion.expected_value_or_variant.is_none(),
+            "{source}: {assertion:?}"
+        );
+        assert_eq!(
+            assertion.oracle_confidence,
+            OracleConfidence::Medium,
+            "{source}"
+        );
+    }
+}
+
 /// Oracle metadata: `has_dynamic_matcher_arg = true` and no expected value when
 /// the matcher argument is a variable (non-literal dynamic expression).
 #[test]
@@ -13647,6 +13714,138 @@ fn expected_side_is_live_unique_line_still_folds_liveness() {
             "999",
         ),
         Some(false)
+    );
+}
+
+/// Signed matcher text (`-1`, `+1`) is a numeric expected value. On the
+/// discount boundary it matches neither 90 nor 100, so it is dead rather
+/// than an unparsed `None` that would leave the witness standing (#7647).
+#[test]
+fn expected_side_is_live_treats_signed_numeric_literals_as_numbers() {
+    let owner = boundary_witness_owner();
+    for expected in ["-1", "+1"] {
+        assert_eq!(
+            expected_side_is_live(
+                &owner,
+                "  if (total >= 100) {",
+                "total",
+                "100",
+                &["100".to_string()],
+                expected,
+            ),
+            Some(false),
+            "{expected}"
+        );
+    }
+}
+
+/// A changed branch that returns `-1` is live when the matcher pins that
+/// same signed literal.
+#[test]
+fn expected_side_is_live_credits_a_signed_live_expected_value() {
+    let owner = TypeScriptOwner {
+        name: "polarity".to_string(),
+        file: PathBuf::from("src/lib.ts"),
+        start_line: 1,
+        end_line: 6,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        exported_as_default: false,
+        class_default_export: false,
+        module_entries: Vec::new(),
+        imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+        arity: Some(1),
+        params: vec!["n".to_string()],
+        source_text: Some(
+            concat!(
+                "export function polarity(n: number): number {\n",
+                "    if (n <= 0) {\n",
+                "        return -1;\n",
+                "    }\n",
+                "    return 1;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    if (n <= 0) {",
+            "n",
+            "0",
+            &["0".to_string()],
+            "-1",
+        ),
+        Some(true)
+    );
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    if (n <= 0) {",
+            "n",
+            "0",
+            &["0".to_string()],
+            "1",
+        ),
+        Some(false)
+    );
+}
+
+/// Jest `toBe` uses `Object.is`, so `toBe(-0)` does not pass against a
+/// `return 0` branch even though IEEE equality treats the zeros as equal.
+#[test]
+fn expected_side_is_live_does_not_equate_negative_zero_with_zero() {
+    let owner = TypeScriptOwner {
+        name: "gate".to_string(),
+        file: PathBuf::from("src/lib.ts"),
+        start_line: 1,
+        end_line: 6,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        exported_as_default: false,
+        class_default_export: false,
+        module_entries: Vec::new(),
+        imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+        arity: Some(1),
+        params: vec!["n".to_string()],
+        source_text: Some(
+            concat!(
+                "export function gate(n: number): number {\n",
+                "    if (n <= 0) {\n",
+                "        return 0;\n",
+                "    }\n",
+                "    return 1;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    if (n <= 0) {",
+            "n",
+            "0",
+            &["0".to_string()],
+            "-0",
+        ),
+        Some(false)
+    );
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    if (n <= 0) {",
+            "n",
+            "0",
+            &["0".to_string()],
+            "0",
+        ),
+        Some(true)
     );
 }
 

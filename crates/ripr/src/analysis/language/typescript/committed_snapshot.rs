@@ -1,7 +1,9 @@
 //! RIPR-SPEC-0258: a committed snapshot entry pins the value.
 //!
 //! `expect(x).toMatchSnapshot()` compares the serialized value with the entry
-//! stored under `<test title> <counter>` in `__snapshots__/<test file>.snap`.
+//! stored under `<test title> <counter>` in `__snapshots__/<test file>.snap`;
+//! Jest's `toMatchSnapshot("hint")` stores it under `<test title>: <hint>
+//! <counter>`, counting per hinted name.
 //! When that entry is committed, the runner fails on any changed
 //! serialization (under `--ci` a missing entry fails too), so the assertion
 //! pins the value the way a literal inline snapshot does (RIPR-SPEC-0247
@@ -24,8 +26,39 @@ fn snapshot_calls(text: &str) -> usize {
         .count()
 }
 
-/// Promote each test's `toMatchSnapshot()` assertion to `snapshot` / strong
-/// when the committed entry it compares with exists (rule 1).
+/// The hint of the body's one `toMatchSnapshot("<hint>")` call, when it is a
+/// single quoted string literal whose source text is its value and that the
+/// snapshot file writes unescaped: no `` ` ``, `$`, `\`, line break or
+/// matching quote inside, and not empty (Jest drops an empty hint). Any
+/// other argument (a template, an identifier, a property matcher, a comment,
+/// a second argument) is `None`, and so is a body that names
+/// `toMatchSnapshot` more than once, even in a string or comment, since the
+/// hint read must come from the call the assertion credits.
+fn literal_hint(body: &str) -> Option<&str> {
+    let mut mentions = body.match_indices("toMatchSnapshot");
+    let (index, matched) = mentions.next()?;
+    if mentions.next().is_some() {
+        return None;
+    }
+    let rest = body
+        .get(index + matched.len()..)?
+        .trim_start()
+        .strip_prefix('(')?
+        .trim_start();
+    let quote = rest
+        .chars()
+        .next()
+        .filter(|quote| matches!(quote, '"' | '\''))?;
+    let rest = rest.get(1..)?;
+    let end = rest.find(quote)?;
+    let hint = rest.get(..end)?;
+    let closed = rest.get(end + 1..)?.trim_start().starts_with(')');
+    (closed && !hint.is_empty() && !hint.contains(['`', '\\', '$', '\n', '\r'])).then_some(hint)
+}
+
+/// Promote each test's `toMatchSnapshot()` assertion, or under Jest its
+/// `toMatchSnapshot("<hint>")` assertion, to `snapshot` / strong when the
+/// committed entry it compares with exists (rule 1).
 pub(crate) fn promote_committed_snapshots(
     root: &Path,
     test_file: &Path,
@@ -52,16 +85,32 @@ pub(crate) fn promote_committed_snapshots(
         .iter()
         .map(|test| joined_title(test, &snapshots.separator))
         .collect();
-    let keys: Vec<Option<String>> = tests
+    let keys: Vec<Option<(String, usize)>> = tests
         .iter()
-        .map(|test| snapshot_key(test, &snapshots.separator))
+        .map(|test| snapshot_key(test, &snapshots))
         .collect();
     for (test, key) in tests.iter_mut().zip(&keys) {
-        let Some(key) = key else {
+        let Some((key, arguments)) = key else {
             continue;
         };
-        // Tests whose titles join to the same key share its counter.
-        if titles.iter().filter(|title| *title == key).count() != 1 {
+        // Tests whose titles join to the same key share its counter, and so
+        // does a test titled `<title>` whose call carries a hint: Jest keys
+        // it `<title>: <hint>` and Vitest `<title> > <hint>`, and that hint
+        // may make this key.
+        let hint_join = match snapshots.runner {
+            SnapshotRunner::Jest => ": ",
+            SnapshotRunner::Vitest => " > ",
+        };
+        let sharing = titles
+            .iter()
+            .filter(|title| {
+                *title == key
+                    || key
+                        .strip_prefix(title.as_str())
+                        .is_some_and(|rest| rest.starts_with(hint_join))
+            })
+            .count();
+        if sharing != 1 {
             continue;
         }
         if !snapshots.pins_only_entry(key) {
@@ -70,7 +119,7 @@ pub(crate) fn promote_committed_snapshots(
         // The body holds one snapshot call, so at most one assertion matches.
         if let Some(assertion) = test.assertions.iter_mut().find(|assertion| {
             assertion.matcher == "toMatchSnapshot"
-                && assertion.argument_count == 0
+                && assertion.argument_count == *arguments
                 && assertion.oracle_kind == OracleKind::Snapshot
                 && assertion.oracle_strength == OracleStrength::Medium
         }) {
@@ -84,6 +133,7 @@ pub(crate) fn promote_committed_snapshots(
 struct CommittedSnapshots {
     text: String,
     separator: String,
+    runner: SnapshotRunner,
 }
 
 impl CommittedSnapshots {
@@ -128,6 +178,7 @@ fn committed_snapshot_file(root: &Path, test_file: &Path) -> Option<CommittedSna
     Some(CommittedSnapshots {
         text,
         separator: separator.to_string(),
+        runner,
     })
 }
 
@@ -223,11 +274,14 @@ fn title_parts(test: &TypeScriptTest) -> Vec<&str> {
         .collect()
 }
 
-/// The title the runner keys this test's snapshots under, or `None` when it
-/// cannot be named: more than one snapshot call in the body, or a title with
-/// characters the snapshot file escapes. The caller refuses a key another
-/// test's title also joins to, since the two share its counter.
-fn snapshot_key(test: &TypeScriptTest, separator: &str) -> Option<String> {
+/// The name the runner keys this test's snapshot under, with the argument
+/// count of the call that uses it, or `None` when it cannot be named: more
+/// than one snapshot call in the body, or a title with characters the
+/// snapshot file escapes. A body whose call carries a literal hint keys
+/// `<title>: <hint>` under Jest; Vitest's hinted key is not read. The caller
+/// refuses a key another test's title also joins to, since the two share
+/// its counter.
+fn snapshot_key(test: &TypeScriptTest, snapshots: &CommittedSnapshots) -> Option<(String, usize)> {
     if snapshot_calls(&test.body_text) != 1 {
         return None;
     }
@@ -238,5 +292,12 @@ fn snapshot_key(test: &TypeScriptTest, separator: &str) -> Option<String> {
     {
         return None;
     }
-    Some(parts.join(separator))
+    let title = parts.join(&snapshots.separator);
+    match literal_hint(&test.body_text) {
+        Some(hint) if snapshots.runner == SnapshotRunner::Jest => {
+            Some((format!("{title}: {hint}"), 1))
+        }
+        Some(_) => None,
+        None => Some((title, 0)),
+    }
 }

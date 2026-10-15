@@ -6,7 +6,7 @@ use crate::analysis::seams::SeamGripClass;
 use crate::domain::{ExposureClass, OracleKind};
 use proptest::prelude::*;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
@@ -2330,5 +2330,135 @@ fn closer_config_names_the_member_entry_when_it_is_a_symlink_to_a_different_file
         "loaded must remain the workspace file: {}",
         loaded.display()
     );
+    Ok(())
+}
+
+/// #7652: `load_for_root` used `Path::display()` of the canonicalized config
+/// path, leaking the Windows drive-letter verbatim prefix into the human
+/// stderr line and the JSON refusal `message`. Both surfaces share this
+/// helper; discovery and `source_path` stay canonical.
+#[test]
+fn config_load_parse_error_strips_windows_verbatim_prefix() -> Result<(), String> {
+    // `check-local-context` forbids drive-letter path literals, so the
+    // Windows shape is assembled from parts.
+    let drive = "F:";
+    let verbatim = format!(r"\\?\{drive}\tmp\probe-rust1\ripr.toml");
+    let path = Path::new(&verbatim);
+    let parse_detail = "invalid ripr.toml: TOML parse error at line 4, column 2\n  |\n4 | [bogus_section]\n  |  ^^^^^^^^^^^^^\nunknown field `bogus_section`";
+    let windows = config_load_parse_error_for_host(path, parse_detail, true);
+    let expected_path = format!("{drive}/tmp/probe-rust1/ripr.toml");
+    let expected_prefix =
+        format!("{expected_path}: invalid ripr.toml: TOML parse error at line 4, column 2");
+    if !windows.starts_with(&expected_prefix) {
+        return Err(format!(
+            "Windows parse error leaked the verbatim spelling: {windows}"
+        ));
+    }
+    if windows.contains(r"\\?\") || windows.contains('\\') {
+        return Err(format!(
+            "Windows parse error must use plain forward-slash spelling: {windows}"
+        ));
+    }
+    let unix = config_load_parse_error_for_host(path, parse_detail, false);
+    if !unix.starts_with(&format!("{verbatim}: invalid ripr.toml:")) {
+        return Err(format!(
+            "Unix parse error must keep verbatim text as a filename: {unix}"
+        ));
+    }
+    let unc = Path::new(r"\\?\UNC\server\share\ripr.toml");
+    let unc_windows =
+        config_load_parse_error_for_host(unc, "invalid ripr.toml: expected table", true);
+    if !unc_windows.starts_with(r"\\?\UNC\server\share\ripr.toml: invalid ripr.toml:") {
+        return Err(format!(
+            "Windows UNC verbatim form must render exactly as given: {unc_windows}"
+        ));
+    }
+    let notice = crate::core_error::CoreError::config_invalid(windows.clone()).refusal_notice();
+    if notice.message != expected_prefix {
+        return Err(format!(
+            "JSON refusal message must be the cleaned first line, got: {}",
+            notice.message
+        ));
+    }
+    if notice.message.contains(r"\\?\") || notice.message.contains("bogus_section") {
+        return Err(format!(
+            "JSON refusal message leaked verbatim path or config source: {}",
+            notice.message
+        ));
+    }
+    let unix_notice = crate::core_error::CoreError::config_invalid(unix).refusal_notice();
+    if unix_notice.message
+        != format!("{verbatim}: invalid ripr.toml: TOML parse error at line 4, column 2")
+    {
+        return Err(format!(
+            "Unix JSON refusal message must keep verbatim text as a filename: {}",
+            unix_notice.message
+        ));
+    }
+    let read_windows = config_load_read_error_for_host(path, &"permission denied", true);
+    if read_windows != format!("read {expected_path} failed: permission denied") {
+        return Err(format!(
+            "Windows read error leaked the verbatim spelling: {read_windows}"
+        ));
+    }
+    let read_unix = config_load_read_error_for_host(path, &"permission denied", false);
+    if read_unix != format!("read {verbatim} failed: permission denied") {
+        return Err(format!(
+            "Unix read error must keep verbatim text as a filename: {read_unix}"
+        ));
+    }
+    Ok(())
+}
+
+/// Live `load_for_root` wiring: a parse failure is path-qualified through
+/// the shared renderer, while a successful load still stores the canonical
+/// `source_path` used for identity and the symlink check.
+#[test]
+fn load_for_root_parse_error_uses_the_human_path_and_keeps_canonical_source_path()
+-> Result<(), String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!(
+        "ripr-config-human-path-{}-{stamp}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let config_path = root.join(CONFIG_FILE_NAME);
+    fs::write(&config_path, "[bogus_section]\n").map_err(|err| format!("write invalid: {err}"))?;
+    let parse_error = match load_for_root(&root) {
+        Ok(_) => {
+            fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+            return Err("invalid ripr.toml must fail closed".to_string());
+        }
+        Err(error) => error,
+    };
+    let canonical = fs::canonicalize(&config_path).map_err(|err| format!("canonicalize: {err}"))?;
+    let expected_prefix = format!(
+        "{}: invalid ripr.toml:",
+        config_load_error_path_for_host(&canonical, cfg!(windows))
+    );
+    fs::write(&config_path, "[analysis]\nmode = \"draft\"\n")
+        .map_err(|err| format!("write valid: {err}"))?;
+    let loaded = load_for_root(&root);
+    fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+    if !parse_error.starts_with(&expected_prefix) {
+        return Err(format!(
+            "parse error must use the human renderer of the discovered path: {parse_error}"
+        ));
+    }
+    if parse_error.contains(r"\\?\") && cfg!(windows) {
+        return Err(format!(
+            "hosted Windows parse error still has verbatim prefix: {parse_error}"
+        ));
+    }
+    let loaded = loaded.map_err(|err| format!("valid config must load: {err}"))?;
+    if loaded.source_path.as_deref() != Some(canonical.as_path()) {
+        return Err(format!(
+            "source_path must stay the canonical identity, got {:?}",
+            loaded.source_path
+        ));
+    }
     Ok(())
 }

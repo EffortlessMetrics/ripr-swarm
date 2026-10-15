@@ -4,7 +4,9 @@ use super::gap_artifacts::{
     GapArtifactKind, GapArtifactRejection, GapArtifactValidationContext, bind_portable_command,
     validate_gap_artifact, validate_workspace_gap_artifact_report,
 };
-use super::state::{AnalysisSnapshot, HarnessFactsOnSnapshot, RefreshMetadata};
+use super::state::{
+    AnalysisSnapshot, DocumentStalenessReason, HarnessFactsOnSnapshot, RefreshMetadata,
+};
 use super::uri::{
     CappedArtifactRead, absolute_join, display_path, file_uri_for_path, path_from_file_uri,
     read_artifact_capped,
@@ -695,6 +697,47 @@ pub(super) fn delivery_omission_diagnostic(
         })),
         ..Default::default()
     }
+}
+
+/// One visible summary of a dirty-buffer withdrawal (#7771). This is a
+/// delivery limitation, never a source finding or action. Retracted when
+/// quarantine lifts because the restored publish re-serves the saved-state
+/// set.
+pub(super) fn quarantine_withdrawal_diagnostic(reason: DocumentStalenessReason) -> Diagnostic {
+    let (recovery_id, recovery) = match reason {
+        DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent => {
+            ("save_to_restore", "Save the file to restore them.")
+        }
+        DocumentStalenessReason::InvalidIncrementalChange => (
+            "undo_or_revert",
+            "Undo the edit or revert the file so ripr receives the full document again.",
+        ),
+        DocumentStalenessReason::NoAnalyzedSavedContent => (
+            "save_then_refresh",
+            "Save a new file first, then refresh (`ripr.refresh`) so ripr can restore them.",
+        ),
+    };
+    Diagnostic {
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_QUARANTINE_WITHDRAWN_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!(
+            "ripr diagnostics for this file are paused: {}. {recovery}",
+            reason.description()
+        ),
+        data: Some(serde_json::json!({
+            "kind": "delivery_limitation",
+            "reason": reason.as_str(),
+            "recovery": recovery_id,
+        })),
+        ..Default::default()
+    }
+}
+
+pub(super) fn withdrawn_quarantine_diagnostics(reason: DocumentStalenessReason) -> Vec<Diagnostic> {
+    vec![quarantine_withdrawal_diagnostic(reason)]
 }
 
 /// The identity fragment the document result IDs bind to. For a committed

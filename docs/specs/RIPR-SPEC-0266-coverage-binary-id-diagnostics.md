@@ -127,8 +127,9 @@ The committed controls in
 
 - `tools/repo-policy/src/coverage_diagnostics/binary_ids.rs` owns bounded
   profile-ID parsing and executable association.
-- `tools/repo-policy/src/coverage_diagnostics.rs` attaches the diagnostic
-  fields and preserves retained profile hashes during manifest compaction.
+- `tools/repo-policy/src/coverage_diagnostics/linux.rs` attaches the diagnostic
+  fields and preserves retained profile hashes during manifest compaction; it
+  is the Linux-only capture machinery submodule gated by #7624 reachability.
 - `docs/ci/coverage.md` documents the failure-manifest output and claim limits.
 - `.ripr/traceability.toml` connects this spec's tests, code and outputs.
 

@@ -685,57 +685,56 @@ impl WorkspaceSession {
             has_more: start + count < selected_items.len(),
             next_offset: (start + count < selected_items.len()).then_some(start + count),
         };
-        if !items.is_empty() {
-            let structured_fit = |count: usize| -> Result<bool, AttemptFailure> {
-                let scope = GapListScope {
-                    selection,
-                    requested,
-                    filter,
-                    filtered,
-                };
-                let probe = self.gap_list_document(
-                    snapshot,
-                    &scope,
-                    items[..count].to_vec(),
-                    &page_fields(count),
-                )?;
-                crate::mcp::protocol::structured_envelope_overflows(&probe)
-                    .map(|overflows| !overflows)
-                    .map_err(|error| {
-                        AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
-                    })
+        // Empty pages still echo non-pageable filters, so they must pass
+        // the same complete structured-envelope bound as nonempty pages.
+        let structured_fit = |count: usize| -> Result<bool, AttemptFailure> {
+            let scope = GapListScope {
+                selection,
+                requested,
+                filter,
+                filtered,
             };
-            if !structured_fit(items.len())? {
-                let mut low = 1usize;
-                let mut high = items.len() - 1;
-                let mut fitting = 0usize;
-                while low <= high {
-                    let mid = (low + high) / 2;
-                    if structured_fit(mid)? {
-                        fitting = mid;
-                        low = mid + 1;
-                    } else {
-                        high = mid.saturating_sub(1);
-                    }
+            let probe = self.gap_list_document(
+                snapshot,
+                &scope,
+                items[..count].to_vec(),
+                &page_fields(count),
+            )?;
+            crate::mcp::protocol::structured_envelope_overflows(&probe)
+                .map(|overflows| !overflows)
+                .map_err(|error| {
+                    AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
+                })
+        };
+        if !structured_fit(items.len())? {
+            let mut low = 1usize;
+            let mut high = items.len().saturating_sub(1);
+            let mut fitting = 0usize;
+            while low <= high {
+                let mid = (low + high) / 2;
+                if structured_fit(mid)? {
+                    fitting = mid;
+                    low = mid + 1;
+                } else {
+                    high = mid.saturating_sub(1);
                 }
-                if fitting == 0 {
-                    // Even one summary cannot fit beside the shell in the
-                    // structured envelope: no page can carry the advertised
-                    // structured result, so fail closed instead of shipping
-                    // a text-only success that breaks the outputSchema
-                    // contract (#6021 review).
-                    return Err(AttemptFailure::new(
-                        CODE_RESULT_TOO_LARGE,
-                        format!(
-                            "gap list cannot serve even one page with its structured result: the non-pageable disclosure alone fills the {}-byte envelope budget",
-                            super::MAX_RESPONSE_BYTES
-                        ),
-                        "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap",
-                    )
-                    .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
-                }
-                items.truncate(fitting);
             }
+            if fitting == 0 {
+                // No page can carry the required structured result. This
+                // includes empty pages whose echoed filters fill the shell;
+                // fail closed instead of shipping a text-only success that
+                // breaks the outputSchema contract (#6021 review, #7768).
+                return Err(AttemptFailure::new(
+                    CODE_RESULT_TOO_LARGE,
+                    format!(
+                        "gap list cannot serve even one page with its structured result: the non-pageable disclosure alone fills the {}-byte envelope budget",
+                        super::MAX_RESPONSE_BYTES
+                    ),
+                    "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap",
+                )
+                .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
+            }
+            items.truncate(fitting);
         }
 
         let page = page_fields(items.len());

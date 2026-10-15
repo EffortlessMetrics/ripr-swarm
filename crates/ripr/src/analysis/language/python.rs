@@ -131,9 +131,9 @@ use sink_alignment::{
     fstring_template, oracle_is_pure_len_aggregate, oracle_text_observes_token,
     parse_dict_literal_fields,
 };
-pub(crate) use source_facts::detect_python_test_framework;
 #[cfg(test)]
 use source_facts::parse_module;
+pub(crate) use source_facts::{detect_python_test_framework, detect_python_test_frameworks};
 use source_facts::{extract_source_facts, source_fact_snapshot_observation};
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};

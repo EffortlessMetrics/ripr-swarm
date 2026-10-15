@@ -3,6 +3,7 @@ mod arm_selection;
 mod boundary_pairing;
 mod builder_override;
 mod call_identity;
+mod changed_span;
 mod context;
 mod decision;
 mod effect_carrier;
@@ -45,7 +46,8 @@ pub(in crate::analysis) use decision::{
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
 pub(in crate::analysis) use gap_admission::{
-    REFUSALS_ARE_ANALYZER_LIMITS, withhold_log_capture_gap, withhold_unsupported_gap,
+    REFUSALS_ARE_ANALYZER_LIMITS, withhold_log_capture_gap, withhold_should_panic_gap,
+    withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{
     HELPER_RESULT_NOT_FORWARDED, HelperChain, ReturnedLedger,
@@ -56,15 +58,16 @@ pub(in crate::analysis) use helper_transfer::{
 };
 pub(in crate::analysis) use infection::infection_evidence_with_boundary_input;
 pub(in crate::analysis) use operand_pin::operand_only_pin;
-pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
 pub(in crate::analysis) use owner_pin::{
-    OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, helper_pins_owner_call, pin_scope_needs,
-    targeted_free_call_reaches_owner, targeted_name_is_alias, targeted_type_name_is_unresolved,
-    trait_impl_self_type_names,
+    AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, direct_call_name,
+    helper_pins_owner_call, pin_scope_needs, targeted_free_call_reaches_owner,
+    targeted_name_is_alias, targeted_type_name_is_unresolved, trait_impl_self_type_names,
 };
+pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use propagation_witness::{
-    PropagationWitnessV1, assertion_observes_direct_collection, current_path_witness,
+    PropagationWitnessV1, assertion_observes_collection_argument,
+    assertion_observes_direct_collection, current_path_witness,
     direct_collection_mutation_receiver, retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use propagation_witness::{

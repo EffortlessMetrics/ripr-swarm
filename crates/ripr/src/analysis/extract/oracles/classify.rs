@@ -4,6 +4,10 @@ use super::arguments::{
     assertion_oracle_text, boolean_assertion_macro_condition, ensure_assertion_arguments,
     is_unguarded_wildcard_assertion, outer_assertion_condition,
 };
+use super::bool_operands::{
+    BoolOperandReading, bool_literal_comparison_reading, contains_unread_pattern_operand,
+    unread_pattern_conjunct_rest,
+};
 use super::pattern_admission::pattern_assertion_classification;
 use super::patterns::{
     PatternPolarity, contains_negated_pattern, deciding_disjunction_conjunct_rest,
@@ -54,6 +58,49 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
             strength: OracleStrength::Weak,
         };
     }
+    // RIPR-SPEC-0231 rule 1 (#7598): a comparison, disjunction or chain
+    // compared with a boolean literal reads as what it asserts, so
+    // `assert_eq!(r == Err(E::Bad), false)` is the inequality it states.
+    match bool_literal_comparison_reading(line) {
+        Some(BoolOperandReading::Capped) => {
+            return capped_at_inequality(classify_non_negated_assertion(
+                line,
+                scalar_integer_relation,
+            ));
+        }
+        Some(BoolOperandReading::Chain(chain)) => {
+            let whole = classify_non_negated_assertion(line, scalar_integer_relation);
+            let chain = classify_assertion(&chain);
+            // Rule 3 only lowers a reading, never raises it.
+            return if chain.strength.rank() < whole.strength.rank() {
+                chain
+            } else {
+                whole
+            };
+        }
+        Some(BoolOperandReading::Rest(rest)) => {
+            // The pinning conjuncts decide the kind, but the reading never
+            // rises above what the rules below give the whole assertion: a
+            // dropped compared or negated pattern still caps it
+            // (`a == b && matches!(..) == false`). A tie takes the rest,
+            // unlike `Chain`, because the fix is a kind change at equal
+            // strength.
+            let whole = classify_after_bool_reading(line, scalar_integer_relation);
+            let rest = classify_assertion(&rest);
+            return if rest.strength.rank() <= whole.strength.rank() {
+                rest
+            } else {
+                whole
+            };
+        }
+        None => {}
+    }
+    classify_after_bool_reading(line, scalar_integer_relation)
+}
+
+/// The reading of an assertion that no bool-literal comparison rule
+/// decided: the pattern, negation and whole-condition rules.
+fn classify_after_bool_reading(line: &str, scalar_integer_relation: bool) -> OracleClassification {
     // A negated pattern takes rule 1 before any pattern-reading step, so
     // `!matches!(r, Err(E::X))` never reads as the variant it excludes.
     if is_negated_pattern_assertion(line) {
@@ -63,6 +110,16 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
     // other conjuncts decide (`!matches!(r, Err(E::X)) && score == 4` reads
     // as `score == 4`). A negation anywhere else caps the whole reading.
     if let Some(rest) = negated_pattern_conjunct_rest(line) {
+        return if rest.is_empty() {
+            INEQUALITY
+        } else {
+            classify_assertion(&rest)
+        };
+    }
+    // A conjunct whose `matches!` sits under an unread operator, call or
+    // `if` pins nothing, but the other conjuncts are still required, so
+    // they decide, as beside a negated pattern (#7598).
+    if let Some(rest) = unread_pattern_conjunct_rest(line) {
         return if rest.is_empty() {
             INEQUALITY
         } else {
@@ -86,7 +143,10 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
     // pattern or cannot be resolved, so it caps the reading like a negated
     // condition (`!matches!(..)` anywhere, or `matches!(..).not()`).
     let polarity = pattern_comparison_polarity(line);
-    if contains_negated_pattern(line) || polarity == Some(PatternPolarity::NotPositive) {
+    if contains_negated_pattern(line)
+        || contains_unread_pattern_operand(line)
+        || polarity == Some(PatternPolarity::NotPositive)
+    {
         return capped_at_inequality(classify_non_negated_assertion(
             line,
             scalar_integer_relation,
@@ -127,14 +187,21 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
 /// `!matches!(..)` condition, a `matches!` comparison that is not positive
 /// polarity, a negated pattern that caps a compound condition, an
 /// inequality-named `assert_*` helper or macro that is not a mock or
-/// side-effect observer, or a boolean condition whose only comparison is
-/// `!=` and is not a positive pattern comparison). Reveal reads this so a probe-family override can never lift an
+/// side-effect observer, a boolean-valued operand that a boolean literal
+/// caps (#7598), a `matches!` under an unread operator, call or `if`, or a
+/// boolean condition whose only comparison is `!=` and is not a positive
+/// pattern comparison). Reveal reads this so a probe-family override can never lift an
 /// inequality above its classified strength.
 pub(crate) fn is_inequality_assertion(line: &str) -> bool {
     let oracle_text = assertion_oracle_text(line);
     let line = oracle_text.as_deref().unwrap_or(line);
     let polarity = pattern_comparison_polarity(line);
     is_inequality_macro_assertion(line)
+        || bool_literal_comparison_reading(line) == Some(BoolOperandReading::Capped)
+        || unread_pattern_conjunct_rest(line).map_or_else(
+            || contains_unread_pattern_operand(line),
+            |rest| rest.is_empty(),
+        )
         || is_negated_pattern_assertion(line)
         || polarity == Some(PatternPolarity::NotPositive)
         || (contains_negated_pattern(line)
@@ -1782,6 +1849,26 @@ fn ok_literal() {
                 "mock.expect_err().returning(|| ());",
                 vec![(MockExpectation, Medium)],
             ),
+            // A call receiver does not make a zero-argument `expect_err()`
+            // a `Result::expect_err`, with or without inner whitespace.
+            (
+                "mock_expectation_for_err_method_on_a_constructor",
+                "MockFoo::new().expect_err();",
+                vec![(MockExpectation, Medium)],
+            ),
+            (
+                "mock_expectation_for_err_method_spaced",
+                "MockFoo::new().expect_err( );",
+                vec![(MockExpectation, Medium)],
+            ),
+            // A comment is not an argument.
+            (
+                "mock_expectation_for_err_method_with_a_comment",
+                "MockFoo::new().expect_err(/* setup */);",
+                vec![(MockExpectation, Medium)],
+            ),
+            // `expect_` in a comment is not a mock expectation name.
+            ("expect_word_in_comment", "run(); // expect_called", vec![]),
             // `expect_` text in the message is not a mock expectation name.
             (
                 "expect_err_expect_word_message",

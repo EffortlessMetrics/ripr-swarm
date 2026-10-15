@@ -8,6 +8,8 @@ Created: 2026-10-06
 
 Linked issues:
 
+- #7767 (unknown-resource recovery remains useful to message-only clients)
+
 - #7314 (optional tool arguments reject explicit null consistently with
   their advertised non-null input types)
 - #3089 (this slice: status, refresh, bounded gap list, and evidence
@@ -179,7 +181,11 @@ official SDK transport:
   narrowed set exactly once. Pages are sized so the complete double-carry
   envelope measures under the response bound: a paged success always
   carries `structuredContent`, as the tool's advertised `outputSchema`
-  requires. The generated `next_page` route pins the snapshot identity,
+  requires. Empty pages obey the same structured-envelope bound: echoed
+  filters can exceed it even when the raw document fits. Such a page fails
+  closed with the existing typed `result_too_large` refusal and current
+  snapshot identity instead of a text-only success. The generated `next_page`
+  route pins the snapshot identity,
   filters, and explicit limit, so
   a refresh between pages fails closed with `stale_snapshot` instead of
   mixing snapshots. Only a listing that cannot fit even one page — for
@@ -233,6 +239,25 @@ official SDK transport:
   configuration loading, no model provider, and no repair-ready claim
   anywhere. MCP does not call the LSP server, parse LSP diagnostics, or
   read VS Code artifacts as authority.
+
+### Unknown-resource recovery (#7767)
+
+An unrecognized resource URI returns a bounded, static human-readable message
+naming `ripr://workspace/status` and all five advertised templates:
+`ripr://snapshot/{snapshot_id}`, `ripr://gap/{canonical_id}`,
+`ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
+`ripr://repair-card/{canonical_id}`. The latter repair routes retain the
+identity and typed-failure authorities in RIPR-SPEC-0214 and RIPR-SPEC-0215.
+The same routes remain in the existing `error.data.available` and
+`error.data.resource_templates` arrays. A client displaying only
+`error.message` can discover a next request without inspecting structured
+error data. The message does not echo the unrecognized caller URI.
+
+The SDK still maps resource misses to the negotiated error code; this adds
+no protocol-version decision, schema field, route, or session mutation.
+Recognized resource routes keep their existing missing/stale-identity
+errors rather than receiving this generic route list. Listing a template
+is not evidence that a resource with a particular identity exists.
 
 ## Required Evidence
 
@@ -335,7 +360,20 @@ official SDK transport:
    repair-attempt link until a session transaction binds one; missing
    producer fields remain typed states.
 
+6. After a client reads an unknown URI, the correlated error names the
+   status URI and every template in both prose and structured arrays. A
+   recognized snapshot read before refresh still reports `no_snapshot`,
+   and the same connection can subsequently read the valid status resource.
+
 ## Test Mapping
+
+- `crates/ripr/tests/mcp_stdio.rs::rejection_arms_survive_the_stdio_transport`
+  — literal complete recovery prose and arrays, retained recognized-route
+  refusal, then valid status recovery on the same session.
+- `crates/ripr/tests/mcp_sdk.rs::official_sdk_legacy_client_lists_calls_and_reads_status`
+  and `official_sdk_discovery_client_lists_calls_and_reads_status` — the
+  same literal recovery contract through the official SDK lifecycles,
+  preserving the SDK-owned negotiated resource-miss code.
 
 - `crates/ripr/tests/mcp_stdio.rs::refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation`
   — actual committed multi-item analysis over raw stdio: literal IDs, counts,
@@ -349,6 +387,11 @@ official SDK transport:
   — direct stored-fact narrowing/readiness and continuation controls.
 - `crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_filters_at_the_dispatch_edge`
   — argument admission before refresh; this is not successful narrowing proof.
+- `crates/ripr/tests/mcp_stdio.rs::empty_gap_pages_keep_structured_outcomes_at_the_response_bound`
+  — real committed analysis with nonempty subjects before filtering, fitting
+  empty pages, independently sized structured-envelope overflow below the
+  raw-document ceiling, raw-document overflow, all three string filters,
+  typed refusals bound to the current snapshot, and same-session recovery.
 
 - `crates/ripr/src/mcp/workspace.rs::tests` — session lifecycle, typed
   failures, identity portability, boundedness, last-known-good retention;

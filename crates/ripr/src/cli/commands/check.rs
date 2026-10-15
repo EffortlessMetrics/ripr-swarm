@@ -1144,6 +1144,26 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         Ok(output) => output,
         Err(err) => return Err(refuse_check(&envelope_input, effective_format, err)),
     };
+    // The findings formats apply suppression only through the explicit flag.
+    // Disclose a detected default without parsing it or changing stdout/exit
+    // semantics. Implicit policy consumers retain their existing authority.
+    if limited_check_input.suppression_policy.is_none()
+        && matches!(
+            format,
+            OutputFormat::Human
+                | OutputFormat::HumanFull
+                | OutputFormat::Json
+                | OutputFormat::Github
+        )
+        && output
+            .root
+            .join(output::suppressions::SUPPRESSIONS_PATH)
+            .is_file()
+    {
+        eprintln!(
+            "ripr: detected .ripr/suppressions.toml under the analyzed root; it was not applied to this check. Rerun this check with --suppression-policy .ripr/suppressions.toml to apply it."
+        );
+    }
     // RIPR-SPEC-0140: persist the full-fidelity finding set plus the input
     // identity for a later `explain --from` / `context --from`. A failed
     // write fails the command: the user explicitly requested the artifact.

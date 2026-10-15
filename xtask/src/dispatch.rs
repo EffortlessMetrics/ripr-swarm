@@ -237,6 +237,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckCiLaneWhitelist => super::check_ci_lane_whitelist(),
         XtaskCommand::CheckProofPacks => super::check_proof_packs(),
         XtaskCommand::CheckProductCopy => super::check_product_copy(),
+        XtaskCommand::CheckPackagedReadme => super::check_packaged_readme(),
         XtaskCommand::CheckPositioningLanguage => super::check_positioning_language(),
         XtaskCommand::CheckDocRoles => super::check_doc_roles(),
         XtaskCommand::CheckReleaseTargets => super::check_release_targets(),

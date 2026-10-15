@@ -74,19 +74,19 @@ Precision notes:
 
 | Seam | Class | Oracle | Mutation operator | Runtime outcome | Join | Confidence label |
 | --- | --- | --- | --- | --- | --- | --- |
-| `33f2fc9a4bfabc2e` | `strongly_gripped` | `unknown`/`unknown` | \|\| | missed | `span_containment` | `contradicts_static_clean` |
-| `9b3a32b1fdffede4` | `strongly_gripped` | `unknown`/`unknown` | unknown | missed | `span_containment` | `contradicts_static_clean` |
-| `f49c5d86e1d4a8fe` | `ungripped` | `unknown`/`unknown` | != | missed | `span_containment` | `supports_static_gap` |
-| `2d733edde2d4a212` | `ungripped` | `unknown`/`unknown` | "xyzzy".into() | missed | `file_line` | `supports_static_gap` |
-| `2d733edde2d4a212` | `ungripped` | `unknown`/`unknown` | String::new() | missed | `file_line` | `supports_static_gap` |
-| `25a88f39b588c3f3` | `activation_unknown` | `unknown`/`unknown` | Ok(()) | missed | `file_line` | `supports_static_gap` |
-| `3a2cc8888f55e1c1` | `ungripped` | `unknown`/`unknown` | Ok(None) | missed | `file_line` | `supports_static_gap` |
-| `3a2cc8888f55e1c1` | `ungripped` | `unknown`/`unknown` | Ok(Some(Default::default())) | missed | `file_line` | `supports_static_gap` |
-| `ae7b3b349a0b2660` | `ungripped` | `unknown`/`unknown` | != | missed | `span_containment` | `supports_static_gap` |
-| `ae7ec0349a0e3e36` | `ungripped` | `unknown`/`unknown` | != | missed | `span_containment` | `supports_static_gap` |
-| `ae7b3d349a0b29c6` | `ungripped` | `unknown`/`unknown` | && | missed | `span_containment` | `supports_static_gap` |
-| `ae7b3d349a0b29c6` | `ungripped` | `unknown`/`unknown` | unknown | missed | `span_containment` | `supports_static_gap` |
-| `a72597349643e206` | `strongly_gripped` | `unknown`/`unknown` | unknown | missed | `span_containment` | `contradicts_static_clean` |
+| `33f2fc9a4bfabc2e` | `strongly_gripped` | `unknown`/`unknown` | BinaryOperator | missed | `span_containment` | `contradicts_static_clean` |
+| `9b3a32b1fdffede4` | `strongly_gripped` | `unknown`/`unknown` | UnaryOperator | missed | `span_containment` | `contradicts_static_clean` |
+| `f49c5d86e1d4a8fe` | `ungripped` | `unknown`/`unknown` | BinaryOperator | missed | `span_containment` | `supports_static_gap` |
+| `2d733edde2d4a212` | `ungripped` | `unknown`/`unknown` | FnValue | missed | `file_line` | `supports_static_gap` |
+| `2d733edde2d4a212` | `ungripped` | `unknown`/`unknown` | FnValue | missed | `file_line` | `supports_static_gap` |
+| `25a88f39b588c3f3` | `activation_unknown` | `unknown`/`unknown` | FnValue | missed | `file_line` | `supports_static_gap` |
+| `3a2cc8888f55e1c1` | `ungripped` | `unknown`/`unknown` | FnValue | missed | `file_line` | `supports_static_gap` |
+| `3a2cc8888f55e1c1` | `ungripped` | `unknown`/`unknown` | FnValue | missed | `file_line` | `supports_static_gap` |
+| `ae7b3b349a0b2660` | `ungripped` | `unknown`/`unknown` | BinaryOperator | missed | `span_containment` | `supports_static_gap` |
+| `ae7b3d349a0b29c6` | `ungripped` | `unknown`/`unknown` | BinaryOperator | missed | `span_containment` | `supports_static_gap` |
+| `ae7ec0349a0e3e36` | `ungripped` | `unknown`/`unknown` | BinaryOperator | missed | `span_containment` | `supports_static_gap` |
+| `ae7b3d349a0b29c6` | `ungripped` | `unknown`/`unknown` | UnaryOperator | missed | `span_containment` | `supports_static_gap` |
+| `a72597349643e206` | `strongly_gripped` | `unknown`/`unknown` | UnaryOperator | missed | `span_containment` | `contradicts_static_clean` |
 
 ## Ambiguous File/Line Matches
 
@@ -96,9 +96,9 @@ No line-only runtime mutants matched multiple static seams.
 
 | Runtime mutant | Location | Runtime outcome | Confidence label | Candidate seams |
 | --- | --- | --- | --- | --- |
+| `crates/atuin-ai/src/context.rs:40:30: replace && with \|\| in history_output_capability_available` | crates/atuin-ai/src/context.rs:40 | missed | `ambiguous_runtime_join` | `000f706384b63df2`, `f17a02397c93826a` |
 | `crates/atuin-ai/src/context.rs:40:5: replace history_output_capability_available -> bool with false` | crates/atuin-ai/src/context.rs:40 | missed | `ambiguous_runtime_join` | `000f706384b63df2`, `f17a02397c93826a` |
 | `crates/atuin-ai/src/context.rs:40:5: replace history_output_capability_available -> bool with true` | crates/atuin-ai/src/context.rs:40 | missed | `ambiguous_runtime_join` | `000f706384b63df2`, `f17a02397c93826a` |
-| `crates/atuin-ai/src/context.rs:40:30: replace && with \|\| in history_output_capability_available` | crates/atuin-ai/src/context.rs:40 | missed | `ambiguous_runtime_join` | `000f706384b63df2`, `f17a02397c93826a` |
 | `crates/atuin-ai/src/context.rs:85:9: replace AppContext::capabilities_as_strings -> Vec<String> with vec!["xyzzy".into()]` | crates/atuin-ai/src/context.rs:85 | missed | `ambiguous_runtime_join` | `a2a1825a2a7a3178`, `cb384a36e083789a` |
 | `crates/atuin-ai/src/context.rs:85:9: replace AppContext::capabilities_as_strings -> Vec<String> with vec![String::new()]` | crates/atuin-ai/src/context.rs:85 | missed | `ambiguous_runtime_join` | `a2a1825a2a7a3178`, `cb384a36e083789a` |
 | `crates/atuin-ai/src/context.rs:85:9: replace AppContext::capabilities_as_strings -> Vec<String> with vec![]` | crates/atuin-ai/src/context.rs:85 | missed | `ambiguous_runtime_join` | `a2a1825a2a7a3178`, `cb384a36e083789a` |
@@ -107,14 +107,14 @@ No line-only runtime mutants matched multiple static seams.
 
 | Location | Mutation operator | Runtime outcome | Reason | Test command |
 | --- | --- | --- | --- | --- |
-| crates/atuin-ai/src/context.rs:56 | vec!["xyzzy".into()] | missed | `no_containing_seam` | unknown |
-| crates/atuin-ai/src/context.rs:56 | vec![String::new()] | missed | `no_containing_seam` | unknown |
-| crates/atuin-ai/src/context.rs:56 | vec![] | missed | `no_containing_seam` | unknown |
-| crates/atuin-ai/src/context.rs:99 | Default::default() | unviable | `no_containing_seam` | unknown |
-| crates/atuin-ai/src/context.rs:117 | Default::default() | missed | `no_containing_seam` | unknown |
-| crates/atuin/src/command/client/store/rebuild.rs:53 | Ok(()) | missed | `no_containing_seam` | unknown |
-| crates/atuin/src/command/client/store/rebuild.rs:71 | Ok(()) | missed | `no_containing_seam` | unknown |
-| crates/atuin/src/logs/otel/enabled.rs:99 | () | missed | `no_containing_seam` | unknown |
+| crates/atuin-ai/src/context.rs:56 | FnValue | missed | `no_containing_seam` | unknown |
+| crates/atuin-ai/src/context.rs:56 | FnValue | missed | `no_containing_seam` | unknown |
+| crates/atuin-ai/src/context.rs:56 | FnValue | missed | `no_containing_seam` | unknown |
+| crates/atuin-ai/src/context.rs:99 | FnValue | unviable | `no_containing_seam` | unknown |
+| crates/atuin-ai/src/context.rs:117 | FnValue | missed | `no_containing_seam` | unknown |
+| crates/atuin/src/command/client/store/rebuild.rs:53 | FnValue | missed | `no_containing_seam` | unknown |
+| crates/atuin/src/command/client/store/rebuild.rs:71 | FnValue | missed | `no_containing_seam` | unknown |
+| crates/atuin/src/logs/otel/enabled.rs:99 | FnValue | missed | `no_containing_seam` | unknown |
 
 ## Static Seams Without Runtime Data
 

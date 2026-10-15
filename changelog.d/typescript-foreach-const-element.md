@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- TypeScript: a `forEach` over an inline array whose element names a top-level primitive `const`, such as `const n = 200; [150, n].forEach((v) => { expect(price(v)).toBe(140); })`, now reads one assertion per element, so the test credits the owner instead of leaving a false gap. A `let`, an object or call value, a later declaration, or a name redeclared in a nested block still collects nothing (RIPR-SPEC-0246 rule 2, #8000).

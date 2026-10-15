@@ -374,7 +374,7 @@
       },
       {
         "command": "ripr.copyReceiptCommand",
-        "title": "ripr: Copy Receipt Command"
+        "title": "ripr: Copy Receipt Command (Receipt Status)"
       },
       {
         "command": "ripr.openAttemptLedger",

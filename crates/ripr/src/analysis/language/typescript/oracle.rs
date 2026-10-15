@@ -413,6 +413,19 @@ fn collect_nested_callback_assertions(
             }
             let mut rows = Vec::new();
             for element in &array.elements {
+                // An element naming a top-level primitive `const` declared
+                // before the call reads as that literal.
+                if let Some(Expression::Identifier(ident)) = element
+                    .as_expression()
+                    .map(Expression::get_inner_expression)
+                    && let Some(cell) = context
+                        .literal_consts
+                        .iter()
+                        .find_map(|known| known.row_cell(&ident.name, call.span.start))
+                {
+                    rows.push(vec![cell.to_string()]);
+                    continue;
+                }
                 let Some(cell) = element.as_expression().filter(|cell| is_literal_cell(cell))
                 else {
                     return;
@@ -2054,7 +2067,8 @@ pub(crate) fn is_safe_javascript_identifier(text: &str) -> bool {
 }
 
 /// Returns `true` if the `Argument` is a concrete resolvable literal
-/// (string, number, boolean, null, or a safe all-literal object).
+/// (string, number, boolean, null, a sign applied directly to a numeric
+/// literal, or a safe all-literal object).
 /// Returns `false` for variables, function calls, computed expressions,
 /// template literals, arrays, etc.
 pub(crate) fn is_literal_argument(arg: &Argument<'_>) -> bool {
@@ -2064,9 +2078,21 @@ pub(crate) fn is_literal_argument(arg: &Argument<'_>) -> bool {
         | Argument::BooleanLiteral(_)
         | Argument::NullLiteral(_) => true,
         Argument::ObjectExpression(object) => safe_mock_expected_object(object),
+        // oxc represents `-1` / `+1` as unary operators over a NumericLiteral,
+        // not as a negative NumericLiteral node. Accept only that shape:
+        // `-x`, `-f()`, `!true`, and parenthesized or nested unaries stay
+        // dynamic (#7647).
+        Argument::UnaryExpression(unary)
+            if matches!(
+                unary.operator,
+                oxc_ast::ast::UnaryOperator::UnaryNegation | oxc_ast::ast::UnaryOperator::UnaryPlus
+            ) && matches!(unary.argument, Expression::NumericLiteral(_)) =>
+        {
+            true
+        }
         // Template literals, identifiers, call expressions, member expressions,
-        // unary/binary expressions, array expressions, spread elements, etc.
-        // are all treated as dynamic / non-resolvable.
+        // remaining unary/binary expressions, array expressions, spread
+        // elements, etc. are all treated as dynamic / non-resolvable.
         _ => false,
     }
 }

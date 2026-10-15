@@ -211,7 +211,12 @@ The test suite:
 CI runs the suite headless with `xvfb-run -a npm run test:e2e`. The test
 runner stores downloaded VS Code archives under
 `target/ripr/vscode-test-cache` so generated editor-host state stays with the
-rest of the repo-local build output.
+rest of the repo-local build output. Isolated host user-data is
+`target/ripr/vscode-test-user-data`, with VS Code logs under `logs/`. A
+test-host failure copies a size-capped, redacted log subset into
+`target/ripr/vscode-test-host-diagnostics/`; CI uploads that folder only when
+the vscode job fails. Success runs do not retain the diagnostics copy, and
+collection cannot change the original test exit status.
 
 ## Golden Output
 
@@ -253,3 +258,30 @@ cargo test --workspace --doc
 
 The JUnit output path is configured in `.config/nextest.toml` at
 `target/nextest/ci/junit.xml`.
+
+## Unused suppression-policy disclosure
+
+The [repository configuration contract](specs/RIPR-SPEC-0007-repository-configuration.md#unused-default-suppression-disclosure-7759)
+is exercised by a genuine changed Rust fixture and the built CLI:
+
+```bash
+cargo test --locked -p ripr --test default_suppression_disclosure -- --test-threads=1
+```
+
+The suite distinguishes unused presence from explicit application/refusal,
+preserves complete stdout, and excludes foreign-CWD and directory false positives.
+
+## MCP unknown-resource recovery
+
+[RIPR-SPEC-0211](specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md#unknown-resource-recovery-7767)
+defines the message-only client's recovery contract. The raw stdio control
+pins literal prose and structured routes, preserves recognized-route failures,
+and follows the rejection with a valid status read on the same connection.
+Official SDK cases cover the negotiated lifecycle mapping independently.
+
+```bash
+cargo test --locked -p ripr --test mcp_stdio rejection_arms_survive_the_stdio_transport -- --exact
+cargo test --locked -p ripr --test mcp_sdk
+```
+
+These tests qualify wire behavior, not installation or every protocol version.

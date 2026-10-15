@@ -7,13 +7,13 @@ use super::arguments::{
 };
 use super::classify::classify_assertion;
 use super::patterns::{
-    contains_macro_invocation, contains_named_enum_variant, is_custom_assertion_helper,
-    is_mock_expectation_line, is_side_effect_observer_assertion, is_snapshot_assertion,
-    is_unwrap_err_bound_error_assertion, without_expect_err,
+    contains_macro_invocation, contains_named_enum_variant, has_argument_tokens,
+    is_custom_assertion_helper, is_mock_expectation_line, is_side_effect_observer_assertion,
+    is_snapshot_assertion, is_unwrap_err_bound_error_assertion, without_expect_err,
 };
 use crate::analysis::extract::ShadowAuthority;
-use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::extract::text::extract_identifier_tokens;
+use crate::analysis::extract::{delimiters_balance, group_end, mask_comments_and_strings};
 
 pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFact> {
     let bound_error_vars = unwrap_err_bound_variables(body);
@@ -2514,7 +2514,7 @@ fn receiver_keeps_call_error(masked: &str) -> bool {
         masked
             .match_indices(".expect_err(")
             .map(|(start, call)| (start, start + call.len() - 1))
-            .find(|&(_, open)| balanced_group_end(masked, open) == Some(masked.len() - 1))
+            .find(|&(_, open)| group_end(masked, open) == Some(masked.len() - 1))
             .map(|(start, _)| &masked[..start])
     });
     receiver.is_some_and(|receiver| keeps_call_result(receiver, 0))
@@ -2528,7 +2528,7 @@ fn keeps_call_result(expr: &str, depth: usize) -> bool {
     const MAX_GROUPING_DEPTH: usize = 8;
     let expr = expr.trim();
     let close = if expr.starts_with('(') {
-        let Some(close) = balanced_group_end(expr, 0) else {
+        let Some(close) = group_end(expr, 0) else {
             return false;
         };
         if depth >= MAX_GROUPING_DEPTH || !keeps_call_result(&expr[1..close], depth + 1) {
@@ -2544,7 +2544,7 @@ fn keeps_call_result(expr: &str, depth: usize) -> bool {
         if !is_call_path(&expr[..open]) {
             return false;
         }
-        let Some(close) = balanced_group_end(expr, open) else {
+        let Some(close) = group_end(expr, open) else {
             return false;
         };
         close
@@ -2584,44 +2584,11 @@ fn adapters_keep_ok(mut rest: &str) -> bool {
         if !KEEPS_OK.contains(&name) || !after.starts_with('(') {
             return false;
         }
-        let Some(close) = balanced_group_end(after, 0) else {
+        let Some(close) = group_end(after, 0) else {
             return false;
         };
         rest = &after[close + 1..];
     }
-}
-
-/// The byte index of the `)` closing the `(` at `open`.
-pub(super) fn balanced_group_end(text: &str, open: usize) -> Option<usize> {
-    let mut depth = 0_i64;
-    for (index, byte) in text.bytes().enumerate().skip(open) {
-        match byte {
-            b'(' | b'[' => depth += 1,
-            b')' | b']' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(index);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn delimiters_balance(masked: &str) -> bool {
-    let mut depth = 0_i64;
-    for byte in masked.bytes() {
-        match byte {
-            b'(' | b'[' => depth += 1,
-            b')' | b']' => depth -= 1,
-            _ => {}
-        }
-        if depth < 0 {
-            return false;
-        }
-    }
-    depth == 0
 }
 
 fn ends_with_unwrap_err(expr: &str) -> bool {
@@ -2629,15 +2596,22 @@ fn ends_with_unwrap_err(expr: &str) -> bool {
 }
 
 fn ends_with_expect_err(expr: &str) -> bool {
-    // .expect_err("...") — ends with `)` after some `.expect_err(`. A
-    // zero-argument `expect_err()` is a mock's expectation for a method
-    // named `err`, not `Result::expect_err`.
+    // `.expect_err(<message>)` whose argument group closes `expr`. An empty
+    // group (`expect_err()`, `expect_err( )`) is a mock's expectation for a
+    // method named `err`, not `Result::expect_err`; `without_expect_err`
+    // applies the same rule, so both adapters agree on it.
+    // Masking keeps byte offsets, and blanks a message's quotes, so the
+    // arguments are read back from `expr` itself, by the same rule
+    // `without_expect_err` applies.
     let expr = expr.trim_end();
-    if !expr.ends_with(')') || expr.ends_with(".expect_err()") {
-        return false;
-    }
-    // Find last `.expect_err(`
-    expr.contains(".expect_err(")
+    let masked = mask_comments_and_strings(expr);
+    let masked = masked.trim_end();
+    let close = masked.len().saturating_sub(1);
+    masked
+        .match_indices(".expect_err(")
+        .map(|(start, call)| start + call.len() - 1)
+        .find(|&open| group_end(masked, open) == Some(close))
+        .is_some_and(|open| has_argument_tokens(&expr[open + 1..close]))
 }
 
 pub(crate) fn extract_line_scanned_oracles(body: &str, start_line: usize) -> Vec<OracleFact> {
@@ -5005,5 +4979,20 @@ mod call_path_tests {
         };
         assert!(super::receiver_keeps_call_error(&grouped(8)));
         assert!(!super::receiver_keeps_call_error(&grouped(9)));
+    }
+
+    #[test]
+    fn a_stray_brace_in_the_receiver_refuses_the_uncompared_unwrap_err() {
+        // The shared walker counts braces (#7860), so a `}` the line cannot
+        // pair, as on a line inside a multi-line string, refuses the read
+        // instead of crediting a weak oracle.
+        assert_eq!(
+            super::uncompared_unwrap_err("let _ = f(a }).unwrap_err();", ""),
+            None
+        );
+        assert_eq!(
+            super::uncompared_unwrap_err("let _ = f(a).unwrap_err();", ""),
+            Some("f(a).unwrap_err()".to_string())
+        );
     }
 }
