@@ -33,7 +33,8 @@ now separate source review before admission from final REVIEW_READY after green.
 ## Scope and safety
 
 Only adding `merge-ready` to an open, reviewed, non-Draft PR is a qualification
-request. Opening, pushing and Ready alone do not invoke routed qualification.
+request. Opening or pushing a PR, or marking it Ready, does not itself invoke
+routed qualification.
 Other labels emit `Merge-ready Nonrequest`, not a skipped required success.
 No main-push routed full run or branch dispatch can impersonate PR qualification.
 Existing unrelated feature, wheel, security, full-Windows and editor workflows

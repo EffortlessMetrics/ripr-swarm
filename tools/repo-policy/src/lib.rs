@@ -1207,6 +1207,9 @@ pub fn routed_rust_workflow_contract_violations_with_reusable(
         }
     }
 
+    // Admission adds a skipped ancestor on legacy events; only pre-admission
+    // callers may retain an implicit-success implementation condition.
+    let has_admission = routed_rust_job_block_any(workflow, "admission", |_| true);
     for (job, target) in [
         ("rust-cx43", "cx43"),
         ("rust-cpx42", "cpx42"),
@@ -1218,8 +1221,12 @@ pub fn routed_rust_workflow_contract_violations_with_reusable(
             "!cancelled() && needs.route.result == 'success' && needs.detect-docs-only.result == 'success' && {legacy_docs}"
         );
         let condition = routed_rust_job_condition(workflow, job);
-        if !matches!(condition.as_deref(), Some(value) if value == legacy || value == legacy_docs || value == staged)
-        {
+        let reviewed = match condition.as_deref() {
+            Some(value) if has_admission => value == staged,
+            Some(value) => value == legacy || value == legacy_docs,
+            None => false,
+        };
+        if !reviewed {
             violations.push(format!("routed Rust job `{job}` must retain its selected target and reviewed legacy or cancellation-aware staging condition"));
         }
     }

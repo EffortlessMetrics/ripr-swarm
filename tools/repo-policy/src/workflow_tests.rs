@@ -1108,6 +1108,38 @@ fn staged_self_hosted_conditions_reject_missing_status_and_header_decoys() -> Re
             .take_while(|line| !line.starts_with("  ") || line.starts_with("   "))
             .collect::<Vec<_>>()
             .join("\n");
+        let start = block.find("    if: >-\n").ok_or("folded guard")?;
+        let end = block.find("    uses:").ok_or("callee after guard")?;
+        let original_guard = &block[start..end];
+        for docs in [false, true] {
+            let suffix = if docs {
+                " && needs.detect-docs-only.outputs.docs_only != 'true'"
+            } else {
+                ""
+            };
+            let legacy_guard =
+                format!("    if: needs.route.outputs.router_target == '{target}'{suffix}\n");
+            let reverted = block.replace(original_guard, &legacy_guard);
+            assert_ne!(reverted, block, "whole guard mutation engages");
+            let wrong = workflow.replace(&block, &reverted);
+            assert!(
+                findings(&wrong)
+                    .iter()
+                    .any(|value| value.contains(&format!("job `{job}` must retain"))),
+                "staged {job} must reject whole legacy guard, docs={docs}"
+            );
+            // Step/run text and comments cannot create a real admission job.
+            let legacy = format!(
+                "jobs:\n  note:\n    steps:\n      - run: |\n          admission:\n  # admission:\n  {job}:\n{legacy_guard}"
+            );
+            assert!(!routed_rust_job_block_any(&legacy, "admission", |_| true));
+            assert!(
+                !findings(&legacy)
+                    .iter()
+                    .any(|value| value.contains(&format!("job `{job}` must retain"))),
+                "legacy {job} compatibility, docs={docs}"
+            );
+        }
         for (old, new) in [
             ("!cancelled()", "success()"),
             ("needs.route.result == 'success'", "true"),
