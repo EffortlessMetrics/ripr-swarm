@@ -369,8 +369,8 @@ changes `self.count += 2` to `self.count += 1`.
   ending in `.unwrap()`, `.expect(..)` or `?`, then optionally bound to one
   name the test uses again before the read only as a whole first or last
   operand of an assertion (`assert_eq!(receipt, ..)`): any other use of a
-  returned `&mut Self` could rewrite the entry. No `return` may come between the call and the
-  read (a platform skip passes without reading). Rule 3 holds for keyed reads: between that call and the read the
+  returned `&mut Self` could rewrite the entry. No `return` may come anywhere in the test
+  before the read (a platform skip passes without reading). Rule 3 holds for keyed reads: between that call and the read the
   test may name the binding only as `binding.getter(..)` through the
   verified getter. Between the declaration and the owner call, every
   statement that names the binding must be a plain call
@@ -378,8 +378,12 @@ changes `self.count += 2` to `self.count += 1`.
   or `?`, none of whose literal arguments equals the expected value under
   any spelling (`7`, `7u32`, `7_u32`), to an inherent method whose body,
   and every `self.m(..)` helper it calls, spells no literal equal to the
-  expected value and hands neither `self` nor `&mut self.f` to other code
-  (`method_cannot_store` in `builder_override.rs`): `s.set("K", 5)`,
+  expected value, hands neither `self` nor `&mut self.f` to other code, and
+  writes the map field only as `self.<path>.insert(k, v)` or
+  `*self.<path>.entry(k).or_insert(<literal>) += v` with `v` a parameter
+  (`method_cannot_store` in `builder_override.rs`); a constant, another
+  field or a function result in value position (`SEED`, `self.base`,
+  `five()`, `self.<path> = Self::defaults()`) fails closed: `s.set("K", 5)`,
   `s.set("K", v)`, `seed(&mut s)` or `s.load_defaults()` storing `("K", 5)`
   before `s.put("K", 5)` may already have stored the expected value. The insert must be a top-level statement of the owner
   (`self.<path>.insert(..)` outside any branch, loop, block or closure),

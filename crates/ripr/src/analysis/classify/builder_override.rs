@@ -827,26 +827,31 @@ pub(in crate::analysis) fn constructor_starts_empty(
 /// Methods resolve by bare type name, so two modules declaring the same
 /// name may lend one type's getter or constructor to the other's test.
 fn type_declared_once(index: &RustIndex, impl_type: &str) -> bool {
-    declared_structs(index, impl_type).len() == 1
+    declared_structs(index, impl_type).is_some_and(|found| found.len() == 1)
 }
 
-fn declared_structs(index: &RustIndex, impl_type: &str) -> Vec<ast::Struct> {
+/// Every `struct impl_type` in the index; `None` when a file that may
+/// declare it does not parse cleanly, so a hidden second declaration
+/// cannot pass for one.
+fn declared_structs(index: &RustIndex, impl_type: &str) -> Option<Vec<ast::Struct>> {
     let declaration = format!("struct {impl_type}");
-    index
+    let mut found = Vec::new();
+    for file in index
         .files()
         .values()
         .filter(|file| file.source.contains(&declaration))
-        .filter_map(|file| parse_clean_source_file(&file.source))
-        .flat_map(|parse| {
+    {
+        let parse = parse_clean_source_file(&file.source)?;
+        found.extend(
             parse
                 .tree()
                 .syntax()
                 .descendants()
                 .filter_map(ast::Struct::cast)
-                .filter(|item| item.name().is_some_and(|name| name.text() == impl_type))
-                .collect::<Vec<_>>()
-        })
-        .collect()
+                .filter(|item| item.name().is_some_and(|name| name.text() == impl_type)),
+        );
+    }
+    Some(found)
 }
 
 fn starts_empty_within(
@@ -958,7 +963,9 @@ fn body_starts_empty(
 /// Whether `impl_type`, declared once in the index, derives `Default` and
 /// declares `field` as a std map or set, whose derived default is empty.
 fn derived_default_starts_empty(index: &RustIndex, impl_type: &str, field: &str) -> bool {
-    let Ok([item]) = <[ast::Struct; 1]>::try_from(declared_structs(index, impl_type)) else {
+    let Ok([item]) =
+        <[ast::Struct; 1]>::try_from(declared_structs(index, impl_type).unwrap_or_default())
+    else {
         return false;
     };
     let derives_default = item.attrs().any(|attr| {
@@ -1118,36 +1125,56 @@ fn method_touches_field_read_only(
 
 /// RIPR-SPEC-0228 keyed reads: whether `impl_type`'s inherent method
 /// `method`, called by a test on its binding before the owner call, can
-/// never store the literal `expected` anywhere. Its body (and every
-/// `self.m(..)` helper it calls) must spell no literal equal to `expected`
-/// (`load_defaults` inserting `("K", 5)` before `put("K", 5)` and
-/// `assert_eq!(.., 5)`), and must not hand `self` or `&mut self.f` to other
-/// code. An unresolved or ambiguous method fails closed. A value computed
-/// from other literals (`3 + 4`) is not detected (#7988).
+/// never store the literal `expected` in the map field `field`. Its body
+/// (and every `self.m(..)` helper it calls) must spell no literal equal to
+/// `expected` (`load_defaults` inserting `("K", 5)` before `put("K", 5)`
+/// and `assert_eq!(.., 5)`), must not hand `self` or `&mut self.f` to
+/// other code, and may write `self.<field>` only as
+/// `self.<field>.insert(k, v)` or `*self.<field>.entry(k).or_insert(<literal>)
+/// += v` with `v` a parameter (optionally `.clone()`d, `.to_owned()`,
+/// `.to_string()` or `.into()`): a constant, another field, or a function
+/// result (`SEED`, `self.base`, `five()`, `self.m = Self::defaults()`)
+/// may hold the expected value under another name. The test passes each
+/// parameter a literal other than `expected`. An unresolved or ambiguous
+/// method fails closed. A value summed from several such calls is not
+/// detected (#7988).
 pub(in crate::analysis) fn method_cannot_store(
     index: &RustIndex,
     impl_type: &str,
     method: &str,
+    field: &str,
     expected: &str,
 ) -> bool {
-    cannot_store_within(index, impl_type, method, expected, MAX_KEYED_HOPS)
+    cannot_store_within(index, impl_type, method, field, expected, MAX_KEYED_HOPS)
 }
 
 fn cannot_store_within(
     index: &RustIndex,
     impl_type: &str,
     method: &str,
+    field: &str,
     expected: &str,
     hops: usize,
 ) -> bool {
     let Some(hops) = hops.checked_sub(1) else {
         return false;
     };
-    let Some(block) = inherent_method_body(index, impl_type, method)
+    let Some(function) = inherent_method_body(index, impl_type, method)
         .and_then(parse_clean_source_file)
         .and_then(|parse| parse.tree().syntax().descendants().find_map(ast::Fn::cast))
-        .and_then(|function| function.body())
     else {
+        return false;
+    };
+    let parameters: Vec<String> = function
+        .param_list()
+        .into_iter()
+        .flat_map(|list| list.params().collect::<Vec<_>>())
+        .filter_map(|parameter| match parameter.pat() {
+            Some(ast::Pat::IdentPat(pat)) => pat.name().map(|name| name.text().to_string()),
+            _ => None,
+        })
+        .collect();
+    let Some(block) = function.body() else {
         return false;
     };
     // `-5` lexes as `-` and `5`; compare magnitudes so the sign never hides
@@ -1190,8 +1217,77 @@ fn cannot_store_within(
         };
         let name_len = member.find(|ch: char| !ident(ch)).unwrap_or(member.len());
         let (name, after) = member.split_at(name_len);
-        !after.starts_with('(') || cannot_store_within(index, impl_type, name, expected, hops)
+        if name == field {
+            return field_write_takes_parameter(after, &parameters);
+        }
+        !after.starts_with('(')
+            || cannot_store_within(index, impl_type, name, field, expected, hops)
     })
+}
+
+/// Whether `after`, the masked text following `self.<field>`, reads the map
+/// or writes it only with a parameter value: `.get(`, `.contains_key(`,
+/// `.len()`, `.is_empty()`, `.insert(k, v)`, or `.entry(k).or_insert(<lit>)
+/// += v` (`.or_default()` too), `v` a parameter as [`method_cannot_store`]
+/// describes.
+fn field_write_takes_parameter(after: &str, parameters: &[String]) -> bool {
+    let parameter_value = |value: &str| {
+        let mut value = value.trim();
+        while let Some(inner) = [".clone()", ".to_owned()", ".to_string()", ".into()"]
+            .iter()
+            .find_map(|suffix| value.strip_suffix(suffix))
+        {
+            value = inner.trim_end();
+        }
+        parameters.iter().any(|parameter| parameter == value)
+    };
+    if [".get(", ".contains_key(", ".len()", ".is_empty()"]
+        .iter()
+        .any(|read| after.starts_with(read))
+    {
+        return true;
+    }
+    if let Some(arguments) = after.strip_prefix(".insert") {
+        return super::activation::call_arguments(arguments, "")
+            .is_some_and(|arguments| arguments.len() == 2 && parameter_value(&arguments[1]));
+    }
+    let Some(entry) = after.strip_prefix(".entry") else {
+        return false;
+    };
+    let Some(close) = entry.strip_prefix('(').and_then(|_| {
+        let mut depth = 0usize;
+        entry.char_indices().find_map(|(at, ch)| match ch {
+            '(' => {
+                depth += 1;
+                None
+            }
+            ')' => {
+                depth -= 1;
+                (depth == 0).then_some(at)
+            }
+            _ => None,
+        })
+    }) else {
+        return false;
+    };
+    let rest = entry[close + 1..].trim_start();
+    let rest = if let Some(rest) = rest.strip_prefix(".or_default()") {
+        rest
+    } else if let Some(rest) = rest.strip_prefix(".or_insert(") {
+        let Some(end) = rest.find(')') else {
+            return false;
+        };
+        if literal_value(&rest[..end]).is_none() {
+            return false;
+        }
+        &rest[end + 1..]
+    } else {
+        return false;
+    };
+    rest.trim_start()
+        .strip_prefix("+=")
+        .and_then(|value| value.split_once(';'))
+        .is_some_and(|(value, _)| parameter_value(value))
 }
 
 /// RIPR-SPEC-0228 keyed reads: whether two plain literals ([`literal_value`])
@@ -1810,11 +1906,12 @@ mod tests {
                 "pub struct Shelf {{ stock: BTreeMap<String, u32>, log: Vec<u32> }}\n\
                  impl Shelf {{\n{methods}\n}}\n"
             ));
-            method_cannot_store(&index, "Shelf", "prime", expected)
+            method_cannot_store(&index, "Shelf", "prime", "stock", expected)
         };
         for methods in [
             "pub fn prime(&mut self, sku: &str, qty: u32) { *self.stock.entry(sku.to_string()).or_insert(0) += qty; self.log.push(qty); }",
-            "pub fn prime(&mut self) { self.stock.insert(\"K\".into(), 3); self.note(); }\nfn note(&mut self) { self.log.push(1); }",
+            "pub fn prime(&mut self, qty: u32) { self.stock.insert(\"K\".into(), qty.clone()); self.note(); }\nfn note(&mut self) { self.log.push(1); }",
+            "pub fn prime(&mut self, k: &str, q: u32) { *self.stock.entry(k.into()).or_default() += q; }",
         ] {
             assert!(cannot_store(methods, "7"), "{methods}");
         }
@@ -1843,6 +1940,39 @@ mod tests {
             ("pub fn prime(&mut self) { seed(self); }", "7"),
             ("pub fn prime(&mut self) { seed(&mut self.stock); }", "7"),
             ("pub fn prime(&mut self) { self.prime(); }", "7"),
+            // The value under another name: a constant, a field, a call.
+            (
+                "pub fn prime(&mut self) { self.stock.insert(\"K\".into(), SEED); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self) { self.stock.insert(\"K\".into(), self.base); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self) { self.stock.insert(\"K\".into(), five()); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self) { self.stock = Self::defaults(); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str) { *self.stock.entry(k.into()).or_insert(0) += SEED; }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { *self.stock.entry(k.into()).or_insert(q) += q; }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self) { self.stock.extend([(\"K\".into(), 1)]); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str) { *self.stock.entry(k.into()).or_default() += self.stock.len() as u32; }",
+                "7",
+            ),
             ("", "7"),
         ] {
             assert!(!cannot_store(methods, expected), "{methods} / {expected}");

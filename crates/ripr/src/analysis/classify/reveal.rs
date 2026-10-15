@@ -80,10 +80,11 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// constructor a test builds its binding with, leaves that map field
     /// empty (`builder_override::constructor_starts_empty`).
     pub(in crate::analysis) constructor_starts_empty: &'a dyn Fn(&str, &str, &str) -> bool,
-    /// RIPR-SPEC-0228 keyed reads: whether `(type, method, expected)`, a
-    /// call the test makes on its binding before the owner call, can never
-    /// store the expected literal (`builder_override::method_cannot_store`).
-    pub(in crate::analysis) call_cannot_store: &'a dyn Fn(&str, &str, &str) -> bool,
+    /// RIPR-SPEC-0228 keyed reads: whether `(type, method, field, expected)`,
+    /// a call the test makes on its binding before the owner call, can never
+    /// store the expected literal in that map field
+    /// (`builder_override::method_cannot_store`).
+    pub(in crate::analysis) call_cannot_store: &'a dyn Fn(&str, &str, &str, &str) -> bool,
 }
 
 #[cfg(test)]
@@ -112,7 +113,7 @@ fn reveal_evidence(
             owner_argument_names: &[],
             owner_returns_value: true,
             constructor_starts_empty: &|_, _, _| false,
-            call_cannot_store: &|_, _, _| false,
+            call_cannot_store: &|_, _, _, _| false,
         },
         None,
     );
@@ -572,8 +573,8 @@ struct KeyedCall<'a> {
     path: &'a str,
     /// Whether `(type, ctor, field)` builds that field empty.
     starts_empty: &'a dyn Fn(&str, &str, &str) -> bool,
-    /// Whether `(type, method, expected)` can never store `expected`.
-    cannot_store: &'a dyn Fn(&str, &str, &str) -> bool,
+    /// Whether `(type, method, field, expected)` can never store `expected`.
+    cannot_store: &'a dyn Fn(&str, &str, &str, &str) -> bool,
 }
 
 /// RIPR-SPEC-0228 keyed reads: whether some owner call that
@@ -643,9 +644,10 @@ fn owner_call_passes_key(
                     })
                     .is_some_and(|argument| argument == key)
                 && key_holds_between(&masked, end, read_at, &key)
-                // An early `return` (a platform skip) passes without the read.
+                // An early `return` (a platform skip) anywhere before the read
+                // passes without it.
                 && !masked
-                    .get(end..read_at)
+                    .get(..read_at)
                     .is_none_or(|window| contains_as_whole_word(window, "return"))
                 && only_getter_reads_between(&masked, end, read_at, call.binding, call.getter)
                 && binding_starts_without_expected(body, &masked, statement_start, call)
@@ -814,7 +816,7 @@ fn binding_starts_without_expected(
             });
         if !(ends_here
             && literal_arguments
-            && (call.cannot_store)(call.impl_type, method, expected))
+            && (call.cannot_store)(call.impl_type, method, call.path, expected))
         {
             return false;
         }
@@ -1024,8 +1026,18 @@ fn bound_result_only_compared(code: &str, from: usize, to: usize, bound: &str) -
         let statement = before.rfind(';').map_or(before, |i| &before[i + 1..]);
         let before = before.trim_end();
         let after = after.trim_start();
-        statement.trim_start().starts_with("assert")
-            && ((before.ends_with("!(") && after.starts_with(','))
+        // Only the std assertion opener, and no other macro before the
+        // mention: `assert_reset!(r, 7)` or `assert_eq!(x, touch!(r))` may
+        // write through `r`.
+        let head = statement.trim_start();
+        let Some(inner) = ["assert_eq!(", "assert_ne!(", "assert!("]
+            .iter()
+            .find_map(|opener| head.strip_prefix(opener))
+        else {
+            return false;
+        };
+        !inner.contains('!')
+            && ((inner.trim().is_empty() && after.starts_with(','))
                 || (before.ends_with(',')
                     && after
                         .strip_prefix(')')
@@ -4499,7 +4511,7 @@ mod tests {
             owner_argument_names: &[],
             owner_returns_value: true,
             constructor_starts_empty: &|_, _, _| true,
-            call_cannot_store: &|_, _, _| true,
+            call_cannot_store: &|_, _, _, _| true,
         };
         let confirms = |test: &TestSummary| {
             keyed_field_read_confirms(
@@ -4547,8 +4559,11 @@ mod tests {
                     },
                     // `inv.load_defaults()` stands for a method that stores
                     // the expected value.
-                    cannot_store: &|impl_type, method, expected| {
-                        impl_type == "Inventory" && expected == "7" && method != "load_defaults"
+                    cannot_store: &|impl_type, method, field, expected| {
+                        impl_type == "Inventory"
+                            && field == "stock"
+                            && expected == "7"
+                            && method != "load_defaults"
                     },
                 },
             )
@@ -4586,6 +4601,8 @@ mod tests {
             "    assert_eq!(receipt.set(sku, 7), ());\n",
             "    assert!(touch(receipt));\n",
             "    assert_eq!(x, touch(1, receipt));\n",
+            "    assert_reset!(receipt, 7);\n",
+            "    assert_eq!(x, touch!(1, receipt));\n",
         ] {
             assert!(!passes(
                 &format!(
@@ -4643,7 +4660,8 @@ mod tests {
             "    let mut inv = Inventory::seeded(&[(\"BOLT-M8\", 7)]);\n    { let inv = Inventory::new(2); inv.len(); }\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
             "    let mut inv = Inventory::seeded(&[(\"BOLT-M8\", 7)]);\n    let mut inv = Inventory::new(2);\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
             "    {\n    let mut inv = Inventory::new(2);\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);\n    }",
-            // An early return between the call and the read.
+            // An early return before the read, after or before the call.
+            "    let mut inv = Inventory::new(2);\n    if skip() { return; }\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
             "    let mut inv = Inventory::new(2);\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    if skip() { return; }\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
             // A write on the read's own line, before the assertion.
             "    let mut inv = Inventory::new(2);\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    inv.set(\"BOLT-M8\", 7); assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
@@ -5117,7 +5135,7 @@ mod tests {
                     owner_argument_names: &[],
                     owner_returns_value: true,
                     constructor_starts_empty: &|_, _, _| false,
-                    call_cannot_store: &|_, _, _| false,
+                    call_cannot_store: &|_, _, _, _| false,
                 },
                 None,
             )
@@ -5218,7 +5236,7 @@ mod tests {
                     owner_argument_names: &[],
                     owner_returns_value: true,
                     constructor_starts_empty: &|_, _, _| false,
-                    call_cannot_store: &|_, _, _| false,
+                    call_cannot_store: &|_, _, _, _| false,
                 },
                 None,
             )
@@ -5576,7 +5594,7 @@ mod tests {
                 owner_argument_names: &[],
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
-                call_cannot_store: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| false,
             },
             None,
         );
@@ -5653,7 +5671,7 @@ mod tests {
                 owner_argument_names: &[],
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
-                call_cannot_store: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| false,
             },
             None,
         );
@@ -7302,7 +7320,7 @@ return Err(\"typed pin\".into());
                 owner_argument_names: &[],
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
-                call_cannot_store: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| false,
             },
             None,
         );
@@ -7364,7 +7382,7 @@ return Err(\"typed pin\".into());
                 owner_argument_names: &[],
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
-                call_cannot_store: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| false,
             },
             None,
         );
@@ -7397,7 +7415,7 @@ return Err(\"typed pin\".into());
                 owner_argument_names: &[],
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
-                call_cannot_store: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| false,
             },
             None,
         );
@@ -7449,7 +7467,7 @@ return Err(\"typed pin\".into());
                 owner_argument_names: &[],
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
-                call_cannot_store: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| false,
             },
             None,
         );
@@ -7503,7 +7521,7 @@ return Err(\"typed pin\".into());
                 owner_argument_names: &[],
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
-                call_cannot_store: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| false,
             },
             None,
         );
@@ -7682,7 +7700,7 @@ return Err(\"typed pin\".into());
                 owner_argument_names: &[],
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
-                call_cannot_store: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| false,
             },
             None,
         );
@@ -7718,7 +7736,7 @@ return Err(\"typed pin\".into());
                 owner_argument_names: &[],
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
-                call_cannot_store: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| false,
             },
             None,
         );
@@ -8113,7 +8131,7 @@ return Err(\"typed pin\".into());
                     owner_argument_names: &[],
                     owner_returns_value: true,
                     constructor_starts_empty: &|_, _, _| false,
-                    call_cannot_store: &|_, _, _| false,
+                    call_cannot_store: &|_, _, _, _| false,
                 },
                 None,
             )
@@ -8395,7 +8413,7 @@ return Err(\"typed pin\".into());
                 owner_argument_names: &[],
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
-                call_cannot_store: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| false,
             },
             None,
         );
@@ -8492,7 +8510,7 @@ return Err(\"typed pin\".into());
                     owner_argument_names: &[],
                     owner_returns_value: true,
                     constructor_starts_empty: &|_, _, _| false,
-                    call_cannot_store: &|_, _, _| false,
+                    call_cannot_store: &|_, _, _, _| false,
                 },
                 None,
             );
@@ -8532,7 +8550,7 @@ return Err(\"typed pin\".into());
                 owner_argument_names: &[],
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
-                call_cannot_store: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| false,
             },
             None,
         );
@@ -8890,7 +8908,7 @@ return Err(\"typed pin\".into());
                 owner_argument_names: &[],
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
-                call_cannot_store: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| false,
             },
             None,
         );
@@ -9195,7 +9213,7 @@ return Err(\"typed pin\".into());
                 owner_argument_names: &[],
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
-                call_cannot_store: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| false,
             },
             None,
         );

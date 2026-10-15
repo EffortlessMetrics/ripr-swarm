@@ -619,8 +619,8 @@ impl ClassifiedProbeEvidence {
                     constructor_memo.borrow_mut().insert(key, empty);
                     empty
                 },
-                call_cannot_store: &|impl_type, method, expected| {
-                    method_cannot_store(context.index, impl_type, method, expected)
+                call_cannot_store: &|impl_type, method, field, expected| {
+                    method_cannot_store(context.index, impl_type, method, field, expected)
                 },
             },
             arm_selector.as_ref(),
