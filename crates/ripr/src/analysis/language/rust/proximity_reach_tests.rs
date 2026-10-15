@@ -146,6 +146,73 @@ fn proximity_only_reach_through_a_macro_names_the_macro_limit() -> Result<(), St
 }
 
 #[test]
+fn a_chain_past_five_hops_does_not_displace_the_macro_witness() -> Result<(), String> {
+    // RIPR-SPEC-0114 step 5 (#8047): the walk past the bound runs after
+    // every other reach witness, so a second test entering a seven-hop chain
+    // to the same owner leaves the one-macro-hop witness named.
+    let chain = "pub fn d7(x: i64) -> i64 { d6(x) }
+fn d6(x: i64) -> i64 { d5(x) }
+fn d5(x: i64) -> i64 { d4(x) }
+fn d4(x: i64) -> i64 { d3(x) }
+fn d3(x: i64) -> i64 { d2(x) }
+fn d2(x: i64) -> i64 { d1(x) }
+fn d1(x: i64) -> i64 { inner_rate(x) }
+";
+    let fixture = Fixture::new(
+        "macro-and-deep",
+        &format!(
+            "{MACRO_ROUTED}    #[test]\n    fn deep_triples() {{\n        assert_eq!(d7(4), 12);\n    }}\n}}\n{chain}"
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert!(
+        all_relations(&finding, crate::analysis::classify::is_proximity_only),
+        "{:?}",
+        finding.related_tests
+    );
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustMacroReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    assert!(
+        !finding
+            .stop_reasons
+            .contains(&StopReason::TransitiveReachUnresolved),
+        "{:?}",
+        finding.stop_reasons
+    );
+
+    // Discriminating half: without the macro route, the same chain names
+    // the transitive limit through the walk past the bound.
+    let no_macro = MACRO_ROUTED.replace("call_inner!(x)", "x");
+    let fixture = Fixture::new(
+        "deep-only",
+        &format!(
+            "{no_macro}    #[test]\n    fn deep_triples() {{\n        assert_eq!(d7(4), 12);\n    }}\n}}\n{chain}"
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert!(
+        finding
+            .stop_reasons
+            .contains(&StopReason::TransitiveReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("deep_triples")),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
 fn a_forwarding_helper_chain_relates_and_establishes_reach_without_credit() -> Result<(), String> {
     // A same-file test that reaches a private helper through its forwarding
     // caller relates by the chain, not file proximity.

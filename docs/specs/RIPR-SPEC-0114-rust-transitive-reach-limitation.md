@@ -75,10 +75,13 @@ the Rust adapter runs a bounded BFS walk over the lexical call facts in the Rust
    (`fn name()` facts) yields none, so the walk goes on. A chain of any
    length that a test enters is still a path ripr does not trace, so it
    names the same limitation; a chain no test enters still finds nothing.
-   The walk runs only for an owner some test-entered function calls at any
-   depth (one forward closure per index), so an owner in code no test
-   enters costs nothing. A witness within depth 5 always wins, so the
-   deeper walk never changes the named witness of a shallower path.
+   The walk runs only for an owner a test or a test-entered function calls
+   at any depth (one forward closure per index), so an owner in code no
+   test enters costs nothing. It is the last reach witness every consumer
+   tries: after the bounded walk, and after the macro (RIPR-SPEC-0117),
+   subprocess, property-macro and seam trait-dispatch witnesses. A deeper
+   name-only chain therefore never changes the limit or witness a
+   shallower or more specific path names.
 
 ### When found
 
@@ -182,7 +185,8 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
 - Negative fixture: `fixtures/rust_transitive_reach_negative/` — limitation does NOT fire.
 - Unit tests covering: positive path, no path, depth-5 boundary (found), depth-6 (found by
   the walk past the bound, not found when no test enters the chain), a witness within the
-  bound winning over a deeper one, macro skip, external callee stop, honest message language.
+  bound winning over a deeper one, the deeper walk running after the macro witness, macro
+  skip, external callee stop, honest message language.
 - JSON evidence and human output surface the limitation detail: last established
   edge, first unresolved edge, analyzer route, and non-claim.
 
@@ -207,6 +211,11 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
   caller (#8047)
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::seam_behind_a_helper_chain_past_five_hops_is_opaque_not_ungripped`
   — the same witness keeps a repo seam `opaque` (RIPR-SPEC-0230 rule 1, #8047)
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_chain_past_five_hops_does_not_displace_the_macro_witness`
+  — a one-macro-hop witness stays named beside a seven-hop chain; without the macro, the
+  chain names the transitive limit (#8047)
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::seam_reach_past_five_hops_does_not_displace_a_macro_witness`
+  — the walk past the bound is also the last seam reach witness (#8047)
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_macro_call_in_test_calls_then_macro_is_skipped`
   — macro invocations skipped
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_callee_not_in_crate_then_walk_stops_fail_closed`

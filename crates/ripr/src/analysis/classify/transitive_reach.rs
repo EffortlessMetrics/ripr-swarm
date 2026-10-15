@@ -1,4 +1,4 @@
-//! Bounded transitive-reach check for Rust `no_static_path` findings.
+//! Transitive-reach check for Rust `no_static_path` findings.
 //!
 //! When the direct-call classifier finds no related test (ExposureClass::NoStaticPath),
 //! this module runs a depth-bounded breadth-first walk over the lexical call facts
@@ -9,9 +9,10 @@
 //!
 //! - The walk is pure NAME matching over lexical call facts - no AST resolution.
 //! - The witness walk is bounded at 5 hops (`MAX_TRANSITIVE_DEPTH`). Only when
-//!   it names no witness does the same walk continue past the bound, level by
-//!   level, to a level a test enters (#8047); a chain no test enters names
-//!   nothing.
+//!   it names no witness, and no macro, subprocess, property-macro or
+//!   trait-dispatch witness applies, does the same walk continue past the
+//!   bound, level by level, to a level a test enters (#8047); a chain no test
+//!   enters names nothing.
 //! - The walk stops at macro invocations (`name!`) and callee names not found
 //!   in the production function set.
 //! - Finding classification NEVER changes: `no_static_path` stays `no_static_path`
@@ -110,8 +111,10 @@ pub(in crate::analysis) const MACRO_WITNESS_TEST_GENERATOR_HOST: &str = "test ge
 /// Returns `Some(witness)` when at least one test reaches the owner (test ->
 /// ... -> owner) using same-crate production functions only: within
 /// `MAX_TRANSITIVE_DEPTH` hops when such a test exists, else through the walk
-/// past the bound (#8047). The named witness is selected deterministically
-/// (see below). Returns `None` when no such candidate path exists.
+/// past the bound (#8047). Production callers ask for the two separately so
+/// other reach witnesses sit between them; this test helper chains them. The
+/// named witness is selected deterministically (see below). Returns `None`
+/// when no such candidate path exists.
 ///
 /// The caller is responsible for wiring the result into `static_limit_kind`
 /// ONLY when the finding's class is `no_static_path` and `related_tests` is
@@ -120,7 +123,10 @@ pub(in crate::analysis) const MACRO_WITNESS_TEST_GENERATOR_HOST: &str = "test ge
 /// proximity-only (#7071). Classification NEVER changes.
 #[cfg(test)]
 fn find_transitive_witness(owner_name: &str, index: &RustIndex) -> Option<TransitiveWitness> {
-    TransitiveReachIndex::new(index).transitive_witness(owner_name)
+    let reach = TransitiveReachIndex::new(index);
+    reach
+        .transitive_witness(owner_name)
+        .or_else(|| reach.deep_transitive_witness(owner_name))
 }
 
 /// Per-index reach facts shared by every `no_static_path` finding in one run.
@@ -927,17 +933,28 @@ impl<'a> TransitiveReachIndex<'a> {
         if owner_name.is_empty() {
             return None;
         }
-        let graph = self.graph();
-        let reaching = graph.names_reaching(owner_name);
+        let reaching = self.graph().names_reaching(owner_name);
         if reaching.is_empty() {
             return None;
         }
-        // A chain longer than the walk is still a path ripr does not trace:
-        // name the same limit rather than leave a bare gap (#8047).
-        self.witness_through(owner_name, &reaching).or_else(|| {
-            graph.walk_past_bound(owner_name, |deeper| {
-                self.witness_through(owner_name, deeper)
-            })
+        self.witness_through(owner_name, &reaching)
+    }
+
+    /// The witness past the five-hop bound (#8047): a chain longer than the
+    /// walk is still a path ripr does not trace, so it names the same limit
+    /// rather than leave a bare gap. Callers try it after every other reach
+    /// witness (bounded transitive, macro, subprocess, property macro, trait
+    /// dispatch), so a long name-only chain never displaces a shallower or
+    /// more specific witness.
+    pub(in crate::analysis) fn deep_transitive_witness(
+        &self,
+        owner_name: &str,
+    ) -> Option<TransitiveWitness> {
+        if owner_name.is_empty() {
+            return None;
+        }
+        self.graph().walk_past_bound(owner_name, |deeper| {
+            self.witness_through(owner_name, deeper)
         })
     }
 

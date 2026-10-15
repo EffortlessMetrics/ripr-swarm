@@ -471,8 +471,9 @@ pub(crate) fn compact_evidence_for_seam(
 /// exact-value oracle and read `reach: yes` (#5335). When every related
 /// test is such a relation, the shared diff-mode reach decides: `weak` when
 /// something could still run the owner unseen (a doctest or caller names
-/// it, a trait impl, a test macro), otherwise `no`. A bounded transitive,
-/// macro or trait-dispatch witness from repo reach keeps it `weak` too.
+/// it, a trait impl, a test macro), otherwise `no`. A transitive (bounded
+/// or past five hops), macro or trait-dispatch witness from repo reach keeps
+/// it `weak` too.
 /// Either way the seam can no longer read `strongly_gripped`; the related
 /// tests stay listed as suggestions.
 fn reach_evidence(
