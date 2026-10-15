@@ -170,3 +170,9 @@ codegen-units = 1
 # test` when a developer needs to step-debug with variable inspection.
 [profile.dev]
 debug = "line-tables-only"
+
+# Retained fixture integrity checks hash multi-megabyte archives repeatedly.
+# Optimize the SHA-2 compression dependency while keeping repository code in
+# the normal dev/test profile and preserving every byte-integrity check.
+[profile.dev.package.sha2]
+opt-level = 3
