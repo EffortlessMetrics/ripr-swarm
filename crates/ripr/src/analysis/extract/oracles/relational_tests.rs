@@ -1145,6 +1145,16 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             &weak,
         ),
         ("assert_eq!(flags | (a == b), X);", &weak),
+        ("assert_eq!(flag ^ Into::<u8>::into(a == b), x);", &weak),
+        (
+            "assert_eq!(flag ^ <bool as From<bool>>::from(a == b), x);",
+            &weak,
+        ),
+        ("assert_eq!(flags | &mut (a == b), X);", &weak),
+        // A multi-byte identifier character before a callee's last word
+        // (review of e7a56e8: a byte offset past it is no char boundary).
+        ("assert_eq!(flag ^ x\u{b7}y(a == b), x);", &exact),
+        ("assert_eq!(flag ^ x\u{b7}not(a == b), x);", &exact),
         (
             "assert!(flag == if (ready && matches!(r, Ok(3))) { false } else { true });",
             &weak,

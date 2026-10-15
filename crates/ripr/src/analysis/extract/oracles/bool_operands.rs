@@ -706,10 +706,8 @@ fn blank_call_arguments(text: &str) -> String {
 /// test from the bitwise operator around it (review of #8101).
 fn carries_test_through(head: &str) -> bool {
     let head = head.trim_end();
-    let name_start = head
-        .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-        .map_or(0, |index| index + 1);
-    let (path, name) = head.split_at(name_start);
+    let path = head.trim_end_matches(|ch: char| ch.is_alphanumeric() || ch == '_');
+    let name = head.get(path.len()..).unwrap_or_default();
     matches!(name, "from" | "into" | "not") && path.trim_end().ends_with("::")
 }
 
@@ -1225,17 +1223,13 @@ fn strip_grouping_opens(before: &str) -> &str {
 /// Whether `text` ends with a keyword after which a parenthesis groups an
 /// expression rather than opening call arguments (`if (..)`, `match (..)`).
 fn ends_with_keyword(text: &str) -> bool {
-    let word_start = text
-        .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-        .map_or(0, |index| index + 1);
-    let word = text.get(word_start..).unwrap_or_default();
-    let raw = text
-        .get(..word_start)
-        .is_some_and(|head| head.ends_with("r#"));
-    !raw && matches!(
-        word,
-        "if" | "while" | "match" | "return" | "in" | "else" | "break" | "yield" | "move"
-    )
+    let head = text.trim_end_matches(|ch: char| ch.is_alphanumeric() || ch == '_');
+    let word = text.get(head.len()..).unwrap_or_default();
+    !head.ends_with("r#")
+        && matches!(
+            word,
+            "if" | "while" | "match" | "return" | "in" | "else" | "break" | "yield" | "mut"
+        )
 }
 
 /// Whether `text` ends with the `>` of a turbofish (`foo::<T>`,
