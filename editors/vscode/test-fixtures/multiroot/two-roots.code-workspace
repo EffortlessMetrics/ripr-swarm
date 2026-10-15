@@ -1,0 +1,12 @@
+{
+  "folders": [
+    { "name": "alpha", "path": "root-a" },
+    { "name": "beta", "path": "root-b" }
+  ],
+  "settings": {
+    "ripr.baseRef": "HEAD~1",
+    "ripr.check.mode": "draft",
+    "ripr.seamDiagnostics": true,
+    "ripr.diagnosticProfile": "full"
+  }
+}

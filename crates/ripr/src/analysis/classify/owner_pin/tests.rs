@@ -4208,6 +4208,109 @@ fn any_mention_in_another_macros_arguments_stays_ambiguous() {
 }
 
 #[test]
+fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
+    // #6648: the corpus subject's own `header_case!` wraps its argument in a
+    // closure body; its expansion can define, import or export nothing, so
+    // the `assert_eq!` tokens it receives do not make every `assert_eq!` in
+    // the crate ambiguous.
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let definition = "macro_rules! case {\n    ($name:ident, |$v:ident| $body:block) => {\n        #[test]\n        fn $name() { let check = |$v: u32| $body; check(1); }\n    };\n}\n";
+    let call = "case!(one, |v| { assert_eq!(v, 1); });\n";
+    let refusal = |other: &str| weight_refusal(tests, &[("src/other.rs", other)]);
+    assert_eq!(refusal(&format!("{definition}{call}")), None);
+    assert_eq!(
+        refusal(&format!("mod tests {{\n{definition}{call}}}\n")),
+        None
+    );
+    // A doc comment is not an attribute node, so it changes nothing.
+    assert_eq!(
+        refusal(&format!("/// Runs one case.\n{definition}{call}")),
+        None
+    );
+    // Another inert call of the same wrapper between them, and a built-in
+    // test attribute in the arguments, bind nothing either.
+    assert_eq!(
+        refusal(&format!(
+            "{definition}case!(two, |v| {{ assert_eq!(v, 2); }});\ncase!(one, |v| {{ #[allow(unused)] let w = 1; assert_eq!(v, 1); }});\n"
+        )),
+        None
+    );
+
+    // Each way the wrapper may still bind a name keeps the argument
+    // ambiguous.
+    let bang = definition.replace("check(1);", "check(1); assert!(true);");
+    let defines = definition.replace("#[test]", "macro_rules! inner { () => {} }\n#[test]");
+    let imports = definition.replace("#[test]", "use other::*;\n#[test]");
+    let attributed = format!("#[allow(unused)]\n{definition}");
+    for other in [
+        // Used before (or without) a definition in this file.
+        call.to_string(),
+        format!("{call}{definition}"),
+        // Defined twice, or also imported under its name.
+        format!("{definition}{definition}{call}"),
+        format!("use other::case;\n{definition}{call}"),
+        format!("use other::wrap as case;\n{definition}{call}"),
+        // Reached by path, so not the textual definition.
+        format!("{definition}crate::case!(one, |v| {{ assert_eq!(v, 1); }});\n"),
+        // The definition invokes a macro or holds a binding word.
+        format!("{bang}{call}"),
+        format!("{defines}{call}"),
+        format!("{imports}{call}"),
+        // An attribute on the definition may change it.
+        format!("{attributed}{call}"),
+        // The arguments carry a binding word.
+        format!("{definition}case!(one, |v| {{ macro_rules! assert_eq {{ () => {{}} }} }});\n"),
+        format!("{definition}case!(one, |v| {{ use other::assert_eq; assert_eq!(v, 1); }});\n"),
+        // The call sits outside the definition's inline module, or the
+        // module's scope cannot be bounded, or the definition sits in a
+        // function body.
+        format!("mod tests {{\n{definition}}}\n{call}"),
+        format!("mod tests {{\nmod child;\n{definition}{call}}}\n"),
+        format!("#[macro_use]\nmod tests {{\n{definition}{call}}}\n"),
+        format!("fn setup() {{\n{definition}{call}}}\n"),
+        // The arguments invoke another macro, a trusted name by path, or an
+        // attribute that may emit items.
+        format!("{definition}case!(one, |v| {{ define!(assert_eq); }});\n"),
+        format!("{definition}case!(one, |v| {{ other::assert_eq!(v, 1); }});\n"),
+        format!(
+            "{definition}case!(one, |v| {{ #[derive(Clone)] struct S; assert_eq!(v, 1); }});\n"
+        ),
+        format!(
+            "{}{call}",
+            definition.replace("#[test]", "#[test]\n#[derive(Clone)]")
+        ),
+        // A macro expanded between the definition and the call may emit a
+        // shadowing `macro_rules! case`.
+        format!("{definition}generate!();\n{call}"),
+        // Even a trusted name may be a local macro that emits one.
+        format!("{definition}fn build() -> Vec<u32> {{ vec![1] }}\n{call}"),
+        // A module between them may carry a shadowing definition, even
+        // without an outer attribute (`#![macro_use]` in its own file).
+        format!("{definition}#[macro_use]\nmod shadow;\n{call}"),
+        format!("{definition}mod shadow;\n{call}"),
+        // A `!` that reads as unary can be spliced after a name by a `tt`
+        // fragment or a repetition.
+        format!("{definition}case!(one, |v| {{ assert!(!(v == 2)); assert_eq!(v, 1); }});\n"),
+        "macro_rules! case { ($m:ident, $b:tt, $n:ident) => { $m $b ($n); } }\ncase!(define, !, assert_eq);\n".to_string(),
+        "macro_rules! case { ($($m:ident)*; $n:ident) => { $($m)* ! ($n); } }\ncase!(define; assert_eq);\n".to_string(),
+        // A `tt` fragment can lift the `!` off a trusted call and put it
+        // after an untrusted name: this expands to `define!(assert_eq);`.
+        "macro_rules! case { ($m:ident $n:ident $bang:tt $a:tt) => { $m $bang ($n); } }\ncase!(define assert_eq!(x));\n".to_string(),
+        format!("{definition}case!(two, |v| {{ generate!(); }});\n{call}"),
+    ] {
+        assert!(
+            matches!(
+                refusal(&other),
+                Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::MacroBinding(_)
+                ))
+            ),
+            "{other}"
+        );
+    }
+}
+
+#[test]
 fn a_definition_confined_to_an_inline_module_refuses_only_tests_inside_it() {
     let shadow = "macro_rules! assert_eq { ($a:expr, $b:expr) => {} }";
     let outside = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";

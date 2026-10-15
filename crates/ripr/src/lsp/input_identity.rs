@@ -117,15 +117,24 @@ impl LspAnalysisInputIdentity {
         let enabled_languages = config.repo_config().languages().enabled();
         let (manifest_identity, lockfile_identity) =
             crate::analysis::seam_cache::workspace_named_file_identities(&effective_root);
-        let session_options_identity = config.session_options.as_ref().map(|_| {
-            crate::config::config_fingerprint(&format!(
-                "base_ref={:?};mode={};include_unchanged_tests={};seam_diagnostics={}",
-                config.base_ref,
-                config.mode.as_str(),
-                config.include_unchanged_tests,
-                config.enable_seam_diagnostics
-            ))
-        });
+        // The session-settings fingerprint hashes the RESOLVED effective
+        // values, and it is present whenever any layer supplied session
+        // settings: the workspace/configuration pull rewrites which layer
+        // retains them (the initialization layer can shrink to empty when
+        // the pull covers every key), and that bookkeeping is not an
+        // analysis input — hashing it made every request after the pull
+        // supersede the just-committed snapshot, withdrawing full-seam
+        // evidence the explicit refresh had published (#7408 matrix).
+        let session_options_identity =
+            (config.session_options.is_some() || config.pulled_options.is_some()).then(|| {
+                crate::config::config_fingerprint(&format!(
+                    "base_ref={:?};mode={};include_unchanged_tests={};seam_diagnostics={}",
+                    config.base_ref,
+                    config.mode.as_str(),
+                    config.include_unchanged_tests,
+                    config.enable_seam_diagnostics
+                ))
+            });
         Self::new(
             effective_root.clone(),
             saved_workspace_revision,

@@ -153,6 +153,13 @@ nearest Cargo package or JavaScript/Python workspace declaration, then a
 verified Git work-tree root. `ripr cache` shares this resolver. Explicit
 `--root` remains authoritative.
 
+Structural-marker hardening (#8126) narrows the former field-presence rule:
+`package.json` marks a workspace only when its top-level `workspaces` value is
+an array or object, including Yarn object forms. String, number, Boolean, and
+`null` values do not select that directory. This shared rule also governs
+TypeScript package-discovery evidence (RIPR-SPEC-0085). It does not validate
+members, globs, or package-manager schemas or execute a package manager.
+
 A `.git` entry alone is not proof of a Git root. An inert ancestor marker must
 not move a standalone project's analysis away from its current directory or
 lose marker-based Python detection (#5111). Valid repositories, linked-worktree

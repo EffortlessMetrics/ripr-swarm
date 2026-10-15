@@ -9,7 +9,7 @@
   "edit_kind": "behavior_change",
   "behavior_family": "field_construction",
   "test_shape": "jest_tomatchobject_non_literal_argument",
-  "hard_case": "the `toMatchObject` arguments are variables, not object literals, so the spec withholds the field-pin credit although they pin `adult`",
+  "hard_case": "the `toMatchObject` arguments are test-body `const` bindings, not object literals; the spec credits them only because each binding is a flat literal the body names nowhere else",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "`adult: age >= 18` becomes `adult: age > 18`. The test declares `const minor = { name: \"ana\", adult: false }` and `const grown = { name: \"bo\", adult: true }` and pins `toMatchObject(minor)` at 17 and `toMatchObject(grown)` at 18; at 18 the edit gives `adult: false` and the test fails. RIPR-SPEC-0250 example 5: a non-literal `toMatchObject(expected)` is not `exposed`. ripr reads the pins `relational_check` / weak and reports `weakly_exposed`, as the spec states; against the discriminated truth that is a false actionable gap the spec accepts.",
+  "reasoning": "`adult: age >= 18` becomes `adult: age > 18`. The test declares `const minor = { name: \"ana\", adult: false }` and `const grown = { name: \"bo\", adult: true }` and pins `toMatchObject(minor)` at 17 and `toMatchObject(grown)` at 18; at 18 the edit gives `adult: false` and the test fails. RIPR-SPEC-0250 example 5, amended 2026-10-15: a `toMatchObject(<name>)` argument reads the flat literal of a test-body `const` the body names only in its binding and that argument. Both bindings qualify, so the pins read `exact_value` / strong for the listed `adult` field and ripr reports `exposed`, matching the discriminated truth.",
   "labeling_observation": {
     "ripr_commit": "3480fb2",
     "full_checkout_verdict": "gap",

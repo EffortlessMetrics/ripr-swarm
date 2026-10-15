@@ -1573,8 +1573,11 @@ The evidence-first fields are additive in schema `0.2`:
     contains a `package.json` (relative to the repo root). Absent when no
     `package.json` is found.
   - `typescript_workspace_root: <path>` — nearest ancestor with a
-    `pnpm-workspace.yaml` or a `package.json` `"workspaces"` field; falls
-    back to `package_root`. Absent when `package_root` is unresolved.
+    `pnpm-workspace.yaml` or an array or object `package.json` `"workspaces"`
+    field. Scalar values (string, number, Boolean, or `null`) do not mark a
+    workspace. Array/object recognition includes Yarn object forms without
+    member/glob/schema validation or package-manager execution. Falls back to
+    `package_root`; absent when `package_root` is unresolved.
   - `typescript_framework_hint: <jest|vitest|bun|mocha|node_test|ava>` — test
     framework detected from `package.json` deps/devDeps. Absent when no
     evidence-backed framework is found.
@@ -17825,7 +17828,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.77",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.78",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -18525,7 +18528,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.39",
+    "schema_version": "1.41",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -18536,7 +18539,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.77",
+      "schema_version": "1.78",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

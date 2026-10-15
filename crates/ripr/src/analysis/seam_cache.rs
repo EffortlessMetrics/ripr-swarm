@@ -456,7 +456,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// panic-assertion helper loans (#7818); neither standalone `1.75` is reusable.
 /// `1.77`: a whole same-line comparison tail reaches its owner's return
 /// (#8042). Old entries can keep a predicate's propagation unknown.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.77";
+/// `1.78`: a verified `expect_file![..].assert_eq(..)` golden comparison
+/// pins the owner's return (#6578). Old entries keep it a medium snapshot.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.78";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -578,7 +580,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.77";
 /// `0.81`: same variant-field pattern evidence as full `1.75`.
 /// `0.82`: same composed helper/pattern evidence as full `1.76`.
 /// `0.83`: same returned-comparison transition as full `1.77` (#8042).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.83";
+/// `0.84`: same golden-file pin evidence as full `1.78`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.84";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -702,7 +705,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.83";
 /// `0.81`: same variant-field pattern evidence as full `1.75`.
 /// `0.82`: same composed helper/pattern evidence as full `1.76`.
 /// `0.83`: same returned-comparison transition as full `1.77` (#8042).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.83";
+/// `0.84`: same golden-file pin evidence as full `1.78`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.84";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -876,7 +880,11 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.38`: retain separate parser-owned match-head coverage (#5604).
 /// `1.39`: the guarded-match scan emits the RIPR-SPEC-0175 accepted-Err
 /// form; `1.38` facts lack it.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.39";
+/// `1.40`: single-line `self.<field>` assignments mint a parser-owned
+/// `field_construction` shape (RIPR-SPEC-0228, #6485). `1.39` facts lack it.
+/// `1.41`: `expect_file` joins the trusted macro names a binding site may
+/// report (#6578); `1.40` candidates never record it.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.41";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -4364,7 +4372,9 @@ mod tests {
         // (#6578); 1.35 is allocated to #7828.
         // 1.36 -> 1.37: combine expect-test facts and JSON binding candidates.
         // 1.38 -> 1.39: accepted-Err guarded-match form (RIPR-SPEC-0175).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.39");
+        // 1.39 -> 1.40: field-assignment probe shapes (RIPR-SPEC-0228).
+        // 1.40 -> 1.41: trusted `expect_file` binding candidates (#6578).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.41");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -4466,7 +4476,8 @@ mod tests {
         // 1.74 -> 1.75: literal variant-field patterns pin the field (#6578).
         // 1.75 -> 1.76: compose both independently allocated 1.75 semantics (#7818).
         // 1.76 -> 1.77: same-line returned comparisons gain a real sink (#8042).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.77");
+        // 1.77 -> 1.78: verified expect_file golden comparisons pin (#6578).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.78");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4536,8 +4547,9 @@ mod tests {
         // 0.80 -> 0.81: same evidence as full 1.75.
         // 0.81 -> 0.82: same composed evidence as full 1.76 (#7818).
         // 0.82 -> 0.83: same returned-comparison evidence as full 1.77.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.83");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.83");
+        // 0.83 -> 0.84: same evidence as full 1.78.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.84");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.84");
     }
 
     #[test]

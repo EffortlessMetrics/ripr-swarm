@@ -254,7 +254,7 @@ fn match_object_pin_stays_weak_without_the_listed_field_on_the_whole_result() ->
         ),
         (
             "match-object-dynamic",
-            "  const expected = { adult: true };\n  expect(buildProfile(\"bo\", 18)).toMatchObject(expected);",
+            "  let expected = { adult: true };\n  expect(buildProfile(\"bo\", 18)).toMatchObject(expected);",
         ),
         (
             "match-object-rejects",
@@ -447,6 +447,33 @@ fn match_object_pin_looks_through_a_test_local_identity_helper() -> Result<(), S
     )?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
 
+    // The helper stays eligible, so these refusals come from the call-site
+    // shape: a member of the owner result, or a second wrap around it.
+    for (label, shape) in [
+        (
+            "match-object-wrapped-member",
+            "normalize(buildProfile(\"bo\", 18).meta)",
+        ),
+        (
+            "match-object-nested-wrap",
+            "normalize(normalize(buildProfile(\"bo\", 18)))",
+        ),
+    ] {
+        let source = format!(
+            "import {{ buildProfile }} from \"../src/profile\";\nfunction normalize<T>(value: T): T {{\n  return value;\n}}\ntest(\"profile records adulthood\", () => {{\n  buildProfile(\"ana\", 17);\n  expect({shape}).toMatchObject({{ name: \"bo\", adult: true }});\n}});\n"
+        );
+        let tests = extract_tests(Path::new("tests/profile.test.ts"), &source);
+        assert_eq!(tests.len(), 1, "{label}");
+        assert_eq!(tests[0].assertions.len(), 1, "{label}");
+        assert_eq!(
+            tests[0].identity_helpers_in_file,
+            vec!["normalize".to_string()],
+            "{label}"
+        );
+        let finding = profile_finding(label, &source)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{label}");
+    }
+
     for (label, helper) in [
         (
             "match-object-rebuilding-helper",
@@ -631,5 +658,252 @@ fn rewritten_owner_local_is_not_the_owner_result() -> Result<(), String> {
             finding.missing
         );
     }
+    Ok(())
+}
+
+/// RIPR-SPEC-0250 example 5 (amended 2026-10-15): `toMatchObject(<name>)`
+/// reads the flat literal of a test-body `const` the body names only in its
+/// binding and that argument; any other mention, binding kind, object shape,
+/// matcher chain or escape hatch keeps the pin uncredited.
+#[test]
+fn match_object_pin_reads_a_test_body_object_const() -> Result<(), String> {
+    let pinned = profile_test(
+        "  const minor = { name: \"ana\", adult: false };\n  const grown = { name: \"bo\", adult: true };\n  expect(buildProfile(\"ana\", 17)).toMatchObject(minor);\n  expect(buildProfile(\"bo\", 18)).toMatchObject(grown);",
+    );
+    let tests = extract_tests(Path::new("tests/profile.test.ts"), &pinned);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].assertions.len(), 2);
+    let assertion = &tests[0].assertions[1];
+    assert_eq!(assertion.matcher, "toMatchObject");
+    assert_eq!(assertion.expected_value_or_variant, None);
+    assert!(assertion.has_dynamic_matcher_arg);
+    assert_eq!(
+        assertion.expected_object_const.as_deref(),
+        Some("{ name: \"bo\", adult: true }")
+    );
+    let finding = profile_finding("match-object-const", &pinned)?;
+    assert_eq!(finding.probe.family, ProbeFamily::FieldConstruction);
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    let row = finding
+        .related_tests
+        .first()
+        .ok_or("expected a related test row")?;
+    assert_eq!(row.oracle_kind, OracleKind::ExactValue);
+    assert_eq!(row.oracle_strength, OracleStrength::Strong);
+    // The argument is resolved, so the finding does not also say it is not.
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("typescript_dynamic_assertion_unresolved")),
+        "{:?}",
+        finding.evidence
+    );
+
+    let pin = "  expect(buildProfile(\"bo\", 18)).toMatchObject(expected);";
+    let declared = "  const expected = { adult: true };";
+    for (label, body) in [
+        ("let", format!("  let expected = {{ adult: true }};\n{pin}")),
+        (
+            "field-write",
+            format!("{declared}\n  expected.adult = false;\n{pin}"),
+        ),
+        (
+            "alias",
+            format!(
+                "{declared}\n  const same = expected;\n  expect(buildProfile(\"bo\", 18)).toMatchObject(same);"
+            ),
+        ),
+        (
+            "helper-call",
+            format!("{declared}\n  tweak(expected);\n{pin}"),
+        ),
+        ("second-assertion", format!("{declared}\n{pin}\n{pin}")),
+        (
+            "unlisted-field",
+            format!("  const expected = {{ name: \"bo\" }};\n{pin}"),
+        ),
+        (
+            "nested-value",
+            format!("  const expected = {{ adult: true, meta: {{ id: 1 }} }};\n{pin}"),
+        ),
+        (
+            "spread",
+            format!("  const expected = {{ ...base, adult: true }};\n{pin}"),
+        ),
+        ("eval", format!("{declared}\n  eval(\"x\");\n{pin}")),
+        (
+            "unicode-escape",
+            format!("{declared}\n  const s = \"\\u0041\";\n{pin}"),
+        ),
+        ("nested-block", format!("  {{\n  {declared}\n  {pin}\n  }}")),
+        // The binding is top-level but the call sits in a nested block.
+        (
+            "call-in-block",
+            format!("{declared}\n  if (true) {{\n  {pin}\n  }}"),
+        ),
+        (
+            "resolves-chain",
+            format!(
+                "{declared}\n  await expect(Promise.resolve(buildProfile(\"bo\", 18))).resolves.toMatchObject(expected);"
+            ),
+        ),
+    ] {
+        let test = profile_test(&body);
+        let tests = extract_tests(Path::new("tests/profile.test.ts"), &test);
+        assert_eq!(tests.len(), 1, "{label}");
+        let assertion = tests[0]
+            .assertions
+            .iter()
+            .find(|assertion| assertion.matcher == "toMatchObject")
+            .ok_or_else(|| format!("{label}: no toMatchObject assertion"))?;
+        if label != "unlisted-field" {
+            assert_eq!(assertion.expected_object_const, None, "{label}");
+        }
+        let finding = profile_finding(&format!("match-object-const-{label}"), &test)?;
+        let row = finding
+            .related_tests
+            .first()
+            .ok_or_else(|| format!("{label}: expected a related test row"))?;
+        assert_ne!(
+            (row.oracle_kind.clone(), row.oracle_strength.clone()),
+            (OracleKind::ExactValue, OracleStrength::Strong),
+            "{label}"
+        );
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
+
+    // A binding outside the test body is shared with other tests and hooks,
+    // so it is not read even when this body names it only once.
+    let outside = format!(
+        "import {{ buildProfile }} from \"../src/profile\";\n{declared}\ntest(\"profile records adulthood\", () => {{\n{pin}\n}});\n"
+    );
+    let tests = extract_tests(Path::new("tests/profile.test.ts"), &outside);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].assertions.len(), 1);
+    assert_eq!(tests[0].assertions[0].expected_object_const, None);
+    let finding = profile_finding("match-object-const-outside-body", &outside)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+
+    // A sloppy-mode script can reach the object through a `with` scope.
+    let script = |extra: &str| {
+        let source = format!(
+            "const {{ buildProfile }} = require(\"../src/profile\");\ntest(\"t\", () => {{\n{declared}\n{extra}{pin}\n}});\n"
+        );
+        let tests = extract_tests(Path::new("tests/profile.test.cjs"), &source);
+        assert_eq!(tests.len(), 1, "{extra}");
+        tests[0]
+            .assertions
+            .iter()
+            .find(|assertion| assertion.matcher == "toMatchObject")
+            .and_then(|assertion| assertion.expected_object_const.clone())
+    };
+    assert_eq!(script("").as_deref(), Some("{ adult: true }"));
+    assert_eq!(script("  with (globalThis) {\n  }\n"), None);
+    Ok(())
+}
+
+/// `{ __proto__: v }` sets the object's prototype rather than an own
+/// property, so a colon `__proto__:` entry is not a listed field on either
+/// the matcher argument or the owner's returned literal.
+///
+/// Computed `["__proto__"]` and shorthand `__proto__` are own properties.
+/// On current main they already fail this reader's colon/`[]` split, so
+/// they are not cases here; the skip must not treat them as proto setters.
+#[test]
+fn colon_proto_is_not_a_listed_match_object_field() -> Result<(), String> {
+    let owner =
+        "export function make() {\n  return {\n    name: \"x\",\n    __proto__: 0,\n  };\n}\n";
+    assert_eq!(
+        ts_owner_returned_field_key(owner, "    __proto__: 0,").as_deref(),
+        None,
+        "owner colon __proto__: is a prototype setter, not a returned field"
+    );
+
+    for text in [
+        "{ __proto__: 0 }",
+        "{ \"__proto__\": 0 }",
+        "{ '__proto__': 0 }",
+    ] {
+        let keys = flat_object_keys(text);
+        assert!(
+            keys.as_ref()
+                .is_none_or(|keys| !keys.iter().any(|key| key == "__proto__")),
+            "{text}: colon __proto__ must not list an own field, got {keys:?}"
+        );
+    }
+    assert_eq!(
+        flat_object_keys("{ __proto__: 0, adult: true }"),
+        Some(vec!["adult".to_string()]),
+        "skipping colon __proto__: must still list sibling own fields"
+    );
+
+    let root = ts_unique_tempdir("match-object-colon-proto")?;
+    ts_write_file(
+        &root.join("src/make.ts"),
+        &owner.replace("    __proto__: 0,", "    __proto__: 1,"),
+    )?;
+    ts_write_file(
+        &root.join("tests/make.test.ts"),
+        "import { make } from \"../src/make\";\ntest(\"proto\", () => {\n  expect(make()).toMatchObject({ __proto__: 1 });\n});\n",
+    )?;
+    let changed = ChangedFile {
+        path: PathBuf::from("src/make.ts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 4,
+            text: "    __proto__: 1,".to_string(),
+            new_side_line: 4,
+        }],
+        removed_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 4,
+            text: "    __proto__: 0,".to_string(),
+            new_side_line: 4,
+        }],
+    };
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let finding = result?
+        .findings
+        .into_iter()
+        .find(|finding| finding.probe.location.line == 4)
+        .ok_or("expected a finding on the changed __proto__: line")?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "colon __proto__: pin would credit a prototype setter: {:?}",
+        finding.missing
+    );
+    let row = finding
+        .related_tests
+        .first()
+        .ok_or("expected a related test row")?;
+    assert_ne!(
+        (row.oracle_kind.clone(), row.oracle_strength.clone()),
+        (OracleKind::ExactValue, OracleStrength::Strong)
+    );
+
+    // A listed own field still pins when the matcher also has a colon
+    // proto setter; computed/shorthand siblings already fail this parse.
+    let finding = profile_finding(
+        "colon-sibling-adult",
+        &profile_test(
+            "  expect(buildProfile(\"bo\", 18)).toMatchObject({ __proto__: 0, adult: true });",
+        ),
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "colon-sibling-adult: {:?}",
+        finding.missing
+    );
     Ok(())
 }

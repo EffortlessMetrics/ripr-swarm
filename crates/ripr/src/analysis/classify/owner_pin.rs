@@ -2321,6 +2321,19 @@ impl OwnerReturnPin {
             // a mismatch, as `assert_eq!(render_row("alice", 41), "alice: 42")`
             // does.
             expect_operands = operands;
+            // #6578 review: a golden file the test itself writes (from the
+            // owner, say) before comparing fixes nothing, so a test that
+            // writes, copies or renames a file, or sets `UPDATE_EXPECT`,
+            // lends no golden-file pin.
+            if is_golden_file_comparison(&assertion.text)
+                && (test_may_write_files(&test.body)
+                    || index
+                        .files()
+                        .get(&test.file)
+                        .is_none_or(|facts| file_renames_fs_or_env_import(&facts.source)))
+            {
+                return false;
+            }
             let Some(call) = self.awaited_call_shape(&expect_operands[0], &self.name) else {
                 return false;
             };
@@ -4181,11 +4194,11 @@ fn assertion_context_macros() -> Vec<&'static str> {
 }
 
 /// Trusted names whose trust is the test-side binding scan's alone (#6578).
-/// `expect!` is no `std` macro: outside a test that verifies
-/// `use expect_test::expect;`, a bare `expect!` is a crate's own (a try-style
-/// `expect!(x)` may hide a `return`), so owner bodies and binding reads never
-/// count it as bounded.
-const TEST_SCOPED_TRUSTED_MACROS: &[&str] = &["expect"];
+/// `expect!` and `expect_file!` are no `std` macros: outside a test that
+/// verifies `use expect_test::{expect, expect_file};`, a bare one is a
+/// crate's own (a try-style `expect!(x)` may hide a `return`), so owner
+/// bodies and binding reads never count it as bounded.
+const TEST_SCOPED_TRUSTED_MACROS: &[&str] = &["expect", "expect_file"];
 
 /// Whether a macro named `name` neither returns nor binds a name, whatever
 /// file it sits in.
@@ -5895,8 +5908,16 @@ fn is_admission_gated_assert_eq(text: &str) -> bool {
 /// lines) and panics on a mismatch unless `UPDATE_EXPECT` is set. Only the
 /// bare `expect!` with one string literal (or none, the empty expectation)
 /// and one argument; a single leading `&` borrows the actual value and is
-/// dropped. `assert_debug_eq`, `expect_file!` and a qualified
-/// `expect_test::expect!` stay `snapshot` / medium (RIPR-SPEC-0231 step 6).
+/// dropped. `assert_debug_eq` and a qualified `expect_test::expect!` stay
+/// `snapshot` / medium (RIPR-SPEC-0231 step 6).
+///
+/// `expect_file!["path"].assert_eq(actual)` compares `actual` with the
+/// committed file's whole text (CRLF read as LF; a missing file reads as
+/// "") and panics on a mismatch the same way, so it pins too. Its file is
+/// not read: the second operand is the path literal, standing in for a
+/// fixed text the analyzer does not inspect. Only a path gate that admits
+/// any value of the owner's type (`ReturnPathGate::Any` and the like)
+/// accepts that stand-in; a gate that checks the expected value refuses it.
 pub(in crate::analysis) fn inline_expect_operands(text: &str) -> Option<[String; 2]> {
     let statement = text.trim().trim_end_matches(';').trim_end();
     let parse = parse_clean_source_file(&format!("fn ripr_expect() {{ {statement}; }}"))?;
@@ -5923,9 +5944,15 @@ pub(in crate::analysis) fn inline_expect_operands(text: &str) -> Option<[String;
         return None;
     };
     let receiver = receiver.macro_call()?;
-    if receiver.excl_token().is_none() || receiver.path()?.syntax().text() != "expect" {
+    receiver.excl_token()?;
+    let path = receiver.path()?.syntax().text();
+    let golden_file = if path == "expect" {
+        false
+    } else if path == "expect_file" {
+        true
+    } else {
         return None;
-    }
+    };
     let tokens: Vec<_> = receiver
         .token_tree()?
         .syntax()
@@ -5936,6 +5963,14 @@ pub(in crate::analysis) fn inline_expect_operands(text: &str) -> Option<[String;
         .collect();
     let texts: Vec<&str> = tokens.iter().map(|(_, text)| text.as_str()).collect();
     let literal = match texts.as_slice() {
+        // `expect_file!["path"]`: one string literal naming the file.
+        ["[", path, "]"] if golden_file => {
+            if tokens[1].0 != ra_ap_syntax::SyntaxKind::STRING || !is_in_tree_relative_path(path) {
+                return None;
+            }
+            (*path).to_string()
+        }
+        _ if golden_file => return None,
         ["[", "[", _, "]", "]"] | ["[", _, "]"] => {
             let (kind, text) = &tokens[tokens.len() / 2];
             // expect-test trims a multi-line literal's indentation before
@@ -5963,6 +5998,109 @@ pub(in crate::analysis) fn inline_expect_operands(text: &str) -> Option<[String;
         other => other.syntax().text().to_string(),
     };
     Some([actual, literal])
+}
+
+/// #6578 review: `expect_file!` resolves its path against the test's own
+/// source directory, so a relative path without `..` names a file under the
+/// crate, which the commit fixes. An absolute path (`/tmp/x`, a drive-letter
+/// path, a UNC `\\\\host`), a home-relative `~` or any `..` segment may name text
+/// produced outside the commit, so it lends no pin. `path` is the literal's
+/// source text, quotes and any raw-string hashes included.
+fn is_in_tree_relative_path(path: &str) -> bool {
+    let inner = path
+        .trim_start_matches('r')
+        .trim_matches('#')
+        .trim_matches('"');
+    let absolute = inner.starts_with(['/', '\\', '~']) || inner.as_bytes().get(1) == Some(&b':');
+    // A non-raw literal's escapes (`\u{2e}\u{2e}/w.txt`) decode to segments
+    // this text check cannot see, so any escape refuses.
+    let escaped = !path.starts_with('r') && inner.contains('\\');
+    !inner.is_empty()
+        && !absolute
+        && !escaped
+        && !inner.split(['/', '\\']).any(|segment| segment == "..")
+}
+
+/// #6578 review: whether a test file renames an import from `std::fs` or
+/// `std::env` (`use std::fs::write as save;`), which would let a bare
+/// `save(..)` write the golden or set `UPDATE_EXPECT` unseen by
+/// [`test_may_write_files`]. Fail-closed: any such rename refuses.
+fn file_renames_fs_or_env_import(source: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    // Word tokens rather than a statement prefix: a `use` may follow `{`, an
+    // item's `}`, an attribute or `pub(crate)` inside the same `;` fragment.
+    masked.split(';').any(|statement| {
+        let mut words = statement
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .filter(|word| !word.is_empty())
+            .skip_while(|word| *word != "use");
+        if words.next().is_none() {
+            return false;
+        }
+        let tree: Vec<&str> = words.collect();
+        tree.iter().any(|word| matches!(*word, "fs" | "env")) && tree.contains(&"as")
+    })
+}
+
+/// Whether an expect-test comparison's receiver is `expect_file!`.
+fn is_golden_file_comparison(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    let compact: String = masked.chars().filter(|c| !c.is_whitespace()).collect();
+    compact.starts_with("expect_file!")
+}
+
+/// #6578 review: whether a test body may write the file a golden-file
+/// comparison reads. Comments and strings are masked; anything that may
+/// create, overwrite, copy or rename a file, or turn on expect-test's
+/// `UPDATE_EXPECT` rewrite, counts. A bare `write(..)`/`create(..)` call
+/// counts too, since `use std::fs::write;` makes it the file write.
+/// Fail-closed: a test that writes some other file also lends no pin.
+fn test_may_write_files(body: &str) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let compact: String = masked.chars().filter(|c| !c.is_whitespace()).collect();
+    const WRITERS: &[&str] = &[
+        "fs::write",
+        "fs::copy",
+        "fs::rename",
+        "fs::hard_link",
+        "File::create",
+        "File::options",
+        "OpenOptions",
+        "UPDATE_EXPECT",
+        "set_var",
+        // A subprocess, a symlink or a persisted temp file may also produce it.
+        "Command",
+        "symlink",
+        "soft_link",
+        "persist",
+    ];
+    WRITERS.iter().any(|writer| compact.contains(writer))
+        || [
+            "write(",
+            "create(",
+            "copy(",
+            "rename(",
+            "write::<",
+            "create::<",
+            "copy::<",
+            "rename::<",
+        ]
+        .iter()
+        .any(|call| {
+            // A turbofish (`write::<_, _>(..)`) is the same call.
+            compact.match_indices(call).any(|(at, _)| {
+                let before = &compact[..at];
+                // A bare or path-qualified call (`save::write(`, `<File>::create(`,
+                // `fs_err::write(`) may write; a method call or `io::copy(`
+                // between readers and writers does not.
+                if before.ends_with("::") {
+                    return !before.ends_with("io::");
+                }
+                before.chars().next_back().is_none_or(|previous| {
+                    !(previous.is_alphanumeric() || matches!(previous, '_' | '.' | ':'))
+                })
+            })
+        })
 }
 
 /// RIPR-SPEC-0197: the compared operands of a plain `assert!(lhs == rhs)`
