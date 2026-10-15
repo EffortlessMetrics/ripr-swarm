@@ -222,3 +222,33 @@ lane: multiple existing Cargo/rustc builds remained active, and rebuilding
 xtask's product dependency stack would be expensive. No readiness, balance,
 native product-suite, nextest timing, trusted receipt or activation claim is
 made. Original Linux evidence above keeps its original subjects and epochs.
+
+### Task 17 independent exact-head review
+
+Reviewed head `2b686e2cf0091ba66769623d3965cfedbf0c56c1`; integration basis
+`d4c952532ad29ac005fcf231748357ae41f6519b`. Independent reviewer inspected the
+complete prototype, scoped repair, JSON/CLI controls, configuration, evidence
+and changelogs. Disposition: **REVIEW_INCOMPLETE; no blocking findings for
+inactive draft publication**. Source hash matched the repaired-source identity
+above. The reviewer independently executed the retained hash-matching test
+executable (8/8 pass, zero ignored/filtered) and all six actual CLI cases
+(valid exit 0, five intended negative exits 1 with aggregation diagnostics).
+
+Reviewer-owned removal controls compiled and exercised the intended behavior:
+removing duplicate passed-row rejection yielded 7 passes/1 failure; bypassing
+duplicate shard rejection yielded 6 passes/2 failures (the unit and CLI shard
+controls). Both native exits were 101. An initial shard mutation failed to
+compile because bypassing the guard left an uninferred unused set; that is
+instrument failure, not behavioral evidence. The corrected mutation retains
+the insert side effect while discarding its result, isolating the decision.
+Scratch source/executable witnesses are retained in
+`H:\Temp\ripr-task17-review`, and their hashes in the task proof directory.
+
+A separate direct pinned `clippy-driver --test --emit metadata -D warnings`
+check on this same example passed, exit 0, using the recorded dependency paths.
+It is a focused metadata-only lint check, not Cargo's workspace lint inheritance
+or the required repository policy gates. This review receipt changes only
+Markdown; reviewed Rust/configuration and the executed artifacts remain the
+identical subjects. Full Cargo/policy/hosted and product timing dimensions stay
+missing. Resources remain retained for the parent's in-flight draft review;
+no unrelated cleanup, activation or qualification dispatch occurred.
