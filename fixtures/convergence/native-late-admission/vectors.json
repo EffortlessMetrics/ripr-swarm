@@ -1635,7 +1635,7 @@
         "CPX42_SCRATCH_STATUS": "",
         "CX53_SCRATCH_STATUS": ""
       },
-      "observation": "Candidate outcome is source-derived under the provided successful initial preflight and live PR snapshot; no shell/job execution."
+      "observation": "Candidate outcome is source-derived under the provided admission result/environment and live PR snapshot; no shell/job execution."
     },
     {
       "id": "request_admission_failed",
@@ -1671,7 +1671,7 @@
         "CPX42_SCRATCH_STATUS": "",
         "CX53_SCRATCH_STATUS": ""
       },
-      "observation": "Candidate outcome is source-derived under the provided successful initial preflight and live PR snapshot; no shell/job execution."
+      "observation": "Candidate outcome is source-derived under the provided admission result/environment and live PR snapshot; no shell/job execution."
     },
     {
       "id": "request_selected_evidence_skipped",
@@ -1707,7 +1707,7 @@
         "CPX42_SCRATCH_STATUS": "",
         "CX53_SCRATCH_STATUS": ""
       },
-      "observation": "Candidate outcome is source-derived under the provided successful initial preflight and live PR snapshot; no shell/job execution."
+      "observation": "Candidate outcome is source-derived under the provided admission result/environment and live PR snapshot; no shell/job execution."
     },
     {
       "id": "request_prior_failure",
@@ -1743,7 +1743,7 @@
         "CPX42_SCRATCH_STATUS": "",
         "CX53_SCRATCH_STATUS": ""
       },
-      "observation": "Candidate outcome is source-derived under the provided successful initial preflight and live PR snapshot; no shell/job execution."
+      "observation": "Candidate outcome is source-derived under the provided admission result/environment and live PR snapshot; no shell/job execution."
     },
     {
       "id": "request_prior_success_current_readiness",
@@ -1779,7 +1779,7 @@
         "CPX42_SCRATCH_STATUS": "",
         "CX53_SCRATCH_STATUS": ""
       },
-      "observation": "Candidate outcome is source-derived under the provided successful initial preflight and live PR snapshot; no shell/job execution."
+      "observation": "Candidate outcome is source-derived under the provided admission result/environment and live PR snapshot; no shell/job execution."
     },
     {
       "id": "request_prior_success_review_revoked",
@@ -1815,7 +1815,7 @@
         "CPX42_SCRATCH_STATUS": "",
         "CX53_SCRATCH_STATUS": ""
       },
-      "observation": "Candidate outcome is source-derived under the provided successful initial preflight and live PR snapshot; no shell/job execution."
+      "observation": "Candidate outcome is source-derived under the provided admission result/environment and live PR snapshot; no shell/job execution."
     }
   ],
   "concurrency_cases": [
