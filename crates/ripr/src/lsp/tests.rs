@@ -15562,9 +15562,18 @@ fn execute_command_collect_context_returns_packet_for_known_finding() -> Result<
         // that diff source with the session root — re-running it re-selects
         // the finding the packet ships with, instead of exiting 2 with "no
         // finding matched" against the committed default-branch diff.
+        // #7937: the root spelling comes from the same binding owner the
+        // packet builder uses (`bound_root` + `shell_arg`), not a hardcoded
+        // POSIX literal — a rooted `/workspace` binds to the process drive
+        // on Windows and renders the bound drive-absolute form, and the
+        // pin must accept the producer's own replayable form on every host.
         if let Some(witness) = expected_context_packet.witness.as_mut() {
-            witness.explain_command =
-                "ripr explain --root /workspace --worktree probe:pricing:88:predicate".to_string();
+            witness.explain_command = format!(
+                "ripr explain --root {} --worktree probe:pricing:88:predicate",
+                crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+                    "/workspace"
+                )),
+            );
         }
         let expected_json =
             crate::output::json::render_context_packet_dto(&expected_context_packet);
