@@ -1640,10 +1640,10 @@ fn push_unsafe_boundary_probe_shapes(
 /// `self.child.count = 0`). Any other place (a local, `*p`, an index, a
 /// field of a call result or of another binding) gives `None`, and so does
 /// an assignment that spans lines (a changed continuation line would carry
-/// only part of it) or whose right-hand side is a call, method call, macro,
-/// `?` or `.await`, or that chooses between values (`if`, `match`, a
-/// comparison or `&&`/`||`): those keep their `call_deletion`, predicate
-/// and other probes (RIPR-SPEC-0228 Non-Goals).
+/// only part of it) or whose right-hand side contains, at any depth, a call,
+/// method call, macro, closure, `?` or `.await`, or a choice between values
+/// (`if`, `match`, a comparison or `&&`/`||`): those keep their
+/// `call_deletion`, predicate and other probes (RIPR-SPEC-0228 Non-Goals).
 pub(crate) fn field_assignment_path(bin_expr: &ast::BinExpr) -> Option<String> {
     let op = bin_expr.op_token()?;
     if !matches!(
@@ -1652,19 +1652,27 @@ pub(crate) fn field_assignment_path(bin_expr: &ast::BinExpr) -> Option<String> {
     ) {
         return None;
     }
-    if bin_expr.syntax().text().contains_char('\n')
-        || matches!(
-            bin_expr.rhs()?,
-            ast::Expr::CallExpr(_)
-                | ast::Expr::MethodCallExpr(_)
-                | ast::Expr::MacroExpr(_)
-                | ast::Expr::TryExpr(_)
-                | ast::Expr::AwaitExpr(_)
-                | ast::Expr::IfExpr(_)
-                | ast::Expr::MatchExpr(_)
-        )
-        || matches!(bin_expr.rhs()?, ast::Expr::BinExpr(rhs) if rhs.op_kind().is_some_and(|op| matches!(op, ast::BinaryOp::CmpOp(_) | ast::BinaryOp::LogicOp(_))))
-    {
+    let rhs = bin_expr.rhs()?;
+    let keeps_other_probe = rhs.syntax().descendants().any(|node| {
+        matches!(
+            ast::Expr::cast(node.clone()),
+            Some(
+                ast::Expr::CallExpr(_)
+                    | ast::Expr::MethodCallExpr(_)
+                    | ast::Expr::MacroExpr(_)
+                    | ast::Expr::TryExpr(_)
+                    | ast::Expr::AwaitExpr(_)
+                    | ast::Expr::IfExpr(_)
+                    | ast::Expr::MatchExpr(_)
+                    | ast::Expr::ClosureExpr(_)
+            )
+        ) || ast::BinExpr::cast(node).is_some_and(|inner| {
+            inner
+                .op_kind()
+                .is_some_and(|op| matches!(op, ast::BinaryOp::CmpOp(_) | ast::BinaryOp::LogicOp(_)))
+        })
+    });
+    if bin_expr.syntax().text().contains_char('\n') || keeps_other_probe {
         return None;
     }
     let mut place = bin_expr.lhs()?;
@@ -4690,6 +4698,9 @@ mod shadow_fact_equivalence_tests {
             "self.z\u{e4}hler = 1;",
             "self.count =\n    self.count + 1;",
             "self.label = compute(2);",
+            "self.count = self.count + compute(2);",
+            "self.count = (self.size() as u32) * 2;",
+            "self.ok = !self.a.is_empty();",
             "self.label = self.name.clone();",
             "self.label = format!(\"x\");",
             "self.count = parse()?;",

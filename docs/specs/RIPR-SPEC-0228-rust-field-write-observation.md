@@ -350,13 +350,14 @@ changes `self.count += 2` to `self.count += 1`.
   `field_construction` in diff scope (`field_assignment_path` in `ra.rs`)
   when the whole assignment sits on one line, every field name is a plain
   ASCII identifier (not `self.0`, `self.r#type` or a non-ASCII name), and
-  the right-hand side is neither a call, method call, macro, `?` or
-  `.await` (those keep `call_deletion` and their other probes, per the
-  Non-Goals) nor a choice between values (`if`, `match`, a comparison,
-  `&&`, `||`; those keep their predicate probe). Other assignments read as
-  before. Repo-scope seam inventory skips these shapes
+  the right-hand side contains, at any depth, no call, method call, macro,
+  closure, `?` or `.await` (those keep `call_deletion` and their other
+  probes, per the Non-Goals) and no choice between values (`if`, `match`, a
+  comparison, `&&`, `||`; those keep their predicate probe). Other
+  assignments read as before. Repo-scope seam inventory skips these shapes
   (`build_seam_from_shape` in `seam_inventory.rs`): its grading does not
-  apply the read rule below.
+  apply the read rule below. So a `reachable_unrevealed` finding on one has
+  no repo seam, and `ripr agent stub --at` cannot target it yet.
 - One is credited through the same read rule as a pushed literal
   (`assigned_field_of` and `pushed_collection_compared_whole` in
   `activation.rs`): an `assert_eq!` whose one operand is the whole field,
@@ -369,7 +370,8 @@ changes `self.count += 2` to `self.count += 1`.
   fields, macro calls and closures that do not name the field, and `self`
   calls whose bodies do not write it. Nothing earlier in the body may leave
   before the assignment (`return`, `?`, `let .. else`, `break`,
-  `continue`, any macro call, `assert`, `.unwrap(`, `.expect(`), the
+  `continue`, any macro call including ones that cannot exit such as
+  `vec!` or `println!`, `assert`, `.unwrap(`, `.expect(`), the
   right-hand side may not branch, and the asserted value may not be one a
   field usually holds before any write (`0`, `0 as T`, `T::MIN`,
   `T::ZERO`, `false`, `None`, `""`, an empty `String` or `Vec`, a
