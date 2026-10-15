@@ -1,8 +1,7 @@
 //! Pin the protected PR qualification event at the workflow boundary.
 //!
 //! Draft activity must not create the required `Ripr Rust Small Result` check.
-//! The native Draft -> Ready transition is the only pull-request admission
-//! event; main and explicit manual authorities remain separate. The PR
+//! The explicit merge-ready label is the only pull-request admission event. The PR
 //! staleness watchdog is alert-only: it must never qualify a Ready head by
 //! dispatching the protected workflow on its branch (#4986).
 
@@ -10,18 +9,10 @@ use std::fs;
 use std::path::Path;
 
 const WORKFLOW: &str = ".github/workflows/routed-rust.yml";
-const EXPECTED_EVENT_DECLARATIONS: &[&str] = &[
-    "on:",
-    "  pull_request:",
-    "    types: [ready_for_review]",
-    "  push:",
-    "    branches: [main, master]",
-    "  workflow_dispatch:",
-];
-const EXPECTED_CONCURRENCY_GROUP: &str = "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}";
-const EXPECTED_CANCEL_IN_PROGRESS: &str =
-    "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
-const REQUIRED_CONTEXT: &str = "Ripr Rust Small Result";
+const EXPECTED_EVENT_DECLARATIONS: &[&str] = &["on:", "  pull_request:", "    types: [labeled]"];
+const EXPECTED_CONCURRENCY_GROUP: &str = "  group: ${{ github.event.label.name == 'merge-ready' && format('qualification-{0}-{1}', github.repository, github.event.pull_request.number) || format('metadata-{0}', github.run_id) }}";
+const EXPECTED_CANCEL_IN_PROGRESS: &str = "  cancel-in-progress: false";
+const REQUIRED_CONTEXT: &str = "${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
 const WATCHDOG: &str = ".github/workflows/pr-staleness-watchdog.yml";
 /// Executable (non-comment) fragments that would let the watchdog start or
 /// authorize a workflow run.
@@ -124,29 +115,26 @@ fn terminal_context(source: &str) -> Option<&str> {
 }
 
 #[test]
-fn required_pr_context_is_withheld_until_ready() -> Result<(), String> {
+fn required_pr_context_is_event_bound_to_explicit_request() -> Result<(), String> {
     let source = workflow_source()?;
 
     assert_eq!(
         event_declarations(&source)?,
         EXPECTED_EVENT_DECLARATIONS,
-        "protected workflow must expose only Ready PR, main push, and manual authorities",
+        "protected workflow admits only explicit labeled PR requests",
     );
     assert!(source.contains(EXPECTED_CONCURRENCY_GROUP));
     assert!(source.contains(EXPECTED_CANCEL_IN_PROGRESS));
     assert_eq!(terminal_context(&source), Some(REQUIRED_CONTEXT));
     assert!(!source.contains("Ripr Rust Small Ignored Label Event"));
-    assert!(!source.contains("github.event.pull_request.draft"));
+    assert!(!source.contains("    if: github.event.pull_request.draft"));
     Ok(())
 }
 
 #[test]
 fn contract_rejects_draft_or_mutation_triggers() -> Result<(), String> {
     let source = workflow_source()?;
-    let changed = source.replace(
-        "types: [ready_for_review]",
-        "types: [ready_for_review, synchronize]",
-    );
+    let changed = source.replace("types: [labeled]", "types: [labeled, synchronize]");
     assert_ne!(changed, source, "trigger mutation must engage");
     assert_ne!(
         event_declarations(&changed)?,
@@ -159,10 +147,7 @@ fn contract_rejects_draft_or_mutation_triggers() -> Result<(), String> {
 #[test]
 fn contract_rejects_disabled_ready_cancellation() -> Result<(), String> {
     let source = workflow_source()?;
-    let changed = source.replace(
-        "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
-        "  cancel-in-progress: false",
-    );
+    let changed = source.replace("  cancel-in-progress: false", "  cancel-in-progress: true");
     assert_ne!(changed, source, "cancellation mutation must engage");
     assert!(
         !changed.contains(EXPECTED_CANCEL_IN_PROGRESS),
@@ -175,7 +160,7 @@ fn contract_rejects_disabled_ready_cancellation() -> Result<(), String> {
 fn contract_rejects_a_noncanonical_terminal_context() -> Result<(), String> {
     let source = workflow_source()?;
     let changed = source.replace(
-        "  result:\n    name: Ripr Rust Small Result",
+        &format!("  result:\n    name: {REQUIRED_CONTEXT}"),
         "  result:\n    name: Ripr Rust Small Draft Result",
     );
     assert_ne!(changed, source, "result-name mutation must engage");
@@ -206,14 +191,14 @@ fn staleness_watchdog_reports_without_dispatching() -> Result<(), String> {
     assert_eq!(
         watchdog_dispatch_fragments(&source),
         Vec::<&str>::new(),
-        "watchdog must be alert-only: a Ready head returns to Draft -> Ready",
+        "watchdog must be alert-only: a Ready head returns to explicit merge-ready",
     );
     Ok(())
 }
 
 /// The required check run appears only when `result` starts, so a head whose
-/// Ready-triggered run is still queued or running has no required check yet.
-/// Calling that head dark tells the author to re-toggle Draft -> Ready, which
+/// merge-ready run is still queued or running has no required check yet.
+/// Calling that head dark tells the author to re-toggle explicit merge-ready, which
 /// cancels the real run (`cancel-in-progress` for pull_request).
 const WATCHDOG_IN_FLIGHT_QUERY: &str =
     "actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$head_sha";
@@ -225,7 +210,8 @@ fn watchdog_reports_in_flight_before_dark(source: &str) -> bool {
     let Some(dark) = source.find("dark=$((dark + 1))") else {
         return false;
     };
-    source.contains("select(.status != \"completed\")")
+    source.contains(r#"select(.status != \"completed\" and"#)
+        && source.contains("Merge-ready $head_sha/")
         && source.contains("  actions: read\n")
         && query < dark
 }
@@ -235,7 +221,7 @@ fn staleness_watchdog_does_not_call_an_in_flight_run_dark() -> Result<(), String
     let source = repo_file(WATCHDOG)?;
     assert!(
         watchdog_reports_in_flight_before_dark(&source),
-        "watchdog must look for a queued or in-progress Ready-triggered run before reporting DARK",
+        "watchdog must look for a queued or in-progress merge-ready run before reporting DARK",
     );
     Ok(())
 }
@@ -256,7 +242,7 @@ fn contract_rejects_a_watchdog_without_the_in_flight_check() -> Result<(), Strin
 /// `routed-rust.yml` evaluates from the merge ref, which does not exist while
 /// the PR conflicts (#7079). The report must carry each PR's `mergeable_state`
 /// so the conflicted dark mode ("merge main first") is distinguishable from a
-/// dropped delivery ("re-toggle Draft -> Ready").
+/// dropped delivery ("re-toggle explicit merge-ready").
 const WATCHDOG_MERGEABLE_STATE_QUERY: &str = "repos/$REPOSITORY/pulls/$number";
 const WATCHDOG_MERGEABLE_STATE_COLUMN: &str = "| PR | head | mergeable_state | disposition |";
 
@@ -385,7 +371,7 @@ fn ready_after_active_completed_or_unavailable_advisory_has_no_new_admission() -
             "{path}: Ready must neither replace active work nor repeat completed/unavailable work"
         );
     }
-    assert_eq!(parsed_types(&workflow_source()?)?, ["ready_for_review"]);
+    assert_eq!(parsed_types(&workflow_source()?)?, ["labeled"]);
     Ok(())
 }
 
@@ -450,11 +436,11 @@ fn contract_rejects_ready_reentry_and_missing_repair_publication() -> Result<(),
 
 #[test]
 fn event_parser_ignores_decoys_outside_pull_request() -> Result<(), String> {
-    let source = "# types: [ready_for_review]\non:\n  workflow_dispatch:\n    inputs:\n      types: [ready_for_review]\n  pull_request:\n    types: ['opened', \"synchronize\", reopened] # real events\njobs:\n  decoy:\n    run: |\n      types: [ready_for_review]\n";
+    let source = "# types: [labeled]\non:\n  workflow_dispatch:\n    inputs:\n      types: [labeled]\n  pull_request:\n    types: ['opened', \"synchronize\", reopened] # real events\njobs:\n  decoy:\n    run: |\n      types: [labeled]\n";
     assert_eq!(parsed_types(source)?, ["opened", "synchronize", "reopened"]);
     assert!(
         repo_policy::routed_rust_pull_request_types(
-            "jobs:\n  decoy:\n    run: |\n      types: [ready_for_review]\n"
+            "jobs:\n  decoy:\n    run: |\n      types: [labeled]\n"
         )
         .is_none()
     );
@@ -486,7 +472,7 @@ fn unauditable_event_layouts_and_missing_publication_fail_closed() -> Result<(),
 #[test]
 fn contract_rejects_replacing_required_ready_admission() -> Result<(), String> {
     let source = workflow_source()?;
-    let changed = source.replace("types: [ready_for_review]", "types: [opened]");
+    let changed = source.replace("types: [labeled]", "types: [opened]");
     assert_ne!(changed, source, "required-admission mutation engages");
     assert_ne!(event_declarations(&changed)?, EXPECTED_EVENT_DECLARATIONS);
     assert_ne!(parsed_types(&changed)?, ["ready_for_review"]);

@@ -597,69 +597,36 @@ fork or otherwise untrusted PR:
   GitHub-hosted only
 ```
 
-Label events are not an implicit full-gate refresh, and Draft iteration does not
-allocate the heavy required gate (#4986):
+Ordinary Draft/open/synchronize/Ready activity does not launch the routed gate.
+The explicit request is `pull_request:labeled` with event label `merge-ready`,
+for a currently reviewed non-Draft H. Live preflight binds H/base B/integration T
+and readiness; native run readback handles sequential duplicates. Other labels
+emit `Merge-ready Nonrequest`, never a skipped `Ripr Rust Small Result`.
+Qualification and per-run metadata concurrency are separate. Running work is
+preserved, but native default concurrency can replace a pending identical request;
+read back existing work before requesting again. There is no exactly-once claim.
 
-```text
-opened / reopened / synchronize while Draft:
-  no Routed Rust Small run; existing early advisory events remain separate
+Existing Rust/docs producers and the extracted Windows subset feed the aggregate.
+The subset preserves advisory verdicts and mandatory status/log/nonempty execution,
+source/receipt/cleanup evidence. Its standalone wrapper runs the subset only for
+schedule/manual diagnostics. The full Windows suite and other feature/wheel/
+security/editor lanes remain separately owned; this bounded patch does not claim
+that every legacy automatic launch has migrated.
 
-ready_for_review (Draft -> Ready):
-  the sole pull-request qualification request; validates the exact Ready head
+No per-main routed full run or branch dispatch can impersonate the protected PR
+result. Cache acceleration may be cold/stale after retiring that writer; proof
+still executes and no warm-cache or <=20-minute result is assumed. Main-health
+sampling remains a separate proposal rather than a cutover prerequisite.
 
-labeled / unlabeled (any label):
-  no Routed Rust Small run; labels never create or refresh the required context
-
-push to main / workflow_dispatch:
-  launch under their own authorities, unchanged
-```
-
-`windows-ci` continues to opt into `.github/workflows/windows-advisory.yml` only.
-`cancel-in-progress` is `github.event_name == 'pull_request'` and the concurrency
-group is qualified by `github.event_name`, so a second Ready transition replaces
-the prior admission attempt while independent main and manual work cannot replace
-each other. No run posts a pseudo-result, so a Draft PR with no required check
-blocks rather than inheriting stale proof. The result job keeps its static
-`Ripr Rust Small Result` name on every run. One gap is not enforced: a
-`workflow_dispatch` of `routed-rust.yml` on a PR branch also posts that context
-on the branch head, without the `pull_request`-scoped PR-evidence steps.
-Do not dispatch on PR branches; #5394 tracks enforcing this.
-
-What this means for authors and agents:
-
-UB and Droid retain early review on `opened`, `synchronize`, and `reopened`,
-including Drafts; Droid also retains `labeled` and `unlabeled`. They do not
-subscribe to `ready_for_review` (#4987). Ready therefore neither cancels an
-active UB review nor queues another Droid review, and does not repeat completed
-advisory work. Their existing trust/title/release guards and concurrency remain
-unchanged. UB explicitly lists all three early passes in
-`.ub-review.toml`'s `gate.post_review_on`: action pin
-`55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8` otherwise permits publication only on
-opened and Ready. Removing Ready admission alone would leave repaired-head
-reviews unable to publish. This does not suppress repeated Draft synchronize
-review or complete the broader #4987 acceptance.
-
-Retain advisory run IDs, candidate head, observed base and synthetic merge SHA,
-action/config identity, and review receipts. The same PR head with a changed
-base or merge tree is a different review identity; this event change supplies
-no cache hit or integration re-review. Before merge, inspect material integration
-changes and obtain applicable fresh review through the existing review route.
-Material findings return the candidate to Draft for repair. An unavailable,
-failed, or skipped provider remains missing review evidence after Ready; no
-synthetic success replaces it. Runner-minute savings remain unmeasured until a
-natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
-checks parsed event/config contracts, not hosted provider execution.
-
-- Open PRs as Draft (`gh pr create --draft`), then follow the
-  [Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff) before
-  requesting qualification. A PR opened directly as Ready never receives a
-  `ready_for_review` event and never gets the required check.
-- A push after Ready leaves the new head without the required check. Return to
-  Draft and refresh affected proof and review through the same handoff before
-  another Ready transition. Reassess exact-head merge prerequisites before
-  rearming auto-merge.
-- Labels such as `full-ci` take effect at the next Ready transition, not when
-  they are added.
+Early UB/Droid review remains separate, including Drafts. Quota, skipped sensors,
+failed-to-review and missing provider output are not clean reviews. The
+[explicit request handoff](PR_AUTOMATION.md#draft-to-ready-handoff) binds source
+review before qualification and final REVIEW_READY/current-state decision after
+green. The result refreshes current readiness again; separate read/publication
+operations are not atomic. Protected expected-head squash and landed-tree readback
+retain current server enforcement, without a native merge queue or added settings.
+The known required mapping remains `Ripr Rust Small Result`, app15368; complete
+classic strictness is unreadable, not assumed absent and not a new settings gate.
 
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and

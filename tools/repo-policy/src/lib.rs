@@ -889,16 +889,16 @@ pub fn routed_rust_workflow_contract_violations(
 /// desired policy (#4380, #4986).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoutedRustEventRoute {
+    BookkeepingOnly,
     LaunchFullGate,
     WorkflowNotTriggered,
 }
 
-pub const ROUTED_RUST_READY_EVENT: &str = "ready_for_review";
+pub const ROUTED_RUST_READY_EVENT: &str = "labeled";
 
-pub const ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET: &str = "group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}";
-
-pub const ROUTED_RUST_READY_CANCEL_SNIPPET: &str =
-    "cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
+pub const ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET: &str = "group: ${{ github.event.label.name == 'merge-ready' && format('qualification-{0}-{1}', github.repository, github.event.pull_request.number) || format('metadata-{0}', github.run_id) }}";
+pub const ROUTED_RUST_READY_CANCEL_SNIPPET: &str = "cancel-in-progress: false";
+pub const ROUTED_RUST_RESULT_NAME: &str = "${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
 
 pub const ROUTED_RUST_IGNORED_LABEL_RESULT_NAME: &str = "Ripr Rust Small Ignored Label Event";
 
@@ -960,29 +960,31 @@ pub fn routed_rust_event_route(
     workflow: &str,
     event_name: &str,
     action: Option<&str>,
-    _label: Option<&str>,
+    label: Option<&str>,
 ) -> RoutedRustEventRoute {
-    if event_name == "pull_request" {
-        let action = action.unwrap_or("");
-        if let Some(types) = routed_rust_pull_request_types(workflow)
-            && !types.iter().any(|value| value == action)
-        {
-            return RoutedRustEventRoute::WorkflowNotTriggered;
-        }
+    if event_name != "pull_request" {
+        return RoutedRustEventRoute::WorkflowNotTriggered;
     }
-    RoutedRustEventRoute::LaunchFullGate
+    let action = action.unwrap_or("");
+    if let Some(types) = routed_rust_pull_request_types(workflow)
+        && !types.iter().any(|value| value == action)
+    {
+        return RoutedRustEventRoute::WorkflowNotTriggered;
+    }
+    if action == "labeled" && label.is_some_and(|label| label.eq_ignore_ascii_case("merge-ready")) {
+        RoutedRustEventRoute::LaunchFullGate
+    } else {
+        RoutedRustEventRoute::BookkeepingOnly
+    }
 }
 
-/// Enforce the Ready-only pull-request admission law declared by
+/// Enforce the native explicit-label admission law declared by
 /// `.github/workflows/routed-rust.yml` (#4986).
 ///
-/// The native Draft -> Ready transition is the sole pull-request qualification
-/// request. A skipped required job reports success, so this validator fails
-/// closed on every path that could resurrect Draft or label participation in
-/// the protected required context. The old label-event law (opened /
-/// synchronize / reopened / labeled admission, the ignored-label pseudo-result,
-/// and the synchronize-only cancellation) is rejected here as the actual
-/// failure mode instead of being mandated.
+/// Ready is a UI state. Labeled requests use an event-bound result name; other
+/// labels must not emit skipped success under the protected name. Concurrency
+/// isolates metadata and native run reconciliation supplies sequential dedup.
+/// The exported compatibility function name predates this admission law.
 pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String> {
     let has_pull_request_trigger = workflow
         .lines()
@@ -993,29 +995,29 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
     }
     let Some(types) = routed_rust_pull_request_types(workflow) else {
         return vec![
-            ".github/workflows/routed-rust.yml must declare an inline pull_request types array so the Ready-only admission contract is auditable (#4986)".to_string(),
+            ".github/workflows/routed-rust.yml must declare an inline pull_request types array so the explicit-label admission contract is auditable (#4986)".to_string(),
         ];
     };
     let mut violations = Vec::new();
-    let ready_only = [ROUTED_RUST_READY_EVENT];
+    let request_only = [ROUTED_RUST_READY_EVENT];
     let unexpected: Vec<&str> = types
         .iter()
         .map(String::as_str)
-        .filter(|value| !ready_only.contains(value))
+        .filter(|value| !request_only.contains(value))
         .collect();
-    if !unexpected.is_empty() || types.len() != ready_only.len() {
+    if !unexpected.is_empty() || types.len() != request_only.len() {
         violations.push(format!(
-            ".github/workflows/routed-rust.yml pull_request types must be exactly `[{ROUTED_RUST_READY_EVENT}]`; unexpected activity types: {unexpected:?}. The Draft -> Ready transition is the sole pull-request qualification request and every other pull_request activity type must stay withheld (#4986)"
+            ".github/workflows/routed-rust.yml pull_request types must be exactly `[{ROUTED_RUST_READY_EVENT}]`; unexpected activity types: {unexpected:?}. Only the explicit merge-ready label event is a request; Ready and push activity stay withheld (#4986)"
         ));
     }
     if !workflow.contains(ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET) {
         violations.push(
-            ".github/workflows/routed-rust.yml must keep the event-qualified concurrency group `${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}` so push and manual work cannot replace each other (#4986)".to_string(),
+            ".github/workflows/routed-rust.yml must isolate qualification and per-run metadata concurrency so unrelated labels cannot displace pending qualification (#4986)".to_string(),
         );
     }
     if !workflow.contains(ROUTED_RUST_READY_CANCEL_SNIPPET) {
         violations.push(
-            ".github/workflows/routed-rust.yml must keep `cancel-in-progress: ${{ github.event_name == 'pull_request' }}` so a second Ready transition replaces the prior admission attempt without cancelling push or manual runs (#4986)".to_string(),
+            ".github/workflows/routed-rust.yml must keep `cancel-in-progress: false` and reconcile sequential requests using native run evidence (#4986)".to_string(),
         );
     }
     for job in ROUTED_RUST_IMPLEMENTATION_JOBS {
@@ -1036,7 +1038,7 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             in_job_condition && normalized.contains("always()")
         }) {
             violations.push(format!(
-                ".github/workflows/routed-rust.yml implementation job `{job}` must not use `always()` in its job condition; a job-level `always()` survives cancellation, so a second Ready transition queues behind the obsolete head's full gate. Use `!cancelled()` (#6729)"
+                ".github/workflows/routed-rust.yml implementation job `{job}` must not use `always()` in its job condition; a job-level `always()` survives cancellation, so cancelled requests cannot start additional product work. Use `!cancelled()` (#6729)"
             ));
         }
     }
@@ -1047,15 +1049,26 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
     }
     if workflow.contains(ROUTED_RUST_IGNORED_LABEL_RESULT_NAME) {
         violations.push(
-            ".github/workflows/routed-rust.yml must not post the retired `Ripr Rust Small Ignored Label Event` pseudo-result; the required context is either earned by an exact Ready-head run or absent (#4986)".to_string(),
+            ".github/workflows/routed-rust.yml must not post the retired `Ripr Rust Small Ignored Label Event` pseudo-result; the required context is either earned by an exact requested integration run; unrelated labels use a non-required name (#4986)".to_string(),
         );
     }
-    let required_name_line = format!("name: {ROUTED_RUST_REQUIRED_RESULT_NAME}");
+    if !routed_rust_job_block_any(workflow, "result", |line| line == "    if: always()") {
+        violations.push("routed result must always evaluate actual requests; a job-level skip can manufacture required success".to_owned());
+    }
     if !routed_rust_job_block_any(workflow, "result", |line| {
-        line.trim() == required_name_line.as_str()
+        line.starts_with("    needs: [admission,") && line.contains("windows-subset")
+    }) {
+        violations.push(
+            "routed result must depend on native admission and selected Windows evidence"
+                .to_owned(),
+        );
+    }
+    let required_name_line = format!("    name: {ROUTED_RUST_RESULT_NAME}");
+    if !routed_rust_job_block_any(workflow, "result", |line| {
+        line == required_name_line.as_str()
     }) {
         violations.push(format!(
-            ".github/workflows/routed-rust.yml result job must post the static `{ROUTED_RUST_REQUIRED_RESULT_NAME}` context on every run; a conditional or renamed result can hide Draft or label activity from branch protection (#4986)"
+            ".github/workflows/routed-rust.yml result job must post event-bound `{ROUTED_RUST_REQUIRED_RESULT_NAME}` only for actual requests, and a distinct non-required name for unrelated labels (#4986)"
         ));
     }
     violations

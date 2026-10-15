@@ -1,7 +1,7 @@
 //! Bounded source contract and real domain-entry tests; no Windows/CI execution.
 
-const LEGACY: &str = include_str!("../../.github/workflows/windows-advisory.yml");
-const STAGED: &str = include_str!("../../fixtures/convergence/windows-subset/qualification.yml");
+const LEGACY: &str = include_str!("../../fixtures/convergence/windows-subset/qualification.yml");
+const STAGED: &str = include_str!("../../.github/workflows/windows-subset-qualification.yml");
 const PRECHECK: &str =
     "      - name: Verify admitted integration source before product execution\n";
 
@@ -29,7 +29,7 @@ fn normalized_job(source: &str) -> Result<String, String> {
 }
 
 #[test]
-fn inactive_producer_preserves_all_native_commands_oracles_and_cleanup() -> Result<(), String> {
+fn production_producer_preserves_all_native_commands_oracles_and_cleanup() -> Result<(), String> {
     assert_eq!(normalized_job(STAGED)?, normalized_job(LEGACY)?);
     Ok(())
 }
@@ -46,7 +46,7 @@ fn subset_command_removal_is_detected() -> Result<(), String> {
 }
 
 #[test]
-fn staged_source_has_only_call_admission_and_no_write_authority() {
+fn production_callee_has_only_call_admission_and_no_write_authority() {
     let header = STAGED.split("\njobs:\n").next().unwrap_or("");
     assert!(header.contains("on:\n  workflow_call:\n"));
     for forbidden in [
@@ -66,9 +66,7 @@ fn staged_source_has_only_call_admission_and_no_write_authority() {
     for field in [
         "request_id",
         "head_sha",
-        "base_sha",
         "subject_sha",
-        "subject_tree",
         "workflow_generation",
     ] {
         assert!(header.contains(&format!(
@@ -103,7 +101,7 @@ fn source_precheck_precedes_candidate_execution_and_keeps_source_receipt() -> Re
     Ok(())
 }
 
-const NATIVE: &str = include_str!("../../fixtures/convergence/windows-subset/merge-ready.yml");
+const NATIVE: &str = include_str!("../../.github/workflows/routed-rust.yml");
 const RESULT_NAME: &str = "    name: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
 
 #[test]

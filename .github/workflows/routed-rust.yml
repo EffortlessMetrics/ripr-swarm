@@ -1,30 +1,103 @@
 name: Routed Rust Small
+run-name: ${{ github.event.label.name == 'merge-ready' && format('Merge-ready {0}/{1}/{2}', github.event.pull_request.head.sha, github.event.pull_request.base.sha, github.sha) || format('Label metadata {0}', github.run_id) }}
 
 on:
   pull_request:
-    # The protected PR qualification is requested exactly once by the native
-    # Draft -> Ready transition. Draft opened/synchronize/reopened activity and
-    # ordinary labels must not create Ripr Rust Small Result.
-    types: [ready_for_review]
-  push:
-    branches: [main, master]
-  workflow_dispatch:
+    types: [labeled]
 
 permissions:
   actions: read
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
-  # A second Ready transition means the prior admission transaction was
-  # revoked. Preserve independent main/manual work.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.event.label.name == 'merge-ready' && format('qualification-{0}-{1}', github.repository, github.event.pull_request.number) || format('metadata-{0}', github.run_id) }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  admission:
+    name: Live merge-ready preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      execute: ${{ steps.preflight.outputs.execute }}
+      prior_result: ${{ steps.preflight.outputs.prior_result }}
+      tree: ${{ steps.preflight.outputs.tree }}
+    steps:
+      - name: Reconcile native request and current readiness
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SUBJECT_SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          if [ "$ACTION" != labeled ] || [ "${LABEL,,}" != merge-ready ]; then
+            printf 'execute=false\nprior_result=nonrequest\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [[ "$REPOSITORY" = EffortlessMetrics/ripr-swarm && "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          for sha in "$HEAD_SHA" "$BASE_SHA" "$SUBJECT_SHA"; do [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; done
+          permission=$(gh api "repos/$REPOSITORY/collaborators/$ACTOR/permission" --jq .permission)
+          case "$permission" in admin|maintain|write) ;; *) echo 'Untrusted request actor' >&2; exit 1;; esac
+          pr=$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER")
+          jq -e --arg repo "$REPOSITORY" --arg head "$HEAD_SHA" --arg base "$BASE_SHA" --arg subject "$SUBJECT_SHA" '
+            .state == "open" and .draft == false and .head.repo.full_name == $repo and
+            .head.sha == $head and .base.sha == $base and .base.ref == "main" and
+            .mergeable == true and .merge_commit_sha == $subject and
+            any(.labels[]; (.name | ascii_downcase) == "merge-ready")' <<< "$pr" >/dev/null
+          reviews=$(gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100")
+          author=$(jq -r .user.login <<< "$pr")
+          jq -s -e --arg head "$HEAD_SHA" --arg author "$author" '
+            [ .[][] ] | group_by(.user.login) | map(max_by(.submitted_at)) |
+            all(.[]; .commit_id != $head or .state != "CHANGES_REQUESTED") and
+            any(.[]; .commit_id == $head and
+              (.state == "APPROVED" or (.state == "COMMENTED" and
+               (.body | test("(^|[^A-Z_])(SOURCE_REVIEW_READY|REVIEW_READY)([^A-Z_]|$)")))))' <<< "$reviews" >/dev/null
+          cursor=null
+          while :; do
+            threads=$(gh api graphql -f query='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}' -F number="$PR_NUMBER" -F cursor="$cursor")
+            jq -e '.errors == null and (.data.repository.pullRequest.reviewThreads.nodes | all(.isResolved == true))' <<< "$threads" >/dev/null
+            more=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | tostring' <<< "$threads")
+            [ "$more" = true ] || break
+            cursor=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | select(length > 0)' <<< "$threads")
+          done
+          commit=$(gh api "repos/$REPOSITORY/git/commits/$SUBJECT_SHA")
+          jq -e --arg head "$HEAD_SHA" --arg base "$BASE_SHA" '.parents | map(.sha) == [$base, $head]' <<< "$commit" >/dev/null
+          tree=$(jq -er '.tree.sha | select(test("^[0-9a-f]{40}$"))' <<< "$commit")
+          key="Merge-ready $HEAD_SHA/$BASE_SHA/$SUBJECT_SHA"
+          workflow_file=${GITHUB_WORKFLOW_REF#*/.github/workflows/}
+          workflow_file=${workflow_file%%@*}
+          workflow_id=$(gh api "repos/$REPOSITORY/actions/workflows/$workflow_file" --jq .id)
+          runs=$(gh api --paginate "repos/$REPOSITORY/actions/runs?head_sha=$HEAD_SHA&event=pull_request&per_page=100")
+          prior=$(jq -sr --arg key "$key" --arg head "$HEAD_SHA" --argjson workflow "$workflow_id" --argjson number "$GITHUB_RUN_NUMBER" '
+            [ .[].workflow_runs[] | select(.workflow_id == $workflow and .head_sha == $head and
+              .display_title == $key and .run_number < $number) ] | sort_by(.run_number) | last // empty' <<< "$runs")
+          printf 'tree=%s\n' "$tree" >> "$GITHUB_OUTPUT"
+          if [ -n "$prior" ]; then
+            [ "$(jq -r .status <<< "$prior")" = completed ] || { echo 'Prior request still pending/running; no relaunch' >&2; exit 1; }
+            prior_id=$(jq -er .id <<< "$prior")
+            jobs=$(gh api --paginate "repos/$REPOSITORY/actions/runs/$prior_id/jobs?per_page=100")
+            result=$(jq -sr '[.[].jobs[] | select(.name == "Ripr Rust Small Result" and .status == "completed")] |
+              if length == 1 then .[0].conclusion else "missing" end' <<< "$jobs")
+            case "$result" in success|failure) ;; *) echo 'Missing/incomplete prior required result' >&2; exit 1;; esac
+            printf 'execute=false\nprior_result=%s\n' "$result" >> "$GITHUB_OUTPUT"
+          else
+            printf 'execute=true\nprior_result=none\n' >> "$GITHUB_OUTPUT"
+          fi
+
   route:
+    needs: [admission]
+    if: needs.admission.outputs.execute == 'true'
     name: Route Ripr Rust Small
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -80,6 +153,8 @@ jobs:
           { echo "### Ripr Rust Small Router"; echo ""; echo "- repo: \`$REPOSITORY\`"; echo "- workflow: \`routed-rust\`"; echo "- run: \`$RUN_ID\`"; echo "- target: \`$target\`"; echo "- reason: \`$reason\`"; for row in "runner query:$runner_query" "visible runners:$runner_total" "cx43 online:$cx43_online" "cx43 idle ready:$cx43_idle_ready" "cpx42 online:$cpx42_online" "cpx42 idle ready:$cpx42_idle_ready" "cx53 online:$cx53_online" "cx53 idle ready:$cx53_idle_ready"; do echo "- ${row%%:*}: \`${row#*:}\`"; done; } >> "$GITHUB_STEP_SUMMARY"
 
   detect-docs-only:
+    needs: [admission]
+    if: needs.admission.outputs.execute == 'true'
     name: Detect Docs-Only Surface
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -249,15 +324,66 @@ jobs:
           if-no-files-found: ignore
           retention-days: 5
 
+  windows-subset:
+    needs: [admission]
+    if: needs.admission.outputs.execute == 'true'
+    uses: ./.github/workflows/windows-subset-qualification.yml
+    with:
+      proof_profile: qualification
+      request_id: ${{ format('{0}-{1}', github.run_id, github.run_attempt) }}
+      head_sha: ${{ github.event.pull_request.head.sha }}
+      base_sha: ${{ github.event.pull_request.base.sha }}
+      subject_sha: ${{ github.sha }}
+      subject_tree: ${{ needs.admission.outputs.tree }}
+      workflow_generation: ${{ github.workflow_sha }}
+
   result:
-    name: Ripr Rust Small Result
-    needs: [route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, docs-gate]
+    name: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}
+    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, docs-gate, windows-subset]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Recheck current head and base before result publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          LABEL: ${{ github.event.label.name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SUBJECT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [ "${LABEL,,}" = merge-ready ] || exit 0
+          pr=$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER")
+          jq -e --arg repo "$REPOSITORY" --arg head "$HEAD_SHA" --arg base "$BASE_SHA" --arg subject "$SUBJECT_SHA" '
+            .state == "open" and .draft == false and .head.repo.full_name == $repo and .base.ref == "main" and
+            .mergeable == true and .head.sha == $head and .base.sha == $base and
+            .merge_commit_sha == $subject and any(.labels[]; (.name | ascii_downcase) == "merge-ready")' <<< "$pr" >/dev/null
+          reviews=$(gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100")
+          author=$(jq -r .user.login <<< "$pr")
+          jq -s -e --arg head "$HEAD_SHA" --arg author "$author" '
+            [ .[][] ] | group_by(.user.login) | map(max_by(.submitted_at)) |
+            all(.[]; .commit_id != $head or .state != "CHANGES_REQUESTED") and
+            any(.[]; .commit_id == $head and
+              (.state == "APPROVED" or (.state == "COMMENTED" and
+               (.body | test("(^|[^A-Z_])(SOURCE_REVIEW_READY|REVIEW_READY)([^A-Z_]|$)")))))' <<< "$reviews" >/dev/null
+          cursor=null
+          while :; do
+            threads=$(gh api graphql -f query='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}' -F number="$PR_NUMBER" -F cursor="$cursor")
+            jq -e '.errors == null and (.data.repository.pullRequest.reviewThreads.nodes | all(.isResolved == true))' <<< "$threads" >/dev/null
+            more=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | tostring' <<< "$threads")
+            [ "$more" = true ] || break
+            cursor=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | select(length > 0)' <<< "$threads")
+          done
       - name: Summarize routed result
         env:
+          LABEL: ${{ github.event.label.name }}
+          ADMISSION_RESULT: ${{ needs.admission.result }}
+          EXECUTE: ${{ needs.admission.outputs.execute }}
+          PRIOR_RESULT: ${{ needs.admission.outputs.prior_result }}
+          WINDOWS_RESULT: ${{ needs.windows-subset.result }}
           TARGET: ${{ needs.route.outputs.router_target }}
           REASON: ${{ needs.route.outputs.router_reason }}
           ROUTE_RESULT: ${{ needs.route.result }}
@@ -284,6 +410,14 @@ jobs:
           DOCS_ONLY: ${{ needs.detect-docs-only.outputs.docs_only }}
           DOCS_GATE_RESULT: ${{ needs.docs-gate.result }}
         run: |
+          [ "${LABEL,,}" = merge-ready ] || exit 0
+          [ "$ADMISSION_RESULT" = success ] || { echo 'Admission missing/failed' >&2; exit 1; }
+          if [ "$EXECUTE" = false ]; then
+            [ "$PRIOR_RESULT" = success ] || { echo 'Prior required result failed; no implicit retry' >&2; exit 1; }
+            exit 0
+          fi
+          [ "$EXECUTE" = true ] || { echo 'Incomplete native request' >&2; exit 1; }
+          [ "$WINDOWS_RESULT" = success ] || { echo 'Selected Windows evidence missing/failed' >&2; exit 1; }
           status=pass
           message="selected implementation job succeeded"
           if [ "$DOCS_DETECT_RESULT" != "success" ]; then

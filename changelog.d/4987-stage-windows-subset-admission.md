@@ -1,2 +1,2 @@
 <!-- section: Internal / CI -->
-- Stage native merge-ready label admission, request-scoped check naming and sequential run reconciliation with the existing Windows subset outside active workflows; preserve current triggers and native evidence until coordinated rollout (#4987).
+- Wire explicit native merge-ready admission, current readiness refresh, event-bound required naming and native duplicate readback with the extracted Windows subset; preserve protected result identity and advisory/native-evidence distinctions (#4987).

@@ -47,34 +47,23 @@ local `git merge-tree` runs of open PR heads against `main`:
 - If a rebase drops or rewrites a hunk, keep `main`'s version of any file
   another PR has already fixed; do not carry an old copy of it.
 
-## Required check only on Draft to Ready (#4986)
+## Required qualification by explicit merge-ready request (#4986)
 
-`Ripr Rust Small Result` runs only when a PR moves from Draft to Ready.
+Ready alone does not request qualification. Follow the [shared handoff](PR_AUTOMATION.md#draft-to-ready-handoff), obtain current independent source review and local proof, then add `merge-ready` to the non-Draft exact head. Read native queued/running requests first; do not repeat a slow unchanged request. Unrelated labels cannot emit the protected result or displace qualification concurrency.
 
-- Open PRs as Draft and apply the shared
-  [Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff) before
-  requesting required qualification.
-- If the current head lacks its required check after a direct Ready opening or
-  post-Ready push, return through that same handoff before another Ready
-  transition. Preserve a queued or running Ready-triggered `routed-rust.yml`
-  run on the unchanged head; re-toggling cancels it.
-- Re-check auto-merge against the current exact-head prerequisites after a
-  transition.
-- Labels such as `full-ci` take effect at the next Ready transition.
-- Do not `workflow_dispatch` `routed-rust.yml` on a PR branch (#5394).
+After green, make the final current-state/vision decision, refresh exact-head review and current integration prerequisites, then use normal protected expected-head squash. No native merge queue or protection bypass. Head/base/readback operations are not atomic; inspect landed tree identity and disposition changed integration inputs.
 
 ## Combined-tree check
 
-Branch protection does not test the combined tree, so two individually green
-PRs can leave `main` failing to compile (#5062 and #5109 did). After merging a
-PR that changes a shared type, field, or function signature, run on the new
-`main`:
+A green head may have qualified an older integration base; stale combined-tree
+proof let individually green PRs leave main broken (#5062 and #5109). For a demonstrated changed integration prerequisite, perform the affected
+combined-tree proof before admitting merge, for example:
 
 ```bash
 cargo test -p ripr --lib --no-run
 ```
 
-If it fails, say so in the thread and `status.md` before anything else merges.
+A failure returns the candidate for repair; it is not waived by old head-green proof. Do not replay a full suite solely on each main push. Main-health cadence is a separate proposal.
 
 ## One line per merge
 
