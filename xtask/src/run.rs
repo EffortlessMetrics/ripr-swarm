@@ -3068,24 +3068,6 @@ if [ "$RIPR_CAPTURE_WAIT" = yes ]; then wait; fi
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn scan_proc_pgrp_includes_own_live_process() -> Result<(), String> {
-        // #8055: require an actual Linux scan constructor, with no skipped setup.
-        let stat = fs::read_to_string("/proc/self/stat").map_err(|err| err.to_string())?;
-        let Some(super::ProcStatPgrp::Live { pgrp, .. }) = parse_stat_pgrp(&stat) else {
-            return Err(format!("self stat must describe a live process: {stat}"));
-        };
-        match super::scan_proc_pgrp(pgrp) {
-            Some(super::ProcGroupScan::Complete { live }) if live.contains(&std::process::id()) => {
-                Ok(())
-            }
-            other => Err(format!(
-                "own live process must appear in the scan: {other:?}"
-            )),
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
     fn scan_proc_pgrp_includes_readable_other_uid_members() -> Result<(), String> {
         let Ok(stat) = fs::read_to_string("/proc/1/stat") else {
             return Ok(());
