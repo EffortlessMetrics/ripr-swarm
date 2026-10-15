@@ -12560,6 +12560,15 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_early_err_variant_return_is_pinned_when_no_other_exit_builds_it",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_early_err_variant_pin_admits_only_its_variant_through_derived_equality",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_early_err_variant_pin_refuses_what_can_build_its_variant_unseen",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_early_err_variant_pin_reads_only_the_owner_result",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_early_err_variant_pin_refuses_a_test_file_that_rebinds_the_enum",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::only_a_declared_enum_variant_completes_the_error_witness",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::a_payload_carrying_err_on_its_own_line_completes_the_error_witness",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::a_payload_change_needs_the_whole_value_owner_pin",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::a_sibling_exclusion_does_not_confirm_a_payload_only_change",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::short_circuit_owner_tail_completes_only_an_admitted_chain",
   "crates/ripr/tests/short_circuit_or_tail.rs::an_or_tail_run_to_its_end_by_a_table_is_exposed",
   "crates/ripr/tests/short_circuit_or_tail.rs::an_or_tail_whose_changed_operand_never_runs_stays_below_exposed",

@@ -5,7 +5,7 @@ use crate::analysis::classify::{
     activation_and_boundary_input, assertion_observes_collection_argument,
     body_contains_owner_call, call_parameter_names, callee_is_unique,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
-    confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness,
+    confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
     direct_call_name, direct_collection_mutation_receiver, expected_operand_value,
     fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
@@ -130,66 +130,70 @@ impl ClassifiedProbeEvidence {
             }
             _ => None,
         };
-        let propagation_witness = current_path_witness(context.probe, &flow_sinks)
-            .or_else(|| {
-                fallible_checks.iter().find_map(|receipt| {
-                    fallible_literal_witness(context.probe, &flow_sinks, receipt)
-                })
+        let propagation_witness = current_path_witness_with(context.probe, &flow_sinks, &|path| {
+            context.owner_fn.is_some_and(|owner| {
+                crate::analysis::classify::owner_builds_declared_error_variant(
+                    path,
+                    owner,
+                    context.index,
+                )
             })
-            .or_else(|| {
-                context.owner_fn.and_then(|owner| {
-                    crate::analysis::classify::constant_tail_witness(
-                        context.probe,
-                        owner,
-                        &flow_sinks,
-                    )
-                })
+        })
+        .or_else(|| {
+            fallible_checks
+                .iter()
+                .find_map(|receipt| fallible_literal_witness(context.probe, &flow_sinks, receipt))
+        })
+        .or_else(|| {
+            context.owner_fn.and_then(|owner| {
+                crate::analysis::classify::constant_tail_witness(context.probe, owner, &flow_sinks)
             })
-            .or_else(|| {
-                context.owner_fn.and_then(|owner| {
-                    crate::analysis::classify::format_tail_witness(
-                        context.probe,
-                        owner,
-                        context
-                            .index
-                            .files()
-                            .get(&owner.file)
-                            .map(|facts| facts.data().source.as_ref()),
-                        &flow_sinks,
-                    )
-                })
-            })
-            .or_else(|| {
-                returned_ledger.as_ref().and_then(|_| {
-                    crate::analysis::classify::returned_ledger_witness(context.probe, &flow_sinks)
-                })
-            })
-            .map(|mut witness| {
-                if let (Some(owner), Some(ledger)) = (context.owner_fn, returned_ledger.as_ref()) {
-                    crate::analysis::classify::retain_returned_ledger(
-                        &mut witness,
-                        &owner.id,
-                        &ledger.parameter,
-                        &ledger.caller,
-                        &ledger.local,
-                    );
-                    if let Some(helper) = context
+        })
+        .or_else(|| {
+            context.owner_fn.and_then(|owner| {
+                crate::analysis::classify::format_tail_witness(
+                    context.probe,
+                    owner,
+                    context
                         .index
-                        .functions()
-                        .iter()
-                        .find(|function| function.id == ledger.caller)
-                    {
-                        witness.selected_helper_calls =
-                            crate::analysis::classify::selected_inherent_calls(
-                                helper,
-                                context.index,
-                                context.workspace_complete,
-                            );
-                        witness.semantic_digest = witness.compute_semantic_digest();
-                    }
+                        .files()
+                        .get(&owner.file)
+                        .map(|facts| facts.data().source.as_ref()),
+                    &flow_sinks,
+                )
+            })
+        })
+        .or_else(|| {
+            returned_ledger.as_ref().and_then(|_| {
+                crate::analysis::classify::returned_ledger_witness(context.probe, &flow_sinks)
+            })
+        })
+        .map(|mut witness| {
+            if let (Some(owner), Some(ledger)) = (context.owner_fn, returned_ledger.as_ref()) {
+                crate::analysis::classify::retain_returned_ledger(
+                    &mut witness,
+                    &owner.id,
+                    &ledger.parameter,
+                    &ledger.caller,
+                    &ledger.local,
+                );
+                if let Some(helper) = context
+                    .index
+                    .functions()
+                    .iter()
+                    .find(|function| function.id == ledger.caller)
+                {
+                    witness.selected_helper_calls =
+                        crate::analysis::classify::selected_inherent_calls(
+                            helper,
+                            context.index,
+                            context.workspace_complete,
+                        );
+                    witness.semantic_digest = witness.compute_semantic_digest();
                 }
-                PropagationWitnessDiagnostic::from_witness(witness)
-            });
+            }
+            PropagationWitnessDiagnostic::from_witness(witness)
+        });
         let mut gathered = activation_and_boundary_input(
             context.probe,
             context.owner_fn,

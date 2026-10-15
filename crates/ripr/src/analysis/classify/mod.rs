@@ -68,15 +68,15 @@ pub(in crate::analysis) use infection::infection_evidence_with_boundary_input;
 pub(in crate::analysis) use operand_pin::operand_only_pin;
 pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, direct_call_name,
-    expected_operand_value, helper_pins_owner_call, pin_scope_needs,
-    targeted_free_call_reaches_owner, targeted_name_is_alias, targeted_type_name_is_unresolved,
-    trait_impl_self_type_names,
+    expected_operand_value, helper_pins_owner_call, owner_builds_declared_error_variant,
+    pin_scope_needs, targeted_free_call_reaches_owner, targeted_name_is_alias,
+    targeted_type_name_is_unresolved, trait_impl_self_type_names,
 };
 pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_observes_collection_argument,
-    assertion_observes_direct_collection, current_path_witness,
+    assertion_observes_direct_collection, current_path_witness_with,
     direct_collection_mutation_receiver, field_assignment_target, retain_returned_ledger,
     returned_ledger_witness,
 };
