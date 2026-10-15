@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/workspace/8004-repair/add_corpus.py", line 11, in <module>
+    assert all(s['grip_class']=='opaque' and s['evidence']['reach']=='weak' for s in seams)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError
+
+Subcommand exit: 1. Outer batch continued (exit 0), producing local, unpublished commit 86d038ef62e5232bc15bfe0e4ff3da22cd0f5257, tree dbd44f9d34b637e98462e1142001a1ec36a2ac4f. Corpus remained at 317 rows and only the first raw report was copied. No product push. Correction: entry and method-entry negatives have weakly_gripped/weak evidence, not opaque/weak. Both already satisfy the independent no-high/no-strong/weak-reach CLI invariant.

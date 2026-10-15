@@ -1,0 +1,7 @@
+Auto-merging .ripr/traceability.toml
+Auto-merging crates/ripr/src/analysis/classify/mod.rs
+Auto-merging crates/ripr/src/analysis/classify/owner_pin.rs
+Auto-merging crates/ripr/src/analysis/test_grip_evidence/tests.rs
+Auto-merging fixtures/evidence-promotion-honesty-corpus/corpus.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/corpus.json
+Automatic merge failed; fix conflicts and then commit the result.

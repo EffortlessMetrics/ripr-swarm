@@ -1,9 +1,10 @@
-import pathlib,json,subprocess,hashlib,os
+import pathlib,json,subprocess,hashlib,os,sys
 repo=pathlib.Path('/workspace/ripr-swarm')
 rows=json.loads((repo/'fixtures/inherent_receiver_free_helper_identity/cases.json').read_text())+json.loads(pathlib.Path('/workspace/8004-repair/new-fixture/cases.json').read_text())
-out=pathlib.Path('/workspace/8004-repair/native-matrix');out.mkdir(exist_ok=True)
+out=pathlib.Path('/workspace/8004-repair')/(sys.argv[2] if len(sys.argv)>2 else 'native-matrix');out.mkdir(exist_ok=True)
 results=[]
 for n,row in enumerate(rows):
+    if n < (int(sys.argv[1]) if len(sys.argv)>1 else 0): continue
     relative=row['path']
     src=repo/'fixtures'/relative
     if 'inherent_receiver_async_function/' in relative:
@@ -23,4 +24,4 @@ for n,row in enumerate(rows):
         results.append(result)
         (out/'results.json').write_text(json.dumps(results,indent=2)+'\n')
         assert run.returncode==expected,result
-print(f'{len(rows)} cases; {len(results)} native executions; all match independent native_reaches expectations')
+print(f'{len(results)//2} executed cases (inventory {len(rows)}); {len(results)} native executions; all match independent native_reaches expectations')

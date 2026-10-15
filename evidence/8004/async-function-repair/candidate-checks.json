@@ -1,0 +1,244 @@
+[
+  {
+    "label": "committed-cli-build",
+    "argv": [
+      "cargo",
+      "build",
+      "--locked",
+      "-p",
+      "ripr",
+      "--bin",
+      "ripr",
+      "--message-format=json"
+    ],
+    "cwd": "/workspace/ripr-swarm",
+    "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+    "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+    "returncode": 0,
+    "seconds": 36.41,
+    "cargo_build_jobs": 2
+  },
+  {
+    "label": "grip",
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--lib",
+      "test_grip_evidence",
+      "--",
+      "--test-threads=4"
+    ],
+    "cwd": "/workspace/ripr-swarm",
+    "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+    "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+    "returncode": 0,
+    "seconds": 407.0,
+    "cargo_build_jobs": 2
+  },
+  {
+    "label": "related",
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--lib",
+      "related_tests",
+      "--",
+      "--test-threads=4"
+    ],
+    "cwd": "/workspace/ripr-swarm",
+    "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+    "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+    "returncode": 0,
+    "seconds": 3.36,
+    "cargo_build_jobs": 2
+  },
+  {
+    "label": "owner-pin",
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--lib",
+      "owner_pin",
+      "--",
+      "--test-threads=4"
+    ],
+    "cwd": "/workspace/ripr-swarm",
+    "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+    "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+    "returncode": 0,
+    "seconds": 52.33,
+    "cargo_build_jobs": 2
+  },
+  {
+    "label": "private_inherent_receiver",
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--test",
+      "private_inherent_receiver",
+      "--",
+      "--test-threads=4"
+    ],
+    "cwd": "/workspace/ripr-swarm",
+    "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+    "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+    "returncode": 0,
+    "seconds": 122.16,
+    "cargo_build_jobs": 2
+  },
+  {
+    "label": "assertion_helper_credit",
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--test",
+      "assertion_helper_credit",
+      "--",
+      "--test-threads=4"
+    ],
+    "cwd": "/workspace/ripr-swarm",
+    "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+    "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+    "returncode": 0,
+    "seconds": 2.08,
+    "cargo_build_jobs": 2
+  },
+  {
+    "label": "helper_wrapper_reach",
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--test",
+      "helper_wrapper_reach",
+      "--",
+      "--test-threads=4"
+    ],
+    "cwd": "/workspace/ripr-swarm",
+    "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+    "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+    "returncode": 0,
+    "seconds": 2.07,
+    "cargo_build_jobs": 2
+  },
+  {
+    "label": "match_arm_helper_selection",
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--test",
+      "match_arm_helper_selection",
+      "--",
+      "--test-threads=4"
+    ],
+    "cwd": "/workspace/ripr-swarm",
+    "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+    "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+    "returncode": 0,
+    "seconds": 1.47,
+    "cargo_build_jobs": 2
+  },
+  {
+    "label": "native_path_roots",
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--test",
+      "native_path_roots",
+      "--",
+      "--test-threads=4"
+    ],
+    "cwd": "/workspace/ripr-swarm",
+    "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+    "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+    "returncode": 0,
+    "seconds": 0.99,
+    "cargo_build_jobs": 2
+  },
+  {
+    "label": "rerun",
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--test",
+      "cli_smoke",
+      "rerun_",
+      "--",
+      "--test-threads=4"
+    ],
+    "cwd": "/workspace/ripr-swarm",
+    "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+    "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+    "returncode": 0,
+    "seconds": 14.95,
+    "cargo_build_jobs": 2
+  },
+  {
+    "label": "suppression",
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--test",
+      "cli_smoke",
+      "suppression_notice",
+      "--",
+      "--test-threads=4"
+    ],
+    "cwd": "/workspace/ripr-swarm",
+    "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+    "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+    "returncode": 0,
+    "seconds": 0.39,
+    "cargo_build_jobs": 2
+  },
+  {
+    "label": "structural",
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--test",
+      "cli_smoke",
+      "structural_workspace_markers",
+      "--",
+      "--test-threads=4"
+    ],
+    "cwd": "/workspace/ripr-swarm",
+    "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+    "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+    "returncode": 0,
+    "seconds": 0.66,
+    "cargo_build_jobs": 2
+  }
+]

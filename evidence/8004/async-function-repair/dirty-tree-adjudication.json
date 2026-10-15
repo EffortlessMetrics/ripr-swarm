@@ -1,0 +1,38 @@
+{
+  "composition_basis": "6b38d4e74623743d851f5dc7756725662a250e2b",
+  "composition_basis_tree": "834b90117415f3afc54753576fcf83ae39d727a3",
+  "cases": 50,
+  "original_cases_unchanged": 34,
+  "new_cases": 16,
+  "cli_reports": 150,
+  "fresh_compact_metrics_match_full": true,
+  "source_input_native_digest_equality": true,
+  "native_original_pass": 50,
+  "native_mutant_fail": 22,
+  "native_mutant_survive": 28,
+  "red_false_owner_case_indices": [
+    34,
+    35,
+    36,
+    41,
+    47,
+    49
+  ],
+  "red_false_owner_rows": 24,
+  "fixed_false_owner_rows": 0,
+  "staged_expectation_correction": {
+    "index": 38,
+    "path": "inherent_receiver_async_function/controls/sync-chain.rs",
+    "original_expectation": "helper_owner_call",
+    "correct_expectation": null,
+    "native_reaches": true,
+    "reason": "New sparse-name three-helper chain is already outside the existing bounded candidate graph. Preserve native-positive unsupported behavior; original failed receipt remains at red-cli, and all original 34 cases and native truth are unchanged."
+  },
+  "ineffective_guard": {
+    "tree": "8c9aa28ab66caadc24efe3dce6bb98accf5884a8",
+    "patch_sha256": "75b62ef457cfba2da7b28b741310cfb51559a86ec1da35ac837eab2883e5573f",
+    "cli_reports": 150,
+    "false_owner_rows": 24,
+    "reason": "Indexed function body starts at fn and omits async qualifier; source-aware declaration query is required."
+  }
+}

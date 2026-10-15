@@ -1,0 +1,11 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.35s
+     Running tests/match_arm_helper_selection.rs (target/debug/deps/match_arm_helper_selection-a87957266d352db3)
+
+running 3 tests
+test a_helper_lent_literal_for_another_arm_does_not_expose_it ... ok
+test a_helper_lent_literal_that_selects_the_arm_exposes_it ... ok
+test a_variable_helper_argument_does_not_expose_the_arm ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+

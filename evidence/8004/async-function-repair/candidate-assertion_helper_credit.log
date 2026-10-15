@@ -1,0 +1,31 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.61s
+     Running tests/assertion_helper_credit.rs (target/debug/deps/assertion_helper_credit-fb0b9838a3d7546d)
+
+running 23 tests
+test examples_tests_check_helper_does_not_expose ... ok
+test helper_asserting_on_something_else_reads_as_the_inline_assertion ... ok
+test harness_false_integration_helper_does_not_expose ... ok
+test excluded_nested_package_integration_helper_does_not_expose ... ok
+test declared_integration_helper_with_autotests_false_still_exposes ... ok
+test helper_ignoring_its_arguments_does_not_take_the_callers_boundary ... ok
+test integration_assert_macro_helper_does_not_expose ... ok
+test integration_contains_helper_does_not_expose ... ok
+test integration_helper_path_qualified_owner_does_not_expose ... ok
+test nested_tests_support_check_helper_does_not_expose ... ok
+test nested_tests_support_tests_check_helper_does_not_expose ... ok
+test integration_helper_that_names_the_owner_twice_does_not_expose ... ok
+test production_top_level_check_helper_does_not_expose ... ok
+test nested_package_integration_helper_exposes_the_changed_predicate ... ok
+test integration_target_check_helper_exposes_the_changed_predicate ... ok
+test required_features_unmet_integration_helper_does_not_expose ... ok
+test required_features_default_enabled_integration_helper_exposes ... ok
+test src_tests_module_check_helper_does_not_expose ... ok
+test returned_helper_panic_assertion_exposes_even_when_result_is_discarded ... ok
+test test_false_integration_helper_does_not_expose ... ok
+test undeclared_integration_helper_with_autotests_false_does_not_expose ... ok
+test test_false_parent_path_spelling_helper_does_not_expose ... ok
+test returned_helper_keeps_execution_binding_and_value_refusals ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+

@@ -1,0 +1,21 @@
+{
+  "status": "verified recoverable retirement",
+  "archive": "/workspace/8004-repair/verified-quarantine-cli/witnesses.tar.gz",
+  "archive_sha256": "fa91eeed34e833eed651f40897449de402fd06f2b2435ee90e13aaaa3041ecff",
+  "archive_bytes": 158014400,
+  "manifest_sha256": "bf401631bedefa2898f42c9697947d47d026625475695694576d0a30516a58c6",
+  "restored_files": 3,
+  "source_bytes": 653044264,
+  "free_bytes_after": 12293840896,
+  "current_candidate_retained": "/workspace/8004-repair/candidate-ripr",
+  "raw_sources_and_logs_retained": true,
+  "required_metadata": [
+    "size",
+    "sha256",
+    "mode",
+    "mtime_ns",
+    "uid",
+    "gid"
+  ],
+  "restore": "Read manifest.json; extract witnesses.tar.gz into a separate staging directory, verify each entry, restore required mode/mtime and verify uid/gid, then restore only missing original paths under /workspace/8004-repair. Archive retained; no permanent purge authorized."
+}

@@ -1,0 +1,9 @@
+47 inherent_receiver_async_function/controls/named-intermediate.rs [['helper_owner_call', 'helper_owner_call', 'helper_owner_call', 'helper_owner_call'], None, ['same_test_file', 'same_test_file']]
+48 inherent_receiver_async_function/controls/named-sync-chain.rs [['helper_owner_call', 'helper_owner_call', 'helper_owner_call', 'helper_owner_call'], None, ['same_test_file', 'same_test_file']]
+49 inherent_receiver_async_function/controls/named-method-last-hop.rs [['helper_owner_call', 'helper_owner_call', 'helper_owner_call', 'helper_owner_call'], None, ['same_test_file', 'same_test_file']]
+{"cases": 50, "reports": 9, "violations": [[47, "repo-exposure-json", "helper_owner_call", null], [47, "repo-exposure-json", "helper_owner_call", null], [47, "repo-exposure-json", "helper_owner_call", null], [47, "repo-exposure-json", "helper_owner_call", null], [49, "repo-exposure-json", "helper_owner_call", null], [49, "repo-exposure-json", "helper_owner_call", null], [49, "repo-exposure-json", "helper_owner_call", null], [49, "repo-exposure-json", "helper_owner_call", null]]}
+Traceback (most recent call last):
+  File "/workspace/8004-repair/cli.py", line 60, in <module>
+    assert not violations
+           ^^^^^^^^^^^^^^
+AssertionError

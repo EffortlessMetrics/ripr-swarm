@@ -1,0 +1,14 @@
+{
+  "base": "a142074061128a85e76c1ac494b9939f3a58428b",
+  "candidate": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
+  "main": "98c8f172bfd6aa2b808f63431ed4eac9c224c102",
+  "counts": [
+    297,
+    316,
+    298,
+    317
+  ],
+  "divergent": [],
+  "metadata_preserved": true,
+  "complete_keyed_rows": true
+}

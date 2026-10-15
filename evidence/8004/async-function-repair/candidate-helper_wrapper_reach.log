@@ -1,0 +1,41 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.59s
+     Running tests/helper_wrapper_reach.rs (target/debug/deps/helper_wrapper_reach-bcbf15f0375048d7)
+
+running 33 tests
+test bool_caller_pinned_by_a_plain_assert_abstains ... ok
+test any_exact_oracle_on_a_macro_argument_caller_abstains ... ok
+test buried_scalar_in_a_wrapper_argument_does_not_pair ... ok
+test effect_macro_exception_needs_every_hop_through_the_macro ... ok
+test aliased_or_same_named_wrapper_does_not_relate_or_pair ... ok
+test forwarding_wrapper_relates_and_pairs_its_boundary_pin ... ok
+test generic_helper_behind_a_constant_argument_wrapper_pairs ... ok
+test exact_pin_through_a_local_macro_argument_abstains_as_not_forwarded ... ok
+test helper_side_effect_behind_a_discarding_wrapper_keeps_its_propagation ... ok
+test exact_or_mixed_oracle_behind_a_non_forwarding_hop_abstains ... ok
+test helper_effect_on_a_wrapper_owned_target_abstains ... ok
+test match_arm_behind_a_dropping_wrapper_is_not_credited ... ok
+test intermediate_hop_test_is_not_stopped_by_a_dropping_outer_wrapper ... ok
+test match_arm_behind_a_forwarding_wrapper_keeps_its_verdict_path ... ok
+test macro_argument_without_the_owner_or_an_exact_pin_keeps_the_gap ... ok
+test match_arm_behind_a_transforming_wrapper_is_not_credited ... ok
+test mixed_direct_weak_and_wrapper_exact_oracles_do_not_credit_the_wrapper ... ok
+test owner_named_only_in_a_wrapper_string_literal_does_not_abstain ... ok
+test return_value_behind_a_forwarding_wrapper_is_not_stopped_at_the_hop ... ok
+test return_value_behind_a_dropping_or_transforming_wrapper_is_not_credited ... ok
+test returned_ledger_direct_observation_keeps_partial_identity ... ok
+test returned_ledger_higher_observed_routes_keep_forwarding_limitation ... ok
+test caller_that_branches_on_the_owner_abstains_under_a_loose_check ... ok
+test user_type_between_owner_and_caller_abstains ... ok
+test test_local_helper_hop_is_part_of_the_oracle ... ok
+test weak_oracle_does_not_lift_the_effect_target_rule ... ok
+test weak_oracle_behind_a_non_forwarding_hop_keeps_its_gap ... ok
+test wrapper_tests_that_miss_the_boundary_still_report_the_gap ... ok
+test shadowed_wrapper_call_does_not_relate_or_pair ... ok
+test wrapper_that_drops_the_helper_result_keeps_pairing_missing ... ok
+test wrapper_that_rebinds_the_parameter_does_not_credit_the_boundary ... ok
+test wrapper_that_transforms_the_argument_transfers_no_boundary_value ... ok
+test wrapper_with_a_computed_branch_does_not_pair ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
