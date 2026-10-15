@@ -8,6 +8,65 @@ fn payload(source: &str) -> &str {
         .map_or("", |(_, tail)| tail)
 }
 
+fn input_bindings(source: &str) -> bool {
+    let Some((_, tail)) =
+        source.split_once("      - name: Verify exact source before product execution\n")
+    else {
+        return false;
+    };
+    let Some((step, _)) = tail.split_once("      - uses: dtolnay") else {
+        return false;
+    };
+    !step.lines().any(|line| line.starts_with("        if:") || line.starts_with("        continue-on-error:"))
+        && source.contains("cancel-in-progress: ${{ !contains(toJSON(inputs), '\"subject_sha\"') && github.event_name == 'pull_request' }}")
+        && [
+            "CALLED: ${{ contains(toJSON(inputs), '\"subject_sha\"') }}",
+            "PROFILE: ${{ inputs.proof_profile }}", "REQUEST: ${{ inputs.request_id }}",
+            "HEAD_SHA: ${{ inputs.head_sha }}", "BASE_SHA: ${{ inputs.base_sha }}",
+            "SUBJECT: ${{ inputs.subject_sha || github.sha }}", "TREE: ${{ inputs.subject_tree }}",
+            "GENERATION: ${{ inputs.workflow_generation }}",
+        ].iter().all(|binding| step.contains(binding))
+}
+
+#[test]
+fn input_binding_and_guard_removal_mutants_are_rejected() {
+    assert!(input_bindings(WORKFLOW));
+    for (old, new) in [
+        (
+            "CALLED: ${{ contains(toJSON(inputs), '\"subject_sha\"') }}",
+            "CALLED: false",
+        ),
+        ("${{ inputs.proof_profile }}", "qualification"),
+        ("${{ inputs.request_id }}", "1-1"),
+        ("${{ inputs.head_sha }}", "main"),
+        ("${{ inputs.base_sha }}", "main"),
+        (
+            "SUBJECT: ${{ inputs.subject_sha || github.sha }}",
+            "SUBJECT: main",
+        ),
+        ("${{ inputs.subject_tree }}", "main"),
+        ("${{ inputs.workflow_generation }}", "main"),
+        (
+            "cancel-in-progress: ${{ !contains(toJSON(inputs), '\"subject_sha\"') && github.event_name == 'pull_request' }}",
+            "cancel-in-progress: true",
+        ),
+        (
+            "      - name: Verify exact source before product execution\n",
+            "      - name: Verify exact source before product execution\n        if: false\n",
+        ),
+        (
+            "Verify exact source before product execution",
+            "Removed guard",
+        ),
+    ] {
+        assert!(WORKFLOW.contains(old));
+        assert!(
+            !input_bindings(&WORKFLOW.replace(old, new)),
+            "accepted {old}"
+        );
+    }
+}
+
 fn contract(source: &str) -> bool {
     let original_matrix = ORIGINAL
         .split_once("    strategy:\n")
@@ -17,7 +76,8 @@ fn contract(source: &str) -> bool {
         .split_once("    strategy:\n")
         .and_then(|(_, tail)| tail.split_once("    steps:\n"))
         .map(|(matrix, _)| matrix);
-    matrix.is_some()
+    input_bindings(source)
+        && matrix.is_some()
         && matrix == original_matrix
         && payload(source) == payload(ORIGINAL)
         && source.contains("timeout-minutes: 20")
@@ -51,6 +111,7 @@ fn exact_checkout_and_full_platform_shell_payload_are_preserved() {
     let checkout = WORKFLOW.find("actions/checkout@v6");
     let guard = WORKFLOW.find("Verify exact source before product execution");
     let toolchain = WORKFLOW.find("dtolnay/rust-toolchain@1.95");
+    assert!(checkout.is_some() && guard.is_some() && toolchain.is_some());
     assert!(checkout < guard && guard < toolchain);
 }
 
@@ -83,7 +144,7 @@ fn removal_and_failure_masking_controls_reject_wrong_workflows() {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 mod execution {
     use super::*;
     use std::process::Command;
