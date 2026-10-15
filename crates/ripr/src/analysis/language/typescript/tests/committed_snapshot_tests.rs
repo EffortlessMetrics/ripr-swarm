@@ -337,3 +337,127 @@ fn snapshot_location_or_update_override_stays_medium() -> Result<(), String> {
     }
     Ok(())
 }
+
+fn hinted(hint: &str) -> String {
+    format!("test(\"price\", () => {{\n  expect(price(150)).toMatchSnapshot({hint});\n}});\n")
+}
+
+#[test]
+fn committed_jest_hint_entry_reads_strong() -> Result<(), String> {
+    // Jest keys `toMatchSnapshot("cap")` as `<title>: cap <counter>`.
+    let snap = jest_snap(&[("price: cap 1", "140")]);
+    for hint in ["\"cap\"", "'cap'", " \"cap\" "] {
+        assert_eq!(
+            strengths("snap-hint-jest", &hinted(hint), &[(SNAP_PATH, &snap)])?,
+            vec![OracleStrength::Strong],
+            "{hint}"
+        );
+    }
+    let described = "describe(\"d\", () => {\n  it(\"price\", () => {\n    expect(price(150)).toMatchSnapshot(\"cap more\");\n  });\n});\n";
+    let described_snap = jest_snap(&[("d price: cap more 1", "140")]);
+    assert_eq!(
+        strengths(
+            "snap-hint-describe",
+            described,
+            &[(SNAP_PATH, &described_snap)]
+        )?,
+        vec![OracleStrength::Strong]
+    );
+    // A test whose title only starts the key does not share its counter.
+    let neighbour = format!(
+        "{}test(\"pri\", () => {{\n  expect(price(9)).toMatchSnapshot();\n}});\n",
+        hinted("\"cap\"")
+    );
+    let neighbour_snap = jest_snap(&[("price: cap 1", "140"), ("pri 1", "9")]);
+    assert_eq!(
+        strengths(
+            "snap-hint-neighbour",
+            &neighbour,
+            &[(SNAP_PATH, &neighbour_snap)]
+        )?,
+        vec![OracleStrength::Strong; 2]
+    );
+    Ok(())
+}
+
+#[test]
+fn hinted_snapshot_without_its_exact_entry_stays_medium() -> Result<(), String> {
+    let medium = |count: usize| vec![OracleStrength::Medium; count];
+    let cap = hinted("\"cap\"");
+    for (label, entries) in [
+        // A wrong hint, the unhinted key, a key without the `: ` joint.
+        ("snap-hint-wrong", vec![("price: cape 1", "140")]),
+        ("snap-hint-unhinted", vec![("price 1", "140")]),
+        ("snap-hint-joint", vec![("price cap 1", "140")]),
+        // A second entry means the call ran twice when the file was written.
+        (
+            "snap-hint-twice",
+            vec![("price: cap 1", "140"), ("price: cap 2", "150")],
+        ),
+    ] {
+        let snap = jest_snap(&entries);
+        assert_eq!(
+            strengths(label, &cap, &[(SNAP_PATH, &snap)])?,
+            medium(1),
+            "{label}"
+        );
+    }
+    // A missing file.
+    assert_eq!(strengths("snap-hint-none", &cap, &[])?, medium(1));
+    // The entry under a hint that is not a plain string literal, or one the
+    // file escapes or Jest drops.
+    for (hint, raw) in [
+        ("`cap`", "cap"),
+        ("hint", "cap"),
+        ("\"ca\" + \"p\"", "ca"),
+        ("\"cap\", \"x\"", "cap"),
+        ("/* c */ \"cap\"", "cap"),
+        ("\"ca$p\"", "ca$p"),
+        ("\"ca\\\\p\"", "ca\\p"),
+        ("\"ca\\\\p\"", "ca\\\\p"),
+        ("\"\"", ""),
+    ] {
+        let hinted_key = format!("price: {raw} 1");
+        let snap = jest_snap(&[(hinted_key.as_str(), "140"), ("price 1", "140")]);
+        assert_eq!(
+            strengths("snap-hint-shape", &hinted(hint), &[(SNAP_PATH, &snap)])?,
+            medium(1),
+            "{hint}"
+        );
+    }
+    // Vitest's hinted key is not read.
+    let vitest = format!(
+        "{VITEST_HEADER}{}{}",
+        entry("price > cap 1", "140"),
+        entry("price: cap 1", "140")
+    );
+    assert_eq!(
+        strengths(
+            "snap-hint-vitest",
+            &cap,
+            &[
+                (SNAP_PATH, &vitest),
+                ("vitest.config.ts", "export default { test: {} };")
+            ]
+        )?,
+        medium(1)
+    );
+    Ok(())
+}
+
+#[test]
+fn hinted_snapshot_sharing_its_counter_stays_medium() -> Result<(), String> {
+    let medium = |count: usize| vec![OracleStrength::Medium; count];
+    let snap = jest_snap(&[("price: cap 1", "140"), ("price 1", "90")]);
+    let files = [(SNAP_PATH, snap.as_str())];
+    // Two tests titled `price`: the other's call may use the same hint.
+    let duplicate = "test(\"price\", () => {\n  expect(price(150)).toMatchSnapshot(\"cap\");\n});\ntest(\"price\", () => {\n  expect(price(90)).toMatchSnapshot();\n});\n";
+    assert_eq!(strengths("snap-hint-dup", duplicate, &files)?, medium(2));
+    // A test titled `price: cap` keys its unhinted call the same way.
+    let titled = "test(\"price\", () => {\n  expect(price(150)).toMatchSnapshot(\"cap\");\n});\ntest(\"price: cap\", () => {\n  expect(price(90)).toMatchSnapshot();\n});\n";
+    assert_eq!(strengths("snap-hint-titled", titled, &files)?, medium(2));
+    // A second snapshot call in the body.
+    let two = "test(\"price\", () => {\n  expect(price(150)).toMatchSnapshot(\"cap\");\n  expect(price(90)).toMatchSnapshot(\"cap\");\n});\n";
+    assert_eq!(strengths("snap-hint-two", two, &files)?, medium(2));
+    Ok(())
+}
