@@ -1719,6 +1719,47 @@ fn only_a_plain_assert_eq_against_an_owner_free_value_pins() {
 }
 
 #[test]
+fn a_constant_initialized_through_the_owner_is_not_an_independent_expected_value() {
+    let test = |items: &str| {
+        format!(
+            "use demo::weight;\n{items}\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), EXPECTED);\n}}\n"
+        )
+    };
+    // RIPR-SPEC-0035: the constant moves with the owner, directly, through
+    // a `static`, or through another constant.
+    for items in [
+        "const EXPECTED: u32 = weight(4);",
+        "static EXPECTED: u32 = weight(4);",
+        "pub(crate) static mut EXPECTED: u32 = weight(4);",
+        "const BASE: u32 = weight(2);\nconst EXPECTED: u32 = BASE * 2;",
+    ] {
+        let tests = test(items);
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+    // The constant may live in another file.
+    let tests = test("use demo::other::EXPECTED;");
+    let index = index(&[
+        (LIB, WEIGHT_LIB),
+        (TESTS, &tests),
+        (
+            "src/other.rs",
+            "pub const EXPECTED: u32 = crate::weight(4);\n",
+        ),
+    ]);
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(pin.is_some(), "the free owner must establish a pin");
+    if let Some(pin) = pin {
+        assert!(admitted_texts(&index, &pin).is_empty(), "{tests}");
+    }
+    // A literal constant stays an independent expected value.
+    let tests = test("const EXPECTED: u32 = 12; // not weight(4)");
+    assert_eq!(
+        weight_admitted(&tests),
+        vec!["assert_eq!(weight(4), EXPECTED);".to_string()]
+    );
+}
+
+#[test]
 fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
     for attributes in [
         "use serial_test::serial;\n#[test]\n#[serial]",

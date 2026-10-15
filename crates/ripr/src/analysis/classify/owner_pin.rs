@@ -2419,6 +2419,7 @@ impl OwnerReturnPin {
         // `assert_eq!(f(4), f(2) + f(2))` compares the owner with itself.
         if expected_reaches_owner(test, &assertion.text, expected, &self.name)
             || expected_reaches_fixture(test, expected)
+            || expected_constant_reaches_owner(index, expected, &self.name)
         {
             return false;
         }
@@ -8007,6 +8008,69 @@ pub(in crate::analysis::classify) fn expected_reaches_owner(
     contains_as_whole_word(&mask_comments_and_strings(expected), name)
         || (owner_named_outside(test, assertion, name)
             && expected_binding_calls_owner(test, expected, name))
+}
+
+/// RIPR-SPEC-0035: whether an identifier in the expected operand names a
+/// `const` or `static` whose initializer mentions the owner, directly or
+/// through further constants (`const EXPECTED: u32 = quota(2);
+/// assert_eq!(quota(2), EXPECTED)` compares the owner with itself, as a
+/// `let` binding would). Any item of that name anywhere in the index counts:
+/// matching too many only withholds the pin. An item the scan cannot parse
+/// fails closed. A constant computed through a helper that calls the owner
+/// is not followed.
+fn expected_constant_reaches_owner(index: &RustIndex, expected: &str, name: &str) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut pending = vec![mask_comments_and_strings(expected)];
+    while let Some(text) = pending.pop() {
+        for word in text
+            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .filter(|word| is_plain_identifier(word) && *word != name)
+        {
+            if !seen.insert(word.to_string()) {
+                continue;
+            }
+            for (_, facts) in index.files().iter() {
+                if !declares_constant(&facts.source, word) {
+                    continue;
+                }
+                let Some(parsed) = parse_clean_source_file(&facts.source) else {
+                    return true;
+                };
+                for node in parsed.tree().syntax().descendants() {
+                    let initializer = if let Some(item) = ast::Const::cast(node.clone()) {
+                        item.name()
+                            .is_some_and(|item_name| item_name.text() == word)
+                            .then(|| item.body())
+                    } else if let Some(item) = ast::Static::cast(node) {
+                        item.name()
+                            .is_some_and(|item_name| item_name.text() == word)
+                            .then(|| item.body())
+                    } else {
+                        None
+                    };
+                    let Some(initializer) = initializer.flatten() else {
+                        continue;
+                    };
+                    let initializer = mask_comments_and_strings(&initializer.syntax().to_string());
+                    if contains_as_whole_word(&initializer, name) {
+                        return true;
+                    }
+                    pending.push(initializer);
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Cheap prefilter for [`expected_constant_reaches_owner`]: whether some
+/// whole-word `word` in `source` follows `const`, `static` or `static mut`.
+fn declares_constant(source: &str, word: &str) -> bool {
+    whole_word_offsets(source, word).into_iter().any(|offset| {
+        let before = source[..offset].trim_end();
+        let before = before.strip_suffix("mut").map_or(before, str::trim_end);
+        before.ends_with("const") || before.ends_with("static")
+    })
 }
 
 /// #6974 review: whether the test body names the owner anywhere but the
