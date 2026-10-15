@@ -1736,22 +1736,69 @@ fn a_constant_initialized_through_the_owner_is_not_an_independent_expected_value
         let tests = test(items);
         assert!(weight_admitted(&tests).is_empty(), "{tests}");
     }
-    // The constant may live in another file.
-    let tests = test("use demo::other::EXPECTED;");
-    let index = index(&[
-        (LIB, WEIGHT_LIB),
-        (TESTS, &tests),
+    // The constant may live in another file, be renamed on import, name
+    // the owner through a rename, or be declared by a macro.
+    let across = |import: &str, operand: &str, other: &str| {
+        let tests = format!(
+            "use demo::weight;\n{import}\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), {operand});\n}}\n"
+        );
+        let index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests), ("src/other.rs", other)]);
+        let pin = establish(&index, "weight", "x * 3");
+        assert!(pin.is_some(), "the free owner must establish a pin");
+        pin.map(|pin| admitted_texts(&index, &pin))
+            .unwrap_or_default()
+    };
+    for (import, operand, other) in [
         (
-            "src/other.rs",
+            "use demo::other::EXPECTED;",
+            "EXPECTED",
             "pub const EXPECTED: u32 = crate::weight(4);\n",
         ),
-    ]);
-    let pin = establish(&index, "weight", "x * 3");
-    assert!(pin.is_some(), "the free owner must establish a pin");
-    if let Some(pin) = pin {
-        assert!(admitted_texts(&index, &pin).is_empty(), "{tests}");
+        (
+            "use demo::other::E as EXPECTED;",
+            "EXPECTED",
+            "pub const E: u32 = crate::weight(4);\n",
+        ),
+        (
+            "use demo::other::EXPECTED;",
+            "EXPECTED",
+            "use crate::weight as w;\npub const EXPECTED: u32 = w(4);\n",
+        ),
+        (
+            "use demo::other::Table;",
+            "Table::EXPECTED",
+            "pub struct Table;\nimpl Table {\n    pub const EXPECTED: u32 = crate::weight(4);\n}\n",
+        ),
+        (
+            "use demo::other::EXPECTED;",
+            "EXPECTED.with(|e| *e)",
+            "thread_local! {\n    pub static EXPECTED: u32 = crate::weight(4);\n}\n",
+        ),
+        (
+            "use demo::other::EXPECTED;",
+            "*EXPECTED",
+            "lazy_static::lazy_static! {\n    pub static ref EXPECTED: u32 = crate::weight(4);\n}\n",
+        ),
+    ] {
+        assert!(
+            across(import, operand, other).is_empty(),
+            "{import} {operand} {other}"
+        );
     }
-    // A literal constant stays an independent expected value.
+    // A constant built by some other type's same-named function, a method of
+    // that name, or a literal stays an independent expected value.
+    for other in [
+        "pub const EXPECTED: u32 = 12;\n",
+        "pub const EXPECTED: u32 = Table::weight(4);\n",
+        "pub const EXPECTED: u32 = TABLE.weight(4);\n",
+        "pub const EXPECTED: u32 = TABLE.weight;\n",
+    ] {
+        assert_eq!(
+            across("use demo::other::EXPECTED;", "EXPECTED", other),
+            vec!["assert_eq!(weight(4), EXPECTED);".to_string()],
+            "{other}"
+        );
+    }
     let tests = test("const EXPECTED: u32 = 12; // not weight(4)");
     assert_eq!(
         weight_admitted(&tests),

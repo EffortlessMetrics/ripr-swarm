@@ -2419,7 +2419,7 @@ impl OwnerReturnPin {
         // `assert_eq!(f(4), f(2) + f(2))` compares the owner with itself.
         if expected_reaches_owner(test, &assertion.text, expected, &self.name)
             || expected_reaches_fixture(test, expected)
-            || expected_constant_reaches_owner(index, expected, &self.name)
+            || expected_constant_reaches_owner(index, test, expected, &self.name, &self.call)
         {
             return false;
         }
@@ -8011,66 +8011,211 @@ pub(in crate::analysis::classify) fn expected_reaches_owner(
 }
 
 /// RIPR-SPEC-0035: whether an identifier in the expected operand names a
-/// `const` or `static` whose initializer mentions the owner, directly or
+/// `const` or `static` whose initializer calls the owner, directly or
 /// through further constants (`const EXPECTED: u32 = quota(2);
 /// assert_eq!(quota(2), EXPECTED)` compares the owner with itself, as a
-/// `let` binding would). Any item of that name anywhere in the index counts:
-/// matching too many only withholds the pin. An item the scan cannot parse
-/// fails closed. A constant computed through a helper that calls the owner
-/// is not followed.
-fn expected_constant_reaches_owner(index: &RustIndex, expected: &str, name: &str) -> bool {
+/// `let` binding would). Constants come from one memoized workspace table
+/// keyed by name, so any same-named item counts: matching too many only
+/// withholds the pin. The call must have the pin's own shape (a bare or
+/// module-path call for a free function, `T::name(..)` for an associated
+/// one, `.name(..)` or `T::name(..)` for a method), so a constant built
+/// with some other type's `new` or `len` keeps the pin. A test-file `use ..
+/// as` rename of a constant and a constant file's rename of the owner are
+/// followed. A constant computed through a helper that calls the owner is
+/// not.
+fn expected_constant_reaches_owner(
+    index: &RustIndex,
+    test: &TestSummary,
+    expected: &str,
+    name: &str,
+    call: &PinCall,
+) -> bool {
+    let constants = index
+        .call_identity_memos
+        .workspace_constants(|| workspace_constant_table(index));
+    if constants.is_empty() {
+        return false;
+    }
+    let test_renames: Vec<UsePath> = index
+        .files()
+        .get(&test.file)
+        .map(|facts| flattened_use_paths(&facts.source))
+        .unwrap_or_default();
     let mut seen = BTreeSet::new();
     let mut pending = vec![mask_comments_and_strings(expected)];
     while let Some(text) = pending.pop() {
-        for word in text
+        let mut words: Vec<String> = text
             .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
             .filter(|word| is_plain_identifier(word) && *word != name)
-        {
-            if !seen.insert(word.to_string()) {
+            .map(str::to_string)
+            .collect();
+        let renamed: Vec<String> = test_renames
+            .iter()
+            .filter(|import| {
+                import
+                    .alias
+                    .as_deref()
+                    .is_some_and(|alias| words.iter().any(|word| word == alias))
+            })
+            .filter_map(|import| import.path.rsplit("::").next().map(str::to_string))
+            .collect();
+        words.extend(renamed);
+        for word in words {
+            if !seen.insert(word.clone()) {
                 continue;
             }
-            for (_, facts) in index.files().iter() {
-                if !declares_constant(&facts.source, word) {
-                    continue;
-                }
-                let Some(parsed) = parse_clean_source_file(&facts.source) else {
+            let Some(initializers) = constants.get(&word) else {
+                continue;
+            };
+            for (file, initializer) in initializers {
+                if initializer_calls_owner(initializer, name, call)
+                    || owner_aliases(index, file, name)
+                        .iter()
+                        .any(|alias| initializer_calls_owner(initializer, alias, call))
+                {
                     return true;
-                };
-                for node in parsed.tree().syntax().descendants() {
-                    let initializer = if let Some(item) = ast::Const::cast(node.clone()) {
-                        item.name()
-                            .is_some_and(|item_name| item_name.text() == word)
-                            .then(|| item.body())
-                    } else if let Some(item) = ast::Static::cast(node) {
-                        item.name()
-                            .is_some_and(|item_name| item_name.text() == word)
-                            .then(|| item.body())
-                    } else {
-                        None
-                    };
-                    let Some(initializer) = initializer.flatten() else {
-                        continue;
-                    };
-                    let initializer = mask_comments_and_strings(&initializer.syntax().to_string());
-                    if contains_as_whole_word(&initializer, name) {
-                        return true;
-                    }
-                    pending.push(initializer);
                 }
+                pending.push(initializer.clone());
             }
         }
     }
     false
 }
 
-/// Cheap prefilter for [`expected_constant_reaches_owner`]: whether some
-/// whole-word `word` in `source` follows `const`, `static` or `static mut`.
-fn declares_constant(source: &str, word: &str) -> bool {
-    whole_word_offsets(source, word).into_iter().any(|offset| {
-        let before = source[..offset].trim_end();
-        let before = before.strip_suffix("mut").map_or(before, str::trim_end);
-        before.ends_with("const") || before.ends_with("static")
+/// Names `file` imports the owner `name` under (`use crate::quota as q;`).
+fn owner_aliases(index: &RustIndex, file: &Path, name: &str) -> Vec<String> {
+    index
+        .files()
+        .get(file)
+        .map(|facts| {
+            flattened_use_paths(&facts.source)
+                .into_iter()
+                .filter(|import| import.path.rsplit("::").next() == Some(name))
+                .filter_map(|import| import.alias)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whether the masked `initializer` calls `name` in the pin's call shape.
+fn initializer_calls_owner(initializer: &str, name: &str, call: &PinCall) -> bool {
+    whole_word_offsets(initializer, name).into_iter().any(|offset| {
+        let after = initializer[offset + name.len()..].trim_start();
+        if !(after.starts_with('(') || after.starts_with("::<")) {
+            return false;
+        }
+        let before = initializer[..offset].trim_end();
+        let qualifier = before.strip_suffix("::").map(|path| {
+            let path = path.trim_end();
+            let start = path
+                .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+                .map_or(0, |index| index + 1);
+            &path[start..]
+        });
+        let type_like = |segment: &str| segment.starts_with(|c: char| c.is_ascii_uppercase());
+        match call {
+            PinCall::Bare => !before.ends_with('.') && !qualifier.is_some_and(type_like),
+            PinCall::Associated { type_name } => {
+                qualifier.is_some_and(|segment| segment == type_name || segment == "Self")
+            }
+            PinCall::Method { receivers, .. } => {
+                before.ends_with('.')
+                    || qualifier.is_some_and(|segment| {
+                        segment == "Self"
+                            || receivers.iter().any(|receiver| {
+                                matches!(receiver, ReceiverType::Named(type_name) if type_name == segment)
+                            })
+                    })
+            }
+        }
     })
+}
+
+/// Every `const` and `static` of the workspace, by name, with its file and
+/// masked initializer: one parse per file per index. Items a macro call
+/// declares (`thread_local!`, `lazy_static!`) and items of a file that does
+/// not parse cleanly are read from their text.
+fn workspace_constant_table(index: &RustIndex) -> BTreeMap<String, Vec<(PathBuf, String)>> {
+    let mut table: BTreeMap<String, Vec<(PathBuf, String)>> = BTreeMap::new();
+    for (path, facts) in index.files().iter() {
+        let source = &facts.source;
+        if !source.contains("const") && !source.contains("static") {
+            continue;
+        }
+        let mut add = |name: &str, initializer: String| {
+            let name = name.strip_prefix("r#").unwrap_or(name);
+            table
+                .entry(name.to_string())
+                .or_default()
+                .push((path.clone(), initializer));
+        };
+        let Some(parsed) = parse_clean_source_file(source) else {
+            for (name, initializer) in text_declared_constants(&mask_comments_and_strings(source)) {
+                add(&name, initializer);
+            }
+            continue;
+        };
+        for node in parsed.tree().syntax().descendants() {
+            let item = if let Some(item) = ast::Const::cast(node.clone()) {
+                item.name().zip(item.body())
+            } else if let Some(item) = ast::Static::cast(node.clone()) {
+                item.name().zip(item.body())
+            } else {
+                if let Some(macro_call) = ast::MacroCall::cast(node)
+                    && let Some(tokens) = macro_call.token_tree()
+                {
+                    let text = mask_comments_and_strings(&tokens.syntax().to_string());
+                    for (name, initializer) in text_declared_constants(&text) {
+                        add(&name, initializer);
+                    }
+                }
+                None
+            };
+            if let Some((item_name, body)) = item {
+                add(
+                    &item_name.text(),
+                    mask_comments_and_strings(&body.syntax().to_string()),
+                );
+            }
+        }
+    }
+    table
+}
+
+/// `const NAME: T = init;` and `static [ref] [mut] NAME: T = init;` read
+/// from masked text, for macro bodies and unparsed files. The type
+/// annotation is required, so `const fn`, `*const u8` and `&'static str`
+/// are not declarations.
+fn text_declared_constants(text: &str) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    for keyword in ["const", "static"] {
+        for offset in whole_word_offsets(text, keyword) {
+            let mut rest = text[offset + keyword.len()..].trim_start();
+            for modifier in ["ref", "mut"] {
+                if let Some(stripped) = rest.strip_prefix(modifier)
+                    && stripped.starts_with(char::is_whitespace)
+                {
+                    rest = stripped.trim_start();
+                }
+            }
+            let raw = rest.strip_prefix("r#");
+            let body = raw.unwrap_or(rest);
+            let length = body
+                .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+                .unwrap_or(body.len());
+            let name = &body[..length];
+            if !is_plain_identifier(name) || !body[length..].trim_start().starts_with(':') {
+                continue;
+            }
+            let Some(equals) = body[length..].find('=') else {
+                continue;
+            };
+            let initializer = &body[length + equals + 1..];
+            let end = initializer.find(';').unwrap_or(initializer.len());
+            found.push((name.to_string(), initializer[..end].to_string()));
+        }
+    }
+    found
 }
 
 /// #6974 review: whether the test body names the owner anywhere but the
