@@ -197,10 +197,11 @@ not present the empty ranking as a clean result: the terminal and Markdown name
 each such language, its diff-first `ripr check --root <root>` route (or, when
 this binary cannot analyze the language, the unavailable-adapter notice), and
 close with that route instead of the Rust before/after snapshot commands. When
-a supported language has that check route and no Rust seam or Python repair
+an enabled language has that check route and no Rust seam or Python repair
 card ranks, the Top recommendation names the route (`analyze the Python
 diff: ripr check --root <root>`) instead of `none`; the "pilot ranks Rust
-seams and found none" explanation stays secondary. JSON `language_routes` and
+seams and found none" explanation stays secondary. Disabled preview languages
+still list the route in the languages section. JSON `language_routes` and
 `current_change.top_recommendation_in_change` are unchanged (#3906, #7665).
 When Rust seams exist, the human output is unchanged and other languages are
 listed only in `pilot-summary.json` `language_routes`.

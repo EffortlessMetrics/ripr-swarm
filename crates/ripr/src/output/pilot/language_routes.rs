@@ -202,13 +202,19 @@ impl PilotLanguageRoutes {
         (self.state == PilotLanguageRoutesState::Required).then_some(self.routes.as_slice())
     }
 
-    /// First language with a runnable `ripr check` route when the empty
-    /// ranking would otherwise headline as "none" (#7665). Unavailable
-    /// adapters have no command and stay on the none line.
+    /// First *enabled* language with a runnable `ripr check` route when the
+    /// empty ranking would otherwise headline as "none" (#7665). Disabled
+    /// adapters still get a command in the languages section, but `ripr check`
+    /// does not analyze them until `[languages] enabled` includes them, so
+    /// they must not headline as "analyze the … diff". Unavailable adapters
+    /// have no command and stay on the none line.
     pub(crate) fn supported_headline_route(&self) -> Option<(&PilotLanguageRoute, &str)> {
-        self.required()?
-            .iter()
-            .find_map(|route| route.command.as_deref().map(|command| (route, command)))
+        self.required()?.iter().find_map(|route| {
+            (route.enabled)
+                .then(|| route.command.as_deref())
+                .flatten()
+                .map(|command| (route, command))
+        })
     }
 
     /// Distinct runnable route commands, in route order.

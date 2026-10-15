@@ -1698,8 +1698,14 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
         PilotLanguageRoutes::commands(&required.routes),
         expected_commands
     );
-    if typescript_available || LanguageId::Python.is_available() {
-        assert!(required.supported_headline_route().is_some());
+    // Only TypeScript is enabled among the routed languages here. Python is
+    // detected but disabled, so it must not headline (#7665 / enabled gate).
+    if typescript_available {
+        let (route, _) = required
+            .supported_headline_route()
+            .expect("enabled TypeScript is a supported headline route");
+        assert_eq!(route.language, LanguageId::TypeScript);
+        assert!(route.enabled);
     } else {
         assert!(required.supported_headline_route().is_none());
     }
@@ -2023,21 +2029,21 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
             assert!(!md.contains("```bash"), "{md}");
         }
     } else {
+        // Available but not enabled: the languages section still names the
+        // check route, but `ripr check` skips it until `[languages] enabled`
+        // includes it, so the headline stays none (#7665).
         assert!(
             terminal.contains(&format!("typescript: 1 file (preview, diff-first; not enabled in ripr.toml [languages])\n    route: {}\n", route_command())),
             "{terminal}"
         );
         assert!(
-            terminal.contains(&format!(
-                "Top recommendation:\n  analyze the TypeScript diff: {}\n",
-                route_command()
-            )),
+            terminal.contains(
+                "none: pilot ranks Rust seams and found none here; see the languages below"
+            ),
             "{terminal}"
         );
         assert!(
-            !terminal.contains(
-                "none: pilot ranks Rust seams and found none here; see the languages below"
-            ),
+            !terminal.contains("analyze the TypeScript diff:"),
             "{terminal}"
         );
         assert!(
@@ -2048,7 +2054,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
             "{terminal}"
         );
         assert!(
-            md.contains(&format!(
+            !md.contains(&format!(
                 "Analyze the TypeScript diff: `{}`",
                 route_command()
             )),
@@ -2057,6 +2063,40 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         assert!(
             md.contains(&format!("```bash\n{}\n```", route_command())),
             "{md}"
+        );
+
+        let enabled_ts = PilotLanguageRoutes::from_discovered(
+            root,
+            false,
+            &[LanguageId::Rust, LanguageId::TypeScript],
+            &files,
+        );
+        let enabled_context = PilotSummaryContext {
+            language_routes: Some(&enabled_ts),
+            seam_limit: None,
+            ..pilot_context(&artifacts)
+        };
+        let enabled_terminal = render_pilot_terminal(&[], enabled_context);
+        assert!(
+            enabled_terminal.contains(&format!(
+                "Top recommendation:\n  analyze the TypeScript diff: {}\n",
+                route_command()
+            )),
+            "{enabled_terminal}"
+        );
+        assert!(
+            !enabled_terminal.contains(
+                "none: pilot ranks Rust seams and found none here; see the languages below"
+            ),
+            "{enabled_terminal}"
+        );
+        let enabled_md = render_pilot_summary_md(&[], enabled_context);
+        assert!(
+            enabled_md.contains(&format!(
+                "Analyze the TypeScript diff: `{}`",
+                route_command()
+            )),
+            "{enabled_md}"
         );
     }
     assert!(!terminal.contains("ripr outcome --before"), "{terminal}");
@@ -2200,6 +2240,65 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
     assert!(
         carded_terminal.contains("Top recommendation:\n  language: python (preview)"),
         "{carded_terminal}"
+    );
+
+    // Disabled TypeScript still lists the check route below, but must not
+    // headline "analyze the TypeScript diff": check skips it until enabled.
+    let ts_files = discovered_files(&[(LanguageId::TypeScript, "web/c.ts")]);
+    let disabled_ts =
+        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Rust], &ts_files);
+    if LanguageId::TypeScript.is_available() {
+        assert!(
+            disabled_ts.supported_headline_route().is_none(),
+            "{disabled_ts:?}"
+        );
+        let disabled_context = PilotSummaryContext {
+            language_routes: Some(&disabled_ts),
+            seam_limit: None,
+            ..pilot_context(&artifacts)
+        };
+        let disabled_terminal = render_pilot_terminal(&[], disabled_context);
+        assert!(
+            disabled_terminal.contains(
+                "none: pilot ranks Rust seams and found none here; see the languages below"
+            ),
+            "{disabled_terminal}"
+        );
+        assert!(
+            !disabled_terminal.contains("analyze the TypeScript diff:"),
+            "{disabled_terminal}"
+        );
+    }
+
+    // Mixed: TypeScript is first in route order but disabled; enabled Python
+    // must headline, not the disabled TypeScript check command.
+    let mixed_files = discovered_files(&[
+        (LanguageId::TypeScript, "web/c.ts"),
+        (LanguageId::Python, "src/pricing.py"),
+    ]);
+    let mixed = PilotLanguageRoutes::from_discovered(
+        Path::new("."),
+        false,
+        &[LanguageId::Python],
+        &mixed_files,
+    );
+    let (headline_route, _) = mixed
+        .supported_headline_route()
+        .expect("enabled Python is the supported headline when TypeScript is disabled");
+    assert_eq!(headline_route.language, LanguageId::Python);
+    let mixed_context = PilotSummaryContext {
+        language_routes: Some(&mixed),
+        python_first_use: Some(&python),
+        ..pilot_context(&artifacts)
+    };
+    let mixed_terminal = render_pilot_terminal(&[], mixed_context);
+    assert!(
+        mixed_terminal.contains(&format!("Top recommendation:\n  {headline}\n")),
+        "{mixed_terminal}"
+    );
+    assert!(
+        !mixed_terminal.contains("analyze the TypeScript diff:"),
+        "{mixed_terminal}"
     );
     Ok(())
 }

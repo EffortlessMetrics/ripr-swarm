@@ -1244,8 +1244,9 @@ fn required_routes<'a>(context: PilotSummaryContext<'a>) -> Option<&'a [PilotLan
         .and_then(PilotLanguageRoutes::required)
 }
 
-/// Supported-language check route the top recommendation should name when
-/// there is no Rust seam to rank (#7665).
+/// Enabled supported-language check route the top recommendation should name
+/// when there is no Rust seam to rank (#7665). Disabled preview languages
+/// keep the none headline.
 fn supported_headline_route(
     context: PilotSummaryContext<'_>,
 ) -> Option<(&PilotLanguageRoute, &str)> {
