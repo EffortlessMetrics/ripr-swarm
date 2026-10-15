@@ -1774,6 +1774,19 @@ idx + 1 });` got no pin and read as a gap although
   `#[macro_use]` on any enclosing module, no out-of-line child module)
   refuses only tests inside that item; a glob import from a workspace member
   crate with indexed files is workspace-owned.
+- A `macro_rules!` or `macro` body is only tokens to the parser, so the
+  items its expansion emits are read from its binding positions (#5991):
+  `macro_rules! name`, `macro name`, and a `use` whose last segment or
+  rename target is the name make that trusted name ambiguous wherever the
+  macro may expand. `macro_use`, `no_implicit_prelude`, or a glob `use`
+  not rooted at `crate`, `self`, `super` or `$crate` in a body makes every
+  trusted name ambiguous. A body that binds a name its caller passes in
+  (`macro_rules! $n`, `macro $n`, `use x::$n`) does too, when the macro's
+  own name is trusted: calls of a trusted name are never read for the
+  names they pass, while an untrusted call's arguments already record
+  them. Such a site is crate-local only when neither the macro nor its
+  body is exported. A helper body that only calls `assert_eq!` or holds
+  `use super::*;` binds nothing.
 - A crate-local binding reaches only tests compiled in the same crate. A
   site is crate-local when it cannot leave the crate whose module tree holds
   its file: a private `use` or glob, `#[macro_use] extern crate`,
@@ -2257,6 +2270,10 @@ assertions. This repair shares the existing callback without that larger migrati
   and the mutant passes while the finding refuses.
 - Binding-free local wrappers (#6648): `owner_pin/tests.rs`
   `a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted`.
+- Macro-body bindings (#5991): `owner_pin/tests.rs`
+  `a_macro_body_that_binds_a_trusted_name_makes_it_ambiguous`,
+  `a_macro_body_site_names_the_macro_and_its_reach`, and the body rows of
+  `stored_macro_candidates_record_each_binding_construct`.
 - Short-circuit tail propagation (#8037): `propagation_witness.rs`
   `short_circuit_owner_tail_completes_only_an_admitted_chain`;
   `crates/ripr/tests/short_circuit_or_tail.rs`

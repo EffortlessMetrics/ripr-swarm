@@ -15474,6 +15474,8 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_direct_call_name_is_one_bare_call_ending_the_subject",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_macro_body_that_binds_a_trusted_name_makes_it_ambiguous",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_macro_body_site_names_the_macro_and_its_reach",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_relations_stop_crediting_beside_a_reach_bearing_one",
   "crates/ripr/src/analysis/classifier/evidence.rs::tests::preferred_refusal_note_puts_a_non_limit_owner_call_first",

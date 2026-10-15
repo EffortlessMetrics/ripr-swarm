@@ -1458,6 +1458,15 @@ impl AssertionRefusal {
                         MacroBindingKind::ArgumentAttribute { wrapper, attribute } => format!(
                             "`{wrapper}!` at {place} carries `{attribute}` in its arguments, which its expansion may apply, bringing in a different `{name}!`"
                         ),
+                        MacroBindingKind::MacroBody(macro_name) => format!(
+                            "the body of `{macro_name}!` at {place} defines or imports `{name}`, so its expansion may rebind it"
+                        ),
+                        MacroBindingKind::BodyBindsAny {
+                            macro_name,
+                            binding,
+                        } => format!(
+                            "the body of `{macro_name}!` at {place} carries `{binding}`, which its expansion may apply, bringing in a different `{name}!`"
+                        ),
                     }
                 }
             },

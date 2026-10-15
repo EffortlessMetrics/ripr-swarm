@@ -326,6 +326,13 @@ pub(crate) enum MacroBindingKind {
     /// Another macro's arguments carry `macro_use` or `no_implicit_prelude`,
     /// which its expansion may apply to an item.
     ArgumentAttribute { wrapper: String, attribute: String },
+    /// A macro definition's body defines or imports the name, so each
+    /// expansion may bind it; the text is the macro defined (#5991).
+    MacroBody(String),
+    /// A macro definition's body carries `macro_use`, `no_implicit_prelude`
+    /// or a glob import from outside this crate, which each expansion may
+    /// apply (#5991).
+    BodyBindsAny { macro_name: String, binding: String },
 }
 
 impl MacroBindingKind {
@@ -339,6 +346,7 @@ impl MacroBindingKind {
                 | Self::MacroUse(_)
                 | Self::ForeignGlob(_)
                 | Self::ArgumentAttribute { .. }
+                | Self::BodyBindsAny { .. }
         )
     }
 }
@@ -412,12 +420,12 @@ pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
 /// parse and stored in the file facts (#5363).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum MacroBindingCandidates {
-    /// A site may bind every name: an attribute or macro argument naming
-    /// `macro_use` or `no_implicit_prelude`, a glob import not rooted at
-    /// `crate`, `self` or `super`, or a `use` without a tree.
+    /// A site may bind every name: an attribute, macro argument or macro
+    /// body naming `macro_use` or `no_implicit_prelude`, a glob import not
+    /// rooted at `crate`, `self` or `super`, or a `use` without a tree.
     Any,
-    /// Only these trusted names have a definition, an import or a mention
-    /// in some macro call's arguments.
+    /// Only these trusted names have a definition, an import, a mention
+    /// in some macro call's arguments, or a binding in a macro body.
     Names(BTreeSet<String>),
 }
 
@@ -468,6 +476,16 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
             .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
         {
             names.extend(trusted(name.text()));
+        }
+        if let Some(body) = macro_body_bindings(&node, &|name| trusted(name).is_some()) {
+            let trusted_name = ast::MacroRules::cast(node.clone())
+                .and_then(|item| item.name())
+                .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
+                .is_some_and(|name| trusted(name.text()).is_some());
+            if body.any.is_some() || body.binds_fragment.is_some() && trusted_name {
+                return MacroBindingCandidates::Any;
+            }
+            names.extend(body.names);
         }
         let tokens = || {
             node.descendants_with_tokens()
@@ -633,6 +651,42 @@ fn macro_binding_ambiguities(
                         kind: MacroBindingKind::Definition,
                         scope,
                         crate_local: !is_exported_macro(&node),
+                    },
+                ));
+            }
+        }
+        if let Some(body) = macro_body_bindings(&node, &|name| trusted.contains(&name)) {
+            let macro_name = ast::MacroRules::cast(node.clone())
+                .and_then(|item| item.name())
+                .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
+                .map(|name| name.text().to_string())
+                .unwrap_or_default();
+            let fragment = body
+                .binds_fragment
+                .filter(|_| trusted.contains(&macro_name.trim_start_matches("r#")));
+            if let Some(binding) = body.any.or(fragment) {
+                return all(
+                    line_of(&node),
+                    MacroBindingKind::BodyBindsAny {
+                        macro_name,
+                        binding,
+                    },
+                    // The macro may be invoked from another crate.
+                    false,
+                );
+            }
+            // The expansion lands wherever the macro is invoked, so no
+            // textual scope bounds it, and an exported macro or a
+            // `#[macro_export]` in the body reaches other crates.
+            let crate_local = !body.exports && !is_exported_macro(&node);
+            for name in body.names {
+                ambiguous.push((
+                    name,
+                    MacroBindingSite {
+                        line: line_of(&node),
+                        kind: MacroBindingKind::MacroBody(macro_name.clone()),
+                        scope: None,
+                        crate_local,
                     },
                 ));
             }
@@ -1160,6 +1214,136 @@ fn is_exported_macro(definition: &SyntaxNode) -> bool {
         });
     }
     ast::MacroDef::cast(definition.clone()).is_none_or(|item| item.visibility().is_some())
+}
+
+/// What a macro definition's body may bind wherever it expands (#5991).
+#[derive(Default)]
+struct MacroBodyBindings {
+    /// A word the expansion may apply to any name: `macro_use`,
+    /// `no_implicit_prelude`, or a glob `use` whose root is not this crate.
+    any: Option<String>,
+    /// Trusted names the body defines (`macro_rules! assert_eq`, `macro
+    /// assert_eq`) or imports (`use x::assert_eq;`, `use x::y as assert_eq;`).
+    names: Vec<String>,
+    /// The body carries `macro_export`, so what it defines leaves the crate.
+    exports: bool,
+    /// The body defines or imports a name its caller passes in (`macro_rules!
+    /// $name`). A call of an untrusted macro records the names in its
+    /// arguments, but a call whose own name is trusted is never read, so a
+    /// local `vec!` like this may bind any name. The text is the binding.
+    binds_fragment: Option<String>,
+}
+
+/// The binding items in a `macro_rules!` or `macro` body. A body is a token
+/// tree, so the items it emits never parse into the `MacroRules`, `Use` or
+/// `Attr` nodes the scan reads; this reads them from the tokens instead.
+/// Only binding positions count, so a test-generating macro whose body
+/// calls `assert_eq!` and holds `use super::*;` binds nothing. `None` when
+/// the node is not a macro definition.
+fn macro_body_bindings(
+    definition: &SyntaxNode,
+    trusted: &dyn Fn(&str) -> bool,
+) -> Option<MacroBodyBindings> {
+    use ra_ap_syntax::SyntaxKind::{BANG, COLON, COLON2, COMMA, DOLLAR, R_CURLY, SEMICOLON, STAR};
+    if !ast::MacroRules::can_cast(definition.kind()) && !ast::MacroDef::can_cast(definition.kind())
+    {
+        return None;
+    }
+    let tokens: Vec<_> = definition
+        .children()
+        .filter(|child| child.kind() == ra_ap_syntax::SyntaxKind::TOKEN_TREE)
+        .flat_map(|tree| non_trivia_tokens(&tree))
+        .collect();
+    let word = |index: usize| {
+        tokens
+            .get(index)
+            .map(|token| token.text().trim_start_matches("r#"))
+    };
+    let kind = |index: usize| tokens.get(index).map(|token| token.kind());
+    let mut names: Vec<String> = Vec::new();
+    let mut exports = false;
+    let mut binds_fragment = None;
+    let mut add = |name: &str| {
+        if trusted(name) && !names.iter().any(|known| known == name) {
+            names.push(name.to_string());
+        }
+    };
+    for (index, token) in tokens.iter().enumerate() {
+        match token.text().trim_start_matches("r#") {
+            "macro_use" | "no_implicit_prelude" => {
+                return Some(MacroBodyBindings {
+                    any: Some(token.text().to_string()),
+                    ..MacroBodyBindings::default()
+                });
+            }
+            "macro_export" => exports = true,
+            "macro_rules" if kind(index + 1) == Some(BANG) => {
+                if kind(index + 2) == Some(DOLLAR) {
+                    binds_fragment =
+                        Some(format!("macro_rules! ${}", word(index + 3).unwrap_or("")));
+                }
+                if let Some(name) = word(index + 2) {
+                    add(name);
+                }
+            }
+            "macro" => {
+                if kind(index + 1) == Some(DOLLAR) {
+                    binds_fragment = Some(format!("macro ${}", word(index + 2).unwrap_or("")));
+                }
+                if let Some(name) = word(index + 1) {
+                    add(name);
+                }
+            }
+            "use" => {
+                let end = (index + 1..tokens.len())
+                    .find(|&at| kind(at) == Some(SEMICOLON))
+                    .unwrap_or(tokens.len());
+                let mut start = index + 1;
+                while matches!(kind(start), Some(COLON | COLON2)) {
+                    start += 1;
+                }
+                // `$crate` is this crate; any other fragment is unknown.
+                let root = if kind(start) == Some(DOLLAR) {
+                    word(start + 1).filter(|word| *word == "crate")
+                } else {
+                    word(start).filter(|word| matches!(*word, "crate" | "self" | "super"))
+                };
+                for at in start..end {
+                    if kind(at) == Some(STAR) && root.is_none() {
+                        let path: String = tokens
+                            .get(index + 1..end)
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|token| token.text())
+                            .collect();
+                        return Some(MacroBodyBindings {
+                            any: Some(format!("use {path}")),
+                            ..MacroBodyBindings::default()
+                        });
+                    }
+                    // A fragment past the root may name what is imported.
+                    if at > start && kind(at) == Some(DOLLAR) {
+                        binds_fragment = Some(format!("use ${}", word(at + 1).unwrap_or("")));
+                    }
+                    let Some(name) = word(at) else { continue };
+                    // What a `use` binds ends its tree: a last segment or a
+                    // rename target (`as name`), so a renamed-away segment
+                    // (`assert_eq as check`) binds nothing.
+                    let last = at + 1 >= end || matches!(kind(at + 1), Some(COMMA | R_CURLY));
+                    if last {
+                        add(name);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(MacroBodyBindings {
+        any: None,
+        names,
+        exports,
+        binds_fragment,
+    })
 }
 
 /// The item's text without attributes, doc comments or body: `mod name;` or

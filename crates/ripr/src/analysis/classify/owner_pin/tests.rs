@@ -7005,6 +7005,32 @@ fn stored_macro_candidates_record_each_binding_construct() -> Result<(), String>
         ("#[macro_use]\nextern crate log;\n", any.clone()),
         ("#![no_implicit_prelude]\n", any.clone()),
         ("wrap! { #[macro_use] mod m; }\n", any.clone()),
+        // A macro body's binding items (#5991).
+        (
+            "macro_rules! m { () => { macro_rules! assert_eq { () => {} } }; }\n",
+            names(&["assert_eq"]),
+        ),
+        (
+            "macro_rules! m { () => { use a::check as vec; assert!(true); }; }\n",
+            names(&["vec"]),
+        ),
+        ("macro_rules! m { () => { use other::*; }; }\n", any.clone()),
+        (
+            "macro_rules! m { () => { #[macro_use] extern crate log; }; }\n",
+            any.clone(),
+        ),
+        (
+            "macro_rules! m { () => { use super::*; assert_eq!(1, 1); }; }\n",
+            names(&[]),
+        ),
+        (
+            "macro_rules! vec { ($n:ident) => { macro_rules! $n { () => {} } }; }\n",
+            any.clone(),
+        ),
+        (
+            "macro_rules! define { ($n:ident) => { macro_rules! $n { () => {} } }; }\n",
+            names(&[]),
+        ),
     ] {
         let expected = match expected {
             None => MacroBindingCandidates::Any,
@@ -9973,4 +9999,120 @@ fn a_direct_call_name_is_one_bare_call_ending_the_subject() {
     ] {
         assert_eq!(direct_call_name(subject), name, "{subject}");
     }
+}
+
+#[test]
+fn a_macro_body_that_binds_a_trusted_name_makes_it_ambiguous() {
+    // #5991: a body is a token tree, so the `macro_rules!` and `use` items it
+    // emits never parse as items. Each binding position in it counts.
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let refusal = |other: &str| weight_refusal(tests, &[("src/other.rs", other)]);
+    let refused = |other: &str| {
+        matches!(
+            refusal(other),
+            Some(
+                AssertionRefusal::MacroBinding { .. }
+                    | AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(_))
+            )
+        )
+    };
+    for other in [
+        // A local trusted-named macro defining a name its caller passes.
+        "macro_rules! vec { ($n:ident) => { macro_rules! $n { ($a:expr, $b:expr) => {}; } }; }\nvec!(assert_eq);\n",
+        // The issue's own shape, and the same body under a trusted name.
+        "macro_rules! m { () => { macro_rules! assert_eq { ($a:expr, $b:expr) => {{ let _ = (&$a, &$b); }}; } #[cfg(test)] mod tests; }; }\nm!();\n",
+        "macro_rules! vec { () => { #[macro_export] macro_rules! assert_eq { ($a:expr, $b:expr) => {{ let _ = ($a, $b); }}; } }; }\nvec!();\n",
+        // Nested one level deeper, as a macro 2.0 item, and by import.
+        "macro_rules! m { () => { macro_rules! inner { () => { macro_rules! assert_eq { ($($t:tt)*) => {}; } }; } inner!(); }; }\nm!();\n",
+        "macro_rules! m { () => { macro assert_eq($($t:tt)*) {} }; }\nm!();\n",
+        "macro_rules! m { () => { use other::check as assert_eq; }; }\nm!();\n",
+        "macro_rules! m { () => { use other::{assert_eq, Thing}; }; }\nm!();\n",
+        "macro_rules! m { () => { use ::other::assert_eq; }; }\nm!();\n",
+        // Words that may bring in any name.
+        "macro_rules! m { () => { #[macro_use] extern crate other; }; }\nm!();\n",
+        "macro_rules! m { () => { #![no_implicit_prelude] }; }\nm!();\n",
+        "macro_rules! m { () => { use other::*; }; }\nm!();\n",
+        "macro_rules! m { ($k:ident) => { use $k::*; }; }\nm!(other);\n",
+    ] {
+        assert!(refused(other), "{other}");
+    }
+    // A test-generating macro whose body only calls `assert_eq!`, renames it
+    // away, or glob-imports this crate binds nothing.
+    for other in [
+        "macro_rules! m { ($n:ident) => { mod $n { use super::*; #[test] fn t() { assert_eq!(1, 1); } } }; }\nm!(one);\n",
+        "macro_rules! m { () => { use other::assert_eq as _; use $crate::prelude::*; use self::x::*; }; }\nm!();\n",
+        "macro_rules! m { () => { use other::assert_eq as check; }; }\nm!();\n",
+    ] {
+        assert_eq!(refusal(other), None, "{other}");
+    }
+}
+
+#[test]
+fn a_macro_body_site_names_the_macro_and_its_reach() {
+    let trusted = &["assert", "assert_eq", "vec", "format", "dbg", "write"];
+    let sites = |source: &str| {
+        sites_in_widest_context(source, trusted)
+            .into_iter()
+            .map(|(name, site)| (name, site.kind, site.crate_local))
+            .collect::<Vec<_>>()
+    };
+    let body = |name: &str| MacroBindingKind::MacroBody(name.to_string());
+    // Only binding positions count: the `assert_eq!` call does not.
+    assert_eq!(
+        sites(
+            "macro_rules! m { () => { macro_rules! assert { () => {} } use a::{b, vec}; use c::d as format; assert_eq!(1, 1); }; }\n"
+        ),
+        vec![
+            ("assert".to_string(), body("m"), true),
+            ("vec".to_string(), body("m"), true),
+            ("format".to_string(), body("m"), true),
+        ]
+    );
+    // An exported macro, or an export in its body, reaches other crates.
+    assert_eq!(
+        sites("#[macro_export]\nmacro_rules! e { () => { macro_rules! dbg { () => {} } }; }\n"),
+        vec![("dbg".to_string(), body("e"), false)]
+    );
+    assert_eq!(
+        sites("macro_rules! f { () => { #[macro_export] macro_rules! write { () => {} } }; }\n"),
+        vec![("write".to_string(), body("f"), false)]
+    );
+    // A glob from a fragment root may import anything.
+    let any = sites("macro_rules! h { ($k:ident) => { use $k::*; }; }\n");
+    assert_eq!(any.len(), trusted.len());
+    assert!(any.iter().all(|(_, kind, crate_local)| {
+        *kind
+            == MacroBindingKind::BodyBindsAny {
+                macro_name: "h".to_string(),
+                binding: "use $k::*".to_string(),
+            }
+            && !crate_local
+    }));
+    // A local macro under a trusted name is never read at its calls, so a
+    // name it takes from its caller may be any name; an untrusted one's
+    // calls are read instead.
+    let any = sites("macro_rules! vec { ($n:ident) => { macro_rules! $n { () => {} } }; }\n");
+    assert_eq!(any.len(), trusted.len());
+    assert!(any.iter().all(|(_, kind, _)| {
+        *kind
+            == MacroBindingKind::BodyBindsAny {
+                macro_name: "vec".to_string(),
+                binding: "macro_rules! $n".to_string(),
+            }
+    }));
+    for source in [
+        "macro_rules! vec { ($n:ident) => { macro $n() {} }; }\n",
+        "macro_rules! vec { ($n:ident) => { use other::$n; }; }\n",
+    ] {
+        assert_eq!(sites(source).len(), trusted.len(), "{source}");
+    }
+    assert_eq!(
+        sites("macro_rules! define { ($n:ident) => { macro_rules! $n { () => {} } }; }\n"),
+        Vec::new()
+    );
+    // This crate's globs bind nothing.
+    assert_eq!(
+        sites("macro_rules! g { () => { use crate::x::*; use $crate::y::*; use super::*; }; }\n"),
+        Vec::new()
+    );
 }

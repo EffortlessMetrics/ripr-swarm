@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A `macro_rules!` body that defines or imports a trusted assertion macro (`macro_rules! assert_eq`, `use other::check as assert_eq;`), or carries `macro_use`, `no_implicit_prelude` or a foreign glob import, now makes that macro ambiguous for owner-return pins, as the same item written outside a macro does. A local trusted-named macro that defines a name its caller passes (`vec!(assert_eq)`) does too. Helper macros that only call `assert_eq!` are unaffected (#5991).
