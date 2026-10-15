@@ -54107,3 +54107,35 @@ fn gh_pr_status_identity_response(fixture: &Value) -> String {
     }
     serde_json::json!({"data":{"repository":{"pullRequest":identity}}}).to_string()
 }
+
+/// Use the existing approved runner to inspect real gh's offline field registry.
+#[test]
+#[ignore = "requires real gh; set RIPR_TEST_GH to the supported gh 2.46 binary and run --ignored"]
+fn gh_pr_status_real_cli_schema() -> Result<(), String> {
+    let gh = std::env::var_os("RIPR_TEST_GH").unwrap_or_else(|| "gh".into());
+    let text = super::run_output_owned(
+        &gh.to_string_lossy(),
+        &[
+            "pr".to_string(),
+            "view".to_string(),
+            "--json".to_string(),
+            "riprUnsupportedSchemaControl".to_string(),
+        ],
+    )
+    .expect_err("unknown-field control unexpectedly succeeded");
+    assert!(
+        text.contains("Unknown JSON field: \"riprUnsupportedSchemaControl\""),
+        "{text}"
+    );
+    let (_, registry) = text
+        .split_once("Available fields:")
+        .ok_or("real gh did not expose its field registry")?;
+    let available: std::collections::BTreeSet<_> = registry.lines().map(str::trim).collect();
+    for field in super::gh_pr_status_snapshot::VIEW_FIELDS.split(',') {
+        assert!(
+            available.contains(field),
+            "real gh rejects production field {field}: {text}"
+        );
+    }
+    Ok(())
+}

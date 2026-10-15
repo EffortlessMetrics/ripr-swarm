@@ -416,40 +416,4 @@ mod tests {
             assert!(bracket(vec![graphql(snapshot()), snapshot(), response]).is_err());
         }
     }
-
-    /// Explicit capability proof, without credentials/network: gh reports its real
-    /// field registry before attempting a request for the deliberately unknown field.
-    #[test]
-    #[ignore = "requires real gh; set RIPR_TEST_GH to the supported gh 2.46 binary and run --ignored"]
-    fn gh_pr_status_real_cli_schema() -> Result<(), String> {
-        let gh = std::env::var_os("RIPR_TEST_GH").unwrap_or_else(|| "gh".into());
-        let output = std::process::Command::new(gh)
-            .args(["pr", "view", "--json", "riprUnsupportedSchemaControl"])
-            .output()
-            .map_err(|error| error.to_string())?;
-        let text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(
-            !output.status.success(),
-            "unknown-field control unexpectedly succeeded"
-        );
-        assert!(
-            text.contains("Unknown JSON field: \"riprUnsupportedSchemaControl\""),
-            "{text}"
-        );
-        let (_, registry) = text
-            .split_once("Available fields:")
-            .ok_or("real gh did not expose its field registry")?;
-        let available: std::collections::BTreeSet<_> = registry.lines().map(str::trim).collect();
-        for field in VIEW_FIELDS.split(',') {
-            assert!(
-                available.contains(field),
-                "real gh rejects production field {field}: {text}"
-            );
-        }
-        Ok(())
-    }
 }
