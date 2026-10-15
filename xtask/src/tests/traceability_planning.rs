@@ -105,6 +105,8 @@ fn accepted_empty_placeholder_fenced_and_unrelated_plans_remain_failures() -> Re
         "Planned tests:\n- <test name>\n",
         "```text\nPlanned tests:\n- boundary_obligation\n```\n",
         "````text\n```\nPlanned tests:\n- boundary_obligation\n````\n",
+        "````text\n    ````\nPlanned tests:\n- boundary_obligation\n````\n",
+        "````text\n\t````\nPlanned tests:\n- boundary_obligation\n````\n",
         "    Planned tests:\n    - boundary_obligation\n",
         "```text\n```not-a-close\nPlanned tests:\n- boundary_obligation\n```\n",
         "<!--\nPlanned tests:\n- boundary_obligation\n-->\n",
@@ -152,6 +154,7 @@ fn visible_named_obligations_after_comments_and_task_markers_remain_valid() -> R
         "Visible prose <!--\n```\n-->\nPlanned tests:\n- boundary_obligation\n",
         "Planned tests:\n- [ ] **boundary_obligation**\n",
         "Planned tests:\n- [x] `boundary_obligation`\n",
+        "````text\nExample only.\n   ````\nPlanned tests:\n- boundary_obligation\n",
     ] {
         with_temp_cwd("trace-visible-named-obligation", |root| {
             fixture(root, "accepted", mapping, "[]", "[]")?;

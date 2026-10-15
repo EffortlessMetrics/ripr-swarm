@@ -5979,9 +5979,11 @@ fn has_explicit_planned_test_mapping(text: &str) -> bool {
     let mut comment = false;
     for line in text.lines() {
         let trimmed = line.trim();
+        let fence_text = line.trim_start_matches(' ');
+        let fence_indent = line.len() - fence_text.len();
         if let Some((delimiter, length)) = fence {
-            let count = trimmed.chars().take_while(|ch| *ch == delimiter).count();
-            if count >= length && trimmed[count..].trim().is_empty() {
+            let count = fence_text.chars().take_while(|ch| *ch == delimiter).count();
+            if fence_indent <= 3 && count >= length && fence_text[count..].trim().is_empty() {
                 fence = None;
             }
             continue;
@@ -6007,11 +6009,15 @@ fn has_explicit_planned_test_mapping(text: &str) -> bool {
         if comment_line {
             continue;
         }
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            let delimiter = if trimmed.starts_with('`') { '`' } else { '~' };
+        if fence_indent <= 3 && (fence_text.starts_with("```") || fence_text.starts_with("~~~")) {
+            let delimiter = if fence_text.starts_with('`') {
+                '`'
+            } else {
+                '~'
+            };
             fence = Some((
                 delimiter,
-                trimmed.chars().take_while(|ch| *ch == delimiter).count(),
+                fence_text.chars().take_while(|ch| *ch == delimiter).count(),
             ));
             continue;
         }
