@@ -1214,6 +1214,12 @@ fn parse_severity(field: &str, value: &str, allow_off: bool) -> Result<ConfigSev
 }
 
 fn parse_relative_path(field: &str, value: &str) -> Result<PathBuf, String> {
+    // TOML permits escaped NULs, but filesystem paths cannot contain them.
+    // Reject them here instead of validating a path that later looks absent
+    // (Path::exists) or fails to open. Do not echo the control byte.
+    if value.contains('\0') {
+        return Err(format!("{field} must not contain NUL characters"));
+    }
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err(format!("{field} must not be empty"));

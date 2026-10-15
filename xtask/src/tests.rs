@@ -7,6 +7,8 @@ mod discarded_matcher_honesty;
 mod fixture_cache;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
+#[cfg(windows)]
+mod review_conversations;
 mod rust_corpus_projection;
 
 /// Best-effort temp-dir teardown for tests. The `io::Result` is matched
@@ -89,18 +91,20 @@ use super::{
     StaticLanguageAllowEntry, StaticLanguageMatcher, TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES,
     TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES,
     TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES, TestOracleClass,
-    USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES, USER_SURFACE_PROJECTION_REQUIRED_SURFACES,
-    WorktreeDoctorFinding, WorktreeDoctorSeverity, actionable_gap_outcomes_json,
-    actionable_gap_outcomes_markdown, actionable_gap_outcomes_report_from_values,
-    actionable_gap_outcomes_report_impl, allow_attribute_budget_violations,
-    artifact_router_path_violation, badge_artifact_command_args, badge_artifact_command_label,
-    badge_artifact_jobs, badge_artifact_native_slot, badge_artifacts_impl_with_runners,
-    badge_artifacts_summary_markdown, badge_basis_canonical_projection,
-    badge_basis_derived_ripr_plus_snapshot, badge_basis_needs_repo_badge_plus_job,
-    badge_basis_report_json, badge_basis_report_markdown, badge_basis_seam_native_counts,
-    badge_diff_policy_violations, badge_native_audit_snapshot, build_lsp_cockpit_report,
-    build_repo_exposure_latency_report, build_targeted_test_outcome_report, check_allow_attributes,
-    check_badge_diff_policy_with_context, check_doc_artifacts, check_droid_review_config,
+    UNREGISTERED_SPEC_MESSAGE_LIMIT, USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES,
+    USER_SURFACE_PROJECTION_REQUIRED_SURFACES, WorktreeDoctorFinding, WorktreeDoctorSeverity,
+    actionable_gap_outcomes_json, actionable_gap_outcomes_markdown,
+    actionable_gap_outcomes_report_from_values, actionable_gap_outcomes_report_impl,
+    allow_attribute_budget_violations, artifact_router_path_violation, badge_artifact_command_args,
+    badge_artifact_command_label, badge_artifact_jobs, badge_artifact_native_slot,
+    badge_artifacts_impl_with_runners, badge_artifacts_summary_markdown,
+    badge_basis_canonical_projection, badge_basis_derived_ripr_plus_snapshot,
+    badge_basis_needs_repo_badge_plus_job, badge_basis_report_json, badge_basis_report_markdown,
+    badge_basis_seam_native_counts, badge_diff_policy_violations, badge_native_audit_snapshot,
+    build_lsp_cockpit_report, build_repo_exposure_latency_report,
+    build_targeted_test_outcome_report, check_allow_attributes,
+    check_badge_diff_policy_with_context, check_doc_artifacts,
+    check_doc_artifacts_with_unregistered_baseline, check_droid_review_config,
     check_executable_files, check_file_policy, check_local_context, check_network_policy,
     check_no_panic_family, check_process_policy, check_static_language, check_support_tiers,
     check_workflows, ci_enforced_xtask_invocations, ci_full_evidence_gates, cockpit_json,
@@ -185,9 +189,9 @@ use super::{
     report_index_repo_ops_status, report_packet_index_case_id_violation,
     report_packet_index_generated_at_violation, report_packet_index_render_plan,
     report_status_from_text, repository_owned_review_thread_mutation_violations,
-    ripr_command_literals_in_text, ripr_debug_binary, ripr_plus_receipt_from_badge,
-    ripr_plus_receipt_from_options, ripr_plus_receipt_from_repo_badge_json,
-    ripr_plus_receipt_from_repo_exposure_summary_json,
+    reverse_direction_unregistered_violation, ripr_command_literals_in_text, ripr_debug_binary,
+    ripr_plus_receipt_from_badge, ripr_plus_receipt_from_options,
+    ripr_plus_receipt_from_repo_badge_json, ripr_plus_receipt_from_repo_exposure_summary_json,
     ripr_plus_receipt_from_repo_exposure_summary_json_with_source, ripr_plus_receipt_markdown,
     ripr_pre_commit_hook, ripr_swarm_attempt_allowed_file_line,
     ripr_swarm_attempt_dry_run_from_actionable_gaps_value, ripr_swarm_attempt_dry_run_markdown,
@@ -24988,6 +24992,131 @@ owner = "repo-infra"
 
         check_doc_artifacts()
     })
+}
+
+#[test]
+fn reverse_direction_violation_names_unregistered_spec_ids_and_paths() -> Result<(), String> {
+    let unregistered = [
+        (
+            "RIPR-SPEC-1234".to_string(),
+            "docs/specs/RIPR-SPEC-1234-alpha.md".to_string(),
+        ),
+        (
+            "RIPR-SPEC-1235".to_string(),
+            "docs/specs/RIPR-SPEC-1235-beta.md".to_string(),
+        ),
+    ];
+    let message = reverse_direction_unregistered_violation(&unregistered, 1, DOC_ARTIFACT_LEDGER)
+        .ok_or_else(|| "two unregistered specs exceed baseline 1".to_string())?;
+    if !message.contains("RIPR-SPEC-1234 (docs/specs/RIPR-SPEC-1234-alpha.md)") {
+        return Err(format!(
+            "must name the first unregistered id and path, got {message}"
+        ));
+    }
+    if !message.contains("RIPR-SPEC-1235 (docs/specs/RIPR-SPEC-1235-beta.md)") {
+        return Err(format!(
+            "must name the second unregistered id and path, got {message}"
+        ));
+    }
+    if !message.contains("unregistered:") {
+        return Err(format!(
+            "must label the named ids, not only the excess count, got {message}"
+        ));
+    }
+    if !(message.contains("baseline: 1") && message.contains("current: 2")) {
+        return Err(format!("must retain the ratchet counts, got {message}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn reverse_direction_violation_is_silent_at_baseline() {
+    let unregistered = [(
+        "RIPR-SPEC-1234".to_string(),
+        "docs/specs/RIPR-SPEC-1234-alpha.md".to_string(),
+    )];
+    assert_eq!(
+        reverse_direction_unregistered_violation(&unregistered, 1, DOC_ARTIFACT_LEDGER),
+        None,
+        "the ratchet must not fire at the baseline count"
+    );
+}
+
+#[test]
+fn reverse_direction_violation_names_newest_ids_before_truncating() -> Result<(), String> {
+    let unregistered: Vec<(String, String)> = (1..=UNREGISTERED_SPEC_MESSAGE_LIMIT + 2)
+        .map(|n| {
+            let id = format!("RIPR-SPEC-{n:04}");
+            let path = format!("docs/specs/{id}-sample.md");
+            (id, path)
+        })
+        .collect();
+    let message = reverse_direction_unregistered_violation(&unregistered, 0, DOC_ARTIFACT_LEDGER)
+        .ok_or_else(|| "any unregistered spec exceeds baseline 0".to_string())?;
+    let newest = format!("RIPR-SPEC-{:04}", UNREGISTERED_SPEC_MESSAGE_LIMIT + 2);
+    if !message.contains(&newest) {
+        return Err(format!(
+            "truncation must keep the newest spec id visible, got {message}"
+        ));
+    }
+    if message.contains("RIPR-SPEC-0001 (") {
+        return Err(format!(
+            "oldest spec ids should fall into the truncation remainder, got {message}"
+        ));
+    }
+    let remaining = 2;
+    if !message.contains(&format!("and {remaining} more")) {
+        return Err(format!("must mark truncated remainder, got {message}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn doc_artifacts_command_names_unregistered_spec_ids() {
+    with_temp_cwd("doc-artifacts-reverse-direction-names-ids", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_fixture(
+            root,
+            "docs/specs/RIPR-SPEC-1234-widget.md",
+            "RIPR-SPEC-1234",
+        );
+        write_doc_artifact_fixture(
+            root,
+            "docs/specs/RIPR-SPEC-1235-gadget.md",
+            "RIPR-SPEC-1235",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "accepted"
+owner = "repo-infra"
+"#,
+        );
+
+        let error = check_doc_artifacts_with_unregistered_baseline(1)
+            .expect_err("two unregistered specs exceed baseline 1");
+        assert!(
+            error.contains("RIPR-SPEC-1234 (docs/specs/RIPR-SPEC-1234-widget.md)"),
+            "command path must name the first unregistered spec, got {error}"
+        );
+        assert!(
+            error.contains("RIPR-SPEC-1235 (docs/specs/RIPR-SPEC-1235-gadget.md)"),
+            "command path must name the second unregistered spec, got {error}"
+        );
+        assert!(
+            error.contains("unregistered:"),
+            "command path must not keep the count-only reverse-direction message, got {error}"
+        );
+    });
 }
 
 #[test]
@@ -53965,8 +54094,12 @@ fn gh_pr_status_provider_quota_observations_preserve_evidence() -> Result<(), St
     });
     let pr = super::collect_gh_pr_status_with(42, |program, args| {
         assert_eq!(program, "gh");
+        if args.first().is_some_and(|arg| arg == "api") {
+            return Ok(gh_pr_status_identity_response(&fixture));
+        }
         assert_eq!(args.len(), 5);
         assert_eq!(&args[..4], &["pr", "view", "42", "--json"]);
+        assert!(!args[4].split(',').any(|field| field == "baseRefOid"));
         let fields: std::collections::BTreeSet<_> = args[4].split(',').collect();
         for required in ["comments", "headRefOid", "latestReviews"] {
             assert!(fields.contains(required), "collector omitted {required}");
@@ -54017,5 +54150,122 @@ fn gh_pr_status_provider_quota_observations_preserve_evidence() -> Result<(), St
         readiness.safe_next_action, "merge",
         "advisory provider disclosure must not silently become a new gate"
     );
+    Ok(())
+}
+
+#[test]
+fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Result<(), String> {
+    for (status, conclusion, review, expected) in [
+        ("COMPLETED", "SUCCESS", "APPROVED", "merge"),
+        ("IN_PROGRESS", "", "APPROVED", "wait"),
+        ("COMPLETED", "FAILURE", "APPROVED", "inspect failure"),
+        (
+            "COMPLETED",
+            "SUCCESS",
+            "CHANGES_REQUESTED",
+            "inspect failure",
+        ),
+    ] {
+        let first = serde_json::json!({
+            "number":42,"title":"final snapshot","headRefOid":"1111111111111111111111111111111111111111",
+            "baseRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"main",
+            "headRefName":"candidate","isDraft":false,"mergeStateStatus":"CLEAN","reviewDecision":"APPROVED",
+            "latestReviews":[{"author":{"login":"fixture-reviewer"},"state":"APPROVED","submittedAt":"2026-10-15T01:00:00Z"}],
+            "reviews":[{"author":{"login":"fixture-reviewer"},"state":"APPROVED","submittedAt":"2026-10-15T01:00:00Z","commit":{"oid":"1111111111111111111111111111111111111111"}}],"comments":[],
+            "statusCheckRollup":[{"__typename":"CheckRun","name":"rust","status":"COMPLETED","conclusion":"SUCCESS"}]
+        });
+        let mut last = first.clone();
+        last["reviewDecision"] = serde_json::json!(review);
+        last["statusCheckRollup"][0]["status"] = serde_json::json!(status);
+        last["statusCheckRollup"][0]["conclusion"] = serde_json::json!(conclusion);
+        let mut reads = 0;
+        let observation = super::gh_pr_status_snapshot::collect_current(
+            42,
+            || {
+                reads += 1;
+                super::collect_gh_pr_status_json_with(42, |program, args| {
+                    assert_eq!(program, "gh");
+                    if args.first().is_some_and(|arg| arg == "api") {
+                        return Ok(gh_pr_status_identity_response(if reads == 1 {
+                            &first
+                        } else {
+                            &last
+                        }));
+                    }
+                    assert_eq!(&args[..4], ["pr", "view", "42", "--json"]);
+                    let fields = args[4].split(',').collect::<Vec<_>>();
+                    assert!(fields.contains(&"headRefOid") && !fields.contains(&"baseRefOid"));
+                    Ok(if reads == 1 {
+                        first.to_string()
+                    } else {
+                        last.to_string()
+                    })
+                })
+            },
+            |target| {
+                assert_eq!(target, "main");
+                Ok(vec!["rust".to_string()])
+            },
+        )?;
+        assert_eq!(reads, 2);
+        let pr = parse_gh_pr_status_pull_request(&observation.pr.to_string())?;
+        let readiness = gh_pr_status_readiness(
+            &pr,
+            &observation.contexts,
+            observation.contexts_available,
+            observation.warnings,
+        );
+        assert_eq!(readiness.safe_next_action, expected);
+        let json: Value =
+            serde_json::from_str(&gh_pr_status_json(&pr, &observation.contexts, &readiness))
+                .map_err(|error| error.to_string())?;
+        assert_eq!(json["safe_next_action"], expected);
+        let markdown = gh_pr_status_markdown(&pr, &observation.contexts, &readiness);
+        assert!(markdown.contains(&format!("safe next action: `{expected}`")));
+        assert!(markdown.contains("1111111111111111111111111111111111111111"));
+        assert!(markdown.contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        assert!(markdown.contains("not atomic"));
+    }
+    Ok(())
+}
+
+fn gh_pr_status_identity_response(fixture: &Value) -> String {
+    let mut identity = fixture.clone();
+    if identity.get("baseRefOid").is_none() {
+        identity["baseRefOid"] = serde_json::json!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    }
+    serde_json::json!({"data":{"repository":{"pullRequest":identity}}}).to_string()
+}
+
+/// Use the existing approved runner to inspect real gh's offline field registry.
+#[test]
+#[ignore = "requires real gh; set RIPR_TEST_GH to the supported gh 2.46 binary and run --ignored"]
+fn gh_pr_status_real_cli_schema() -> Result<(), String> {
+    let gh = std::env::var_os("RIPR_TEST_GH").unwrap_or_else(|| "gh".into());
+    let Err(text) = super::run_output_owned(
+        &gh.to_string_lossy(),
+        &[
+            "pr".to_string(),
+            "view".to_string(),
+            "--json".to_string(),
+            "riprUnsupportedSchemaControl".to_string(),
+        ],
+    ) else {
+        return Err("unknown-field control unexpectedly succeeded".to_string());
+    };
+    assert!(
+        text.contains("Unknown JSON field: \"riprUnsupportedSchemaControl\""),
+        "{text}"
+    );
+    let (_, registry) = text
+        .split_once("Available fields:")
+        .ok_or("real gh did not expose its field registry")?;
+    let available: std::collections::BTreeSet<_> = registry.lines().map(str::trim).collect();
+    for field in super::gh_pr_status_snapshot::VIEW_FIELDS.split(',') {
+        assert!(
+            available.contains(field),
+            "real gh rejects production field {field}: {text}"
+        );
+    }
     Ok(())
 }

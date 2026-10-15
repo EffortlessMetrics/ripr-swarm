@@ -161,7 +161,8 @@ Unchanged: bare `no_static_path`, no `static_limit_kind`, no witness.
 - The witness pointer NEVER says the test "reaches", "covers", "tests", or "exercises" the change.
   It says the test calls an entry symbol that "may lead here".
 - All RIPR-SPEC-0114 boundaries are inherited unchanged: name-only matching over lexical call
-  facts, depth ≤ 5, stop at macros, stop at out-of-crate callees.
+  facts, depth ≤ 5 (and, only when that names no witness, the walk past the bound of #8047),
+  stop at macros, stop at out-of-crate callees.
 
 ### Wire format
 
@@ -276,8 +277,9 @@ requirements in this spec remain unchanged.
   — message honesty (contains "may lead here"; excludes reaches/covers/tests/exercises)
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_path_at_depth_5_then_witness_is_captured`
   — depth-5 boundary still returns a witness
-- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_path_depth_6_then_witness_is_none`
-  — depth-6 boundary returns `None`
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_path_depth_6_then_the_walk_past_the_bound_names_a_witness`
+  — a depth-6 chain a test enters returns that test's witness from the walk past the bound
+  (RIPR-SPEC-0114 example 5, #8047); a test entering no chain name returns `None`
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_macro_call_in_test_calls_then_witness_is_none`
   — macro entry skipped
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_callee_not_in_crate_then_witness_is_none`

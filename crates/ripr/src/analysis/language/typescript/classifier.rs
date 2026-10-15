@@ -356,7 +356,7 @@ pub(crate) fn ts_changed_value_is_observed(
                     observed,
                     &owner_names,
                     &changed_tokens,
-                    &candidate.test.body_text,
+                    candidate.test,
                 ) {
                     return true;
                 }
@@ -461,11 +461,14 @@ pub(crate) fn ts_changed_value_is_observed(
 /// the next `;` or newline, and only the FIRST matching assignment in the
 /// test body is considered. Any failure to resolve keeps the guard's
 /// fail-closed downgrade.
+///
+/// #7497: a local the test rewrites or escapes ([`ts_test_local_is_mutated`])
+/// observes the test's own write, so the one-hop credit stays unavailable.
 fn ts_observed_local_aliases_owner(
     observed: &str,
     owner_names: &[&str],
     changed_tokens: &[String],
-    test_body: &str,
+    test: &TypeScriptTest,
 ) -> bool {
     fn is_ident_byte(b: u8) -> bool {
         b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
@@ -480,6 +483,7 @@ fn ts_observed_local_aliases_owner(
     if !ident_is_bare {
         return false;
     }
+    let test_body = test.body_text.as_str();
     let body = test_body.as_bytes();
     let mut search_from = 0;
     while let Some(pos) = test_body
@@ -514,7 +518,13 @@ fn ts_observed_local_aliases_owner(
                         .iter()
                         .any(|tok| ts_references_identifier(rhs, tok))
                 {
-                    return true;
+                    // #7497: a local the test rewrites or escapes observes
+                    // the test's own write, so the one-hop credit stays
+                    // unavailable. The scan runs here — after the
+                    // owner-initialized assignment matched — so a bare
+                    // observed identifier with no such assignment never
+                    // pays the mutation-scan cost.
+                    return !ts_test_local_is_mutated(test, ident);
                 }
             }
         }
@@ -2332,6 +2342,9 @@ fn scan_test_body_constant_declarations(body: &str, name: &str) -> (Option<Strin
 /// declaration inside a nested block binds only that block's interval. An
 /// outer assertion on an imported `result` is therefore never attributed to
 /// a nested helper's same-named `const result = applyDiscount(100)`.
+///
+/// #7497: a local the test rewrites or escapes ([`ts_test_local_is_mutated`])
+/// observes the test's own write, so the one-hop credit stays unavailable.
 fn ts_observed_local_owner_call_arguments(
     test: &TypeScriptTest,
     assertion: &TypeScriptAssertion,
@@ -2356,6 +2369,12 @@ fn ts_observed_local_owner_call_arguments(
     let scan = scan_body_lexical_facts(body_text, ident);
     let init = single_local_initializer(body_text, ident)?;
     if init.is_mutable && later_reassigns_ident(body_text, ident, init.value_start) {
+        return None;
+    }
+    // #7497: a local the test rewrites (`bo.adult = true`,
+    // `Object.assign(bo, ...)`) or escapes to a non-assertion call
+    // (`fix(bo)`) observes the test's own write rather than the owner call.
+    if ts_test_local_is_mutated(test, ident) {
         return None;
     }
     let assertion_uses = assertion_observed_use_offsets(test, assertion, ident, &scan)?;
@@ -2596,6 +2615,460 @@ fn later_reassigns_ident(body: &str, ident: &str, from: usize) -> bool {
             || rest.starts_with("++")
             || rest.starts_with("--");
         if plain_assign || mutating_assign {
+            return true;
+        }
+    }
+    false
+}
+
+/// #7497: `true` when the test body mutates or escapes the bare local
+/// `ident`, so an assertion on the bare local observes the test's own write
+/// rather than the owner call (`bo.adult = true`,
+/// `bo["adult"] = true`, `bo!["adult"] = true`,
+/// `Object.assign(bo, { adult: true })`, `Object["assign"](bo, ...)`, or
+/// `fix(bo)` / `this.fix(bo)` / `fix<Profile>(bo)` that sets `p.adult`).
+///
+/// Fail-closed: a member write, a `delete` of the local, or passing the
+/// local to any call other than the test's own assertions withholds the
+/// whole-result credit — including a pass to a pure helper, which is
+/// statically indistinguishable from the mutating `fix(bo)` shape, and a
+/// callee whose name does not statically resolve (computed
+/// `Object["assign"](...)`, parenthesized `(mutate)(bo)`), whose argument
+/// list alone then decides. The scan runs over
+/// [`ts_mask_literals_and_comments`] output, so strings and comments never
+/// count as writes or calls. A bare read (`expect(bo)`, `bo.tags`,
+/// `{ ...bo }`) is not a mutation.
+///
+/// The scan is position-blind: a write anywhere in the body refuses the
+/// credit, including a write textually AFTER the assertion. That is
+/// deliberate: JavaScript hoists function declarations, so textual order
+/// does not prove execution order (`hoisted(); expect(bo)…; function
+/// hoisted() { bo.adult = true; }`), and sound write-order analysis needs
+/// control flow this guard does not model. The refusal lands in the
+/// conservative `weakly_exposed` direction.
+///
+/// The asserting call itself is exempt: `expect(...)` by root name, the
+/// `test(...)` / `it(...)` / `specify(...)` / `describe(...)` registration
+/// wrapper (whose argument list trivially contains the local, since
+/// `body_text` is the registration call's own source slice), and any call
+/// whose final member names a recorded assertion matcher of the test
+/// (`t.is(bo, 3)`, `assert.deepStrictEqual(bo, ...)`), or any `*.expect`
+/// callee (`chai.expect(bo)`; an aliased `expect` import reads as the
+/// local name and stays withheld). Residual over-credit: a non-assertion
+/// call that happens to share an assertion matcher's name (a helper
+/// literally named `is` in an AVA test, a custom `x.expect` helper) is
+/// still credited, as are exotic write shapes the occurrence scan does
+/// not model (destructuring-target writes like `[bo.x] = ...`,
+/// `for (bo.x of ...)` rebinding).
+fn ts_test_local_is_mutated(test: &TypeScriptTest, ident: &str) -> bool {
+    fn is_ident_char(c: char) -> bool {
+        c.is_alphanumeric() || c == '_' || c == '$'
+    }
+    fn ident_len(s: &str) -> usize {
+        s.chars()
+            .take_while(|c| is_ident_char(*c))
+            .map(char::len_utf8)
+            .sum()
+    }
+    fn contains_ident(text: &str, ident: &str) -> bool {
+        text.match_indices(ident).any(|(at, _)| {
+            let before_ok = text[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !is_ident_char(c));
+            let after_ok = text[at + ident.len()..]
+                .chars()
+                .next()
+                .is_none_or(|c| !is_ident_char(c));
+            before_ok && after_ok
+        })
+    }
+    /// The slice after the `]` matching the `[` that `after_open` follows,
+    /// or `None` when it never closes. Depth counts every bracket kind (as
+    /// in [`ts_is_one_argument_list`]); a closer of another kind fails
+    /// instead of mis-splitting.
+    fn bracket_tail(after_open: &str) -> Option<&str> {
+        let mut depth = 1usize;
+        for (index, c) in after_open.char_indices() {
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth = depth.checked_sub(1)?;
+                    if depth == 0 {
+                        if c != ']' {
+                            return None;
+                        }
+                        return Some(&after_open[index + c.len_utf8()..]);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    /// The `(root, last)` callee chain of the call opening at byte offset
+    /// `open` (`(fix, fix)` in `fix(bo)`, `(console, log)` in
+    /// `console.log(bo)`, `(expect, poll)` in `expect.poll(bo)`), or `None`
+    /// when the paren opens no resolvable call (grouping, a keyword
+    /// condition, a missing callee, a computed/parenthesized callee — the
+    /// caller decides what an unresolvable prefix means). One balanced
+    /// TypeScript type-argument list is skipped (`fix<Profile>(bo)` still
+    /// resolves `(fix, fix)`). Member punctuation (`?.`, `!.`) and
+    /// surrounding whitespace are skipped; a spread or double dot is not a
+    /// call. `chars` is the precomputed `masked.char_indices()` table so
+    /// repeated paren scans do not re-collect the whole body.
+    fn call_callee(chars: &[(usize, char)], open: usize) -> Option<(String, String)> {
+        let mut idx = chars.binary_search_by_key(&open, |(off, _)| *off).ok()?;
+        let mut segments: Vec<String> = Vec::new();
+        // The finished chain, nearest-paren-first: `segments[0]` is the
+        // final member (`last`), the final element is the chain root.
+        let finish = |segments: &[String]| -> Option<(String, String)> {
+            if segments.is_empty() {
+                return None;
+            }
+            Some((
+                segments.last().cloned().unwrap_or_default(),
+                segments.first().cloned().unwrap_or_default(),
+            ))
+        };
+        loop {
+            while idx > 0 && chars[idx - 1].1.is_whitespace() {
+                idx -= 1;
+            }
+            let mut start = idx;
+            while start > 0 && is_ident_char(chars[start - 1].1) {
+                start -= 1;
+            }
+            if start == idx {
+                // TypeScript type arguments (`fix<Profile>(bo)`): skip one
+                // balanced `<...>` list directly before the paren and
+                // resume at the callee name. Only a balanced list whose
+                // left edge touches an identifier qualifies; anything else
+                // stays unresolvable.
+                if segments.is_empty() && idx >= 1 && chars[idx - 1].1 == '>' {
+                    let mut depth = 0usize;
+                    let mut j = idx;
+                    while j > 0 {
+                        j -= 1;
+                        match chars[j].1 {
+                            '>' => depth += 1,
+                            '<' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if depth == 0 && j > 0 && is_ident_char(chars[j - 1].1) {
+                        idx = j;
+                        continue;
+                    }
+                }
+                // No identifier directly before the paren: allow an
+                // optional-call punctuator (`fix?.(bo)`) and stop otherwise.
+                if idx >= 2 && chars[idx - 1].1 == '.' && matches!(chars[idx - 2].1, '?' | '!') {
+                    idx -= 2;
+                    continue;
+                }
+                return finish(&segments);
+            }
+            segments.push(chars[start..idx].iter().map(|(_, c)| *c).collect());
+            idx = start;
+            while idx > 0 && chars[idx - 1].1.is_whitespace() {
+                idx -= 1;
+            }
+            if idx > 0 && chars[idx - 1].1 == '.' {
+                let dots = [1usize, 2, 3]
+                    .into_iter()
+                    .take_while(|k| idx >= *k && chars[idx - *k].1 == '.')
+                    .count();
+                if dots != 1 {
+                    return None;
+                }
+                idx -= 1;
+                if idx > 0 && matches!(chars[idx - 1].1, '?' | '!') {
+                    idx -= 1;
+                }
+                continue;
+            }
+            return finish(&segments);
+        }
+    }
+    /// The `(args_start, args_end)` byte span of the call opening at `open`,
+    /// or `None` when the parens never balance. Counts every bracket kind
+    /// (as in [`ts_is_one_argument_list`]).
+    fn call_args_span(masked: &str, open: usize) -> Option<(usize, usize)> {
+        let mut depth = 0usize;
+        let mut start = None;
+        for (rel, c) in masked[open..].char_indices() {
+            let index = open + rel;
+            match c {
+                '(' | '[' | '{' => {
+                    if index == open {
+                        start = Some(open + 1);
+                    }
+                    depth += 1;
+                }
+                ')' | ']' | '}' => {
+                    depth = depth.checked_sub(1)?;
+                    if depth == 0 {
+                        if c != ')' {
+                            return None;
+                        }
+                        return Some((start?, index));
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    if ident.is_empty() {
+        return false;
+    }
+    let masked = ts_mask_literals_and_comments(test.body_text.as_str());
+    // Whole-word offsets of `ident` in the masked body.
+    let mut occurrences = Vec::new();
+    let mut from = 0usize;
+    while from < masked.len() {
+        let Some(rel) = masked[from..].find(ident) else {
+            break;
+        };
+        let at = from + rel;
+        let before_ok = masked[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !is_ident_char(c));
+        let after_ok = masked[at + ident.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !is_ident_char(c));
+        if before_ok && after_ok {
+            occurrences.push(at);
+        }
+        from = at + ident.len();
+    }
+    const COMPOUND_ASSIGNMENTS: [&str; 15] = [
+        "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "**=", "<<=", ">>=", ">>>=", "||=", "&&=",
+        "??=",
+    ];
+    for &at in &occurrences {
+        // `++bo.x` / `--bo.x` rewrites the object (the same prefix
+        // heuristic `later_reassigns_ident` uses for the binding itself),
+        // and `delete bo.x` removes the field.
+        let before = masked[..at].trim_end();
+        if before.ends_with("++") || before.ends_with("--") {
+            return true;
+        }
+        if before
+            .rsplit(|c: char| !is_ident_char(c))
+            .next()
+            .is_some_and(|word| word == "delete")
+        {
+            return true;
+        }
+        // A member chain (`bo.a`, `bo?.a`, `bo["a"]`) ending in a write. A
+        // bare read (`bo.tags`, `{ ...bo }`) chains to a non-write and
+        // stays credited.
+        let mut rest = &masked[at + ident.len()..];
+        let mut chained = false;
+        loop {
+            let trimmed = rest.trim_start();
+            if trimmed.starts_with("...") {
+                break;
+            }
+            if let Some(after) = trimmed
+                .strip_prefix("?.")
+                .or_else(|| trimmed.strip_prefix("!."))
+            {
+                let after = after.trim_start();
+                let len = ident_len(after);
+                if len == 0 {
+                    break;
+                }
+                rest = &after[len..];
+                chained = true;
+            } else if let Some(after) = trimmed.strip_prefix('.') {
+                let after = after.trim_start();
+                let len = ident_len(after);
+                if len == 0 {
+                    break;
+                }
+                rest = &after[len..];
+                chained = true;
+            } else if let Some(after) = trimmed
+                .strip_prefix('!')
+                .filter(|after| after.starts_with('['))
+            {
+                // A TypeScript non-null assertion before computed access
+                // (`bo!['adult'] = true`) chains into the same bracket; a
+                // `!` followed by anything else is a negation, not a chain.
+                rest = after;
+                chained = true;
+            } else if let Some(after) = trimmed.strip_prefix('[') {
+                let Some(tail) = bracket_tail(after) else {
+                    break;
+                };
+                rest = tail;
+                chained = true;
+            } else {
+                break;
+            }
+        }
+        if chained {
+            let trimmed = rest.trim_start();
+            if let Some(after_eq) = trimmed.strip_prefix('=')
+                && !after_eq.starts_with('=')
+                && !after_eq.starts_with('>')
+            {
+                return true;
+            }
+            if COMPOUND_ASSIGNMENTS
+                .iter()
+                .any(|op| trimmed.starts_with(op))
+                || trimmed.starts_with("++")
+                || trimmed.starts_with("--")
+            {
+                return true;
+            }
+        }
+        // A bare write to the binding itself (`bo = ...`, `bo += ...`,
+        // `bo++`): the initializer's value is gone even though no member
+        // chain is involved. Declarations (`const bo = ...`,
+        // `function bo`, `type bo = ...`), comparisons (`==`), arrows
+        // (`bo => ...`), and keys/labels/annotations are not writes.
+        if !chained {
+            let prev_word = masked[..at]
+                .trim_end()
+                .rsplit(|c: char| !is_ident_char(c))
+                .next()
+                .unwrap_or_default();
+            const DECLARATION_KEYWORDS: [&str; 5] = ["const", "let", "var", "function", "type"];
+            if !DECLARATION_KEYWORDS.contains(&prev_word) {
+                let after = rest.trim_start();
+                let plain_assign = after.starts_with('=') && !after[1..].starts_with(['=', '>']);
+                if plain_assign
+                    || COMPOUND_ASSIGNMENTS.iter().any(|op| after.starts_with(op))
+                    || after.starts_with("++")
+                    || after.starts_with("--")
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    // Control and operator keywords whose paren is not a call (`if (bo)`,
+    // `typeof(bo)`); `delete` is deliberately absent — `delete(bo.x)`
+    // mutates the object and is refused below.
+    const CALL_KEYWORDS: [&str; 32] = [
+        "if",
+        "for",
+        "while",
+        "switch",
+        "catch",
+        "with",
+        "function",
+        "class",
+        "return",
+        "throw",
+        "typeof",
+        "void",
+        "new",
+        "in",
+        "of",
+        "instanceof",
+        "else",
+        "do",
+        "case",
+        "try",
+        "finally",
+        "var",
+        "let",
+        "const",
+        "import",
+        "export",
+        "default",
+        "extends",
+        "await",
+        "yield",
+        "debugger",
+        "this",
+    ];
+    // Test-registration wrappers (`test(...)`, `it(...)`, `specify(...)`,
+    // `describe(...)` and its `context` / `suite` aliases, including dotted
+    // forms like `test.serial(...)` whose chain root is still the runner):
+    // `body_text` is the exact source slice of the registration call, so
+    // its argument list trivially contains the local. The wrapper itself is
+    // not an escape; the calls inside it are still scanned one by one below.
+    const WRAPPER_CALLEES: [&str; 6] = ["test", "it", "specify", "describe", "context", "suite"];
+    let matchers: Vec<&str> = test
+        .assertions
+        .iter()
+        .map(|assertion| assertion.matcher.as_str())
+        .collect();
+    // One shared char table for every paren scan below: `call_callee`
+    // locates each `(` by offset instead of re-collecting the whole body
+    // once per paren.
+    let chars: Vec<(usize, char)> = masked.char_indices().collect();
+    let mut search_from = 0usize;
+    while let Some(rel) = masked[search_from..].find('(') {
+        let open = search_from + rel;
+        search_from = open + 1;
+        let Some((root, last)) = call_callee(&chars, open) else {
+            // No resolvable callee name. A `]` or `)` directly before the
+            // paren is still a call — a computed callee
+            // (`Object['assign'](bo, ...)`) or a parenthesized one
+            // (`(mutate)(bo)`) — so the argument list alone decides,
+            // fail-closed: the local's presence in the arguments escapes,
+            // and no matcher exemption can apply because the callee name
+            // is unreadable through the masked literal. Any other
+            // unresolvable prefix (`(bo) => ...` grouping, a stray
+            // punctuator) opens no call at all.
+            let before = masked[..open].chars().next_back();
+            if !matches!(before, Some(']') | Some(')')) {
+                continue;
+            }
+            let Some((args_start, args_end)) = call_args_span(&masked, open) else {
+                continue;
+            };
+            // A computed method definition (`['key'](bo) { ... }`) is not
+            // a call: the closer is followed by its body block.
+            if masked[args_end + 1..].trim_start().starts_with('{') {
+                continue;
+            }
+            if contains_ident(&masked[args_start..args_end], ident) {
+                return true;
+            }
+            continue;
+        };
+        // Control-keyword roots are reads (`if (bo)`, `typeof(bo)`) — but
+        // only while the keyword IS the whole callee. A member call rooted
+        // in one (`this.fix(bo)`) is an ordinary escape and must reach the
+        // argument check below.
+        if root == "expect"
+            || last == "expect"
+            || WRAPPER_CALLEES.contains(&root.as_str())
+            || (root == last && CALL_KEYWORDS.contains(&root.as_str()))
+        {
+            continue;
+        }
+        let Some((args_start, args_end)) = call_args_span(&masked, open) else {
+            continue;
+        };
+        // A definition (`bo() {}`, `function bo() {}`) is not a call: the
+        // closer is followed by its body block.
+        if masked[args_end + 1..].trim_start().starts_with('{') {
+            continue;
+        }
+        // The local as receiver root (`bo.sort()`) or as a call argument
+        // escapes, unless the call is the test's own assertion
+        // (`t.is(bo, 3)` names its matcher).
+        if root == ident || contains_ident(&masked[args_start..args_end], ident) {
+            if matchers.iter().any(|matcher| *matcher == last) {
+                continue;
+            }
             return true;
         }
     }
