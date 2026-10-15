@@ -269,12 +269,16 @@ pub(super) fn match_direct_owner_call(
             {
                 continue;
             }
-            if !method_call_resolves_to_impl(
-                indexed.test,
-                &owner.name,
-                impl_type,
-                owner.impl_trait.as_deref(),
-            ) {
+            // Inherent methods already passed the scope-aware authority.
+            // The legacy matcher can borrow an expired sibling declaration.
+            if !owner.inherent_receiver
+                && !method_call_resolves_to_impl(
+                    indexed.test,
+                    &owner.name,
+                    impl_type,
+                    owner.impl_trait.as_deref(),
+                )
+            {
                 continue;
             }
         }

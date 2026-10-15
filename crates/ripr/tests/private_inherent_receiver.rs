@@ -336,6 +336,40 @@ fn expired_inner_binding_cannot_type_outer_inherent_receiver() -> Result<(), Str
 }
 
 #[test]
+fn expired_foreign_shadow_cannot_hide_actual_outer_receiver() -> Result<(), String> {
+    let fixture = Fixture::create()?;
+    let source = FILES
+        .iter()
+        .find(|(path, _)| *path == "src/reader.rs")
+        .ok_or("missing reader fixture")?
+        .1;
+    let source = source.replace(
+        "let value = JsonValue::Null;",
+        "let value = JsonValue::Null;\n        { let value = serde_json::Value::Null; let _ = value; }",
+    );
+    std::fs::write(fixture.0.join("src/reader.rs"), source).map_err(|error| error.to_string())?;
+    let findings = fixture.findings()?;
+    let reader: Vec<_> = findings
+        .iter()
+        .filter(|finding| finding.probe.location.file.ends_with("src/reader.rs"))
+        .collect();
+    assert_eq!(reader.len(), 2, "both private-owner subjects retained");
+    for finding in reader {
+        let actual = finding
+            .related_tests
+            .iter()
+            .find(|test| test.name == "same_target_actual_null")
+            .ok_or("missing actual outer receiver test")?;
+        assert_eq!(
+            actual.relation_reason,
+            Some(RelationReason::DirectOwnerCall)
+        );
+        assert_eq!(actual.relation_confidence, Some(RelationConfidence::High));
+    }
+    Ok(())
+}
+
+#[test]
 fn while_let_pattern_cannot_borrow_outer_inherent_receiver_type() -> Result<(), String> {
     let source = FILES
         .iter()

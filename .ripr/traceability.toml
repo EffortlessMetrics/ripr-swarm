@@ -13,6 +13,7 @@ tests = [
   "crates/ripr/tests/private_inherent_receiver.rs::public_inherent_method_keeps_cross_target_receiver_attribution",
   "crates/ripr/tests/private_inherent_receiver.rs::raw_call_line_comment_cannot_supply_inherent_receiver",
   "crates/ripr/tests/private_inherent_receiver.rs::expired_inner_binding_cannot_type_outer_inherent_receiver",
+  "crates/ripr/tests/private_inherent_receiver.rs::expired_foreign_shadow_cannot_hide_actual_outer_receiver",
   "crates/ripr/tests/private_inherent_receiver.rs::while_let_pattern_cannot_borrow_outer_inherent_receiver_type",
   "crates/ripr/tests/private_inherent_receiver.rs::scope_items_and_assertion_operand_items_cannot_borrow_outer_receiver_type",
   "crates/ripr/src/analysis/probes/replacement_identity_tests.rs",
@@ -402,6 +403,7 @@ id = "RIPR-SPEC-0005"
 name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_receiver_corpus_boundary_and_live_scope",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::unique_inherent_receiver_refuses_decoys_in_full_and_compact_repo_evidence",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::public_inherent_receiver_keeps_cross_target_full_and_compact_repo_evidence",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::effective_oracle_policy_invalidates_classified_cache",

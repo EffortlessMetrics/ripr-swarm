@@ -228,9 +228,12 @@ target inside otherwise equivalent relationships.
 For parser-established inherent methods with a `self` parameter, a unique
 workspace-indexed method name alone is not direct owner-call evidence: a
 dependency type can have the same method. Diff and repository/compact consumers
-require the bounded nominal receiver matcher plus a real call expression and
+require a syntax-backed bounded nominal receiver plus a real call expression and
 the nearest still-visible simple local declaration. Comments on captured call
 lines and declarations in expired inner blocks cannot supply that evidence.
+An expired foreign shadow cannot hide a later call on a still-visible owner
+binding. The scope-unaware text matcher must not veto that AST evidence or a
+qualified unit variant such as `RenameRule::UpperCase`.
 Standard assertion macro operands are parsed as expressions using the original
 invocation's scope; diagnostic arguments do not supply receiver evidence.
 Operand-local items, including value constructors and type-name binders, withhold
@@ -243,6 +246,13 @@ Cargo-target resolution: qualified types sharing a terminal name, constructor
 return-type conventions, aliases and general factory/value flow remain bounded
 limitations tracked by #7415. Trait dispatch and associated functions without
 `self` retain their existing rules.
+
+The verdict corpus keeps the accuracy cost of this boundary visible: arbitrary
+`ByteSize::gb`/`ByteSize::kib` factories, rstest parameter receivers and bare
+imported enum variants in table loops do not acquire identity from a unique
+method name. Their runtime-discriminated truth and acceptable verdict labels
+remain unchanged; a resulting `gap` is recorded as `false_actionable`, never
+relabeled as correct test advice.
 
 Related-test oracle semantics must explain what the oracle observes, what
 discriminator remains missing, and which assertion upgrade would improve the

@@ -3036,8 +3036,8 @@ pub(in crate::analysis) fn requires_inherent_receiver_identity(owner: &FunctionS
     owner.item.has_self_param && matches!(owner.item.container, FunctionContainer::Inherent { .. })
 }
 
-/// Deny-only refinement of the existing nominal receiver matcher for inherent
-/// methods. Read real call syntax and the nearest visible local declaration,
+/// Bounded nominal receiver authority for inherent methods. Read real call
+/// syntax and the nearest visible local declaration,
 /// never a raw captured-line comment or a binding in an expired inner block.
 /// Aliases, receiver value flow and unsupported binding scopes stay unresolved.
 /// This does not establish general type or Cargo-target identity.
@@ -3046,8 +3046,10 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
     method: &str,
     impl_type: &str,
 ) -> bool {
-    let masked = mask_comments_and_strings(&test.body);
-    if !text_resolves_method_to_type(&masked, method, impl_type, None, &masked, true) {
+    // The legacy text scan cannot be a deny gate: its last `let` can live in
+    // an expired sibling block, and it cannot read a qualified unit variant.
+    // The AST below establishes the same bounded type heads in live scope.
+    if method.is_empty() || impl_type.is_empty() {
         return false;
     }
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&test.body) else {
@@ -3435,10 +3437,12 @@ fn owner_call_relation_reason(
     }) {
         return RelationReason::WeakTokenSubstring;
     }
-    if requires_inherent_receiver_identity(owner)
-        && !inherent_receiver_call_resolves(test, owner_name, &impl_type)
-    {
-        return RelationReason::WeakTokenSubstring;
+    if requires_inherent_receiver_identity(owner) {
+        return if inherent_receiver_call_resolves(test, owner_name, &impl_type) {
+            RelationReason::DirectOwnerCall
+        } else {
+            RelationReason::WeakTokenSubstring
+        };
     }
     if indexed_same_name_count <= 1 {
         return RelationReason::DirectOwnerCall;
@@ -9774,6 +9778,100 @@ let r = try_parse_summary(\"x\");",
             let summary = test("tests/site.rs", "t", body);
             assert_eq!(
                 method_call_resolves_to_impl_type(&summary, "build", "Site"),
+                expected,
+                "{body}"
+            );
+        }
+    }
+
+    /// #7415: keep the conservative corpus boundary separate from runtime
+    /// truth. Arbitrary factories, parameters and imported bare variants do
+    /// not gain receiver proof merely because the method name is unique.
+    #[test]
+    fn inherent_receiver_corpus_boundary_and_live_scope() {
+        for (body, method, ty, expected) in [
+            (
+                "fn t() { assert_eq!(ByteSize::gb(43).as_kib(), 1.0); }",
+                "as_kib",
+                "ByteSize",
+                false,
+            ),
+            (
+                "fn t() { assert_eq!(ByteSize::kib(9).as_mb(), 1.0); }",
+                "as_mb",
+                "ByteSize",
+                false,
+            ),
+            (
+                "fn t() { assert_eq!(ByteSize::new(43).as_kib(), 1.0); }",
+                "as_kib",
+                "ByteSize",
+                true,
+            ),
+            (
+                "fn t() { let size: ByteSize = make(); assert_eq!(size.as_kib(), 1.0); }",
+                "as_kib",
+                "ByteSize",
+                true,
+            ),
+            (
+                "fn t() { assert_eq!(Other::new(43).as_kib(), 1.0); }",
+                "as_kib",
+                "ByteSize",
+                false,
+            ),
+            (
+                "fn t(account: Account) { assert_eq!(account.monthly_fee(), 5); }",
+                "monthly_fee",
+                "Account",
+                false,
+            ),
+            (
+                "fn t() { let account: Account = make(); assert_eq!(account.monthly_fee(), 5); }",
+                "monthly_fee",
+                "Account",
+                true,
+            ),
+            (
+                "fn t() { let account: Other = make(); assert_eq!(account.monthly_fee(), 5); }",
+                "monthly_fee",
+                "Account",
+                false,
+            ),
+            (
+                "fn t() { for original in [\"x\"] { assert_eq!(UpperCase.apply_to_field(original), \"X\"); } }",
+                "apply_to_field",
+                "RenameRule",
+                false,
+            ),
+            (
+                "fn t() { assert_eq!(LowerCase.apply_to_variant(\"X\"), \"x\"); }",
+                "apply_to_variant",
+                "RenameRule",
+                false,
+            ),
+            (
+                "fn t() { assert_eq!(RenameRule::UpperCase.apply_to_field(\"x\"), \"X\"); }",
+                "apply_to_field",
+                "RenameRule",
+                true,
+            ),
+            (
+                "fn t() { let value = JsonValue::Null; { let value = Foreign::new(); let _ = value; } assert_eq!(value.as_object(), None); }",
+                "as_object",
+                "JsonValue",
+                true,
+            ),
+            (
+                "fn t() { let value = Foreign::new(); { let value = JsonValue::Null; let _ = value; } assert_eq!(value.as_object(), None); }",
+                "as_object",
+                "JsonValue",
+                false,
+            ),
+        ] {
+            let summary = test("src/lib.rs", "t", body);
+            assert_eq!(
+                inherent_receiver_call_resolves(&summary, method, ty),
                 expected,
                 "{body}"
             );

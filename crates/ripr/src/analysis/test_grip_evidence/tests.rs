@@ -19460,6 +19460,11 @@ impl<T> ForeignView for T {}
         let value = JsonValue::Null;
         assert_eq!(value.as_object(), None);
     }
+    #[test] fn actual_null_after_expired_shadow() {
+        let value = JsonValue::Null;
+        { let value = serde_json::Value::Null; let _ = value; }
+        assert_eq!(value.as_object(), None);
+    }
     #[test] fn wrong_json_type() {
         let value = serde_json::json!({"key": 1});
         DECOY
@@ -19528,7 +19533,11 @@ impl<T> ForeignView for T {}
                 .map(|(test, reason)| (test.test.name.as_str(), *reason))
                 .collect();
             assert_eq!(full_rows, compact_rows, "full/compact relationship parity");
-            for actual in ["actual_object", "actual_null"] {
+            for actual in [
+                "actual_object",
+                "actual_null",
+                "actual_null_after_expired_shadow",
+            ] {
                 assert_eq!(
                     full_rows.get(actual),
                     Some(&RelationReason::DirectOwnerCall),
