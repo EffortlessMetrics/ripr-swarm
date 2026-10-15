@@ -63,8 +63,13 @@ fn bash_resolution_preserves_override_and_standard_install_root() -> Result<(), 
         bash_path(None, Some(root.clone().into_os_string()), true)?,
         root.join("Git/bin/bash.exe")
     );
-    assert!(bash_path(None, None, true).is_err());
-    assert!(bash_path(None, Some(std::ffi::OsString::new()), true).is_err());
+    for missing in [None, Some(std::ffi::OsString::new())] {
+        let Err(message) = bash_path(None, missing, true) else {
+            return Err("missing Windows installation root was accepted".into());
+        };
+        assert!(message.contains("ProgramFiles"));
+        assert!(message.contains("RIPR_TEST_BASH"));
+    }
     assert_eq!(bash_path(None, None, false)?, PathBuf::from("bash"));
     Ok(())
 }
