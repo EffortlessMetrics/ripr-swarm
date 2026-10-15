@@ -142,3 +142,73 @@ comments. A later native approval or dismissal resolves that reviewer's verdict;
 ordinary comments, including source-ready markers, do not. Focused regressions
 exercise both rejection cases and native resolution. All 30 embedded storage
 Python tests run portably; this is consumer/source proof, not Windows execution.
+
+## Older-review and cancellation repairs after published-source review
+
+The [follow-up review on #4987](https://github.com/EffortlessMetrics/ripr-swarm/issues/4987#issuecomment-6182909371)
+found two defects in published `851195415bd2226f6cba2569cf94a4c787645251`.
+That source acceptance is superseded for these dimensions; it was not native
+qualification or merge readiness.
+
+- **Outstanding verdict survives a push.** The reducer already kept decisive
+  APPROVED / CHANGES_REQUESTED / DISMISSED states separate from comments, but its
+  negative predicate ignored a CHANGES_REQUESTED attached to an older commit.
+  Both admission and final refresh now block any reviewer's latest decisive
+  CHANGES_REQUESTED, irrespective of commit. Actual later approval or dismissal
+  clears that reviewer's negative disposition. Positive approval or source-ready
+  attestation still requires the current head: resolving a verdict is not fresh
+  positive proof. Ordinary comments/markers cannot clear a requested change.
+- **Workflow cancellation survives green producers.** The result job's
+  `always()` condition intentionally survives workflow cancellation; completed
+  dependency results therefore do not establish that the workflow is uncancelled.
+  Its last step now uses native `if: always() && cancelled()` and exits 1 when
+  selected. It runs after readiness and aggregation, including the early-success
+  reuse branch, and remains reachable if earlier steps fail or are interrupted.
+  A skipped cancellation step cannot erase an earlier failure. `cancelled()` is
+  evaluated in the supported step-condition context, not an environment field.
+  See GitHub's [cancellation reference](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation).
+
+Two independent agents reproduced the old behavior using immutable Git source:
+24 actual Bash executions at both review boundaries exposed eight wrong successes
+across older-verdict/comment/marker cases. Seven cancellation cases exposed three
+wrong successes: cancellation with green dependencies, after aggregation, and
+prior-success reuse. Controls included native later approval/dismissal, stale
+positive approval, failed and cancelled producers. These are controlled read-only
+API fixtures and literal expression cases, not live API/Actions observations.
+
+The permanent `tools/repo-policy/tests/native_admission.rs` suite now has five
+subjects, retaining all prior independent drift/terminal vectors and adding both
+repairs. Admission tests execute the complete actual preflight body. Each actual
+run-step body has its own shell scope; failures accumulate while the terminal
+check remains reachable. This avoids putting a `set -e` body on the left of an
+AND-list, which would suppress Bash errexit and manufacture a false drift pass.
+Cancellation tests pin the native terminal condition, execute the rejection body,
+cover normal and reused green proof, and retain failed-producer refusal. Independent
+expression replay evaluates the extracted condition with controlled boolean status
+functions. Actionlint validates the supported condition context.
+
+This repair reuses the existing owner branch, unchanged Windows producer and
+required-check identity; no #8002, platform-lane, main-health or protection work is
+included. It does not activate workflows or open a PR. Fresh main was observed at
+`8b7a9ba4a7ca2f1212fc3b456d0a2bee876a5e55`; its changes since the candidate's
+`16190da1b` integration basis affect product analysis and fixture-home work, not
+these workflow/test owners. No restack is needed for unrelated main movement.
+
+**Remaining native rehearsal:** exercise real API/token shapes, exact check
+name/head/integration association, older outstanding review state after a push,
+controlled cancellation after successful dependencies and during finalization,
+sequential duplicate readback, and one actual reusable Windows integration-subject
+run with PowerShell, nonempty status/log/receipt agreement and cleanup. The native
+scheduler and cancellation delivery are not simulated proof. Cancellation arriving
+after the last condition evaluation/publication remains a non-atomic race requiring
+fresh run/check readback; this adds no atomic-publication claim. Native pending
+replacement, final freshness races and the unmeasured <=20-minute target remain.
+
+Resource admission/retention: the existing owner worktree and Git common directory
+remain in `/workspace`; toolchain and mutable Cargo target remain under
+`/workspace/windows-subset-proof`. This repair admits <=128 MiB additional logs,
+focused test output and compact patch/bundle, with >=8 GiB reserve (29 GiB observed
+free). Original 851 source and independent negative witnesses are retained in Git
+and `older-review-independent` / `cancel-independent` proof directories for the
+parent's review/rehearsal. No frozen executable copies, product build or unrelated
+cleanup are needed; source and proof stay retained with that consumer.
