@@ -896,6 +896,7 @@ id = "RIPR-SPEC-0007"
 name = "repository configuration"
 spec = "docs/specs/RIPR-SPEC-0007-repository-configuration.md"
 tests = [
+  "crates/ripr/tests/cli_smoke.rs::config_validate_does_not_consume_root_flag_as_a_path",
   "crates/ripr/tests/cli_smoke.rs::check_github_over_broad_suppression_policy_emits_denominator_notice",
   "crates/ripr/tests/cli_smoke/suppression_notice.rs::retained_oracle_rejects_silence_wrong_counts_and_leaked_annotations",
   "crates/ripr/tests/default_suppression_disclosure.rs",

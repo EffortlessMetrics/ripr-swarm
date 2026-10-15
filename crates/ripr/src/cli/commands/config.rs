@@ -28,6 +28,10 @@ fn parse_validate_root(args: &[String]) -> Result<PathBuf, String> {
     match args {
         [] => Ok(PathBuf::from(".")),
         [flag] if flag == "--root" => Err("missing value for --root".to_string()),
+        // `--root` is an option token here; `./--root` names the literal path.
+        [flag, value, ..] if flag == "--root" && value == "--root" => {
+            Err("missing value for --root".to_string())
+        }
         [flag, value] if flag == "--root" => Ok(PathBuf::from(value)),
         [flag, _value, extra, ..] if flag == "--root" => {
             Err(unknown_argument("config validate", extra))
