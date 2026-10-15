@@ -172,7 +172,8 @@ fn strip_negations(text: &str) -> (&str, bool, bool) {
                 break;
             }
             core = inner;
-        } else if let Some(receiver) = strip_not_call(core) {
+        } else if let Some(receiver) = strip_not_call(core).or_else(|| not_path_call_operand(core))
+        {
             core = unwrap_parentheses(receiver.trim());
         } else if let Some(inner) = unwrap_block(core) {
             // A block around one expression is that expression
@@ -196,6 +197,23 @@ fn strip_negations(text: &str) -> (&str, bool, bool) {
         negated = !negated;
     }
     (core, negated, literal_compared)
+}
+
+/// The one argument of a path call to `Not::not` (`Not::not(x)`,
+/// `std::ops::Not::not(x)`, `<bool as Not>::not(x)`; #8101), which negates
+/// it like `!x` and `x.not()` do.
+fn not_path_call_operand(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let masked = mask_comments_and_strings(text);
+    let open = masked.find('(')?;
+    let head = masked.get(..open)?.trim_end().strip_suffix("not")?;
+    let path = head.trim_end().strip_suffix("::")?.trim_end();
+    if !(path.ends_with("Not") || path.ends_with("Not>")) || !is_path_head(head) {
+        return None;
+    }
+    let argument = super::arguments::parenthesized_contents(text.get(open..)?.trim_end())?;
+    let commas = super::arguments::split_top_level_commas(argument);
+    (commas.len() == 1).then_some(argument)
 }
 
 /// The operand of a top-level `==` or `!=` whose other side is a boolean
@@ -337,9 +355,12 @@ fn comparison_call(text: &str) -> Option<(&'static str, &str, &str)> {
 /// generics (`PartialEq::`, `Result::`, `<_ as PartialEq>::`,
 /// `<Result<u8, E> as PartialEq>::`; #7993). Any path's two-argument
 /// `eq` reads like `PartialEq::eq`: a cap only lowers a reading, and `eq`
-/// asserted true still pins. An operator or space outside the angles
-/// (`flag && PartialEq::`, `a < b`) ends the path, so the call is not the
-/// whole text.
+/// asserted true still pins. An operator outside the angles, or a space
+/// there that does not sit beside a `::` separator (`flag && PartialEq::`,
+/// `a < b`, `x Result::`), ends the path, so the call is not the whole
+/// text; `Result :: eq` keeps it. Inside the angles a const-generic block
+/// is one argument, and an unbalanced block, or a `{`, `}` or `;` outside
+/// one, rejects the head (#8081).
 fn is_path_head(head: &str) -> bool {
     let head = head.trim_end();
     if !head.ends_with("::") {
@@ -453,7 +474,12 @@ fn method_literal_operand(text: &str) -> Option<(&str, bool)> {
 
 /// The operand inside a spelling that keeps its bool value: a reference to
 /// a single operand, `bool::from(..)` or a single operand cast `as bool`
-/// (`&(r == Err(E::Bad))`, `(r == Err(E::Bad)) as bool`; #7931).
+/// (`&(r == Err(E::Bad))`, `(r == Err(E::Bad)) as bool`; #7931), or that
+/// carries it as an integer: a cast to an integer type or `u8::from(..)`
+/// (`(r == Err(E::Bad)) as u8`; #8093). A cast keeps whether its operand
+/// is a test, so a test compared through one is read like the test; an
+/// integer is no boolean literal, so `0` and `1` on the other side never
+/// pin it.
 fn bool_preserving_operand(text: &str) -> Option<&str> {
     let text = text.trim();
     let single = |operand: &str| {
@@ -463,20 +489,30 @@ fn bool_preserving_operand(text: &str) -> Option<&str> {
     if let Some(rest) = text.strip_prefix('&').filter(|rest| single(rest)) {
         return Some(unwrap_parentheses(rest.trim()));
     }
-    if let Some(inner) = text
-        .strip_prefix("bool::from")
-        .and_then(|rest| super::arguments::parenthesized_contents(rest.trim_start()))
-    {
+    if let Some(inner) = BOOL_CARRYING_TYPES.iter().find_map(|ty| {
+        text.strip_prefix(ty)?
+            .trim_start()
+            .strip_prefix("::")?
+            .trim_start()
+            .strip_prefix("from")
+            .and_then(|rest| super::arguments::parenthesized_contents(rest.trim_start()))
+    }) {
         return Some(unwrap_parentheses(inner.trim()));
     }
     let masked = mask_comments_and_strings(text);
-    let head = masked.strip_suffix("bool")?.trim_end().strip_suffix("as")?;
-    if !head.ends_with(char::is_whitespace) {
-        return None;
-    }
+    let head = BOOL_CARRYING_TYPES.iter().find_map(|ty| {
+        let head = masked.strip_suffix(ty)?.trim_end().strip_suffix("as")?;
+        head.ends_with(char::is_whitespace).then_some(head)
+    })?;
     let operand = text.get(..head.len())?;
     single(operand).then(|| unwrap_parentheses(operand.trim()))
 }
+
+/// The types a `bool` converts to without losing it, through `as` or
+/// `From`.
+const BOOL_CARRYING_TYPES: [&str; 13] = [
+    "bool", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+];
 
 /// Whether `text` has no top-level binary operator the bool rules read.
 fn is_single_operand(text: &str) -> bool {
@@ -1169,4 +1205,43 @@ pub(super) fn unread_pattern_conjunct_rest(line: &str) -> Option<String> {
     // Each conjunct ends its own line, so a trailing `//` comment on one
     // cannot swallow the next conjunct or the closing `);`.
     Some(format!("{macro_name}({}\n);", rest.join("\n && ")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_path_head;
+
+    #[test]
+    fn path_heads_reject_what_is_no_whole_path() -> Result<(), String> {
+        for head in [
+            "PartialEq::",
+            "std::cmp::PartialEq::",
+            "Result :: ",
+            "<_ as PartialEq>::",
+            "<Result<u8, E> as PartialEq>::",
+            "C::<{ 2 }>::",
+            "C::<{ A > B }>::",
+        ] {
+            if !is_path_head(head) {
+                return Err(format!("{head}: must read as a path head"));
+            }
+        }
+        // #8081: an unbalanced const block, a brace or `;` in the angles, a
+        // space not beside a separator, and an operator before the path.
+        for head in [
+            "C::<{ 2 >::",
+            "C::<2 }>::",
+            "C::<A; B>::",
+            "{ x }::",
+            "x Result::",
+            "flag && PartialEq::",
+            "a < b::",
+            "Result",
+        ] {
+            if is_path_head(head) {
+                return Err(format!("{head}: must not read as a path head"));
+            }
+        }
+        Ok(())
+    }
 }
