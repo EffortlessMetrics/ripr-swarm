@@ -1807,6 +1807,99 @@ fn a_constant_initialized_through_the_owner_is_not_an_independent_expected_value
 }
 
 #[test]
+fn a_constant_initializer_reaches_the_owner_only_in_the_pins_call_shape() {
+    let bare = PinCall::Bare;
+    let associated = PinCall::Associated {
+        type_name: "Table".to_string(),
+    };
+    let method = PinCall::Method {
+        receivers: vec![ReceiverType::Named("Counter".to_string())],
+        trait_scope: None,
+    };
+    for (initializer, shape, calls) in [
+        // A free function: bare, module-path, turbofish and value uses.
+        ("weight(4)", &bare, true),
+        ("crate::weight(4)", &bare, true),
+        ("super::weight (4)", &bare, true),
+        ("weight::<u32>(4)", &bare, true),
+        ("apply(weight, 4)", &bare, true),
+        ("<T as Tr>::weight(4)", &bare, true),
+        // Another type's function, a method, a field or a struct field.
+        ("Table::weight(4)", &bare, false),
+        ("Self::weight(4)", &bare, false),
+        ("TABLE.weight(4)", &bare, false),
+        ("TABLE.weight", &bare, false),
+        ("Limits { weight: 4 }", &bare, false),
+        // A non-ASCII qualifier is read whole, not split mid-character.
+        ("módulo::weight(4)", &bare, true),
+        ("Größe::weight(4)", &bare, false),
+        ("Größe::weight(4)", &associated, false),
+        // An associated function needs its own type, `Self` or an
+        // unreadable `<..>` qualifier.
+        ("Table::weight(4)", &associated, true),
+        ("Self::weight(4)", &associated, true),
+        ("Table::<u8>::weight(4)", &associated, true),
+        ("Other::weight(4)", &associated, false),
+        ("weight(4)", &associated, false),
+        ("Table::weight", &associated, false),
+        // A method needs a method call or its receiver's type.
+        ("COUNTER.weight()", &method, true),
+        ("Counter::weight(&COUNTER)", &method, true),
+        ("Other::weight(1)", &method, false),
+        ("weight(1)", &method, false),
+    ] {
+        assert_eq!(
+            initializer_calls_owner(initializer, "weight", shape),
+            calls,
+            "{initializer}"
+        );
+    }
+}
+
+#[test]
+fn text_declared_constants_read_macro_items_and_skip_non_declarations() {
+    assert_eq!(
+        text_declared_constants(
+            "pub static ref EXP: u32 = quota(2); static mut r#M: u8 = 1; const FOO: u8 = 2;"
+        ),
+        vec![
+            ("FOO".to_string(), " 2".to_string()),
+            ("EXP".to_string(), " quota(2)".to_string()),
+            ("M".to_string(), " 1".to_string()),
+        ]
+    );
+    for text in [
+        "extern { static X: u32; } const fn f() -> u32 { 1 }",
+        "fn f(p: *const u8, s: &'static str) -> u8 { 0 }",
+        "static ÉTAT: u32 = 1;",
+    ] {
+        assert!(text_declared_constants(text).is_empty(), "{text}");
+    }
+}
+
+#[test]
+fn a_method_owner_is_reached_only_through_a_method_shaped_constant() {
+    let admitted = |other: &str| {
+        let tests = "use demo::Counter;\nuse demo::other::EXPECTED;\n\n#[test]\nfn counts() {\n    let c = Counter::new();\n    assert_eq!(c.tally(), EXPECTED);\n}\n";
+        let index = index(&[(LIB, COUNTER_LIB), (TESTS, tests), ("src/other.rs", other)]);
+        let pin = establish(&index, "tally", "self.n + 1");
+        assert!(pin.is_some(), "tally must establish a pin");
+        pin.map(|pin| admitted_texts(&index, &pin).len())
+            .unwrap_or_default()
+    };
+    assert_eq!(admitted("pub const EXPECTED: usize = 1;\n"), 1);
+    assert_eq!(admitted("pub const EXPECTED: usize = tally(1);\n"), 1);
+    assert_eq!(
+        admitted("pub const EXPECTED: usize = Other::tally(1);\n"),
+        1
+    );
+    assert_eq!(
+        admitted("pub static EXPECTED: usize = crate::Counter::new().tally();\n"),
+        0
+    );
+}
+
+#[test]
 fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
     for attributes in [
         "use serial_test::serial;\n#[test]\n#[serial]",

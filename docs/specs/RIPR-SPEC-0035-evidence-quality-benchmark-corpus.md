@@ -410,9 +410,9 @@ that assertion as strong exact-value evidence unless the expected value is
 independent of the behavior under test. An expected value read from a `const`
 or `static` whose initializer calls the owner in the pin's own call shape,
 directly or through another constant, is self-computed in the same way as a
-`let` binding that does. Constants are matched by name across the workspace,
-so a same-named constant elsewhere also withholds the pin; a constant computed
-through a helper that calls the owner is not followed.
+`let` binding that does. Constants are matched by name within the test's and
+the owner's packages, so a same-named constant there also withholds the pin; a
+constant computed through a helper that calls the owner is not followed.
 
 Given a changed presentation text constant, the benchmark expects one
 evidence-quality item for the declaration and literal, records visibility and

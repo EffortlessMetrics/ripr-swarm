@@ -2419,7 +2419,14 @@ impl OwnerReturnPin {
         // `assert_eq!(f(4), f(2) + f(2))` compares the owner with itself.
         if expected_reaches_owner(test, &assertion.text, expected, &self.name)
             || expected_reaches_fixture(test, expected)
-            || expected_constant_reaches_owner(index, test, expected, &self.name, &self.call)
+            || expected_constant_reaches_owner(
+                index,
+                test,
+                expected,
+                &self.name,
+                &self.call,
+                &self.owner_file,
+            )
         {
             return false;
         }
@@ -8015,8 +8022,8 @@ pub(in crate::analysis::classify) fn expected_reaches_owner(
 /// through further constants (`const EXPECTED: u32 = quota(2);
 /// assert_eq!(quota(2), EXPECTED)` compares the owner with itself, as a
 /// `let` binding would). Constants come from one memoized workspace table
-/// keyed by name, so any same-named item counts: matching too many only
-/// withholds the pin. The call must have the pin's own shape (a bare or
+/// keyed by name; any same-named item in the test's or the owner's package
+/// counts: matching too many only withholds the pin. The call must have the pin's own shape (a bare or
 /// module-path call for a free function, `T::name(..)` for an associated
 /// one, `.name(..)` or `T::name(..)` for a method), so a constant built
 /// with some other type's `new` or `len` keeps the pin. A test-file `use ..
@@ -8029,6 +8036,7 @@ fn expected_constant_reaches_owner(
     expected: &str,
     name: &str,
     call: &PinCall,
+    owner_file: &Path,
 ) -> bool {
     let constants = index
         .call_identity_memos
@@ -8036,9 +8044,19 @@ fn expected_constant_reaches_owner(
     if constants.is_empty() {
         return false;
     }
+    // A constant from outside both the test's and the owner's package
+    // cannot be the one the test names; unscopable paths keep every match.
+    let test_package = super::related_tests::package_prefix(&test.file);
+    let owner_package = super::related_tests::package_prefix(owner_file);
+    let in_scope = |file: &Path| match (&test_package, &owner_package) {
+        (Some(test_package), Some(owner_package)) => super::related_tests::package_prefix(file)
+            .is_none_or(|package| &package == test_package || &package == owner_package),
+        _ => true,
+    };
     let test_renames: Vec<UsePath> = index
         .files()
         .get(&test.file)
+        .filter(|facts| facts.source.contains(" as "))
         .map(|facts| flattened_use_paths(&facts.source))
         .unwrap_or_default();
     let mut seen = BTreeSet::new();
@@ -8067,7 +8085,7 @@ fn expected_constant_reaches_owner(
             let Some(initializers) = constants.get(&word) else {
                 continue;
             };
-            for (file, initializer) in initializers {
+            for (file, initializer) in initializers.iter().filter(|(file, _)| in_scope(file)) {
                 if initializer_calls_owner(initializer, name, call)
                     || owner_aliases(index, file, name)
                         .iter()
@@ -8098,34 +8116,45 @@ fn owner_aliases(index: &RustIndex, file: &Path, name: &str) -> Vec<String> {
 }
 
 /// Whether the masked `initializer` calls `name` in the pin's call shape.
+/// A free function also counts when named as a value (`apply(quota, 2)`,
+/// `let f = quota;`), and a `<..>::name` qualifier the scan cannot read
+/// counts for every shape.
 fn initializer_calls_owner(initializer: &str, name: &str, call: &PinCall) -> bool {
     whole_word_offsets(initializer, name).into_iter().any(|offset| {
         let after = initializer[offset + name.len()..].trim_start();
-        if !(after.starts_with('(') || after.starts_with("::<")) {
+        let called = after.starts_with('(') || after.starts_with("::<");
+        // A struct-literal field (`Limits { quota: 2 }`) is not the owner.
+        if after.starts_with(':') && !after.starts_with("::") {
             return false;
         }
         let before = initializer[..offset].trim_end();
         let qualifier = before.strip_suffix("::").map(|path| {
             let path = path.trim_end();
             let start = path
-                .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-                .map_or(0, |index| index + 1);
+                .char_indices()
+                .rev()
+                .find(|(_, character)| !(character.is_alphanumeric() || *character == '_'))
+                .map_or(0, |(index, character)| index + character.len_utf8());
             &path[start..]
         });
-        let type_like = |segment: &str| segment.starts_with(|c: char| c.is_ascii_uppercase());
+        if qualifier == Some("") {
+            return true;
+        }
+        let type_like = |segment: &str| segment.starts_with(char::is_uppercase);
         match call {
             PinCall::Bare => !before.ends_with('.') && !qualifier.is_some_and(type_like),
             PinCall::Associated { type_name } => {
-                qualifier.is_some_and(|segment| segment == type_name || segment == "Self")
+                called && qualifier.is_some_and(|segment| segment == type_name || segment == "Self")
             }
             PinCall::Method { receivers, .. } => {
-                before.ends_with('.')
-                    || qualifier.is_some_and(|segment| {
-                        segment == "Self"
-                            || receivers.iter().any(|receiver| {
-                                matches!(receiver, ReceiverType::Named(type_name) if type_name == segment)
-                            })
-                    })
+                called
+                    && (before.ends_with('.')
+                        || qualifier.is_some_and(|segment| {
+                            segment == "Self"
+                                || receivers.iter().any(|receiver| {
+                                    matches!(receiver, ReceiverType::Named(type_name) if type_name == segment)
+                                })
+                        }))
             }
         }
     })
@@ -8210,6 +8239,13 @@ fn text_declared_constants(text: &str) -> Vec<(String, String)> {
             let Some(equals) = body[length..].find('=') else {
                 continue;
             };
+            // `extern { static X: u32; }` has no initializer.
+            if body[length..]
+                .find(';')
+                .is_some_and(|semicolon| semicolon < equals)
+            {
+                continue;
+            }
             let initializer = &body[length + equals + 1..];
             let end = initializer.find(';').unwrap_or(initializer.len());
             found.push((name.to_string(), initializer[..end].to_string()));
