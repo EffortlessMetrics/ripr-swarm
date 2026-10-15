@@ -72,7 +72,7 @@ These establish fixture integrity, not GitHub semantics or workflow correctness.
    pending qualification. Distinguish these two propositions. Native queue:max
    is a documented possible alternative, with a 100-pending bound and no
    combination with cancel-in-progress=true; source/runtime compatibility is
-   untested. A supported unique request grouping is another alternative,
+   unexercised. A supported unique request grouping is another alternative,
    subject to the owner's duplicate/admission requirements. This branch picks
    no production repair.
 
