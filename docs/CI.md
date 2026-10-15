@@ -628,12 +628,13 @@ Do not dispatch on PR branches; #5394 tracks enforcing this.
 
 What this means for authors and agents:
 
-UB and Droid retain early review on `opened`, `synchronize`, and `reopened`,
-including Drafts; Droid also retains `labeled` and `unlabeled`. They do not
-subscribe to `ready_for_review` (#4987). Ready therefore neither cancels an
-active UB review nor queues another Droid review, and does not repeat completed
-advisory work. Their existing trust/title/release guards and concurrency remain
-unchanged. UB explicitly lists all three early passes in
+UB retains early review on `opened`, `synchronize`, and `reopened`, including
+Drafts. It does not subscribe to `ready_for_review` (#4987), so Ready neither
+cancels active UB review nor repeats completed advisory work. Its existing
+same-repository guard and concurrency remain unchanged. Automatic Droid PR
+review is retired under #5086; manual `@droid` commands and scheduled security
+scans retain their separate triggers and safeguards. UB explicitly lists all
+three early passes in
 `.ub-review.toml`'s `gate.post_review_on`: action pin
 `55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8` otherwise permits publication only on
 opened and Ready. Removing Ready admission alone would leave repaired-head
@@ -1036,7 +1037,7 @@ EM self-hosted runners.
 | `security.yml` `cargo-deny` | `em-ci-tiny` | `rust-tiny` |
 | `source-of-truth.yml`, `badge-endpoints.yml` | `em-ci-tiny` | `rust-tiny` |
 | `security.yml` `dependency-review` | `em-ci-nano` | `policy-nano` |
-| `droid-review`, `droid`, `droid-security-scan` | `em-ci-review` | `droid-review` |
+| `droid`, `droid-security-scan` | `em-ci-review` | `droid-review` |
 
 All self-hosted lanes carry the `trusted-pr` label and keep their existing
 fork/untrusted-PR `if:` guards, so fork code cannot reach trusted self-hosted
