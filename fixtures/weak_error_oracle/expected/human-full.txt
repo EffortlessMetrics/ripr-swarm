@@ -35,7 +35,7 @@ Weakness
   - No exact error variant discriminator was detected
   - missing discriminator AuthError::RevokedToken: No exact error variant assertion for AuthError::RevokedToken
 Next step
-  - Assert the exact error variant or payload instead of only is_err().
+  - Assert the exact error variant or payload instead of only is_err()
 Drill in:
   ripr explain --root <cwd>/fixtures/weak_error_oracle/input --diff <cwd>/fixtures/weak_error_oracle/diff.patch --mode fast probe:src_lib.rs:error_path:99b06ce7
   ripr context --root <cwd>/fixtures/weak_error_oracle/input --diff <cwd>/fixtures/weak_error_oracle/diff.patch --mode fast --at probe:src_lib.rs:error_path:99b06ce7
@@ -58,7 +58,7 @@ Weakness
   - No strong discriminator was detected
   - missing discriminator AuthError::RevokedToken: No exact error variant assertion for AuthError::RevokedToken
 Next step
-  - Add a test input that reaches the changed error path and assert the exact error variant it returns.
+  - Add a test input that reaches the changed error path and assert the exact error variant it returns
 Drill in:
   ripr explain --root <cwd>/fixtures/weak_error_oracle/input --diff <cwd>/fixtures/weak_error_oracle/diff.patch --mode fast probe:src_lib.rs:return_value:e21dcccc
   ripr context --root <cwd>/fixtures/weak_error_oracle/input --diff <cwd>/fixtures/weak_error_oracle/diff.patch --mode fast --at probe:src_lib.rs:return_value:e21dcccc

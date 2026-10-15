@@ -38,7 +38,7 @@ Weakness
   - No exact error variant discriminator was detected
   - missing discriminator ParseError::InvalidData: No exact error variant assertion for ParseError::InvalidData
 Next step
-  - Assert the exact error variant or payload instead of only is_err().
+  - Assert the exact error variant or payload instead of only is_err()
 Drill in:
   ripr explain --root <cwd>/fixtures/guarded_result_match_sibling_variant/input --diff <cwd>/fixtures/guarded_result_match_sibling_variant/diff.patch --mode fast probe:src_lib.rs:error_path:94d13aee
   ripr context --root <cwd>/fixtures/guarded_result_match_sibling_variant/input --diff <cwd>/fixtures/guarded_result_match_sibling_variant/diff.patch --mode fast --at probe:src_lib.rs:error_path:94d13aee
@@ -61,7 +61,7 @@ Weakness
   - No strong discriminator was detected
   - missing discriminator ParseError::InvalidData: No exact error variant assertion for ParseError::InvalidData
 Next step
-  - Add a test input that reaches the changed error path and assert the exact error variant it returns.
+  - Add a test input that reaches the changed error path and assert the exact error variant it returns
 Drill in:
   ripr explain --root <cwd>/fixtures/guarded_result_match_sibling_variant/input --diff <cwd>/fixtures/guarded_result_match_sibling_variant/diff.patch --mode fast probe:src_lib.rs:return_value:1f4cb0e7
   ripr context --root <cwd>/fixtures/guarded_result_match_sibling_variant/input --diff <cwd>/fixtures/guarded_result_match_sibling_variant/diff.patch --mode fast --at probe:src_lib.rs:return_value:1f4cb0e7

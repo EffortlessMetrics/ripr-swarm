@@ -37,7 +37,7 @@ Evidence
 Weakness
   - No strong discriminator was detected
 Next step
-  - Strengthen the related assertion so it discriminates the changed behavior.
+  - Strengthen the related assertion so it discriminates the changed behavior
 Drill in:
   ripr explain --root <cwd>/fixtures/collection_argument_raw_type_alias/input --diff <cwd>/fixtures/collection_argument_raw_type_alias/diff.patch --mode fast probe:src_lib.rs:call_deletion:1f64eda5
   ripr context --root <cwd>/fixtures/collection_argument_raw_type_alias/input --diff <cwd>/fixtures/collection_argument_raw_type_alias/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:1f64eda5
@@ -59,7 +59,7 @@ Evidence
 Weakness
   - No strong discriminator was detected
 Next step
-  - Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect.
+  - Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect
 Drill in:
   ripr explain --root <cwd>/fixtures/collection_argument_raw_type_alias/input --diff <cwd>/fixtures/collection_argument_raw_type_alias/diff.patch --mode fast probe:src_lib.rs:side_effect:3ceb2918
   ripr context --root <cwd>/fixtures/collection_argument_raw_type_alias/input --diff <cwd>/fixtures/collection_argument_raw_type_alias/diff.patch --mode fast --at probe:src_lib.rs:side_effect:3ceb2918

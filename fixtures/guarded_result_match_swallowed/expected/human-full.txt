@@ -22,7 +22,7 @@ Shared evidence and guidance
   E12 [findings 1, 2]: source function argument value kind = "busy" at line 15
   E13 [findings 1, 2]: source function argument value len = 12 at line 15
   E14 [findings 1, 2]: source assertion argument value 12 at line 16
-  N1 [findings 1, 2]: Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.
+  N1 [findings 1, 2]: Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value
 
 Finding 1: WARNING ./src/lib.rs:9
   id: probe:src_lib.rs:error_path:94d13aee

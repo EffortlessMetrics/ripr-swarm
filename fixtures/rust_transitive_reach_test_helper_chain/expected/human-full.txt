@@ -12,7 +12,7 @@ Shared evidence and guidance
   E2 [findings 1, 2]: observation no: No reachable test oracle found
   E3 [findings 1, 2]: discriminator no: No assertion can discriminate the changed behavior without a reachable test
   E4 [findings 1, 2]: local flow reaches returned value: value > limit (line 3)
-  N1 [findings 1, 2]: ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.
+  N1 [findings 1, 2]: ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists
 
 Finding 1: WARNING ./src/eval.rs:3
   id: probe:src_eval.rs:predicate:f66d616d

@@ -71,7 +71,7 @@ TypeScript repair packet (advisory)
   limitation: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
   next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
 Next step
-  - TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `throws error matching "TOKEN_REQUIRED"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.
+  - TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `throws error matching "TOKEN_REQUIRED"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
 Drill in:
   ripr explain --root <cwd>/fixtures/typescript_rejects_reexport_shadow/input --diff <cwd>/fixtures/typescript_rejects_reexport_shadow/diff.patch --mode fast probe:src_load.ts:typescript_preview:fd09bc48
   ripr context --root <cwd>/fixtures/typescript_rejects_reexport_shadow/input --diff <cwd>/fixtures/typescript_rejects_reexport_shadow/diff.patch --mode fast --at probe:src_load.ts:typescript_preview:fd09bc48
@@ -130,7 +130,7 @@ TypeScript repair packet (advisory)
   limitation: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
   next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
 Next step
-  - TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == "ready"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.
+  - TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == "ready"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
 Drill in:
   ripr explain --root <cwd>/fixtures/typescript_rejects_reexport_shadow/input --diff <cwd>/fixtures/typescript_rejects_reexport_shadow/diff.patch --mode fast probe:src_load.ts:typescript_preview:2209cfc8
   ripr context --root <cwd>/fixtures/typescript_rejects_reexport_shadow/input --diff <cwd>/fixtures/typescript_rejects_reexport_shadow/diff.patch --mode fast --at probe:src_load.ts:typescript_preview:2209cfc8

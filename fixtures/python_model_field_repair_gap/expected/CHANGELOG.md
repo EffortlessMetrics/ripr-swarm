@@ -430,3 +430,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_model_field_repair_gap (16)
+
+Reason:
+RIPR-SPEC-0002: #7756 labelled human lines carry no terminal period (incl. shared-guidance paths); #7752/#7753/#7755 grammar forms adopted
+
+Command:
+`cargo xtask goldens bless python_model_field_repair_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

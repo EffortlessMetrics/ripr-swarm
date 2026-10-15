@@ -36,7 +36,7 @@ Weakness
   - No exact error variant discriminator was detected
   - missing discriminator ParseError::TooLong: No exact error variant assertion for ParseError::TooLong
 Next step
-  - Assert the exact error variant or payload instead of only is_err().
+  - Assert the exact error variant or payload instead of only is_err()
 Drill in:
   ripr explain --root <cwd>/fixtures/error_path_sibling_oracle_fake_clean/input --diff <cwd>/fixtures/error_path_sibling_oracle_fake_clean/diff.patch --mode fast probe:src_lib.rs:error_path:162493bf
   ripr context --root <cwd>/fixtures/error_path_sibling_oracle_fake_clean/input --diff <cwd>/fixtures/error_path_sibling_oracle_fake_clean/diff.patch --mode fast --at probe:src_lib.rs:error_path:162493bf
@@ -59,7 +59,7 @@ Weakness
   - No strong discriminator was detected
   - missing discriminator ParseError::TooLong: No exact error variant assertion for ParseError::TooLong
 Next step
-  - Add a test input that reaches the changed error path and assert the exact error variant it returns.
+  - Add a test input that reaches the changed error path and assert the exact error variant it returns
 Drill in:
   ripr explain --root <cwd>/fixtures/error_path_sibling_oracle_fake_clean/input --diff <cwd>/fixtures/error_path_sibling_oracle_fake_clean/diff.patch --mode fast probe:src_lib.rs:return_value:ae6d1b32
   ripr context --root <cwd>/fixtures/error_path_sibling_oracle_fake_clean/input --diff <cwd>/fixtures/error_path_sibling_oracle_fake_clean/diff.patch --mode fast --at probe:src_lib.rs:return_value:ae6d1b32

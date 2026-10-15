@@ -436,3 +436,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_method_owner_imported_unbound_receiver (20)
+
+Reason:
+RIPR-SPEC-0002: #7756 labelled human lines carry no terminal period (incl. shared-guidance paths); #7752/#7753/#7755 grammar forms adopted
+
+Command:
+`cargo xtask goldens bless python_adversarial_method_owner_imported_unbound_receiver --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

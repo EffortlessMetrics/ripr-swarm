@@ -38,7 +38,7 @@ Evidence
 Weakness
   - No exact error variant discriminator was detected
 Next step
-  - Assert the exact error variant or payload instead of only is_err().
+  - Assert the exact error variant or payload instead of only is_err()
 Drill in:
   ripr explain --root <cwd>/fixtures/rust_adversarial_shared_error_variant_proximity/input --diff <cwd>/fixtures/rust_adversarial_shared_error_variant_proximity/diff.patch --mode fast probe:src_lib.rs:error_path:25576e80
   ripr context --root <cwd>/fixtures/rust_adversarial_shared_error_variant_proximity/input --diff <cwd>/fixtures/rust_adversarial_shared_error_variant_proximity/diff.patch --mode fast --at probe:src_lib.rs:error_path:25576e80
@@ -60,7 +60,7 @@ Evidence
 Weakness
   - No strong discriminator was detected
 Next step
-  - Add a test input that reaches the changed error path and assert the exact error variant it returns.
+  - Add a test input that reaches the changed error path and assert the exact error variant it returns
 Drill in:
   ripr explain --root <cwd>/fixtures/rust_adversarial_shared_error_variant_proximity/input --diff <cwd>/fixtures/rust_adversarial_shared_error_variant_proximity/diff.patch --mode fast probe:src_lib.rs:return_value:d890a3ab
   ripr context --root <cwd>/fixtures/rust_adversarial_shared_error_variant_proximity/input --diff <cwd>/fixtures/rust_adversarial_shared_error_variant_proximity/diff.patch --mode fast --at probe:src_lib.rs:return_value:d890a3ab
