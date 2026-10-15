@@ -17,14 +17,13 @@
 
 use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use super::owner_pin::{OwnerPinSyntax, field_builtin_integer, targeted_free_call_reaches_owner};
-use crate::analysis::facts::{FunctionContainer, ModulePathTarget};
+use crate::analysis::facts::FunctionContainer;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::Probe;
 use ra_ap_syntax::{
     AstNode, AstToken, SyntaxKind,
     ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasName},
 };
-use std::path::Path;
 
 /// Whether `test` pins the field `probe` constructs inside the array `owner`
 /// returns, through that element alone. The shared owner-pin authorities
@@ -162,11 +161,8 @@ fn iteration_is_closed(index: &RustIndex) -> bool {
         )
         .collect();
     let allowed = |root: &str| roots.iter().any(|known| known == root);
-    let indexed = |candidate: &Path| index.files().get(candidate).is_some();
     index.files().iter().all(|(path, facts)| {
-        if facts.used_lexical_fallback
-            || !modules_are_indexed(path, &facts.module_declarations, &indexed)
-        {
+        if facts.used_lexical_fallback {
             return false;
         }
         let Some(parse) = parse_clean_source_file(&facts.source) else {
@@ -254,29 +250,6 @@ fn iteration_is_closed(index: &RustIndex) -> bool {
             }
             true
         })
-    })
-}
-
-/// Whether every out-of-line `mod name;` the file declares resolves to an
-/// indexed file. The index skips some directories (`fixtures`, `target`,
-/// `node_modules`), and a module there is compiled but never scanned.
-fn modules_are_indexed(
-    path: &Path,
-    modules: &[crate::analysis::facts::ModuleDeclarationFact],
-    indexed: &dyn Fn(&Path) -> bool,
-) -> bool {
-    let Some(parent) = path.parent() else {
-        return modules.is_empty();
-    };
-    let directory = match path.file_stem().and_then(|stem| stem.to_str()) {
-        Some("mod" | "lib" | "main") => parent.to_path_buf(),
-        Some(stem) => parent.join(stem),
-        None => return modules.is_empty(),
-    };
-    modules.iter().all(|module| {
-        module.path_target == ModulePathTarget::Default
-            && (indexed(&directory.join(format!("{}.rs", module.name)))
-                || indexed(&directory.join(&module.name).join("mod.rs")))
     })
 }
 

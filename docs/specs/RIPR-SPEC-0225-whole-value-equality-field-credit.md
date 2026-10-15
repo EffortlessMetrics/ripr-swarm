@@ -292,7 +292,10 @@ rejected alternative. Any can be reversed later without touching the rest.
      an outside crate's macro or a module in a directory the index skips
      (`src/fixtures/`) may otherwise declare a local `u32`. An outside
      procedural macro's output is not read; a derive or attribute macro that
-     declares a type named after a primitive is outside this decision;
+     declares a type named after a primitive is outside this decision, as is
+     an owner or element type that ends the process before the assertion
+     (`std::process::exit` in the owner or in a `Drop`), which no owner pin
+     models yet (#8084);
 
    - the owner's name is the name of no other indexed function, because the
      owner call is matched by name and a nested module's `super::rows` or a
@@ -328,8 +331,10 @@ rejected alternative. Any can be reversed later without touching the rest.
      (directly or through `[workspace.dependencies]`), none is a proc-macro
      library, and no manifest `[patch]`/`[replace]` or `.cargo` configuration
      sits between them and the root; the workspace defines no macro
-     (`macro_rules!` or `macro`); every out-of-line `mod name;` resolves by
-     default to an indexed file; every indexed file parses, nothing sits outside
+     (`macro_rules!` or `macro`); every `.rs` file under each such package
+     (its own `target/` aside) is indexed, with no symbolic link and no
+     target `path` in its manifest, since the index skips directories such as
+     `fixtures/` that a nested or non-root module may still compile; every indexed file parses, nothing sits outside
      the index (no non-UTF-8 source, include limitation, `include!` macro
      however qualified, or attribute naming `path`, `cfg_attr` included),
      every `use`, macro path and attribute path is rooted in `std`, `core`,

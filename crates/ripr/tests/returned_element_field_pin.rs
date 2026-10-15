@@ -582,7 +582,7 @@ fn a_name_from_outside_the_scanned_workspace_keeps_the_gap() -> Result<(), Strin
     const INDEX: &str = "        assert_eq!(rows(30, 3)[1].total, 33);";
     const SHADOW: &str = "pub struct u32(pub i64);\nimpl PartialEq<i32> for u32 {\n    fn eq(&self, _: &i32) -> bool {\n        true\n    }\n}\n";
     const DEP: &str = "\n[dependencies]\nshadowdep = { path = \"../shadowdep\" }\n";
-    let cases: [OutsideCase<'_>; 5] = [
+    let cases: [OutsideCase<'_>; 7] = [
         (
             "mod w {\n    pub struct W(pub i64);\n}\nmacro_rules! alias {\n    ($n:ident) => {\n        use crate::w::W as $n;\n    };\n}\nalias!(u32);\n",
             INDEX,
@@ -620,6 +620,25 @@ fn a_name_from_outside_the_scanned_workspace_keeps_the_gap() -> Result<(), Strin
             DEP,
             &[],
             "a workspace macro calls an outside one",
+        ),
+        (
+            "mod fixtures {\n    pub mod evil;\n}\nuse self::fixtures::evil::*;\n",
+            INDEX,
+            "",
+            &[("fixtures/evil.rs", SHADOW)],
+            "an inline module declares a module in a skipped directory",
+        ),
+        (
+            "mod m;\nuse self::m::lib::fixtures::*;\n",
+            INDEX,
+            "",
+            &[
+                ("m.rs", "pub mod lib;\n"),
+                ("m/lib.rs", "pub mod fixtures;\n"),
+                ("m/lib/fixtures/mod.rs", SHADOW),
+                ("m/fixtures.rs", ""),
+            ],
+            "a module named lib declares one in a skipped directory",
         ),
     ];
     for (tail, body, dependencies, files, label) in cases {

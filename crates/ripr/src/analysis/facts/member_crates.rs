@@ -199,8 +199,10 @@ impl MemberCrates {
         };
         let root = lexical(root);
         let mut packages: Vec<(Package, Vec<PathBuf>)> = Vec::new();
+        let mut indexed = std::collections::BTreeSet::new();
         for file in files {
             let file = lexical(&root.join(file));
+            indexed.insert(file.clone());
             let Some(directory) = file.parent() else {
                 return false;
             };
@@ -213,14 +215,38 @@ impl MemberCrates {
             let Some(found) = nearest_package(&root, directory) else {
                 return false;
             };
-            packages.push(found);
+            if !packages
+                .iter()
+                .any(|(known, _)| known.directory == found.0.directory)
+            {
+                packages.push(found);
+            }
         }
         let directories: Vec<&Path> = packages
             .iter()
             .map(|(package, _)| package.directory.as_path())
             .collect();
         packages.iter().all(|(package, chain)| {
-            if package.manifest.get("lib").is_some_and(|lib| {
+            let manifest = &package.manifest;
+            // A target `path` may put a crate root outside the package, and
+            // a Rust file the index skipped (`fixtures/`, `node_modules/`)
+            // may still be a module some root compiles (#8059 re-review).
+            let moved = ["lib", "bin", "test", "bench", "example"]
+                .iter()
+                .any(|kind| {
+                    manifest
+                        .get(*kind)
+                        .is_some_and(|targets| match targets.as_array() {
+                            Some(targets) => {
+                                targets.iter().any(|target| target.get("path").is_some())
+                            }
+                            None => targets.get("path").is_some(),
+                        })
+                });
+            if moved || !rust_files_indexed(&package.directory, &indexed) {
+                return false;
+            }
+            if manifest.get("lib").is_some_and(|lib| {
                 lib.get("proc-macro").is_some() || lib.get("proc_macro").is_some()
             }) || chain.iter().any(|directory| {
                 ["config.toml", "config"]
@@ -252,6 +278,40 @@ impl MemberCrates {
                 })
         })
     }
+}
+
+/// Whether every `.rs` file under `directory` is in `indexed`, the package's
+/// own `target/` excepted. A symbolic link or an unreadable directory
+/// answers no.
+fn rust_files_indexed(directory: &Path, indexed: &std::collections::BTreeSet<PathBuf>) -> bool {
+    let mut pending = vec![directory.to_path_buf()];
+    while let Some(current) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            return false;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                return false;
+            };
+            let Ok(kind) = entry.file_type() else {
+                return false;
+            };
+            let path = lexical(&entry.path());
+            if kind.is_symlink() {
+                return false;
+            }
+            if kind.is_dir() {
+                if !(current == directory && entry.file_name() == "target") {
+                    pending.push(path);
+                }
+            } else if path.extension().is_some_and(|extension| extension == "rs")
+                && !indexed.contains(&path)
+            {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Every dependency table of `manifest`, build dependencies and `[target.*]`
