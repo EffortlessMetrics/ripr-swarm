@@ -154,7 +154,7 @@ pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
             if !saw_pytest && text.lines().any(is_pytest_import_line) {
                 saw_pytest = true;
             }
-            if !saw_unittest && text.lines().any(is_unittest_import_line) {
+            if !saw_unittest && text_has_unittest_framework_import(&text) {
                 saw_unittest = true;
             }
             if saw_pytest && saw_unittest {
@@ -219,6 +219,45 @@ fn is_pytest_import_line(line: &str) -> bool {
     is_top_level_module_import_line(line, "pytest")
 }
 
+/// Whether prefix text contains unittest-framework import evidence.
+/// Parenthesized `from unittest import (...)` is accumulated across lines
+/// before mock-only classification (#7664 review).
+fn text_has_unittest_framework_import(text: &str) -> bool {
+    let mut pending = String::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if pending.is_empty() {
+            if unittest_from_import_is_open_paren(trimmed) {
+                pending.push_str(trimmed);
+                continue;
+            }
+            if is_unittest_import_line(line) {
+                return true;
+            }
+        } else {
+            pending.push(' ');
+            pending.push_str(trimmed);
+            if pending.contains(')') {
+                let complete = std::mem::take(&mut pending);
+                if is_unittest_import_line(&complete) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn unittest_from_import_is_open_paren(trimmed: &str) -> bool {
+    let Some(imported) = unittest_from_import_names(trimmed) else {
+        return false;
+    };
+    imported.contains('(') && !imported.contains(')')
+}
+
 /// Whether a line is a real unittest import statement — `import unittest`,
 /// `import unittest as ...`, or `from unittest import ...` — at a token
 /// boundary. Comment lines and lookalike identifiers (`import unittesting`)
@@ -229,22 +268,24 @@ fn is_unittest_import_line(line: &str) -> bool {
     if trimmed.starts_with('#') {
         return false;
     }
-    if let Some(rest) = trimmed.strip_prefix("from ") {
-        let Some(after_module) = rest.strip_prefix("unittest") else {
-            return false;
-        };
-        let Some(imported) = after_module.strip_prefix(" import") else {
-            return false;
-        };
+    if let Some(imported) = unittest_from_import_names(trimmed) {
         return !unittest_from_import_is_mock_only(imported);
     }
     is_top_level_module_import_line(line, "unittest")
 }
 
+fn unittest_from_import_names(trimmed: &str) -> Option<&str> {
+    let rest = trimmed.strip_prefix("from ")?;
+    let after_module = rest.strip_prefix("unittest")?;
+    after_module.strip_prefix(" import")
+}
+
 /// `from unittest import mock` / `from unittest import mock as umock` is not
 /// a test runner. A mixed pytest repo that only mocks through unittest must
-/// not grow a `python: unittest` doctor surface.
+/// not grow a `python: unittest` doctor surface. Parentheses are stripped so
+/// `from unittest import (mock)` stays mock-only.
 fn unittest_from_import_is_mock_only(imported: &str) -> bool {
+    let imported = imported.replace(['(', ')'], " ");
     let mut saw_name = false;
     for name in imported
         .split(',')

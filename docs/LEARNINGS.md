@@ -18,6 +18,11 @@ file continues and the last line is not newline-terminated (and the extra
 byte is not that newline), drop the incomplete line. Fail-closed is
 correct; a false `python: unittest` surface is not.
 
+`from unittest import mock` is not a runner. Parenthesized and multiline
+forms (`from unittest import (mock)` / `from unittest import (\n    mock,\n)`)
+must be accumulated and have delimiters stripped before that mock-only
+check; classifying each line independently treats `(` as a non-mock name.
+
 ## 2026-10-12: A timed-out pilot packet must not keep the previous run's repo-exposure (#7425)
 
 `ripr pilot` reuses `--out`. The timeout path writes only `pilot-summary.{json,md}`.
