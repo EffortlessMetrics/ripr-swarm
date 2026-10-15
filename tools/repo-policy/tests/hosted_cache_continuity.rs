@@ -7,47 +7,30 @@
 const CALLER: &str = include_str!("../../../.github/workflows/routed-rust.yml");
 const PRODUCER: &str = include_str!("../../../.github/workflows/rust-gates.yml");
 
-fn top_block<'a>(source: &'a str, name: &str) -> Option<&'a str> {
-    let marker = format!("\n{name}:\n");
+fn block<'a>(source: &'a str, name: &str, indent: usize) -> Option<&'a str> {
+    let marker = format!("{}{name}:\n", " ".repeat(indent));
     let (_, tail) = source.split_once(&marker)?;
-    let end = tail
-        .lines()
-        .scan(0, |offset, line| {
-            let start = *offset;
-            *offset += line.len() + 1;
-            Some((start, line))
-        })
-        .find(|(_, line)| !line.is_empty() && !line.starts_with(' '))
-        .map_or(tail.len(), |(offset, _)| offset);
-    Some(&tail[..end])
-}
-
-fn job<'a>(source: &'a str, name: &str) -> Option<&'a str> {
-    let jobs = top_block(source, "jobs")?;
-    let marker = format!("  {name}:\n");
-    let (_, tail) = jobs.split_once(&marker)?;
-    // Search line boundaries rather than treating the first nested field as
-    // the next job (the common case in reusable-workflow callers).
     let mut offset = 0;
     for line in tail.split_inclusive('\n') {
-        if line.starts_with("  ") && !line.starts_with("   ") && !line.trim().is_empty() {
+        if !line.trim().is_empty()
+            && line.bytes().take_while(|byte| *byte == b' ').count() <= indent
+        {
             return Some(&tail[..offset]);
         }
         offset += line.len();
     }
     Some(tail)
 }
-
 fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
     let mut findings = Vec::new();
-    let events = top_block(caller, "on").unwrap_or("");
-    let push = events
-        .split_once("  push:\n")
-        .map(|(_, tail)| tail.split("\n  ").next().unwrap_or(""));
-    if push != Some("    branches: [main, master]") {
+    let events = block(caller, "on", 0).unwrap_or("");
+    let push = block(events, "push", 2);
+    if push.map(str::trim) != Some("branches: [main, master]") {
         findings.push("main-only hosted cache loses its automatic writer opportunity; reconcile #7827 before retirement");
     }
-    let hosted = job(caller, "rust-github").unwrap_or("");
+    let hosted = block(caller, "jobs", 0)
+        .and_then(|jobs| block(jobs, "rust-github", 2))
+        .unwrap_or("");
     for required in [
         "    uses: ./.github/workflows/rust-gates.yml\n",
         "      use-scratch: false\n",
@@ -56,6 +39,20 @@ fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
             findings
                 .push("hosted caller/cache producer binding changed; requalify writer eligibility");
         }
+    }
+    let guard = hosted.split_once("    if: >-\n").map(|(_, tail)| {
+        tail.lines()
+            .take_while(|line| line.starts_with("      "))
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join(" ")
+    });
+    if guard.as_deref()
+        != Some(
+            "!cancelled() && needs.detect-docs-only.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true' && (needs.route.outputs.router_target == 'github' || (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))",
+        )
+    {
+        findings.push("hosted job eligibility changed; requalify the main writer opportunity");
     }
     let step = producer
         .split("\n      - ")
@@ -127,4 +124,32 @@ fn missing_or_rebound_producer_is_not_a_writer_opportunity() {
     }
     assert!(!continuity_findings("", PRODUCER).is_empty());
     assert!(!continuity_findings(CALLER, "").is_empty());
+}
+
+#[test]
+fn disabled_hosted_job_or_filtered_push_is_not_writer_continuity() {
+    // Address this exact job, rather than whichever multiline guard occurs first.
+    let hosted = block(CALLER, "jobs", 0)
+        .and_then(|jobs| block(jobs, "rust-github", 2))
+        .unwrap_or("");
+    let disabled = CALLER.replace(
+        hosted,
+        &hosted.replace("    if: >-\n", "    if: false\n    # former guard: >-\n"),
+    );
+    assert_ne!(disabled, CALLER);
+    assert!(
+        continuity_findings(&disabled, PRODUCER)
+            .iter()
+            .any(|finding| finding.contains("job eligibility changed"))
+    );
+    let filtered = CALLER.replace(
+        "    branches: [main, master]\n",
+        "    branches: [main, master]\n    paths: ['cache-writer-only/**']\n",
+    );
+    assert_ne!(filtered, CALLER);
+    assert!(
+        continuity_findings(&filtered, PRODUCER)
+            .iter()
+            .any(|finding| finding.contains("loses its automatic writer"))
+    );
 }
