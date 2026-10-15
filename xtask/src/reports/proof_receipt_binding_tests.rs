@@ -108,16 +108,20 @@ fn equivalent_local_and_published_refs_reuse_without_retagging_execution() -> Re
         &digest(b"environment")
     )?));
     fixture.write("source.rs", "fn answer() -> u8 { 2 }\n")?;
-    assert!(
+    assert_eq!(
         fixture
             .binding(&base, &selected, &digest(b"environment"))
-            .is_err()
+            .err()
+            .as_deref(),
+        Some("executing worktree has source changes")
     );
     git(&fixture.0, &["add", "."])?;
-    assert!(
+    assert_eq!(
         fixture
             .binding(&base, &selected, &digest(b"environment"))
-            .is_err()
+            .err()
+            .as_deref(),
+        Some("executing worktree has source changes")
     );
     let changed = fixture.commit()?;
     assert!(!original.compatible_with(&fixture.binding(
@@ -125,10 +129,12 @@ fn equivalent_local_and_published_refs_reuse_without_retagging_execution() -> Re
         &changed,
         &digest(b"environment")
     )?));
-    assert!(
+    assert_eq!(
         fixture
             .binding(&base, &selected, &digest(b"environment"))
-            .is_err()
+            .err()
+            .as_deref(),
+        Some("selected head is not the executing HEAD")
     );
     Ok(())
 }
@@ -138,20 +144,24 @@ fn untracked_and_hidden_tracked_source_refuse_binding() -> Result<(), String> {
     let fixture = Fixture::new()?;
     let head = git(&fixture.0, &["rev-parse", "HEAD"])?;
     fixture.write("extra.rs", "source input")?;
-    assert!(
+    assert_eq!(
         fixture
             .binding(&head, &head, &digest(b"environment"))
-            .is_err()
+            .err()
+            .as_deref(),
+        Some("executing worktree has source changes")
     );
     std::fs::remove_file(fixture.0.join("extra.rs")).map_err(|error| error.to_string())?;
     for flag in ["--assume-unchanged", "--skip-worktree"] {
         git(&fixture.0, &["update-index", flag, "source.rs"])?;
         fixture.write("source.rs", "hidden edit")?;
         assert!(git(&fixture.0, &["status", "--porcelain"])?.is_empty());
-        assert!(
+        assert_eq!(
             fixture
                 .binding(&head, &head, &digest(b"environment"))
-                .is_err()
+                .err()
+                .as_deref(),
+            Some("preflight reuse cannot bind hidden index entries")
         );
         fixture.write("source.rs", "fn answer() -> u8 { 1 }\n")?;
         git(
