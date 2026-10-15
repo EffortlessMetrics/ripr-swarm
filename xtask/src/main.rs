@@ -6032,7 +6032,7 @@ fn has_explicit_planned_test_mapping(text: &str) -> bool {
             let item = item.trim().trim_matches('`').trim().to_ascii_lowercase();
             let placeholder = item.is_empty()
                 || matches!(
-                    item.as_str(),
+                    item.trim_end_matches(['.', '!', '?', ';', ':', ',']),
                     "..." | "-" | "none" | "n/a" | "tbd" | "todo" | "planned"
                 )
                 || ["none ", "todo:", "todo ", "tbd:", "tbd ", "<!--", "<"]

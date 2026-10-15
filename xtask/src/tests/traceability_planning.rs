@@ -87,6 +87,11 @@ fn accepted_empty_placeholder_fenced_and_unrelated_plans_remain_failures() -> Re
         "Planned tests:\n",
         "Planned tests:\n- TODO: add tests\n",
         "Planned tests:\n- TBD\n",
+        "Planned tests:\n- `TBD.`\n",
+        "Planned tests:\n- TODO.\n",
+        "Planned tests:\n- None.\n",
+        "Planned tests:\n- N/A.\n",
+        "Planned tests:\n- planned.\n",
         "Planned tests:\n- None yet\n",
         "Planned tests:\n- planned\n",
         "Planned tests:\n- <test name>\n",
@@ -118,6 +123,15 @@ fn accepted_empty_placeholder_fenced_and_unrelated_plans_remain_failures() -> Re
         })?;
     }
     Ok(())
+}
+
+#[test]
+fn real_planned_mapping_after_closed_example_remains_valid() -> Result<(), String> {
+    with_temp_cwd("trace-planned-after-example", |root| {
+        let mapping = format!("````text\n```\nExample only.\n````\n\n{PLANNED}");
+        fixture(root, "accepted", &mapping, "[]", "[]")?;
+        check_traceability()
+    })
 }
 
 #[test]
