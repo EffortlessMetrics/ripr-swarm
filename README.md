@@ -13,3 +13,7 @@ Pristine exact-head check-fast passed, including strict workspace/all-target Cli
 Verify outer SHA256SUMS, extract into a fresh directory, then run sha256sum -c PROOF-SHA256SUMS inside it. The nested original producer packet was independently verified: all 21 internal hashes, red-tree reconstruction, and policy-report digest.
 
 No binaries, caches or source checkout are included. No submitted-source push, policy weakening, Ready, merge, release, thread resolution or bot contact occurred.
+
+## Terminal local qualification closeout
+
+Local precommit completed with native exit 0, composition local_precommit, exact head/base and four changed records. Both selected ripr/xtask all-target Clippy commands passed, with no recorded skips. Its recomputed report digest is sha256:972e545993c66373ef602b0f7d4f829aaa8e885484b05b4d62f4e7723db4f3ea. The separate closeout archive retains raw logs, structured/Markdown receipts, exact commands, source state and resource accounting. Verify CLOSEOUT-SHA256SUMS after extraction. These local passes do not erase the native source failure; disposition remains REPAIR_REQUIRED, Draft. Hosted and aggregate qualification remain unestablished. No source repair or promotion was performed.
