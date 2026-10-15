@@ -807,3 +807,103 @@ fn match_object_pin_reads_a_test_body_object_const() -> Result<(), String> {
     assert_eq!(script("  with (globalThis) {\n  }\n"), None);
     Ok(())
 }
+
+/// `{ __proto__: v }` sets the object's prototype rather than an own
+/// property, so a colon `__proto__:` entry is not a listed field on either
+/// the matcher argument or the owner's returned literal.
+///
+/// Computed `["__proto__"]` and shorthand `__proto__` are own properties.
+/// On current main they already fail this reader's colon/`[]` split, so
+/// they are not cases here; the skip must not treat them as proto setters.
+#[test]
+fn colon_proto_is_not_a_listed_match_object_field() -> Result<(), String> {
+    let owner =
+        "export function make() {\n  return {\n    name: \"x\",\n    __proto__: 0,\n  };\n}\n";
+    assert_eq!(
+        ts_owner_returned_field_key(owner, "    __proto__: 0,").as_deref(),
+        None,
+        "owner colon __proto__: is a prototype setter, not a returned field"
+    );
+
+    for text in [
+        "{ __proto__: 0 }",
+        "{ \"__proto__\": 0 }",
+        "{ '__proto__': 0 }",
+    ] {
+        let keys = flat_object_keys(text);
+        assert!(
+            keys.as_ref()
+                .is_none_or(|keys| !keys.iter().any(|key| key == "__proto__")),
+            "{text}: colon __proto__ must not list an own field, got {keys:?}"
+        );
+    }
+    assert_eq!(
+        flat_object_keys("{ __proto__: 0, adult: true }"),
+        Some(vec!["adult".to_string()]),
+        "skipping colon __proto__: must still list sibling own fields"
+    );
+
+    let root = ts_unique_tempdir("match-object-colon-proto")?;
+    ts_write_file(
+        &root.join("src/make.ts"),
+        &owner.replace("    __proto__: 0,", "    __proto__: 1,"),
+    )?;
+    ts_write_file(
+        &root.join("tests/make.test.ts"),
+        "import { make } from \"../src/make\";\ntest(\"proto\", () => {\n  expect(make()).toMatchObject({ __proto__: 1 });\n});\n",
+    )?;
+    let changed = ChangedFile {
+        path: PathBuf::from("src/make.ts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 4,
+            text: "    __proto__: 1,".to_string(),
+            new_side_line: 4,
+        }],
+        removed_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 4,
+            text: "    __proto__: 0,".to_string(),
+            new_side_line: 4,
+        }],
+    };
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let finding = result?
+        .findings
+        .into_iter()
+        .find(|finding| finding.probe.location.line == 4)
+        .ok_or("expected a finding on the changed __proto__: line")?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "colon __proto__: pin would credit a prototype setter: {:?}",
+        finding.missing
+    );
+    let row = finding
+        .related_tests
+        .first()
+        .ok_or("expected a related test row")?;
+    assert_ne!(
+        (row.oracle_kind.clone(), row.oracle_strength.clone()),
+        (OracleKind::ExactValue, OracleStrength::Strong)
+    );
+
+    // A listed own field still pins when the matcher also has a colon
+    // proto setter; computed/shorthand siblings already fail this parse.
+    let finding = profile_finding(
+        "colon-sibling-adult",
+        &profile_test(
+            "  expect(buildProfile(\"bo\", 18)).toMatchObject({ __proto__: 0, adult: true });",
+        ),
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "colon-sibling-adult: {:?}",
+        finding.missing
+    );
+    Ok(())
+}

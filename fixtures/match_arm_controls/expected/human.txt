@@ -34,8 +34,8 @@ Next: drill into the top finding:
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output.
-    - fixtures/match_arm_controls/input/src/lib.rs:30 (infection_unknown)
-    - fixtures/match_arm_controls/input/src/lib.rs:46 (infection_unknown)
-    - fixtures/match_arm_controls/input/src/lib.rs:62 (infection_unknown)
+    - ./src/lib.rs:30 (infection_unknown)
+    - ./src/lib.rs:46 (infection_unknown)
+    - ./src/lib.rs:62 (infection_unknown)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

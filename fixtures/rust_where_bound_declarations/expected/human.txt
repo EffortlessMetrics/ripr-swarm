@@ -32,6 +32,6 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - fixtures/rust_where_bound_declarations/input/src/lib.rs:10 (exposed)
+    - ./src/lib.rs:10 (exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
