@@ -5924,10 +5924,13 @@ pub(in crate::analysis) fn inline_expect_operands(text: &str) -> Option<[String;
     };
     let receiver = receiver.macro_call()?;
     receiver.excl_token()?;
-    let golden_file = match receiver.path()?.syntax().text().to_string().as_str() {
-        "expect" => false,
-        "expect_file" => true,
-        _ => return None,
+    let path = receiver.path()?.syntax().text();
+    let golden_file = if path == "expect" {
+        false
+    } else if path == "expect_file" {
+        true
+    } else {
+        return None;
     };
     let tokens: Vec<_> = receiver
         .token_tree()?
