@@ -6030,9 +6030,10 @@ fn has_explicit_planned_test_mapping(text: &str) -> bool {
             .or_else(|| trimmed.strip_prefix("* "));
         if let Some(item) = item {
             let item = item.trim().trim_matches('`').trim().to_ascii_lowercase();
-            let placeholder = item.is_empty()
+            let sentinel = item.trim_end_matches(['.', '!', '?', ';', ':', ',']);
+            let placeholder = sentinel.is_empty()
                 || matches!(
-                    item.trim_end_matches(['.', '!', '?', ';', ':', ',']),
+                    sentinel,
                     "..." | "-" | "none" | "n/a" | "tbd" | "todo" | "planned"
                 )
                 || ["none ", "todo:", "todo ", "tbd:", "tbd ", "<!--", "<"]
