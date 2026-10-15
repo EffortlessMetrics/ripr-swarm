@@ -1543,8 +1543,10 @@ idx + 1 });` got no pin and read as a gap although
 4. Expected value. The pinned assertion is one plain `assert_eq!` with one
    operand that is the owner call or a local bound directly from it
    (`let r = owner(..);`), compared with one `Err(..)` call whose exact
-   variant has the same two trailing path segments (`Err(crate::ConfigError::
-   MissingEquals { line: 2 })` qualifies; `Err(ConfigError::EmptyKey { .. })`
+   variant is the same `Type::Variant`, written bare or after `crate::`
+   (`Err(crate::ConfigError::MissingEquals { line: 2 })` qualifies; any
+   other prefix, such as `external::ConfigError::MissingEquals`, may name a
+   foreign enum sharing the trailing names and does not; `Err(ConfigError::EmptyKey { .. })`
    and `Ok(..)` do not). The owner call may also end in `.unwrap_err()` or
    `.expect_err("..")`, directly or in a local bound from it
    (`let e = owner(..).unwrap_err();`), compared with the bare variant
@@ -1569,8 +1571,8 @@ idx + 1 });` got no pin and read as a gap although
    and any payload is call-free: no call or tuple parentheses, macro,
    closure, `?`, string or nested brace literal. A unit variant
    (`Err(E::V)`) has no payload and qualifies; a tuple payload
-   (`Err(E::V(x))`) reads as a call and stays a candidate. The variant's
-   two trailing segments must name, in the owner's file, a declared
+   (`Err(E::V(x))`) reads as a call and stays a candidate. The variant
+   path, `Type::Variant` bare or after `crate::` (no other prefix), must name, in the owner's file, a declared
    workspace enum that declares that variant, under a name no import or
    alias in that file rebinds (rule 2's owner-file condition). An import
    alias (`use crate::ConfigError as CE;`), a `type` alias, `Self::` or a

@@ -1260,6 +1260,8 @@ fn an_early_err_variant_return_is_pinned_when_no_other_exit_builds_it() {
         "Ok(7)",
         "Err(e)",
         "Err(E::Negative { at: 7 }).map(|v| v)",
+        // A foreign enum that only shares the trailing names.
+        "Err(external::E::Negative { at: 7 })",
     ] {
         assert!(!positive.admits(expected), "{expected}");
     }
@@ -1283,6 +1285,9 @@ fn an_early_err_variant_return_is_pinned_when_no_other_exit_builds_it() {
         let text = body(other, tail);
         assert!(gate_of(&text).is_none(), "{text}");
     }
+    // A changed construction of a foreign `external::E` names no local enum.
+    let foreign = "fn f(x: i32) -> Result<i32, external::E> {\n    if x < 0 {\n        return Err(external::E::Negative { at: x - 1 });\n    }\n    if x == 0 {\n        return Err(external::E::Zero { at: x });\n    }\n    Ok(x)\n}";
+    assert!(gate(foreign, "return Err(external::E::Negative { at: x - 1 });").is_none());
     // A bare variant names no enum.
     let bare = "fn f(x: i32) -> Result<i32, E> {\n    if x < 0 {\n        return Err(Negative { at: x });\n    }\n    if x == 0 {\n        return Err(E::Zero);\n    }\n    Ok(x)\n}";
     assert!(gate(bare, "return Err(Negative { at: x });").is_none());
@@ -1523,6 +1528,19 @@ fn only_a_declared_enum_variant_completes_the_error_witness() {
         (
             format!("use other::ConfigError;\n{MISSING_EQUALS_LIB}"),
             "ConfigError::MissingEquals",
+        ),
+        // A foreign path sharing the declared enum's trailing names.
+        (
+            MISSING_EQUALS_LIB.to_string(),
+            "external::ConfigError::MissingEquals",
+        ),
+        (
+            MISSING_EQUALS_LIB.to_string(),
+            "::ConfigError::MissingEquals",
+        ),
+        (
+            MISSING_EQUALS_LIB.to_string(),
+            "super::ConfigError::MissingEquals",
         ),
     ];
     for (lib, path) in &refused {

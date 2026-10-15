@@ -4337,9 +4337,18 @@ fn error_variant_key(text: &str) -> Option<(String, String)> {
             return None;
         }
     }
-    let mut segments = head.rsplit("::");
-    let variant = segments.next()?.trim();
-    let qualifier = segments.next()?.trim();
+    local_variant_path(head)
+}
+
+/// #7063: the enum and variant of a variant path written `Type::Variant` or
+/// `crate::Type::Variant`. Any other prefix (`external::Type::Variant`,
+/// `self::`, `super::`, a leading `::`) may name a different enum that only
+/// shares the trailing names of a workspace one, so it names none here.
+fn local_variant_path(path: &str) -> Option<(String, String)> {
+    let path = path.trim();
+    let path = path.strip_prefix("crate::").unwrap_or(path);
+    let (qualifier, variant) = path.split_once("::")?;
+    let (qualifier, variant) = (qualifier.trim(), variant.trim());
     (is_plain_identifier(variant) && is_plain_identifier(qualifier))
         .then(|| (qualifier.to_string(), variant.to_string()))
 }
@@ -5359,8 +5368,8 @@ fn owner_file_names_enum(qualifier: &str, owner: &FunctionSummary, index: &RustI
     })
 }
 
-/// #7063: whether the error variant path `path` (`ConfigError::MissingEquals`,
-/// read by its two trailing segments) built in `owner` names a variant that a
+/// #7063: whether the error variant path `path` (`ConfigError::MissingEquals`
+/// or `crate::ConfigError::MissingEquals`, [`local_variant_path`]) built in `owner` names a variant that a
 /// declared workspace enum declares, under a name the owner's file does not
 /// rebind ([`owner_file_names_enum`]). An alias (`use .. as CE`,
 /// `type CE = ..`), `Self::` or a module path names no declared enum here.
@@ -5369,15 +5378,12 @@ pub(in crate::analysis) fn owner_builds_declared_error_variant(
     owner: &FunctionSummary,
     index: &RustIndex,
 ) -> bool {
-    let mut segments = path.rsplit("::").map(str::trim);
-    let (Some(variant), Some(qualifier)) = (segments.next(), segments.next()) else {
+    let Some((qualifier, variant)) = local_variant_path(path) else {
         return false;
     };
-    is_plain_identifier(variant)
-        && is_plain_identifier(qualifier)
-        && qualifier != "Self"
-        && owner_file_names_enum(qualifier, owner, index)
-        && workspace_enum_declares_variant(qualifier, variant, index)
+    qualifier != "Self"
+        && owner_file_names_enum(&qualifier, owner, index)
+        && workspace_enum_declares_variant(&qualifier, &variant, index)
 }
 
 /// #7063: whether an indexed file declares an enum `qualifier` with a
