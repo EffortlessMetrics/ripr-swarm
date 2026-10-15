@@ -5854,6 +5854,11 @@ id = "RIPR-SPEC-0062"
 name = "Cross-language oracle graph"
 spec = "docs/specs/RIPR-SPEC-0062-cross-language-oracle-graph.md"
 tests = [
+  # FFI attribute literal/trivia/raw-identifier regressions: #8090.
+  "crates/ripr/tests/ffi_attribute_literals.rs::raw_doc_string_cannot_invent_a_binding_attribute",
+  "crates/ripr/tests/ffi_attribute_literals.rs::raw_doc_string_cannot_hide_a_real_binding_attribute",
+  "crates/ripr/tests/ffi_attribute_literals.rs::comment_cannot_invent_a_binding_attribute",
+  "crates/ripr/tests/ffi_attribute_literals.rs::attribute_paths_ignore_trivia_and_normalize_raw_identifiers",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::changed_rust_blob_boundary_projects_ts_discriminated_cross_language_grip",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::changed_rust_blob_boundary_projects_missing_resizable_cross_language_grip",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::changed_rust_blob_boundary_with_unknown_bridge_stays_limitation",
@@ -5880,6 +5885,7 @@ tests = [
   "crates/ripr/src/analysis/syntax/ra.rs::tests::impl_block_attrs_are_kept_apart_from_the_method_attrs",
 ]
 fixtures = [
+  "fixtures/rust_ffi_attribute_literals",
   "fixtures/benches_harness_evidence",
   "fixtures/typescript-bun-ub-calibration",
   "fixtures/cross-language-oracle-graph-corpus",
@@ -5900,6 +5906,8 @@ code = [
   "xtask/src/reports/mod.rs",
 ]
 outputs = [
+  "fixtures/rust_ffi_attribute_literals/expected/check.json",
+  "fixtures/rust_ffi_attribute_literals/expected/human.txt",
   "docs/specs/RIPR-SPEC-0062-cross-language-oracle-graph.md",
   "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md",
   "docs/specs/RIPR-SPEC-0061-lane1-canonical-actionability-contract.md",
@@ -8856,7 +8864,13 @@ tests = [
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_test_calls_outer_which_calls_owner_then_witness_is_captured",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_no_path_to_owner_then_witness_is_none",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_path_at_depth_5_then_witness_is_captured",
-  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_path_depth_6_then_witness_is_none",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_path_depth_6_then_the_walk_past_the_bound_names_a_witness",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_witness_within_the_bound_wins_over_a_deeper_one",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::the_walk_past_the_bound_skips_levels_no_test_enters",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_test_declaration_on_a_deep_level_does_not_end_the_walk",
+  "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_chain_past_five_hops_does_not_displace_the_macro_witness",
+  "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_no_static_path_chain_past_five_hops_does_not_displace_the_macro_witness",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::seam_reach_past_five_hops_does_not_displace_a_macro_witness",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_macro_call_in_test_calls_then_witness_is_none",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_callee_not_in_crate_then_witness_is_none",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::transitive_reach_limitation_detail_names_edges_route_and_non_claim",
@@ -13412,6 +13426,13 @@ tests = [
   "crates/ripr/tests/support/mcp_scope_contract.rs::status_and_refresh_advertise_committed_scope_variants",
   "crates/ripr/tests/mcp_stdio.rs::refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation",
   "crates/ripr/tests/mcp_stdio.rs::empty_gap_pages_keep_structured_outcomes_at_the_response_bound",
+  "crates/ripr/tests/mcp_stdio.rs::long_request_ids_refuse_typed_before_the_wire_cap",
+  "crates/ripr/src/mcp/protocol.rs::tests::tool_result_fits_and_refuses_at_the_id_aware_envelope_budget",
+  "crates/ripr/src/mcp/server_tests.rs::long_request_id_refuses_typed_at_the_id_aware_boundary",
+  "crates/ripr/src/mcp/server_tests.rs::outer_envelope_budget_reserves_the_escaped_request_id",
+  "crates/ripr/src/mcp/workspace.rs::tests::list_gaps_honors_the_id_aware_envelope_budget",
+  "crates/ripr/src/mcp/writer.rs::tests::pinned_sdk_wraps_the_measured_envelope_within_the_outer_reserve",
+  "crates/ripr/src/mcp/writer.rs::tests::request_id_escaping_is_charged_exactly_by_the_outer_budget",
   "crates/ripr/src/mcp/workspace.rs::tests::gap_list_summaries_project_readiness_matching_get_gap",
   "crates/ripr/src/mcp/workspace.rs::tests::gap_list_filters_narrow_each_dimension_then_combine_before_paging",
   "crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_filters_at_the_dispatch_edge",
@@ -14416,8 +14437,16 @@ metrics = [
 id = "RIPR-SPEC-0226"
 name = "Findings on one line agree on shared facts"
 spec = "docs/specs/RIPR-SPEC-0226-same-line-finding-agreement.md"
-tests = []
-fixtures = []
+tests = [
+  "crates/ripr/tests/cli_smoke/same_line_owner_tail.rs::retained_split_boundary_tail_keeps_the_predicate_gap_and_exposed_return",
+  "crates/ripr/tests/cli_smoke/same_line_owner_tail.rs::same_test_boundary_assertion_exposes_the_same_line_predicate",
+  "crates/ripr/tests/cli_smoke/same_line_owner_tail.rs::boundary_calls_without_any_oracle_do_not_expose_the_predicate",
+  "crates/ripr/src/analysis/classify/flow.rs::tests::same_line_owner_tail_comparison_reaches_return_sink",
+  "crates/ripr/src/analysis/classify/flow.rs::tests::same_line_owner_tail_refuses_non_tail_ambiguous_and_foreign_predicates",
+]
+fixtures = [
+  "fixtures/rust-verdict-corpus/cases/spec0226-gate-split-boundary-agreement.json",
+]
 code = [
   "crates/ripr/src/analysis/classify/related_tests.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
@@ -14690,6 +14719,7 @@ spec = "docs/specs/RIPR-SPEC-0230-seam-reach-unknown-not-ungripped.md"
 tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::seam_reached_by_no_test_path_stays_ungripped",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::seam_behind_an_unresolved_transitive_path_is_opaque_not_ungripped",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::seam_behind_a_helper_chain_past_five_hops_is_opaque_not_ungripped",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::trait_method_of_a_type_tests_use_is_opaque_not_ungripped",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::trait_method_of_a_type_no_test_reaches_stays_ungripped",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::helper_run_only_through_trait_dispatch_is_opaque_not_ungripped",

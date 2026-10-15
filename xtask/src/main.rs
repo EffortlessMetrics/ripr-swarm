@@ -13372,6 +13372,12 @@ fn check_doc_index() -> Result<(), String> {
 
 const DOC_ARTIFACT_LEDGER: &str = "policy/doc-artifacts.toml";
 const DOC_ARTIFACT_SCHEMA_VERSION: &str = "1.0";
+/// Count of unregistered RIPR-SPEC files when the reverse-direction ratchet
+/// was added (#1718). Lower this as specs are registered.
+const UNREGISTERED_SPEC_BASELINE: usize = 82;
+/// Newest-first bound for named unregistered specs in the reverse-direction
+/// violation (#7400). Remaining ids are summarized, not dropped silently.
+const UNREGISTERED_SPEC_MESSAGE_LIMIT: usize = 8;
 const SUPPORT_TIERS_PATH: &str = "docs/status/SUPPORT_TIERS.md";
 const RUST_REPAIR_TRUST_CORPUS_PATH: &str = "metrics/rust-repair-trust/corpus.json";
 const RUST_GAP_REPAIR_CAPABILITY: &str = "Rust gap repair loop";
@@ -13429,6 +13435,12 @@ struct DocArtifactEntry {
 }
 
 fn check_doc_artifacts() -> Result<(), String> {
+    check_doc_artifacts_with_unregistered_baseline(UNREGISTERED_SPEC_BASELINE)
+}
+
+fn check_doc_artifacts_with_unregistered_baseline(
+    unregistered_spec_baseline: usize,
+) -> Result<(), String> {
     let mut violations = doc_artifact_violations(Path::new("."), Path::new(DOC_ARTIFACT_LEDGER))?;
     // #1718: reverse-direction check — every RIPR-SPEC on disk must be registered
     // in the ledger. This is ratcheted: the current unregistered count is 82, so
@@ -13466,29 +13478,24 @@ fn check_doc_artifacts() -> Result<(), String> {
         }
         Err(err) => return Err(format!("failed to read {}: {err}", specs_dir.display())),
     };
-    let mut unregistered: Vec<String> = Vec::new();
+    let mut unregistered: Vec<(String, String)> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if let Some(spec_id) = spec_id_from_path(&path)
             && !registered.contains(&spec_id)
         {
-            unregistered.push(spec_id);
+            unregistered.push((spec_id, root_relative_path(Path::new("."), &path)));
         }
     }
     // Ratchet: fail only when the unregistered count GROWS beyond the baseline.
     // The baseline (82) is the count at HEAD when this check was added (#1718).
-    // As specs are registered, the baseline should be lowered in this constant.
-    const UNREGISTERED_SPEC_BASELINE: usize = 82;
-    if unregistered.len() > UNREGISTERED_SPEC_BASELINE
-        && let Some(excess) = unregistered.len().checked_sub(UNREGISTERED_SPEC_BASELINE)
-    {
-        violations.push(format!(
-            "reverse-direction: {excess} new RIPR-SPEC file(s) on disk are not registered in {} \
-             (baseline: {UNREGISTERED_SPEC_BASELINE}, current: {}). \
-             Register the new spec(s) or lower the baseline if the count was intentionally reduced.",
-            DOC_ARTIFACT_LEDGER,
-            unregistered.len()
-        ));
+    // As specs are registered, the baseline should be lowered in UNREGISTERED_SPEC_BASELINE.
+    if let Some(violation) = reverse_direction_unregistered_violation(
+        &unregistered,
+        unregistered_spec_baseline,
+        DOC_ARTIFACT_LEDGER,
+    ) {
+        violations.push(violation);
     }
     finish_policy_report(
         PolicyReportSpec {
@@ -13509,6 +13516,48 @@ fn check_doc_artifacts() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+/// Name unregistered RIPR-SPEC ids when the reverse-direction ratchet trips.
+///
+/// The ratchet cannot tell a newly added spec from the grandfathered
+/// unregistered set, so the message lists unregistered identities. Newest spec
+/// ids are shown first so a typical `RIPR-SPEC-NNNN` addition survives the
+/// display bound; remaining entries are summarized with a truncation marker
+/// (#7400).
+fn reverse_direction_unregistered_violation(
+    unregistered: &[(String, String)],
+    baseline: usize,
+    ledger: &str,
+) -> Option<String> {
+    if unregistered.len() <= baseline {
+        return None;
+    }
+    let excess = unregistered.len().checked_sub(baseline)?;
+    Some(format!(
+        "reverse-direction: {excess} new RIPR-SPEC file(s) on disk are not registered in {ledger} \
+         (baseline: {baseline}, current: {}). \
+         unregistered: {}. \
+         Register the new spec(s) or lower the baseline if the count was intentionally reduced.",
+        unregistered.len(),
+        format_unregistered_spec_entries(unregistered),
+    ))
+}
+
+fn format_unregistered_spec_entries(unregistered: &[(String, String)]) -> String {
+    let mut ordered = unregistered.to_vec();
+    ordered.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    let shown: Vec<String> = ordered
+        .iter()
+        .take(UNREGISTERED_SPEC_MESSAGE_LIMIT)
+        .map(|(id, path)| format!("{id} ({path})"))
+        .collect();
+    match ordered.len().checked_sub(shown.len()) {
+        Some(remaining) if remaining > 0 => {
+            format!("{}, … and {remaining} more", shown.join(", "))
+        }
+        _ => shown.join(", "),
+    }
 }
 
 fn doc_artifact_violations(root: &Path, ledger_path: &Path) -> Result<Vec<String>, String> {

@@ -14,6 +14,34 @@ use std::path::PathBuf;
 pub(super) const MAX_MESSAGE_BYTES: usize = 256 * 1024;
 pub(super) const MAX_RESPONSE_BYTES: usize = 128 * 1024;
 
+/// Fixed wire overhead the pinned SDK (rmcp 3.5.1) can add around a
+/// measured tool or resource envelope when it serializes the complete
+/// JSON-RPC response: the `{"jsonrpc":"2.0","id":` + `,"result":` + `}` +
+/// `\n` frame fields (34 bytes) plus, when the negotiated peer keeps the
+/// `2026-07-28` result shape, the `"resultType":"complete",` field (24
+/// bytes). The reserve leaves margin for pinned-SDK field drift. The
+/// request ID itself is not fixed — client-controlled escaping can scale it
+/// to the input cap — so [`outer_envelope_budget`] reserves its actual
+/// JSON-serialized bytes next to this constant (#7768). Pinned against the
+/// real encoder by `writer_tests.rs::pinned_sdk_wraps_the_measured_envelope_within_the_outer_reserve`.
+pub(super) const OUTER_RESPONSE_OVERHEAD_BYTES: usize = 128;
+
+/// The envelope budget one request may fill: the response bound minus the
+/// actual JSON-serialized request id (escaping included) minus the fixed
+/// outer overhead. An envelope that fits this budget provably fits the
+/// writer cap whatever id the client sent, so the semantic layers can
+/// refuse typed (`result_too_large`) before the wire's generic fallback
+/// fires (#7768). A request id whose serialization cannot be measured
+/// (never observed for the pinned SDK's string/number ids) saturates the
+/// budget to zero, which fails closed on every response rather than
+/// shipping an unmeasurable one.
+pub(super) fn outer_envelope_budget(request_id: &rmcp::model::RequestId) -> usize {
+    let id_bytes = serde_json::to_vec(request_id)
+        .map(|bytes| bytes.len())
+        .unwrap_or(usize::MAX);
+    MAX_RESPONSE_BYTES.saturating_sub(id_bytes.saturating_add(OUTER_RESPONSE_OVERHEAD_BYTES))
+}
+
 /// Wire-calibrated ceiling for one tool document that a caller can narrow
 /// with paging (#6021): the tool envelope's text copy escapes every byte in
 /// the worst case, so a document at half the response bound (minus fixed
