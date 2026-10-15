@@ -41,7 +41,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: printed-command-paste-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha || github.sha }}
+  group: printed-command-paste-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha }}
   cancel-in-progress: ${{ !contains(toJSON(inputs), '"subject_sha"') && github.event_name == 'pull_request' }}
 
 # Every command ripr prints, pasted into every shell a user has (#5188, #5232,

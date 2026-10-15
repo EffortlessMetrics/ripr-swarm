@@ -17,7 +17,8 @@ fn input_bindings(source: &str) -> bool {
     let Some((step, _)) = tail.split_once("      - uses: dtolnay") else {
         return false;
     };
-    !step.lines().any(|line| line.starts_with("        if:") || line.starts_with("        continue-on-error:"))
+    source.contains("group: printed-command-paste-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha }}")
+        && !step.lines().any(|line| line.starts_with("        if:") || line.starts_with("        continue-on-error:"))
         && source.contains("cancel-in-progress: ${{ !contains(toJSON(inputs), '\"subject_sha\"') && github.event_name == 'pull_request' }}")
         && [
             "CALLED: ${{ contains(toJSON(inputs), '\"subject_sha\"') }}",
@@ -32,6 +33,10 @@ fn input_bindings(source: &str) -> bool {
 fn input_binding_and_guard_removal_mutants_are_rejected() {
     assert!(input_bindings(WORKFLOW));
     for (old, new) in [
+        (
+            "group: printed-command-paste-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha }}",
+            "group: printed-command-paste-${{ github.sha }}",
+        ),
         (
             "CALLED: ${{ contains(toJSON(inputs), '\"subject_sha\"') }}",
             "CALLED: false",
