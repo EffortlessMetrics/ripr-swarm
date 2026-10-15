@@ -485,7 +485,17 @@ bound to the rechecked SHA (`--force-with-lease=<ref>:<sha>`, never plain
 (`branch-inventory-cleanup.{md,json}`) recording every deleted, skipped,
 changed, and failed branch. No CI or scheduled job runs the apply path.
 
-`gh-pr-status --pr <number>` is the per-PR merge-readiness packet. It reads
+`gh-pr-status --pr <number>` is the per-PR merge-readiness packet.
+It reads the full PR snapshot again after required-context lookup. Both reads
+must identify the requested PR and the same full head/base commits and target
+branch. Movement or unavailable identity returns an error before publishing a
+new readiness packet; existing report files remain historical and must not be
+used as a successful result of that invocation. Head movement requires affected
+head-bound proof/review and integration judgment; base-only movement preserves
+unchanged-head proof/review and requires integration judgment, not blanket
+reruns. When identities match, the final response supplies checks and review
+facts. The warning list records the exact observed commits. This separate read
+is not atomic with a later merge and supplies no merge authority. It reads
 GitHub CLI PR status, branch-protection required contexts when available,
 latest reviews, and Droid-related checks, then writes
 `target/ripr/reports/gh-pr-status.md` and

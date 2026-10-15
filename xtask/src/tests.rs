@@ -54019,3 +54019,71 @@ fn gh_pr_status_provider_quota_observations_preserve_evidence() -> Result<(), St
     );
     Ok(())
 }
+
+#[test]
+fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Result<(), String> {
+    for (status, conclusion, review, expected) in [
+        ("COMPLETED", "SUCCESS", "APPROVED", "merge"),
+        ("IN_PROGRESS", "", "APPROVED", "wait"),
+        ("COMPLETED", "FAILURE", "APPROVED", "inspect failure"),
+        (
+            "COMPLETED",
+            "SUCCESS",
+            "CHANGES_REQUESTED",
+            "inspect failure",
+        ),
+    ] {
+        let first = serde_json::json!({
+            "number":42,"title":"final snapshot","headRefOid":"1111111111111111111111111111111111111111",
+            "baseRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"main",
+            "headRefName":"candidate","isDraft":false,"mergeStateStatus":"CLEAN","reviewDecision":"APPROVED",
+            "latestReviews":[],"comments":[],
+            "statusCheckRollup":[{"__typename":"CheckRun","name":"rust","status":"COMPLETED","conclusion":"SUCCESS"}]
+        });
+        let mut last = first.clone();
+        last["reviewDecision"] = serde_json::json!(review);
+        last["statusCheckRollup"][0]["status"] = serde_json::json!(status);
+        last["statusCheckRollup"][0]["conclusion"] = serde_json::json!(conclusion);
+        let mut reads = 0;
+        let observation = super::gh_pr_status_snapshot::collect_current(
+            42,
+            || {
+                reads += 1;
+                super::collect_gh_pr_status_json_with(42, |program, args| {
+                    assert_eq!(program, "gh");
+                    assert_eq!(&args[..4], ["pr", "view", "42", "--json"]);
+                    let fields = args[4].split(',').collect::<Vec<_>>();
+                    assert!(fields.contains(&"headRefOid") && fields.contains(&"baseRefOid"));
+                    Ok(if reads == 1 {
+                        first.to_string()
+                    } else {
+                        last.to_string()
+                    })
+                })
+            },
+            |target| {
+                assert_eq!(target, "main");
+                Ok(vec!["rust".to_string()])
+            },
+        )?;
+        assert_eq!(reads, 2);
+        let pr = parse_gh_pr_status_pull_request(&observation.pr.to_string())?;
+        let readiness = gh_pr_status_readiness(
+            &pr,
+            &observation.contexts,
+            observation.contexts_available,
+            observation.warnings,
+        );
+        assert_eq!(readiness.safe_next_action, expected);
+        let json: Value =
+            serde_json::from_str(&gh_pr_status_json(&pr, &observation.contexts, &readiness))
+                .map_err(|error| error.to_string())?;
+        assert_eq!(json["safe_next_action"], expected);
+        let markdown = gh_pr_status_markdown(&pr, &observation.contexts, &readiness);
+        assert!(markdown.contains(&format!("safe next action: `{expected}`")));
+        assert!(markdown.contains("1111111111111111111111111111111111111111"));
+        assert!(markdown.contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        assert!(markdown.contains("not atomic"));
+    }
+    Ok(())
+}
