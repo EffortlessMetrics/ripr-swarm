@@ -405,18 +405,22 @@ pub fn check_workflows_impl() -> Result<(), String> {
     let runtime_allowlist = read_count_allowlist("policy/workflow_action_runtime_allowlist.txt")?;
     let mut violations = Vec::new();
 
+    // Share only this invocation's YAML inputs; unbudgeted files still reach
+    // scratch validation. Preflight identity reads remain independent.
+    let mut workflows = Vec::new();
     for path in collect_files(Path::new(".github/workflows"))? {
         let normalized = normalize_path(&path);
         if !(normalized.ends_with(".yml") || normalized.ends_with(".yaml")) {
             continue;
         }
+        let text = read_text_lossy(&path)?;
+        workflows.push((normalized.clone(), text.clone()));
         let Some(budget) = budgets.get(&normalized) else {
             violations.push(format!(
                 "missing workflow budget for {normalized} in policy/workflow_allowlist.txt"
             ));
             continue;
         };
-        let text = read_text_lossy(&path)?;
         violations.extend(workflow_runtime_violations(
             &normalized,
             &text,
@@ -458,7 +462,9 @@ pub fn check_workflows_impl() -> Result<(), String> {
     violations.extend(repository_owned_review_thread_mutation_violations()?);
     validate_assistant_loop_health_fixture_corpus(&mut violations)?;
     violations.extend(routed_rust_workflow_contract_violations_for_repo()?);
-    violations.extend(ci_scratch::scratch_lease_contract_violations_for_repo()?);
+    violations.extend(ci_scratch::scratch_lease_contract_violations_for_workflows(
+        &workflows,
+    )?);
 
     finish_policy_report(
         PolicyReportSpec {

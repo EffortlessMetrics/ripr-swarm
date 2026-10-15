@@ -253,6 +253,11 @@ pub(crate) fn render_pilot_summary_md(
                 "Pilot ranks Rust seams, but Rust is not enabled in `ripr.toml [languages]` ({} not analyzed). This is not a clean result; see Excluded From Pilot's Rust Seam Scan.\n\n",
                 file_count_label(excluded)
             ));
+        } else if let Some((route, command)) = supported_headline_route(context) {
+            out.push_str(&format!(
+                "Analyze the {} diff: `{command}`\n\nPilot ranks Rust seams and found none in this repository. This is not a clean result for the languages listed under Languages Outside The Rust Seam Scan.\n\n",
+                route.language.display_name(),
+            ));
         } else if required_routes(context).is_some() {
             out.push_str(
                 "Pilot ranks Rust seams and found none in this repository. This is not a clean result for the languages listed under Languages Outside The Rust Seam Scan.\n\n",
@@ -630,6 +635,13 @@ pub(crate) fn render_pilot_terminal(
         out.push_str(&format!(
             "  none: pilot ranks Rust seams, but Rust is not enabled in ripr.toml [languages] ({} not analyzed); see the excluded scope below\n\n",
             file_count_label(excluded)
+        ));
+        false
+    } else if let Some((route, command)) = supported_headline_route(context) {
+        out.push_str("Top recommendation:\n");
+        out.push_str(&format!(
+            "  analyze the {} diff: {command}\n  (pilot ranks Rust seams and found none here; see the languages below)\n\n",
+            route.language.display_name(),
         ));
         false
     } else if required_routes(context).is_some() {
@@ -1230,6 +1242,17 @@ fn required_routes<'a>(context: PilotSummaryContext<'a>) -> Option<&'a [PilotLan
     context
         .language_routes
         .and_then(PilotLanguageRoutes::required)
+}
+
+/// Enabled supported-language check route the top recommendation should name
+/// when there is no Rust seam to rank (#7665). Disabled preview languages
+/// keep the none headline.
+fn supported_headline_route(
+    context: PilotSummaryContext<'_>,
+) -> Option<(&PilotLanguageRoute, &str)> {
+    context
+        .language_routes
+        .and_then(PilotLanguageRoutes::supported_headline_route)
 }
 
 /// Rust files excluded by `[languages] enabled`, when the exclusion emptied

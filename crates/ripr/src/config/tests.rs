@@ -1200,6 +1200,86 @@ fn malformed_or_unknown_config_is_actionable() {
 }
 
 #[test]
+fn relative_config_paths_reject_nul_before_filesystem_use() {
+    for (field, source) in [
+        (
+            "suppressions.path",
+            r#"[suppressions]
+path = ".ripr/suppressions\u0000.toml"
+"#,
+        ),
+        (
+            "analysis.production_like_targets",
+            r#"[analysis]
+production_like_targets = ["tests/\u0000support.rs"]
+"#,
+        ),
+        (
+            "analysis.test_harnesses[0].target",
+            r#"[[analysis.test_harnesses]]
+registration_id = "custom"
+target = "tests/custom.rs\u0000"
+kind = "custom_harness"
+adapter = "libtest_mimic_v1"
+marker = "libtest_mimic"
+"#,
+        ),
+        (
+            "profiles.bun_ub.test_roots",
+            r#"[profiles.bun_ub]
+test_roots = ["\u0000test/**/*.ts"]
+bridge_hints = "ripr.bun.bridge.toml"
+"#,
+        ),
+        (
+            "profiles.bun_ub.bridge_hints",
+            r#"[profiles.bun_ub]
+test_roots = ["test/**/*.ts"]
+bridge_hints = "ripr.bun.bridge\u0000.toml"
+"#,
+        ),
+        (
+            "perl.cache_dir",
+            r#"[perl]
+cache_dir = "target/\u0000perl-facts"
+"#,
+        ),
+    ] {
+        let error = parse_config(source).expect_err("NUL cannot name a filesystem path");
+        assert_eq!(error, format!("{field} must not contain NUL characters"));
+        assert!(!error.contains('\0'), "diagnostics must not echo the NUL");
+    }
+}
+
+#[test]
+fn relative_config_paths_preserve_normalization_spaces_and_unicode() -> Result<(), String> {
+    let config = parse_config(
+        r#"[suppressions]
+path = "  ./.ripr//café policy.toml  "
+[analysis]
+production_like_targets = [" ./tests//café support.rs "]
+[perl]
+cache_dir = " ./target//perl facts "
+"#,
+    )?;
+    assert_eq!(
+        config.suppressions.path,
+        PathBuf::from(".ripr/café policy.toml")
+    );
+    assert_eq!(
+        config.analysis.production_like_targets,
+        [PathBuf::from("tests/café support.rs")]
+            .into_iter()
+            .collect()
+    );
+    assert_eq!(
+        config.perl.cache_dir,
+        Some(PathBuf::from("target/perl facts"))
+    );
+    Ok(())
+}
+
+#[test]
 fn config_rejects_unsafe_suppression_paths() {
     for text in [
         "[suppressions]\npath = \"\"\n".to_string(),

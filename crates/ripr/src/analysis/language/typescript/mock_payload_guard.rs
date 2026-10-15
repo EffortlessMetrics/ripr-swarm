@@ -834,10 +834,11 @@ fn trailing_identifier(text: &str) -> &str {
 
 /// RIPR-SPEC-0256 rule 1: the masked changed line occurs once in the masked
 /// owner `body`, outside every brace, parenthesis and bracket, right after
-/// the start of the body, a `;` or a `}`, and holds no `=>`, `function` or
-/// method-like block (see [`has_method_like_block`]).
-/// A line after `=>` (an expression-bodied arrow), after `if (...)` or
-/// `else` without a block, or inside a callback refuses.
+/// the start of the body, a `;`, a `}` or the head of a top-level braceless
+/// `if (...)` / `else` (see [`follows_braceless_if_or_else`]), and holds no
+/// `=>`, `function` or method-like block (see [`has_method_like_block`]).
+/// A line after `=>` (an expression-bodied arrow) or inside a callback
+/// refuses.
 fn changed_line_is_top_level_statement(body: &str, line_text: &str) -> bool {
     let masked_line = ts_mask_literals_and_comments(line_text);
     let statement = masked_line.trim();
@@ -866,12 +867,50 @@ fn changed_line_is_top_level_statement(body: &str, line_text: &str) -> bool {
             _ => {}
         }
     }
+    let before = body[..at].trim_end();
     depth == 0
-        && body[..at]
-            .trim_end()
+        && (before
             .chars()
             .next_back()
             .is_none_or(|c| matches!(c, ';' | '}'))
+            || follows_braceless_if_or_else(before))
+}
+
+/// RIPR-SPEC-0256 rule 1 (2026-10-15): `true` when `before`, the masked
+/// body text before a top-level changed line with its trailing space
+/// trimmed, ends with the head of a braceless branch that runs the line at
+/// most once: `if (...)` whose `if` starts a statement (after the start of
+/// the body, a `;` or a `}`), or `else` after a `;` or a `}`. That position
+/// rule also refuses a word that ends a property access (`cfg.if (x)`,
+/// `cfg.else`), since a `.` precedes it. The caller has
+/// already placed the line outside every brace, parenthesis and bracket, so
+/// the `if` / `else` sits directly in the owner body, not in a nested
+/// function. A nested `if (a) if (b)`, an `else if (...)`, a labelled `if`,
+/// an `else` right after a `)` and any other word before `(...)` refuse,
+/// which under-credits rather than guess.
+fn follows_braceless_if_or_else(before: &str) -> bool {
+    if before.ends_with(')') {
+        let Some(open) = matching_open_paren(before) else {
+            return false;
+        };
+        let head = before[..open].trim_end();
+        let word = trailing_identifier(head);
+        if word != "if" {
+            return false;
+        }
+        return head[..head.len() - word.len()]
+            .trim_end()
+            .chars()
+            .next_back()
+            .is_none_or(|c| matches!(c, ';' | '}'));
+    }
+    let word = trailing_identifier(before);
+    word == "else"
+        && before[..before.len() - word.len()]
+            .trim_end()
+            .chars()
+            .next_back()
+            .is_some_and(|c| matches!(c, ';' | '}'))
 }
 
 /// `true` when `statement` cannot continue the expression on the line before
