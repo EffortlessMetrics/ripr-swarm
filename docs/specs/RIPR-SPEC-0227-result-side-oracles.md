@@ -270,22 +270,30 @@ rejected alternative. Any can be reversed later without touching the rest.
    Adopted (2026-10-14). `assert_eq!(owner(..).ok(), None)`, in either
    operand order and with or without a message, asserts the `Err` side
    as `is_err()` does: `.ok()` is `None` exactly when the call returned
-   `Err`. Decision 4's other conditions are unchanged. The `None` may also
-   come from two places.
-   - A constant-row table (#5328): a top-level unlabeled `for` of the test
-     whose body holds `assert_eq!(owner(..).ok(), want)` as a direct
-     statement, with no `break` or `continue` in the body, where `want` is
-     a table column with a `None` cell. The loop runs that row, so its
+   `Err`. Decision 4's other conditions are unchanged. No item other
+   than a `fn` (a `const`, `static`, `struct`, `as` rename, binding) in
+   the test file may carry the owner's name, the test body may not
+   import it, and the body's top-level statements and tail expression
+   are read. A diverging call before the assertion
+   (`std::process::exit`) is not yet refused (#8015).
+   The `None` may also come from two places.
+   - A constant-row table, as #5328 defines it: a top-level unlabeled
+     `for` of the test whose own pattern binds `want`, whose body holds
+     `assert_eq!(owner(..).ok(), want)` as a direct statement with no
+     `break`, `continue` or block item (`use`, `const`, ..), and where
+     `want` is a column with a `None` cell. The loop runs that row, so its
      call returned `Err`.
    - A check helper: a top-level test call `helper(.., None, ..)` whose
      arguments hold no call, macro, closure or block, to a unique free
      function declared beside the test in the same module, without
-     attributes, generics or `self`. No other item, import, rename or
-     binding in the test file carries the helper's name. The helper's
-     body holds that assertion as a direct statement, `want` is a plain
-     parameter the call fills with `None`, and the body has no `return`,
-     `?`, `break`, `continue`, closure, nested item or non-assertion
-     macro, and binds neither the owner's name nor a parameter's.
+     attributes, generics, `async` or `self`. No other item, import,
+     rename or binding in the test file carries the helper's name. Every
+     helper parameter is a plain identifier, none is named like the
+     owner, and the call fills each one. The helper's body holds that
+     assertion as a direct statement, `want` is the parameter the call
+     fills with `None`, and the body has no `return`, `?`, `break`,
+     `continue`, closure, attribute, block item or non-assertion macro,
+     and binds neither the owner's name nor a parameter's.
 
    All three forms read the text `None`, so a test file that can rebind
    that name (a `const`, `static`, variant or other item named `None`, a

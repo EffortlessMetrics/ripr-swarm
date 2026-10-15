@@ -469,6 +469,18 @@ fn asserts_owner_err_inner(root: &SyntaxNode, function: &ast::Fn, owner: &str) -
     {
         return None;
     }
+    // A file-level `const owner: fn(..) = ..`, `static`, `struct` or
+    // `as owner` rename makes `owner(..)` something other than the owner.
+    // A second `fn owner` already fails the unique-function lookups.
+    if root.descendants().filter_map(ast::Name::cast).any(|bound| {
+        bound.text() == owner
+            && !bound
+                .syntax()
+                .parent()
+                .is_some_and(|parent| ast::Fn::can_cast(parent.kind()))
+    }) {
+        return None;
+    }
     let body = function.body()?;
     for node in body.syntax().descendants() {
         if ast::ReturnExpr::can_cast(node.kind())
@@ -486,9 +498,10 @@ fn asserts_owner_err_inner(root: &SyntaxNode, function: &ast::Fn, owner: &str) -
         {
             return None;
         }
-        if ast::IdentPat::cast(node)
-            .is_some_and(|pat| pat.name().is_some_and(|n| n.text() == owner))
-        {
+        // A local binding, block item (`const owner: fn(..) = ..`) or
+        // import (`use x::owner`, `use x as owner`) of the owner's name
+        // makes `owner(..)` call something else.
+        if binds_name(&node, owner) {
             return None;
         }
     }
@@ -580,10 +593,23 @@ fn table_row_observes_err(expression: &ast::Expr, function: &ast::Fn, owner: &st
         return false;
     };
     if body.syntax().descendants().any(|node| {
-        ast::BreakExpr::can_cast(node.kind()) || ast::ContinueExpr::can_cast(node.kind())
+        ast::BreakExpr::can_cast(node.kind())
+            || ast::ContinueExpr::can_cast(node.kind())
+            // `use consts::want;` in the body hides the row binding.
+            || is_block_item(&node)
     }) {
         return false;
     }
+    // The column must be bound by this loop's own pattern, not by another
+    // table loop of the test.
+    let binds_in_pattern = |name: &str| {
+        for_expr.pat().is_some_and(|pat| {
+            pat.syntax()
+                .descendants()
+                .filter_map(ast::IdentPat::cast)
+                .any(|pattern| pattern.name().is_some_and(|bound| bound.text() == name))
+        })
+    };
     let fn_text = function.syntax().text().to_string();
     body.statements()
         .filter_map(|statement| match statement {
@@ -594,6 +620,7 @@ fn table_row_observes_err(expression: &ast::Expr, function: &ast::Fn, owner: &st
         .any(|assertion| {
             ok_side_expected(&assertion, owner).is_some_and(|expected| {
                 is_plain_identifier(&expected)
+                    && binds_in_pattern(&expected)
                     && crate::analysis::syntax::constant_table_column(&fn_text, &expected)
                         .is_some_and(|cells| cells.iter().any(|cell| cell.trim() == "None"))
             })
@@ -679,6 +706,7 @@ fn helper_call_observes_err(
         .param_list()
         .is_some_and(|list| list.self_param().is_some())
         || parameters.len() != arguments.len()
+        || parameters.iter().any(|parameter| parameter == owner)
     {
         return false;
     }
@@ -692,6 +720,11 @@ fn helper_call_observes_err(
             || ast::BreakExpr::can_cast(node.kind())
             || ast::ContinueExpr::can_cast(node.kind())
             || ast::TryExpr::can_cast(node.kind())
+            // A block item (`const`, `use`, `static`) can rebind the
+            // owner's or a parameter's name, and `#[cfg(..)]` can compile
+            // the assertion out.
+            || is_block_item(&node)
+            || ast::Attr::can_cast(node.kind())
         {
             return false;
         }
@@ -705,12 +738,7 @@ fn helper_call_observes_err(
         if ast::IdentPat::cast(node).is_some_and(|pattern| {
             pattern.name().is_some_and(|bound| {
                 let bound = bound.text();
-                bound == owner
-                    || (parameters.iter().any(|parameter| *parameter == bound)
-                        && !pattern
-                            .syntax()
-                            .parent()
-                            .is_some_and(|parent| ast::Param::can_cast(parent.kind())))
+                bound == owner || parameters.iter().any(|parameter| *parameter == bound)
             })
         }) {
             return false;
@@ -747,14 +775,29 @@ fn file_binds_name(root: &SyntaxNode, name: &str, except: Option<&ast::Name>) ->
         if let Some(bound) = ast::Name::cast(node.clone()) {
             return bound.text() == name && except.is_none_or(|except| *except != bound);
         }
-        ast::UseTree::cast(node).is_some_and(|tree| {
-            tree.rename().is_none()
-                && tree
-                    .path()
-                    .and_then(|path| path.segment())
-                    .and_then(|segment| segment.name_ref())
-                    .is_some_and(|segment| segment.text() == name)
-        })
+        binds_name(&node, name)
+    })
+}
+
+/// An item declared inside a block (`const`, `static`, `use`, `struct`,
+/// ..). Macro calls parse as items too and are judged separately.
+fn is_block_item(node: &SyntaxNode) -> bool {
+    ast::Item::can_cast(node.kind()) && !ast::MacroCall::can_cast(node.kind())
+}
+
+/// Whether this one node binds `name`: a `Name` (item, variant, `as`
+/// rename or binding) or a `use` whose last segment is `name`.
+fn binds_name(node: &SyntaxNode, name: &str) -> bool {
+    if let Some(bound) = ast::Name::cast(node.clone()) {
+        return bound.text() == name;
+    }
+    ast::UseTree::cast(node.clone()).is_some_and(|tree| {
+        tree.rename().is_none()
+            && tree
+                .path()
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .is_some_and(|segment| segment.text() == name)
     })
 }
 
@@ -1038,6 +1081,62 @@ mod tests {
             (
                 "a helper name renamed onto a struct",
                 "struct Check(&'static str, Option<u16>);\nuse Check as check;\nmod dead {\n    pub fn check(text: &str, want: Option<u16>) {\n        assert_eq!(port(text).ok(), want);\n    }\n}\n#[test]\nfn t() {\n    check(\"http\", None);\n}\n",
+            ),
+            (
+                "a helper called with a non-None constant",
+                "fn check(text: &str, want: Option<u16>) {\n    assert_eq!(port(text).ok(), want);\n}\n#[test]\nfn t() {\n    check(\"80\", WANT);\n}\n",
+            ),
+            (
+                "None filling a parameter the helper does not compare",
+                "fn check(text: &str, want: Option<u16>, note: Option<u16>) {\n    assert_eq!(port(text).ok(), want);\n}\n#[test]\nfn t() {\n    check(\"80\", WANT, None);\n}\n",
+            ),
+            (
+                "a test-local binding of the helper's name",
+                "fn check(text: &str, want: Option<u16>) {\n    assert_eq!(port(text).ok(), want);\n}\nfn skip(_: &str, _: Option<u16>) {}\n#[test]\nfn t() {\n    let check = skip;\n    check(\"http\", None);\n}\n",
+            ),
+            (
+                "a helper-local const rebinding the owner",
+                "fn check(text: &str, want: Option<u16>) {\n    const port: fn(&str) -> Result<u16, ()> = other;\n    assert_eq!(port(text).ok(), want);\n}\n#[test]\nfn t() {\n    check(\"http\", None);\n}\n",
+            ),
+            (
+                "a test-local const rebinding the owner",
+                "#[test]\nfn t() {\n    const port: fn(&str) -> Result<u16, ()> = other;\n    assert_eq!(port(\"80\").ok(), None);\n}\n",
+            ),
+            (
+                "a test-local import renamed onto the owner",
+                "#[test]\nfn t() {\n    use crate::other as port;\n    assert_eq!(port(\"80\").ok(), None);\n}\n",
+            ),
+            (
+                "a bare None pattern in the file (fail closed)",
+                "fn kind(v: Option<u16>) -> u8 {\n    match v {\n        None => 0,\n        Some(_) => 1,\n    }\n}\n#[test]\nfn t() {\n    assert_eq!(port(\"http\").ok(), None);\n}\n",
+            ),
+            (
+                "a helper-local const hiding the compared parameter",
+                "fn check(text: &str, want: Option<u16>) {\n    const want: Option<u16> = Some(3);\n    assert_eq!(port(text).ok(), want);\n}\n#[test]\nfn t() {\n    check(\"http\", None);\n}\n",
+            ),
+            (
+                "a helper parameter named like the owner",
+                "fn check(text: &str, want: Option<u16>, port: fn(&str) -> Result<u16, ()>) {\n    assert_eq!(port(text).ok(), want);\n}\n#[test]\nfn t() {\n    check(\"http\", None, fake);\n}\n",
+            ),
+            (
+                "a cfg-gated helper assertion",
+                "fn check(text: &str, want: Option<u16>) {\n    #[cfg(any())]\n    assert_eq!(port(text).ok(), want);\n}\n#[test]\nfn t() {\n    check(\"http\", None);\n}\n",
+            ),
+            (
+                "an import hiding the row binding in the loop",
+                "#[test]\nfn t() {\n    let cases = [(\"12\", None), (\"3\", Some(7))];\n    for (text, want) in cases {\n        use consts::want;\n        assert_eq!(port(text).ok(), want);\n    }\n}\n",
+            ),
+            (
+                "a None column bound by a different loop",
+                "#[test]\nfn t() {\n    let cases = [(\"12\", None)];\n    for (text, want) in cases {\n        let _ = (text, want);\n    }\n    for _row in [1] {\n        assert_eq!(port(\"12\").ok(), want);\n    }\n}\n",
+            ),
+            (
+                "a file-level const rebinding the owner",
+                "const port: fn(&str) -> Result<u16, ()> = fake;\n#[test]\nfn t() {\n    assert_eq!(port(\"80\").ok(), None);\n}\n",
+            ),
+            (
+                "a file-level struct named like the owner",
+                "struct port<'a>(&'a str);\n#[test]\nfn t() {\n    assert_eq!(port(\"80\").ok(), None);\n}\n",
             ),
             (
                 "a helper that may leave through ?",
