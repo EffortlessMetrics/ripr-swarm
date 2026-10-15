@@ -1085,7 +1085,7 @@ jobs:
     );
 }
 #[test]
-fn staged_self_hosted_conditions_reject_missing_status_and_header_decoys() {
+fn staged_self_hosted_conditions_reject_missing_status_and_header_decoys() -> Result<(), String> {
     let workflow = include_str!("../../../.github/workflows/routed-rust.yml");
     let reusable = include_str!("../../../.github/workflows/rust-gates.yml");
     let findings = |source: &str| {
@@ -1093,7 +1093,7 @@ fn staged_self_hosted_conditions_reject_missing_status_and_header_decoys() {
     };
     for target in ["cx43", "cpx42", "cx53"] {
         let job = format!("rust-{target}");
-        let condition = routed_rust_job_condition(workflow, &job).expect("real job condition");
+        let condition = routed_rust_job_condition(workflow, &job).ok_or("real job condition")?;
         assert!(condition.starts_with("!cancelled() &&"));
         assert!(
             !findings(workflow)
@@ -1102,7 +1102,7 @@ fn staged_self_hosted_conditions_reject_missing_status_and_header_decoys() {
         );
         let (_, block) = workflow
             .split_once(&format!("  {job}:\n"))
-            .expect("real job");
+            .ok_or("real job")?;
         let block = block
             .lines()
             .take_while(|line| !line.starts_with("  ") || line.starts_with("   "))
@@ -1129,4 +1129,5 @@ fn staged_self_hosted_conditions_reject_missing_status_and_header_decoys() {
         routed_rust_job_condition(decoy, "rust-cx43").as_deref(),
         Some("false")
     );
+    Ok(())
 }
