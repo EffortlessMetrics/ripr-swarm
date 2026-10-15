@@ -424,6 +424,28 @@ fn match_object_pin_looks_through_a_test_local_identity_helper() -> Result<(), S
     assert_eq!(tests[0].assertions.len(), 1);
     let finding = profile_finding("match-object-shadowed-namespace", &shadowed)?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    // A dynamic import is the owner namespace only as the whole
+    // initializer: a chained `.then(...)` binds the callback's value.
+    let dynamic = |init: &str| {
+        format!(
+            "import {{ buildProfile }} from \"../src/profile\";\nfunction normalize<T>(value: T): T {{\n  return value;\n}}\ntest(\"profile records adulthood\", async () => {{\n  const ns = {init};\n  buildProfile(\"ana\", 17);\n{pin}\n}});\n"
+        )
+    };
+    let finding = profile_finding(
+        "match-object-dynamic-namespace",
+        &dynamic("await import(\"../src/profile\")"),
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    let finding = profile_finding(
+        "match-object-chained-dynamic-namespace",
+        &dynamic("await import(\"../src/profile\").then(() => fakeProfiles())"),
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
 
     for (label, helper) in [
         (

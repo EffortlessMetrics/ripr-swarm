@@ -3411,6 +3411,23 @@ fn dynamic_import_namespace_bindings(body_text: &str) -> Vec<DynamicImportBindin
             if !closed {
                 continue;
             }
+            // The import must be the whole initializer: `)` then the end of
+            // the statement. `import("m").then(() => fake())` binds the
+            // callback's value, not the module namespace.
+            cursor = skip_spaces(&masked_chars, cursor + 1);
+            if masked_chars.get(cursor) != Some(&')') {
+                continue;
+            }
+            let mut tail = cursor + 1;
+            while tail < masked_chars.len()
+                && masked_chars[tail].is_whitespace()
+                && masked_chars[tail] != '\n'
+            {
+                tail += 1;
+            }
+            if !matches!(masked_chars.get(tail), None | Some(';' | '\n' | '\r' | '}')) {
+                continue;
+            }
             bindings.push(DynamicImportBinding {
                 binding,
                 source: module,
