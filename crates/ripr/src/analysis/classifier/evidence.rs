@@ -697,12 +697,8 @@ impl ClassifiedProbeEvidence {
                                 context.probe,
                                 owner,
                                 test,
-                                &|line| {
-                                    test.assertions.iter().any(|assertion| {
-                                        assertion.line == line
-                                            && pin_syntax.admits(test, assertion, context.index)
-                                    })
-                                },
+                                context.index,
+                                pin_syntax,
                             )
                     })
             });

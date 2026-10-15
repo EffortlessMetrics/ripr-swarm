@@ -268,9 +268,17 @@ rejected alternative. Any can be reversed later without touching the rest.
 
 8. **Fields of a returned array element (2026-10-15, #7858).** When the
    owner is a free function whose whole body is one array literal of struct
-   literals of the same type, none with a `..base`, and the changed field
-   `f` is built in exactly one element `k`, a related test pins `f` of
-   element `k` when all of these hold:
+   literals of the same type, none with a `..base` and no attribute anywhere
+   in the array (a `#[cfg]` element may be compiled out and shift every
+   later index), and the changed field `f` is built in exactly one element
+   `k`, a related test pins `f` of element `k` when all of these hold:
+
+   - `f` is declared once, without attributes, as a primitive integer
+     (`u8`..`u128`, `usize`, `i8`..`i128`, `isize`) on the one workspace
+     struct of that name, which has no generic parameters, and no workspace
+     type, alias, rename or foreign import rebinds that integer name, so
+     `==` against an integer literal is the built-in comparison and not a
+     workspace `PartialEq`;
 
    - the owner's name is the name of no other indexed function, because the
      owner call is matched by name and a nested module's `super::rows` or a
@@ -284,7 +292,12 @@ rejected alternative. Any can be reversed later without touching the rest.
      whole test body binds nowhere else, so nothing can rebind the receiver,
      exit or settle the test before it runs;
    - the receiver is that binding or a direct call of the owner by name (or
-     `super::`, `crate::`), and the call's arguments are literals or paths;
+     `super::`, `crate::`), the call's arguments are literals or paths, and
+     the shared free-call binding authority that targeted owner selection
+     uses (`targeted_free_call_reaches_owner`) places the call on the owner:
+     no `const`, `static`, import or item in the test's scope takes the
+     name. The receiver's own `let rows = rows(..)` is read with its binding
+     renamed, since the call runs before the binding takes the name;
    - the macro is a bare `assert_eq!` or `assert!` (a qualified path may be
      any crate's macro), and the shared assertion-context validator that
      owner pins use admits the assertion on that line (a local or imported
@@ -293,7 +306,11 @@ rejected alternative. Any can be reversed later without touching the rest.
    - it is `assert_eq!(recv[k].f, literal)`, in either order, with `k` an
      integer literal; or `assert!(recv.iter().any(|r| r.f == literal))`
      (`into_iter`, literal first, no message), where every other element
-     builds `f` from a decimal integer literal different from `literal`.
+     builds `f` from a decimal integer literal different from `literal`,
+     and every `fn iter`, `fn into_iter` or `fn any` written in a workspace
+     file is an indexed free, local or inherent function, so no trait
+     method or macro can make the membership iterate something other than
+     the returned elements.
 
    The membership needs the last condition because it holds through any
    element: with `[Row { total: 33 }, Row { total: a + b }]`,
@@ -303,8 +320,10 @@ rejected alternative. Any can be reversed later without touching the rest.
    or pattern closure parameter, a `let mut` or shadowed receiver, a
    `#[should_panic]` or `#[ignore]` test, an assertion message, a statement
    before the assertion (a macro that may rebind the receiver,
-   `std::process::exit`), a locally defined `assert_eq!` and a method owner
-   all keep the `FieldValue` missing discriminator. Owner calls get the same
+   `std::process::exit`), a locally defined `assert_eq!`, a method owner, a
+   `const rows: fn(..)` in the test module, a trait `iter` on the array, a
+   `#[cfg]` element and a field type with its own `PartialEq` all keep the
+   `FieldValue` missing discriminator. Owner calls get the same
    same-name import and cross-package defeats as reveal's owner pins. A
    `vec![..]` owner, a `let r = &rows[1]` or `let [_, r] = rows` read and a
    collected scalar owner are not covered. Rejected: crediting any
@@ -402,7 +421,9 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
 - Decision 8: `crates/ripr/tests/returned_element_field_pin.rs` (the
   membership and index pins read `exposed`; the `total: 33` decoy, a
   computed sibling, another element's index, a shadowed receiver, a faked
-  or skipped assertion and a nested module's same-name `rows` keep the gap)
+  or skipped assertion, a nested module's same-name `rows`, a callable
+  `const`, a trait `iter`, a `#[cfg]` element and a custom `PartialEq` keep
+  the gap)
   and the unit tests in
   `crates/ripr/src/analysis/classify/element_field_pin.rs`.
 - Planned: oracle classifier unit tests for braces outside struct-literal

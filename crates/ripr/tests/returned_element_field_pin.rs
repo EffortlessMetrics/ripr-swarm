@@ -112,7 +112,11 @@ fn field_class_with(first: &str, items: &str, body: &str) -> Result<ExposureClas
 }
 
 fn field_class_of(lib: &str, first: &str) -> Result<ExposureClass, String> {
-    let findings = TempRepo::create(lib, &diff(first))?.findings()?;
+    field_class_in(lib, &diff(first))
+}
+
+fn field_class_in(lib: &str, diff: &str) -> Result<ExposureClass, String> {
+    let findings = TempRepo::create(lib, diff)?.findings()?;
     let field = findings
         .iter()
         .find(|finding| {
@@ -231,5 +235,128 @@ pub mod inner {
 }
 ";
     assert_eq!(field_class_of(lib, "0")?, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+/// Each decoy lets the assertion pass through something other than the
+/// changed element's integer field, so none observes it (#8059 review).
+#[test]
+fn a_decoy_the_shared_checks_catch_keeps_the_gap() -> Result<(), String> {
+    for (items, body, label) in [
+        (
+            "    trait Decoy {\n        fn iter(&self) -> std::iter::Once<Row>;\n    }\n    impl Decoy for [Row; 2] {\n        fn iter(&self) -> std::iter::Once<Row> {\n            std::iter::once(Row { total: 33 })\n        }\n    }\n",
+            ANY,
+            "a trait supplies the array's iter",
+        ),
+        (
+            "    fn decoy(_a: u32, _b: u32) -> [Row; 2] {\n        [Row { total: 33 }, Row { total: 33 }]\n    }\n    const rows: fn(u32, u32) -> [Row; 2] = decoy;\n",
+            "        assert_eq!(rows(30, 3)[1].total, 33);",
+            "a callable const takes the bare call",
+        ),
+    ] {
+        assert_eq!(
+            field_class_with("0", items, body)?,
+            ExposureClass::WeaklyExposed,
+            "{label}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_element_cfg_may_drop_or_a_custom_equality_keeps_the_gap() -> Result<(), String> {
+    let cfg = TempRepo::create(
+        "pub struct Row {
+    pub total: u32,
+}
+
+pub fn rows(a: u32, b: u32) -> [Row; 3] {
+    [#[cfg(feature = \"x\")] Row { total: 0 }, Row { total: a + b + 0 }, Row { total: 33 }]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rows_carry_the_sum() {
+        assert_eq!(rows(30, 3)[1].total, 33);
+    }
+}
+",
+        "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,3 +5,3 @@
+ pub fn rows(a: u32, b: u32) -> [Row; 3] {
+-    [#[cfg(feature = \"x\")] Row { total: 0 }, Row { total: a + b }, Row { total: 33 }]
++    [#[cfg(feature = \"x\")] Row { total: 0 }, Row { total: a + b + 0 }, Row { total: 33 }]
+ }
+",
+    )?;
+    let findings = cfg.findings()?;
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.probe.location.line == 6
+                && finding.probe.family == ProbeFamily::FieldConstruction
+                && finding.class != ExposureClass::Exposed),
+        "a cfg-dropped element shifts the index: {findings:?}"
+    );
+    let equality = "pub struct Value(pub u32);
+
+pub struct Row {
+    pub total: Value,
+}
+
+pub fn rows(a: Value, b: Value) -> [Row; 2] {
+    [Row { total: Value(0) }, Row { total: a + b + 0 }]
+}
+
+impl PartialEq<i32> for Value {
+    fn eq(&self, _: &i32) -> bool {
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const A: Value = Value(30);
+    const B: Value = Value(3);
+
+    #[test]
+    fn rows_carry_the_sum() {
+        assert_eq!(rows(A, B)[1].total, 33);
+    }
+}
+";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -7,3 +7,3 @@
+ pub fn rows(a: Value, b: Value) -> [Row; 2] {
+-    [Row { total: Value(0) }, Row { total: a + b }]
++    [Row { total: Value(0) }, Row { total: a + b + 0 }]
+ }
+";
+    let findings = TempRepo::create(equality, diff)?.findings()?;
+    let field = findings
+        .iter()
+        .find(|finding| {
+            finding.probe.location.line == 8
+                && finding.probe.family == ProbeFamily::FieldConstruction
+        })
+        .ok_or_else(|| {
+            format!("premise: a field_construction finding on line 8, got {findings:?}")
+        })?;
+    assert_ne!(
+        field.class,
+        ExposureClass::Exposed,
+        "a PartialEq that ignores the value"
+    );
     Ok(())
 }

@@ -4954,6 +4954,52 @@ const EQUALITY_DEPTH_LIMIT: usize = 4;
 /// must have derived equality ([`derived_equality`]); `field` must carry no
 /// attribute and its type must compare by value. Anything ripr cannot read
 /// fails closed.
+/// RIPR-SPEC-0225 decision 8: whether `field` of `type_name` is declared as
+/// a primitive integer, so comparing it to an integer literal is the
+/// built-in `==`. `type_name` is declared once in the workspace, in a
+/// parser-backed file, without generic parameters; the field is named once,
+/// carries no attribute, and its type is a standard integer name that no
+/// workspace type, alias, rename or foreign import rebinds in the declaring
+/// file. Anything else refuses.
+pub(in crate::analysis) fn field_is_builtin_integer(
+    type_name: &str,
+    field: &str,
+    index: &RustIndex,
+) -> bool {
+    let mut declaring = index.files().values().filter(|facts| {
+        facts.source.contains(type_name)
+            && declares_type(&mask_comments_and_strings(&facts.source), type_name)
+    });
+    let Some(declaring_file) = declaring.next() else {
+        return false;
+    };
+    if declaring.next().is_some() || declaring_file.used_lexical_fallback {
+        return false;
+    }
+    let Some(facts) = local_type_equality(&declaring_file.source, type_name) else {
+        return false;
+    };
+    if facts.generic_params {
+        return false;
+    }
+    let mut named = facts
+        .fields
+        .iter()
+        .filter(|candidate| candidate.name.as_deref() == Some(field));
+    let (Some(found), None) = (named.next(), named.next()) else {
+        return false;
+    };
+    let ty = found.ty.trim();
+    !found.has_attributes
+        && BUILTIN_INTEGERS.contains(&ty)
+        && !type_declared_in_workspace(ty, index)
+        && !declaring_file_rebinds(&declaring_file.source, ty, false, index)
+}
+
+const BUILTIN_INTEGERS: &[&str] = &[
+    "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+];
+
 fn field_compares_with_derived_equality(type_name: &str, field: &str, index: &RustIndex) -> bool {
     derived_equality(type_name, index).is_some_and(|(facts, declaring)| {
         let mut named = facts

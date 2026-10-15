@@ -15,7 +15,10 @@
 //! binding of a direct owner call, and the assertion is a top-level statement
 //! of a plain `#[test]` that cannot leave before it.
 
-use super::super::rust_index::{FunctionSummary, TestSummary};
+use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
+use super::owner_pin::{
+    OwnerPinSyntax, field_is_builtin_integer, targeted_free_call_reaches_owner,
+};
 use crate::analysis::facts::FunctionContainer;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::Probe;
@@ -25,14 +28,148 @@ use ra_ap_syntax::{
 };
 
 /// Whether `test` pins the field `probe` constructs inside the array `owner`
-/// returns, through that element alone. `admitted` is the shared assertion
-/// context validator (macro rebinding, escapes, module composition) for the
-/// assertion on a test line; this reading never stands in for it.
+/// returns, through that element alone. The shared owner-pin authorities
+/// decide what this syntax reading cannot: the assertion's context, what the
+/// owner call binds, and the field's equality.
 pub(in crate::analysis) fn observes_returned_element_field(
     probe: &Probe,
     owner: &FunctionSummary,
     test: &TestSummary,
-    admitted: &dyn Fn(usize) -> bool,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    observes_with(
+        probe,
+        owner,
+        test,
+        &SharedAuthority {
+            owner,
+            test,
+            index,
+            syntax,
+        },
+    )
+}
+
+/// The questions the element pin defers to a shared authority.
+trait PinAuthority {
+    /// The shared assertion-context validator (macro rebinding, escapes,
+    /// module composition) admits the assertion on test line `line`.
+    fn admits_line(&self, line: usize) -> bool;
+    /// The owner call, bare (`None`) or through the path `prefix`, can only
+    /// reach the owner: no same-named `fn`, `const`, `static` or import in
+    /// the test's scope takes it. `receiver` is the test's own binding of
+    /// the call's result, when it has one.
+    fn call_reaches_owner(&self, prefix: Option<&str>, receiver: Option<&Receiver>) -> bool;
+    /// `field` of the one struct `type_name` is declared as a primitive
+    /// integer, so `==` against an integer literal is the built-in one.
+    fn field_is_builtin_integer(&self, type_name: &str, field: &str) -> bool;
+    /// A trait method or macro in the workspace may supply `iter`,
+    /// `into_iter` or `any` to the array or its iterator, so the membership
+    /// test may iterate something other than the returned elements.
+    fn may_redefine_iteration(&self) -> bool;
+}
+
+struct SharedAuthority<'a> {
+    owner: &'a FunctionSummary,
+    test: &'a TestSummary,
+    index: &'a RustIndex,
+    syntax: &'a OwnerPinSyntax,
+}
+
+impl PinAuthority for SharedAuthority<'_> {
+    fn admits_line(&self, line: usize) -> bool {
+        self.test.assertions.iter().any(|assertion| {
+            assertion.line == line && self.syntax.admits(self.test, assertion, self.index)
+        })
+    }
+
+    fn call_reaches_owner(&self, prefix: Option<&str>, receiver: Option<&Receiver>) -> bool {
+        let Some(receiver) = receiver else {
+            return targeted_free_call_reaches_owner(
+                self.test,
+                self.owner,
+                prefix,
+                self.index,
+                self.syntax,
+            );
+        };
+        // `let rows = rows(30, 3);` calls the owner before its own binding
+        // takes the name, and the receiver is the body's only binding of
+        // it. The shared check reads any `let` of the owner's name as a
+        // shadow, so it reads the body with that one binding renamed.
+        let mut test = self.test.clone();
+        test.body = receiver.renamed_body.clone().into();
+        test.let_bindings
+            .retain(|binding| binding.name != receiver.name);
+        targeted_free_call_reaches_owner(&test, self.owner, prefix, self.index, self.syntax)
+    }
+
+    fn field_is_builtin_integer(&self, type_name: &str, field: &str) -> bool {
+        field_is_builtin_integer(type_name, field, self.index)
+    }
+
+    fn may_redefine_iteration(&self) -> bool {
+        // Every `fn iter` (or `into_iter`, `any`) written in a file must be
+        // an indexed free, local or inherent one, none of which a method
+        // call on an array or a slice iterator can reach.
+        self.index.files().iter().any(|(path, facts)| {
+            ITERATION_METHODS.iter().any(|name| {
+                let harmless = self
+                    .index
+                    .functions()
+                    .iter()
+                    .filter(|function| {
+                        function.file == *path
+                            && function.name == *name
+                            && matches!(
+                                function.item.container,
+                                FunctionContainer::Free
+                                    | FunctionContainer::Local
+                                    | FunctionContainer::Inherent { .. }
+                            )
+                    })
+                    .count();
+                written_fn_count(&facts.source, name) > harmless
+            })
+        })
+    }
+}
+
+/// The test's one binding of the owner call's result.
+struct Receiver {
+    name: String,
+    /// The test's source with the binding's name replaced by a fresh one.
+    renamed_body: String,
+}
+
+const ITERATION_METHODS: &[&str] = &["iter", "into_iter", "any"];
+
+/// How many times `fn name` is written in `source`, comments and macro
+/// bodies included.
+fn written_fn_count(source: &str, name: &str) -> usize {
+    source
+        .match_indices("fn")
+        .filter(|(offset, _)| {
+            let before = source[..*offset].chars().next_back();
+            let rest = &source[offset + 2..];
+            let trimmed = rest.trim_start();
+            before.is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'))
+                && trimmed.len() < rest.len()
+                && trimmed.trim_start_matches("r#").starts_with(name)
+                && trimmed.trim_start_matches("r#")[name.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'))
+        })
+        .count()
+}
+
+fn observes_with(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    authority: &dyn PinAuthority,
 ) -> bool {
     // A bare `rows(..)` call names a free function; a method owner is
     // never called that way, so the call would be some other `rows`.
@@ -42,6 +179,10 @@ pub(in crate::analysis) fn observes_returned_element_field(
     let Some(array) = ReturnedArray::read(probe, owner) else {
         return false;
     };
+    // An integer field compares by value; a workspace `PartialEq` may not.
+    if !authority.field_is_builtin_integer(&array.type_name, &array.field) {
+        return false;
+    }
     // Exactly `#[test]`: the lexical fallback and harness-registered tests
     // carry no attributes, so an empty list cannot vouch for the test.
     if !matches!(test.attrs.as_slice(), [only] if only.trim() == "#[test]") {
@@ -87,12 +228,30 @@ pub(in crate::analysis) fn observes_returned_element_field(
     let mut rest = statements.statements().peekable();
     let mut receiver = None;
     if let Some(ast::Stmt::LetStmt(binding)) = rest.peek()
-        && let Some(name) = owner_binding(binding, &owner.name)
+        && let Some((pattern, call)) = owner_binding(binding)
     {
+        let Some(name) = pattern.name() else {
+            return false;
+        };
+        let name = name.text().to_string();
         if binds_more_than_once(&body, &name) {
             return false;
         }
-        receiver = Some(name);
+        let range = pattern.syntax().text_range();
+        let (Some(before), Some(after)) = (
+            source.get(..usize::from(range.start())),
+            source.get(usize::from(range.end())..),
+        ) else {
+            return false;
+        };
+        let bound = Receiver {
+            renamed_body: format!("{before}ripr_element_receiver{after}"),
+            name,
+        };
+        if !is_owner_call(&call, &owner.name, authority, Some(&bound)) {
+            return false;
+        }
+        receiver = Some(bound);
         rest.next();
     }
     let first = match rest.next() {
@@ -112,13 +271,15 @@ pub(in crate::analysis) fn observes_returned_element_field(
     else {
         return false;
     };
-    array.pinned_by(&call, receiver.as_deref(), &owner.name) && admitted(line)
+    array.pinned_by(&call, receiver.as_ref(), &owner.name, authority) && authority.admits_line(line)
 }
 
 /// The owner's whole body is one array of struct literals, and the probe
 /// constructs `field` in exactly one of them.
 #[derive(Debug)]
 struct ReturnedArray {
+    /// The struct every element builds, named by one plain identifier.
+    type_name: String,
     field: String,
     index: usize,
     /// The integer literal each other element builds `field` from, or
@@ -143,7 +304,14 @@ impl ReturnedArray {
         let ast::Expr::ArrayExpr(array) = unwrap_parens(statements.tail_expr()?) else {
             return None;
         };
-        if array.semicolon_token().is_some() {
+        // A `#[cfg]` element or field may be compiled out and shift every
+        // later index, so an attribute anywhere in the array refuses.
+        if array.semicolon_token().is_some()
+            || array
+                .syntax()
+                .descendants()
+                .any(|node| node.kind() == SyntaxKind::ATTR)
+        {
             return None;
         }
         let wanted = squeeze(probe.expression.trim().trim_end_matches(','));
@@ -185,6 +353,13 @@ impl ReturnedArray {
         }
         let field = field?;
         let index = index?;
+        let type_name = path?;
+        if !type_name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        {
+            return None;
+        }
         let mut others = Vec::new();
         for (position, list) in fields.iter().enumerate() {
             let mut named = list.fields().filter(|initializer| {
@@ -201,6 +376,7 @@ impl ReturnedArray {
             }
         }
         Some(Self {
+            type_name,
             field,
             index,
             others,
@@ -211,7 +387,13 @@ impl ReturnedArray {
     /// result: `assert_eq!(recv[index].field, literal)` in either order, or
     /// `assert!(recv.iter().any(|r| r.field == literal))` when no other
     /// element can hold that literal.
-    fn pinned_by(&self, call: &ast::MacroCall, receiver: Option<&str>, owner: &str) -> bool {
+    fn pinned_by(
+        &self,
+        call: &ast::MacroCall,
+        receiver: Option<&Receiver>,
+        owner: &str,
+        authority: &dyn PinAuthority,
+    ) -> bool {
         // A bare macro name only: a qualified path may name any crate's
         // macro, and the shared validator decides what a bare name binds.
         let Some(path) = call.path() else {
@@ -229,9 +411,9 @@ impl ReturnedArray {
         let is_receiver = |expression: &ast::Expr| match unwrap_parens(expression.clone()) {
             ast::Expr::PathExpr(path) => receiver.is_some_and(|receiver| {
                 path.path()
-                    .is_some_and(|path| path.syntax().text() == receiver)
+                    .is_some_and(|path| path.syntax().text() == receiver.name.as_str())
             }),
-            ast::Expr::CallExpr(call) => is_owner_call(&call, owner),
+            ast::Expr::CallExpr(call) => is_owner_call(&call, owner, authority, receiver),
             _ => false,
         };
         match (
@@ -245,7 +427,9 @@ impl ReturnedArray {
                         is_literal(expected) && self.indexed_read(read, &is_receiver)
                     })
             }
-            ("assert", [condition]) => self.membership(condition, &is_receiver),
+            ("assert", [condition]) => {
+                !authority.may_redefine_iteration() && self.membership(condition, &is_receiver)
+            }
             _ => false,
         }
     }
@@ -343,27 +527,34 @@ impl ReturnedArray {
     }
 }
 
-/// `let NAME = owner(..);` with a plain, immutable binding.
-fn owner_binding(binding: &ast::LetStmt, owner: &str) -> Option<String> {
+/// `let NAME = CALL;` with a plain, immutable binding: the pattern and the
+/// call, which [`is_owner_call`] then reads.
+fn owner_binding(binding: &ast::LetStmt) -> Option<(ast::IdentPat, ast::CallExpr)> {
     let ast::Pat::IdentPat(pattern) = binding.pat()? else {
         return None;
     };
     if pattern.mut_token().is_some() || pattern.ref_token().is_some() || pattern.pat().is_some() {
         return None;
     }
-    if binding.let_else().is_some() {
+    if binding.let_else().is_some() || binding.ty().is_some() {
         return None;
     }
     let ast::Expr::CallExpr(call) = unwrap_parens(binding.initializer()?) else {
         return None;
     };
-    is_owner_call(&call, owner).then(|| pattern.name().map(|name| name.text().to_string()))?
+    Some((pattern, call))
 }
 
 /// A direct call of the owner by its own name, or through `super::`/`crate::`,
 /// with literal or path arguments only, so evaluating them cannot leave the
-/// test or settle it before the assertion.
-fn is_owner_call(call: &ast::CallExpr, owner: &str) -> bool {
+/// test or settle it before the assertion. The shared binding authority
+/// decides that the name reaches the owner.
+fn is_owner_call(
+    call: &ast::CallExpr,
+    owner: &str,
+    authority: &dyn PinAuthority,
+    receiver: Option<&Receiver>,
+) -> bool {
     let plain_arguments = call.arg_list().is_some_and(|list| {
         list.args().all(|argument| {
             integer_literal(&argument).is_some()
@@ -383,9 +574,12 @@ fn is_owner_call(call: &ast::CallExpr, owner: &str) -> bool {
         return false;
     };
     let text = squeeze(&path.syntax().text().to_string());
-    [String::new(), "super::".to_string(), "crate::".to_string()]
-        .iter()
-        .any(|prefix| text == format!("{prefix}{owner}"))
+    if text == owner {
+        return authority.call_reaches_owner(None, receiver);
+    }
+    ["super", "crate"].into_iter().any(|prefix| {
+        text == format!("{prefix}::{owner}") && authority.call_reaches_owner(Some(prefix), receiver)
+    })
 }
 
 /// The receiver is bound once in the whole test body, so no shadowing
@@ -515,6 +709,50 @@ mod tests {
         }
     }
 
+    /// Answers the shared-authority questions as configured and records the
+    /// owner-call prefixes and field it was asked about, so the unit tests
+    /// read the syntax gates alone.
+    struct Stub<'a> {
+        admits: &'a dyn Fn(usize) -> bool,
+        reaches: bool,
+        integer: bool,
+        redefines: bool,
+        prefixes: std::cell::RefCell<Vec<Option<String>>>,
+        fields: std::cell::RefCell<Vec<(String, String)>>,
+    }
+
+    impl<'a> Stub<'a> {
+        fn admitting(admits: &'a dyn Fn(usize) -> bool) -> Self {
+            Self {
+                admits,
+                reaches: true,
+                integer: true,
+                redefines: false,
+                prefixes: std::cell::RefCell::default(),
+                fields: std::cell::RefCell::default(),
+            }
+        }
+    }
+
+    impl PinAuthority for Stub<'_> {
+        fn admits_line(&self, line: usize) -> bool {
+            (self.admits)(line)
+        }
+        fn call_reaches_owner(&self, prefix: Option<&str>, _: Option<&Receiver>) -> bool {
+            self.prefixes.borrow_mut().push(prefix.map(str::to_string));
+            self.reaches
+        }
+        fn field_is_builtin_integer(&self, type_name: &str, field: &str) -> bool {
+            self.fields
+                .borrow_mut()
+                .push((type_name.to_string(), field.to_string()));
+            self.integer
+        }
+        fn may_redefine_iteration(&self) -> bool {
+            self.redefines
+        }
+    }
+
     const ARRAY: &str = "[Row { total: 0 }, Row { total: a + b + 0 }]";
     const ANY: &str =
         "        let rows = rows(30, 3);\n        assert!(rows.iter().any(|r| r.total == 33));";
@@ -542,11 +780,11 @@ mod tests {
             .iter()
             .find(|test| test.name == "pins")
             .ok_or("test indexed")?;
-        Ok(Some(observes_returned_element_field(
+        Ok(Some(observes_with(
             &probe(),
             owner,
             test,
-            &|_| true,
+            &Stub::admitting(&|_| true),
         )))
     }
 
@@ -719,7 +957,7 @@ mod tests {
             asked.set(Some(line));
             true
         };
-        if !observes_returned_element_field(&probe(), owner, test, &admitted) {
+        if !observes_with(&probe(), owner, test, &Stub::admitting(&admitted)) {
             return Err("premise: the attributed test pins the element".to_string());
         }
         // `assert!` sits on file line 16, after `let rows = rows(30, 3);`.
@@ -729,12 +967,12 @@ mod tests {
                 asked.get()
             ));
         }
-        if observes_returned_element_field(&probe(), owner, test, &|_| false) {
+        if observes_with(&probe(), owner, test, &Stub::admitting(&|_| false)) {
             return Err("a refused assertion context still pins".to_string());
         }
         let mut bare = test.clone();
         bare.attrs.clear();
-        if observes_returned_element_field(&probe(), owner, &bare, &|_| true) {
+        if observes_with(&probe(), owner, &bare, &Stub::admitting(&|_| true)) {
             return Err("a test without attributes still pins".to_string());
         }
         Ok(())
@@ -771,7 +1009,7 @@ mod tests {
             .iter()
             .find(|test| test.name == "pins")
             .ok_or("test indexed")?;
-        if observes_returned_element_field(&probe, owner, test, &|_| true) {
+        if observes_with(&probe, owner, test, &Stub::admitting(&|_| true)) {
             return Err("a bare call credited a method owner".to_string());
         }
         Ok(())
@@ -793,5 +1031,124 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    /// The owner call, the field's equality and the iteration methods are
+    /// the shared authorities' to decide; a refusal from any of them keeps
+    /// the gap (#8059 review).
+    #[test]
+    fn each_shared_authority_can_refuse_the_pin() -> Result<(), String> {
+        let facts = crate::analysis::rust_index::summarize_file(
+            PathBuf::from("src/lib.rs"),
+            source(ARRAY, "#[test]", ANY),
+        );
+        let owner = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "rows")
+            .ok_or("owner indexed")?;
+        let test = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "pins")
+            .ok_or("test indexed")?;
+        let granted = Stub::admitting(&|_| true);
+        if !observes_with(&probe(), owner, test, &granted) {
+            return Err("premise: the granted membership pins".to_string());
+        }
+        if *granted.prefixes.borrow() != [None]
+            || *granted.fields.borrow() != [("Row".to_string(), "total".to_string())]
+        {
+            return Err(format!(
+                "asked {:?} and {:?}",
+                granted.prefixes.borrow(),
+                granted.fields.borrow()
+            ));
+        }
+        for (label, stub) in [
+            (
+                "the owner call",
+                Stub {
+                    reaches: false,
+                    ..Stub::admitting(&|_| true)
+                },
+            ),
+            (
+                "the field's equality",
+                Stub {
+                    integer: false,
+                    ..Stub::admitting(&|_| true)
+                },
+            ),
+            (
+                "the iteration methods",
+                Stub {
+                    redefines: true,
+                    ..Stub::admitting(&|_| true)
+                },
+            ),
+        ] {
+            if observes_with(&probe(), owner, test, &stub) {
+                return Err(format!("{label} refused, still pinned"));
+            }
+        }
+        // A redefined `iter` leaves the index form alone: it never iterates.
+        let indexed = crate::analysis::rust_index::summarize_file(
+            PathBuf::from("src/lib.rs"),
+            source(
+                ARRAY,
+                "#[test]",
+                "        assert_eq!(super::rows(30, 3)[1].total, 33);",
+            ),
+        );
+        let owner = indexed
+            .functions
+            .iter()
+            .find(|function| function.name == "rows")
+            .ok_or("owner indexed")?;
+        let test = indexed
+            .tests
+            .iter()
+            .find(|test| test.name == "pins")
+            .ok_or("test indexed")?;
+        let redefined = Stub {
+            redefines: true,
+            ..Stub::admitting(&|_| true)
+        };
+        if !observes_with(&probe(), owner, test, &redefined) {
+            return Err("a redefined iter refused the index form".to_string());
+        }
+        if *redefined.prefixes.borrow() != [Some("super".to_string())] {
+            return Err(format!("asked {:?}", redefined.prefixes.borrow()));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_attributed_element_or_field_is_not_read() {
+        for array in [
+            "[#[cfg(feature = \"x\")] Row { total: 0 }, Row { total: a + b + 0 }]",
+            "[Row { #[cfg(all())] total: 0 }, Row { total: a + b + 0 }]",
+        ] {
+            let facts = crate::analysis::rust_index::summarize_file(
+                PathBuf::from("src/lib.rs"),
+                source(array, "#[test]", ANY),
+            );
+            let read = facts
+                .functions
+                .iter()
+                .find(|function| function.name == "rows")
+                .and_then(|owner| ReturnedArray::read(&probe(), owner));
+            assert!(read.is_none(), "{array}");
+        }
+    }
+
+    #[test]
+    fn written_fn_count_finds_every_definition_of_the_name() {
+        let source = "trait Each { fn iter(&self); }\n\
+                      impl Each for [Row; 2] { fn iter (&self) {} }\n\
+                      fn iterate() {}\nfn r#iter() {}\n// fn iter\nlet unfn iter = 1;";
+        assert_eq!(written_fn_count(source, "iter"), 4);
+        assert_eq!(written_fn_count(source, "any"), 0);
     }
 }

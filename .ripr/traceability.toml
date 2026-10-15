@@ -14342,10 +14342,15 @@ tests = [
   "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::an_owner_that_is_not_one_array_of_one_struct_is_not_read",
   "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::an_unattributed_test_or_a_refused_assertion_context_observes_nothing",
   "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::a_bare_call_never_reaches_a_method_owner",
+  "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::each_shared_authority_can_refuse_the_pin",
+  "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::an_attributed_element_or_field_is_not_read",
+  "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::written_fn_count_finds_every_definition_of_the_name",
   "crates/ripr/tests/returned_element_field_pin.rs::a_test_pinning_the_changed_element_exposes_its_field",
   "crates/ripr/tests/returned_element_field_pin.rs::a_membership_or_read_another_element_may_satisfy_keeps_the_gap",
   "crates/ripr/tests/returned_element_field_pin.rs::a_test_that_may_skip_or_fake_the_assertion_keeps_the_gap",
   "crates/ripr/tests/returned_element_field_pin.rs::a_call_another_function_of_the_owner_name_may_take_keeps_the_gap",
+  "crates/ripr/tests/returned_element_field_pin.rs::a_decoy_the_shared_checks_catch_keeps_the_gap",
+  "crates/ripr/tests/returned_element_field_pin.rs::an_element_cfg_may_drop_or_a_custom_equality_keeps_the_gap",
 ]
 fixtures = []
 code = [
