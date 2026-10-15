@@ -114,7 +114,7 @@ fn main() {
 }
 "#;
 
-/// Compile the argv recorder once and install it as both `ripr` and `git`.
+/// Compile the I/O-only argv recorder without optimization and install it as both `ripr` and `git`.
 pub fn install_recorders(dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|err| format!("create {}: {err}", dir.display()))?;
     let source = dir.join("recorder.rs");
@@ -124,7 +124,6 @@ pub fn install_recorders(dir: &Path) -> Result<(), String> {
     let ripr = dir.join(format!("ripr{suffix}"));
     let output = Command::new("rustc")
         .arg("--edition=2021")
-        .arg("-O")
         .arg("-o")
         .arg(&ripr)
         .arg(&source)
