@@ -179,6 +179,19 @@ fn scalar_marker_preserves_cargo_uv_git_and_unmarked_root_boundaries() -> TestRe
             ],
             &[("RIPR_CACHE_DIR", "")],
         )?;
+        // Without `lang-python`, the uv root still resolves, but its Python
+        // markers make the run refuse instead of analysing (#8131 follow-up).
+        if label == "uv" && !cfg!(feature = "lang-python") {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            fs::remove_dir_all(sandbox)?;
+            assert!(!output.status.success(), "{label}: {output:?}");
+            assert!(
+                stderr.contains("pyproject.toml contains [tool.uv.workspace]")
+                    && stderr.contains("built without Cargo feature `lang-python`"),
+                "{label}: {stderr}"
+            );
+            continue;
+        }
         assert!(output.status.success(), "{label}: {output:?}");
         let report: Value = serde_json::from_slice(&output.stdout)?;
         fs::remove_dir_all(sandbox)?;

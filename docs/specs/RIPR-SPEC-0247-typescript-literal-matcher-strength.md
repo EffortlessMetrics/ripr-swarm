@@ -85,7 +85,16 @@ all of these hold:
   shadow an outer `p`) with `const|let|var p = jest.fn(...)` or
   `vi.fn(...)`, or to a flat object literal whose `m` is such a call,
   whose keys are plain identifiers, which keys `m` once and which has no
-  spread that could replace it;
+  spread that could replace it; amended 2026-10-15, `const|let|var p =
+  f();` also reads as such a literal when `f` is a top-level, unexported,
+  non-async, non-generator parameterless test-file factory whose whole
+  body returns that literal (`function f() { return { m: jest.fn() }; }`
+  or `const f = () => ({ m: jest.fn() });`) with `m` keyed to exactly a
+  bare `jest.fn()` or `vi.fn()` (no implementation argument, nothing
+  after it), the file names `f` only in its declaration and direct calls
+  `f(`, `f()` is the whole initializer closed by `;` or the block's end
+  (a line break alone can continue the expression), and the file has no
+  `eval`, `with` or `\u` escape;
 - the test mentions `p` exactly twice outside `expect(p)` /
   `expect(p.m)`: its declaration and one argument of the test's only
   owner call, at `p`'s parameter position with no spread before it.
@@ -273,6 +282,17 @@ and the rejected alternative. Recorded on #6654.
    value does not share the credit. Rejected: keep `0` and `1` weak,
    which leaves `nodetest-legacy-equal-literal-one` (a discriminated
    test) a false gap.
+8. **Test-file mock factory (rule 1, amended 2026-10-15).** Adopted:
+   `const db = makeDb();` reads as the flat literal `makeDb` returns when
+   the factory has no parameters, its body is only that `return`, and the
+   file names it only as direct calls. Each call evaluates the literal
+   afresh, so the test's `db.write` is a new `jest.fn()` no other code
+   holds, exactly as with the inline literal. Rejected: factories with
+   parameters or statements before the `return`, which can hand back a
+   shared or caller-supplied mock, and a bare `const send = makeSend()`
+   returning a function mock, which this amendment does not need.
+   Rejected: keep every helper-made mock medium, which leaves
+   `jest-spec0243-ex30-factory-db` (a discriminated test) a false gap.
 
 ## Required Evidence
 
@@ -286,11 +306,14 @@ and the rejected alternative. Recorded on #6654.
   RIPR-SPEC-0252 amendment), and no other row moves.
 - Amended 2026-10-14 (typed owner): `nodetest-legacy-equal-literal-one`
   moves from `gap` to `credited`, and no other row moves.
+- Amended 2026-10-15 (mock factory): `jest-spec0243-ex30-factory-db`
+  moves from `gap` to `credited`, and no other row moves.
 
 ## Non-Goals
 
 - No credit for `toHaveBeenCalledWith` on a module mock, a spy, a mock
-  made by a helper, an object payload, a mock the owner reaches other
+  made by a helper (except the test-file mock factory of decision 8), an
+  object payload, a mock the owner reaches other
   than through a parameter of the same name, or any mock another call
   could reach.
 - No change to `toHaveBeenLastCalledWith`, `toHaveBeenNthCalledWith` or
@@ -321,7 +344,15 @@ and the rejected alternative. Recorded on #6654.
    `send.call(null, "order 7")`, or `announce(send, 7)`; or with the
    mock declared in a nested block (`if (ready) { const send = jest.fn() }`)
    or, for example 2, `{ write: jest.fn(), ...defaults }` or a second
-   `write` key: `weakly_exposed`.
+   `write` key: `weakly_exposed`. Amended 2026-10-15: example 2 with
+   `function makeDb() { return { write: jest.fn() }; }` in the test file
+   and `const db = makeDb();` is `exposed`; a factory with a parameter, a
+   spread, a second statement, an `export`, `async`, a generator, a
+   `let makeDb` binding, or a `write` value that is not a bare `jest.fn()`
+   (`jest.fn(function () { this.write(2); })`, `jest.fn() && pre.write`),
+   a file that reassigns, passes on or shadows `makeDb` or calls `eval`,
+   or a binding `makeDb().inner`, `makeDb()` continued on the next line
+   (`.inner`, `&& pre`) or `makeDb(1)` stays `weakly_exposed`.
 5. As example 1 with `send` not an owner parameter, with
    `const send = jest.spyOn(mailer, "send")`, a `jest.mock` factory mock
    or `const send = makeSend()`, with an object payload `{ id: 7 }`, or
@@ -379,7 +410,11 @@ and the rejected alternative. Recorded on #6654.
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs`
-  pins examples 1 to 9 at the rule level.
+  pins examples 1 to 9 at the rule level;
+  `mock_payload_on_a_test_file_factory_mock_is_credited` pins the amended
+  example 4.
+- `fixtures/typescript-verdict-corpus` pins the amended example 4:
+  `jest-spec0243-ex30-factory-db` reads `credited`.
 - `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
   keeps the loose-equality grading with coercion-reachable literals, and
   `loose_equality_reads_a_test_local_literal_const` pins example 10.
@@ -395,7 +430,10 @@ and the rejected alternative. Recorded on #6654.
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs`:
-  `MockCallFacts` (rule 1).
+  `MockCallFacts` (rule 1); `credits_with_factories`,
+  `factory_call_is_initializer` and `keys_mock_once` (decision 8), fed by
+  `crates/ripr/src/analysis/language/typescript/tests_extract.rs`:
+  `mock_factories`.
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`:
   `strongest_family_matching_oracle` and `ts_changed_value_is_observed`
   read the credited payload as strong, and `project_credited_mock_rows`
