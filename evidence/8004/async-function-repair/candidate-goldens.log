@@ -1,0 +1,14 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.41s
+     Running `target/debug/xtask goldens check`
+$ cargo build -p ripr
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+xtask: goldens check failed; semantic drift detail in target/ripr/reports/golden-drift.md
+  produced by: ripr 0.11.0 (a5c69b1cd2ef73d47a11163bca0432f9fe285c3d) (binary `/workspace/ripr-swarm/target/debug/ripr`, revision `a5c69b1cd2ef73d47a11163bca0432f9fe285c3d`)
+  drift: fixture `owner_return_pin_fallible_literal` [check.json]: classification_changed [expected [exposed] -> actual [weakly_exposed]], recommendation_changed (no blessing CHANGELOG — re-bless if the flip is intended)
+  first difference: line 6 expected `  \"summary\": {\"changed_rust_files\":2,\"probes\":1,\"findings\":1,\"exposed\":1,\"weakly_exposed\":0,\"reachable_unre…` vs actual `  \"summary\": {\"changed_rust_files\":2,\"probes\":1,\"findings\":1,\"exposed\":0,\"weakly_exposed\":1,\"reachable_unre…`
+  drift: fixture `owner_return_pin_fallible_literal` [human.txt]: formatting_only (25 line(s)) (no blessing CHANGELOG — re-bless if the flip is intended)
+  first difference: line 5 expected `Summary: 1 probe(s), 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propa…` vs actual `Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propa…`
+  drift: fixture `owner_return_pin_fallible_literal` [human-full.txt]: formatting_only (14 line(s)) (no blessing CHANGELOG — re-bless if the flip is intended)
+  first difference: line 5 expected `Summary: 1 probe(s), 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propa…` vs actual `Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propa…`
+reproduce: cargo xtask goldens check
+next: inspect target/ripr/reports/golden-drift.md; if a flip is intended, run `cargo xtask goldens bless <fixture> --reason <reason>`

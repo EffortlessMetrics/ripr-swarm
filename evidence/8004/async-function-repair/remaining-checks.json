@@ -1,0 +1,104 @@
+[
+  {
+    "label": "honesty",
+    "argv": [
+      "cargo",
+      "xtask",
+      "check-evidence-promotion-honesty"
+    ],
+    "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+    "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+    "returncode": 0,
+    "seconds": 0.7,
+    "free_bytes_before": 9143820288,
+    "free_bytes_after": 9143672832,
+    "peak_additional_bytes": 134217728
+  },
+  {
+    "label": "dogfood",
+    "argv": [
+      "cargo",
+      "xtask",
+      "dogfood"
+    ],
+    "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+    "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+    "returncode": 0,
+    "seconds": 3.57,
+    "free_bytes_before": 9143517184,
+    "free_bytes_after": 9140482048,
+    "peak_additional_bytes": 536870912
+  },
+  {
+    "label": "rust-corpus",
+    "argv": [
+      "cargo",
+      "xtask",
+      "verdict-corpus",
+      "check",
+      "--language",
+      "rust"
+    ],
+    "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+    "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+    "returncode": 0,
+    "seconds": 34.96,
+    "free_bytes_before": 9139466240,
+    "free_bytes_after": 9066946560,
+    "peak_additional_bytes": 268435456
+  },
+  {
+    "label": "python-corpus",
+    "argv": [
+      "cargo",
+      "xtask",
+      "verdict-corpus",
+      "check",
+      "--language",
+      "python"
+    ],
+    "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+    "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+    "returncode": 0,
+    "seconds": 2.21,
+    "free_bytes_before": 9066500096,
+    "free_bytes_after": 9063653376,
+    "peak_additional_bytes": 268435456
+  },
+  {
+    "label": "typescript-corpus",
+    "argv": [
+      "cargo",
+      "xtask",
+      "verdict-corpus",
+      "check",
+      "--language",
+      "typescript"
+    ],
+    "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+    "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+    "returncode": 0,
+    "seconds": 11.38,
+    "free_bytes_before": 9063575552,
+    "free_bytes_after": 9030070272,
+    "peak_additional_bytes": 268435456
+  },
+  {
+    "label": "perl-corpus",
+    "argv": [
+      "cargo",
+      "xtask",
+      "verdict-corpus",
+      "check",
+      "--language",
+      "perl"
+    ],
+    "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+    "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+    "outcome": "not_admitted",
+    "free_bytes": 9029906432,
+    "reserve_bytes": 8589934592,
+    "peak_additional_bytes": 3221225472,
+    "reason": "Requires a fresh lang-perl executable; cold variant peak must fit above unchanged reserve. No inherited target cleanup or lower reserve."
+  }
+]

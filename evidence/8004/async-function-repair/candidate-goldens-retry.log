@@ -1,0 +1,4 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.24s
+     Running `target/debug/xtask goldens check`
+$ cargo build -p ripr
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.20s

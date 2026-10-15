@@ -1,0 +1,25 @@
+{
+  "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+  "five_case_and_false_actionable_observation_blobs_unchanged": {
+    "bytesize-as-kib-div": {
+      "case": "7b716661f35ab0d2ce914939c48292d2d39835bb",
+      "observation": "890edd690ce9f7af077579ae0b0cc44ab90a243f"
+    },
+    "bytesize-as-mb-div": {
+      "case": "d38034e34e6940272a5ebc642b58c70749af8b4e",
+      "observation": "7b0d606a6f7d5f99fddcd587a7436d23065b7f77"
+    },
+    "lib-rstest-fixture-injected-receiver": {
+      "case": "2c2f5f7f15b1ebdd9ad8f78f9d83f34b5e9e5691",
+      "observation": "de88d20bf4ace4f1830ea04d370774cc0f0541be"
+    },
+    "serde-derive-rename-field-upper": {
+      "case": "2eb8101d9228fd949f58fa856197984bdb9979d5",
+      "observation": "71223ac3e1774498763722e1958ca45664e57baa"
+    },
+    "serde-derive-rename-variant-lower": {
+      "case": "a3e86225f6d77c601462218d77e39d0a83d54892",
+      "observation": "9c474ecf0405515fce2ef4cda1cfca91465320da"
+    }
+  }
+}
