@@ -308,7 +308,11 @@ Two pattern terms are used below.
    literal, so `0`, `1` or a variable on the other side caps
    (`assert_eq!((r == Err(E::Bad)) as u8, 0)`,
    `assert_eq!(u8::from(r == Err(E::Bad)), n)`; #8093); a cast of a value
-   still pins (`assert_eq!(x as u8, 3)`). A negation of a whole boolean
+   still pins (`assert_eq!(x as u8, 3)`). Such a comparison asserted by a
+   boolean literal caps the same way (`assert_eq!((r == Err(E::Bad)) as u8
+   == 0, true)`, `assert_eq!((r == Err(E::Bad)) == flag, true)`), and a
+   `Not::not(..)` path call negates like `!` (`assert_eq!(Not::not(r ==
+   Err(E::Bad)), true)`; a trait that only ends in `Not` does not). A negation of a whole boolean
    assertion condition that holds a `matches!`, through grouping, a
    one-expression block, `.not()`, a `Not::not(..)` path call or a negating
    literal call on any wrapper, caps (`!(flag || matches!(..))`,

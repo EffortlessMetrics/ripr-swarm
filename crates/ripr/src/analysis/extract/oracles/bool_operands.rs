@@ -208,7 +208,10 @@ fn not_path_call_operand(text: &str) -> Option<&str> {
     let open = masked.find('(')?;
     let head = masked.get(..open)?.trim_end().strip_suffix("not")?;
     let path = head.trim_end().strip_suffix("::")?.trim_end();
-    if !(path.ends_with("Not") || path.ends_with("Not>")) || !is_path_head(head) {
+    let trait_name = path.strip_suffix('>').unwrap_or(path);
+    let names_not =
+        trait_name == "Not" || trait_name.ends_with("::Not") || trait_name.ends_with(" Not");
+    if !names_not || !is_path_head(head) {
         return None;
     }
     let argument = super::arguments::parenthesized_contents(text.get(open..)?.trim_end())?;
@@ -559,27 +562,44 @@ fn conjunct_states_relation(conjunct: &str) -> bool {
 fn compares_test_with_non_literal(line: &str) -> bool {
     let literal = |side: &str| literal_spelling_value(&mask_comments_and_strings(side)).is_some();
     let comparison = assertion_comparison(line);
-    let sides: (&str, &str) = match &comparison {
+    let (mut left, mut right): (&str, &str) = match &comparison {
         Some(AssertionComparison::Operands { left, right, .. }) => (left, right),
         Some(AssertionComparison::Condition(condition)) => {
-            let condition = unwrap_parentheses(condition.trim());
-            if has_top_level_disjunction(condition)
-                || split_top_level_conjuncts(condition).len() > 1
-            {
-                return false;
-            }
-            let Some((at, width)) = top_level_comparison_operator(condition) else {
+            let Some(sides) = whole_comparison_sides(condition) else {
                 return false;
             };
-            match (condition.get(..at), condition.get(at + width..)) {
-                (Some(left), Some(right)) => (left, right),
-                _ => return false,
-            }
+            sides
         }
         None => return false,
     };
-    let (left, right) = (sides.0.trim(), sides.1.trim());
-    !literal(left) && !literal(right) && (is_bool_test(left) || is_bool_test(right))
+    // A literal side asserts the other side's comparison, so that
+    // comparison is read in turn (`assert_eq!((r == Err(E::Bad)) as u8 == 0,
+    // true)`; review of #8110).
+    loop {
+        (left, right) = (left.trim(), right.trim());
+        let other = match (literal(left), literal(right)) {
+            (false, false) => return is_bool_test(left) || is_bool_test(right),
+            (true, false) => right,
+            (false, true) => left,
+            (true, true) => return false,
+        };
+        let (core, _, _) = strip_negations(other);
+        let Some(sides) = whole_comparison_sides(core) else {
+            return false;
+        };
+        (left, right) = sides;
+    }
+}
+
+/// The two sides of `condition` when its whole is one `==` or `!=`
+/// comparison, not a chain of `||` or `&&`.
+fn whole_comparison_sides(condition: &str) -> Option<(&str, &str)> {
+    let condition = unwrap_parentheses(condition.trim());
+    if has_top_level_disjunction(condition) || split_top_level_conjuncts(condition).len() > 1 {
+        return None;
+    }
+    let (at, width) = top_level_comparison_operator(condition)?;
+    Some((condition.get(..at)?, condition.get(at + width..)?))
 }
 
 /// Whether `side`, through the spellings `strip_negations` peels, is a
