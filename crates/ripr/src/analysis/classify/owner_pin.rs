@@ -5923,9 +5923,7 @@ pub(in crate::analysis) fn inline_expect_operands(text: &str) -> Option<[String;
         return None;
     };
     let receiver = receiver.macro_call()?;
-    if receiver.excl_token().is_none() {
-        return None;
-    }
+    receiver.excl_token()?;
     let golden_file = match receiver.path()?.syntax().text().to_string().as_str() {
         "expect" => false,
         "expect_file" => true,

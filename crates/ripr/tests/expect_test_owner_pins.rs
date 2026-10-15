@@ -200,10 +200,16 @@ fn a_verified_golden_file_comparison_pins_the_owner() -> Result<(), String> {
     for (imports, test) in [
         (FILE_IMPORT, GOLDEN),
         ("use expect_test::{expect, expect_file};", GOLDEN),
-        (FILE_IMPORT, "expect_file![\"w.txt\"]\n        .assert_eq(&render(4));"),
+        (
+            FILE_IMPORT,
+            "expect_file![\"w.txt\"]\n        .assert_eq(&render(4));",
+        ),
     ] {
         let finding = render_finding(OLD, NEW, EXPECT_TEST, imports, "", test)?;
-        assert_eq!(finding["classification"], "exposed", "{imports} {test}: {finding}");
+        assert_eq!(
+            finding["classification"], "exposed",
+            "{imports} {test}: {finding}"
+        );
     }
     for (dev, imports, attributes, test) in [
         // No manifest dependency verifies the import.
@@ -229,6 +235,14 @@ fn a_verified_golden_file_comparison_pins_the_owner() -> Result<(), String> {
             "",
             "expect_test::expect_file![\"w.txt\"].assert_eq(&render(4));",
         ),
+        // A renamed import, and a glob.
+        (
+            EXPECT_TEST,
+            "use expect_test::expect_file as golden;",
+            "",
+            "golden![\"w.txt\"].assert_eq(&render(4));",
+        ),
+        (EXPECT_TEST, "use expect_test::*;", "", GOLDEN),
         // A test-file macro shadows the import.
         (
             EXPECT_TEST,
@@ -247,8 +261,15 @@ fn a_verified_golden_file_comparison_pins_the_owner() -> Result<(), String> {
         ),
     ] {
         let finding = render_finding(OLD, NEW, dev, imports, attributes, test)?;
+        // A renamed macro is not recognized as an expect-test comparison
+        // at all, so it earns no snapshot grade either.
+        let expected = if test.starts_with("golden!") {
+            "reachable_unrevealed"
+        } else {
+            "weakly_exposed"
+        };
         assert_eq!(
-            finding["classification"], "weakly_exposed",
+            finding["classification"], expected,
             "{imports} {attributes}{test}: {finding}"
         );
     }

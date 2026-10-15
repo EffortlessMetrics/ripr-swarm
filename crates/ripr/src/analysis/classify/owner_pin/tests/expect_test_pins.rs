@@ -83,7 +83,10 @@ fn an_inline_expect_comparison_pins_behind_a_verified_import() -> Result<(), Str
             "expect_file![\"w.txt\"].assert_debug_eq(&render(4));",
         ),
         ("", "expect_test::expect![[\"w12\"]].assert_eq(&render(4));"),
-        ("", "expect_test::expect_file![\"w.txt\"].assert_eq(&render(4));"),
+        (
+            "",
+            "expect_test::expect_file![\"w.txt\"].assert_eq(&render(4));",
+        ),
         // A computed or non-literal file path.
         (
             "use expect_test::expect_file;",
@@ -93,9 +96,18 @@ fn an_inline_expect_comparison_pins_behind_a_verified_import() -> Result<(), Str
             "use expect_test::expect_file;",
             "expect_file![[\"w.txt\"]].assert_eq(&render(4));",
         ),
-        // `expect_file!` imported from somewhere else.
+        // `expect_file!` imported from somewhere else, renamed onto
+        // `expect!`, or through a glob.
         (
             "use other::expect_file;",
+            "expect_file![\"w.txt\"].assert_eq(&render(4));",
+        ),
+        (
+            "use expect_test::expect_file as expect;",
+            "expect![\"w.txt\"].assert_eq(&render(4));",
+        ),
+        (
+            "use expect_test::*;",
             "expect_file![\"w.txt\"].assert_eq(&render(4));",
         ),
         // A computed expectation, or none of the owner's value.
@@ -223,9 +235,10 @@ fn expect_test_comparisons_extract_as_one_snapshot_oracle() {
     );
 }
 
-/// #6578 review: `expect!` is trusted only where a test's verified
-/// `use expect_test::expect;` binds it. In an owner body it is a crate's
-/// own macro, which may hide a `return` before the changed tail.
+/// #6578 review: `expect!` and `expect_file!` are trusted only where a
+/// test's verified `use expect_test::{expect, expect_file};` binds them. In
+/// an owner body either is a crate's own macro, which may hide a `return`
+/// before the changed tail.
 #[test]
 fn an_owner_body_expect_macro_keeps_its_return_paths_open() {
     let try_style = "macro_rules! {name} {\n    ($e:expr) => {\n        match $e {\n            Some(v) => v,\n            None => return 0,\n        }\n    };\n}\n";
@@ -241,16 +254,25 @@ fn an_owner_body_expect_macro_keeps_its_return_paths_open() {
             .map(|pin| admitted_texts(&index, &pin))
             .unwrap_or_default()
     };
-    let score = |call: &str| {
+    let score = |name: &str, call: &str| {
         format!(
             "{}pub fn score(x: Option<u32>) -> u32 {{\n    let v = {call};\n    v + 1\n}}\n",
-            try_style.replace("{name}", "expect")
+            try_style.replace("{name}", name)
         )
     };
-    // `score(None)` leaves through the macro's hidden `return 0`.
-    assert!(admitted(&score("expect!(x)")).is_empty());
-    // The control: a standard non-returning macro keeps the pin.
-    assert_eq!(admitted(&score("dbg!(x).unwrap_or(0)")).len(), 1);
+    for name in ["expect", "expect_file"] {
+        // `score(None)` leaves through the macro's hidden `return 0`.
+        assert!(
+            admitted(&score(name, &format!("{name}!(x)"))).is_empty(),
+            "{name}"
+        );
+        // The control: a standard non-returning macro keeps the pin.
+        assert_eq!(
+            admitted(&score(name, "dbg!(x).unwrap_or(0)")).len(),
+            1,
+            "{name}"
+        );
+    }
 }
 
 /// #7856 review: the parsed `snapshot` / medium grade is a ceiling. A
