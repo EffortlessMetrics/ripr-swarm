@@ -277,13 +277,15 @@ Two pattern terms are used below.
    call (`assert_eq!(!is_valid(x), true)` pins a bool result) and a whole
    `matches!` (the polarity rule above) keep their readings. Spellings that
    keep a comparison or a literal read the same way (#7931): a comparison
-   method on a receiver or its `PartialEq`/`PartialOrd` path call
+   method on a receiver or a two-argument path call to it
    (`r.eq(&Err(E::Bad))`, `score(2).ne(&0)`, `PartialEq::eq(&r, &x)`,
+   `Result::eq(&r, &x)`, `<_ as PartialEq>::eq(&r, &x)`; #7993;
    `.lt`, `.le`, `.gt`, `.ge`) reads like its operator, so only `eq`
    asserted true may pin, and an `eq` or `ne` with a literal side is that
    literal comparison (`(r == Err(E::Bad)).eq(&false)` is `== false`); a
    literal behind `&`, a one-expression block, `as bool` or
-   `bool::from(..)` is that literal; and the operand through a
+   `bool::from(..)` is that literal, and a `!` over such a spelling negates
+   it (`!&true` is `false`; #7993); and the operand through a
    one-expression block, `&`, `as bool` or `bool::from(..)` is the operand
    (`assert_eq!({ r == Err(E::Bad) }, false)`,
    `assert_eq!(bool::from(r == Err(E::Bad)), false)`). Grouping
