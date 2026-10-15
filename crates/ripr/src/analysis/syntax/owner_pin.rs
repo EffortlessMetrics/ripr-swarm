@@ -886,7 +886,7 @@ const BINDING_WORDS: &[&str] = &[
 ];
 
 /// Attributes a binding-free wrapper may carry through its tokens: built-in
-/// test and lint attributes, none of which can emit an item.
+/// test, lint, `cfg` and `doc` attributes, none of which can emit an item.
 const INERT_ATTRIBUTES: &[&str] = &[
     "test",
     "ignore",
