@@ -183,8 +183,10 @@ pub(super) fn agent_status_surface(
         status: status.status().to_string(),
         required: true,
         summary: format!(
-            "{required_present} of {required_count} required artifacts present, {missing} missing, {warnings} warnings. Command: {}",
-            agent_status_command(
+            // #7753: count-aware noun — "1 warning", never "1 warnings".
+            "{required_present} of {required_count} required artifacts present, {missing} missing, {warnings}. Command: {command}",
+            warnings = crate::output::count_noun::count_noun(warnings, "warning", "warnings"),
+            command = agent_status_command(
                 &bound_root(&root_path_display(root_argument)),
                 Some(WORKFLOW_AGENT_STATUS_ARTIFACT)
             )

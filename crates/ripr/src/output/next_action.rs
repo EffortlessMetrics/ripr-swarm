@@ -248,8 +248,10 @@ fn render_stop(stop: &NextActionStop, bound: Option<&str>) -> Vec<String> {
             None,
         ),
         NextActionStop::SelectAttempt { candidates, total } => (
+            // #7753: count-aware noun — "one of 1 attempt", never "one of 1 attempts".
             format!(
-                "select one of {total} attempts: {}",
+                "select one of {}: {}",
+                crate::output::count_noun::count_noun(*total, "attempt", "attempts"),
                 render_candidates(candidates, *total)
             ),
             None,
