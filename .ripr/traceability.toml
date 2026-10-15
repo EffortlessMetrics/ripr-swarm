@@ -14354,6 +14354,7 @@ tests = [
   "crates/ripr/tests/returned_element_field_pin.rs::a_membership_outside_a_closed_world_keeps_the_gap",
   "crates/ripr/tests/returned_element_field_pin.rs::a_decoy_declaration_of_the_struct_keeps_the_gap",
   "crates/ripr/tests/returned_element_field_pin.rs::a_macro_or_outside_crate_that_may_supply_the_name_keeps_the_gap",
+  "crates/ripr/tests/returned_element_field_pin.rs::a_name_from_outside_the_scanned_workspace_keeps_the_gap",
 ]
 fixtures = []
 code = [

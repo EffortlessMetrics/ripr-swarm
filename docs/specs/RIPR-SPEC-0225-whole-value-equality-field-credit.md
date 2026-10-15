@@ -287,9 +287,12 @@ rejected alternative. Any can be reversed later without touching the rest.
      `compile_error!`), and no macro body or argument that holds `struct`,
      `enum`, `union` or `type` also holds the name or a `$` metavariable.
      So `==` against an integer literal is the built-in comparison and not
-     a workspace `PartialEq`. An outside procedural macro's output is not
-     read; a derive or attribute macro that declares a type named after a
-     primitive is outside this decision;
+     a workspace `PartialEq`. Both forms also need the closed workspace
+     the membership bullet below defines: a workspace macro (`use .. as $n`),
+     an outside crate's macro or a module in a directory the index skips
+     (`src/fixtures/`) may otherwise declare a local `u32`. An outside
+     procedural macro's output is not read; a derive or attribute macro that
+     declares a type named after a primitive is outside this decision;
 
    - the owner's name is the name of no other indexed function, because the
      owner call is matched by name and a nested module's `super::rows` or a
@@ -325,7 +328,8 @@ rejected alternative. Any can be reversed later without touching the rest.
      (directly or through `[workspace.dependencies]`), none is a proc-macro
      library, and no manifest `[patch]`/`[replace]` or `.cargo` configuration
      sits between them and the root; the workspace defines no macro
-     (`macro_rules!` or `macro`); every indexed file parses, nothing sits outside
+     (`macro_rules!` or `macro`); every out-of-line `mod name;` resolves by
+     default to an indexed file; every indexed file parses, nothing sits outside
      the index (no non-UTF-8 source, include limitation, `include!` macro
      however qualified, or attribute naming `path`, `cfg_attr` included),
      every `use`, macro path and attribute path is rooted in `std`, `core`,
@@ -336,8 +340,7 @@ rejected alternative. Any can be reversed later without touching the rest.
      indexed free, local or inherent function. An outside crate's trait or a
      generated method could otherwise make the membership iterate something
      other than the returned elements. Most real workspaces import outside
-     crates, so the membership form credits only small closed ones; the
-     indexed form does not depend on it.
+     crates, so both forms credit only small closed ones.
 
    The membership needs the last condition because it holds through any
    element: with `[Row { total: 33 }, Row { total: a + b }]`,

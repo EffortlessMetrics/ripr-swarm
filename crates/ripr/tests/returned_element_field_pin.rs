@@ -61,11 +61,17 @@ struct TempRepo {
 
 impl TempRepo {
     fn create(lib: &str, diff: &str) -> Result<Self, String> {
-        Self::create_with(lib, diff, "")
+        Self::create_with(lib, diff, "", &[])
     }
 
-    /// `dependencies` is appended to the manifest after `[workspace]`.
-    fn create_with(lib: &str, diff: &str, dependencies: &str) -> Result<Self, String> {
+    /// `dependencies` is appended to the manifest after `[workspace]`;
+    /// `files` are written under `src/`.
+    fn create_with(
+        lib: &str,
+        diff: &str,
+        dependencies: &str,
+        files: &[(&str, &str)],
+    ) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-returned-element-field-{}-{}",
@@ -83,6 +89,15 @@ impl TempRepo {
         .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
         std::fs::write(root.join("src/lib.rs"), lib)
             .map_err(|error| format!("write source failed: {error}"))?;
+        for (path, text) in files {
+            let path = root.join("src").join(path);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("create {parent:?} failed: {error}"))?;
+            }
+            std::fs::write(&path, text)
+                .map_err(|error| format!("write {path:?} failed: {error}"))?;
+        }
         std::fs::write(root.join("diff.patch"), diff)
             .map_err(|error| format!("write diff failed: {error}"))?;
         Ok(Self { root })
@@ -123,15 +138,16 @@ fn field_class_of(lib: &str, first: &str) -> Result<ExposureClass, String> {
 }
 
 fn field_class_in(lib: &str, diff: &str) -> Result<ExposureClass, String> {
-    field_class_manifest(lib, diff, "")
+    field_class_manifest(lib, diff, "", &[])
 }
 
 fn field_class_manifest(
     lib: &str,
     diff: &str,
     dependencies: &str,
+    files: &[(&str, &str)],
 ) -> Result<ExposureClass, String> {
-    let findings = TempRepo::create_with(lib, diff, dependencies)?.findings()?;
+    let findings = TempRepo::create_with(lib, diff, dependencies, files)?.findings()?;
     let field = findings
         .iter()
         .find(|finding| {
@@ -507,10 +523,17 @@ fn a_macro_or_outside_crate_that_may_supply_the_name_keeps_the_gap() -> Result<(
             "macro_rules! pass {\n    ($k:tt $n:ident) => {\n        pub $k $n(pub i64);\n    };\n}\npass!(struct u32);\n",
             "a macro is handed the keyword and the name",
         ),
-        ("outside::declare!();\n", "an item-level macro the workspace does not define"),
+        (
+            "outside::declare!();\n",
+            "an item-level macro the workspace does not define",
+        ),
     ] {
         let lib = format!("{}{tail}", source_with("0", "", INDEX));
-        assert_eq!(field_class_of(&lib, "0")?, ExposureClass::WeaklyExposed, "{label}");
+        assert_eq!(
+            field_class_of(&lib, "0")?,
+            ExposureClass::WeaklyExposed,
+            "{label}"
+        );
     }
     assert_eq!(
         field_class_with(
@@ -522,15 +545,86 @@ fn a_macro_or_outside_crate_that_may_supply_the_name_keeps_the_gap() -> Result<(
         "a macro is handed `fn`"
     );
     for (dependency, root) in [
-        ("alloc = { package = \"hackdep\", path = \"../hackdep\" }", "alloc"),
-        ("clippy = { package = \"hackdep\", path = \"../hackdep\" }", "clippy"),
+        (
+            "alloc = { package = \"hackdep\", path = \"../hackdep\" }",
+            "alloc",
+        ),
+        (
+            "clippy = { package = \"hackdep\", path = \"../hackdep\" }",
+            "clippy",
+        ),
         ("hackdep = \"1\"", "hackdep"),
     ] {
         let lib = source_with("0", &format!("    use {root}::AnyHack;\n"), ANY);
         assert_eq!(
-            field_class_manifest(&lib, &diff("0"), &format!("\n[dependencies]\n{dependency}\n"))?,
+            field_class_manifest(
+                &lib,
+                &diff("0"),
+                &format!("\n[dependencies]\n{dependency}\n"),
+                &[]
+            )?,
             ExposureClass::WeaklyExposed,
             "{dependency}"
+        );
+    }
+    Ok(())
+}
+
+/// The indexed form needs the closed workspace too: a macro alias, a module
+/// in a directory the index skips, or an outside crate's macro may declare a
+/// local `u32`, and a skipped module may bring the membership's trait
+/// (#8059 re-review H1, H7, H8, H15, H16).
+#[test]
+fn a_name_from_outside_the_scanned_workspace_keeps_the_gap() -> Result<(), String> {
+    const INDEX: &str = "        assert_eq!(rows(30, 3)[1].total, 33);";
+    const SHADOW: &str = "pub struct u32(pub i64);\nimpl PartialEq<i32> for u32 {\n    fn eq(&self, _: &i32) -> bool {\n        true\n    }\n}\n";
+    const DEP: &str = "\n[dependencies]\nshadowdep = { path = \"../shadowdep\" }\n";
+    let cases: [(&str, &str, &str, &[(&str, &str)], &str); 5] = [
+        (
+            "mod w {\n    pub struct W(pub i64);\n}\nmacro_rules! alias {\n    ($n:ident) => {\n        use crate::w::W as $n;\n    };\n}\nalias!(u32);\n",
+            INDEX,
+            "",
+            &[],
+            "a macro aliases a type as u32",
+        ),
+        (
+            "mod fixtures;\nuse self::fixtures::*;\n",
+            INDEX,
+            "",
+            &[("fixtures/mod.rs", SHADOW)],
+            "a skipped directory declares u32",
+        ),
+        (
+            "mod fixtures;\n",
+            ANY,
+            "",
+            &[(
+                "fixtures/mod.rs",
+                "pub trait Hijack {\n    fn iter(&self) -> std::slice::Iter<'_, crate::Row>;\n}\n",
+            )],
+            "a skipped directory supplies a trait iter",
+        ),
+        (
+            "macro_rules! shadow {\n    () => {};\n}\nshadowdep::shadow!(u32);\n",
+            INDEX,
+            DEP,
+            &[],
+            "an outside macro shares a workspace macro's name",
+        ),
+        (
+            "macro_rules! wrap {\n    () => {\n        shadowdep::shadow!(u32);\n    };\n}\nwrap!();\n",
+            INDEX,
+            DEP,
+            &[],
+            "a workspace macro calls an outside one",
+        ),
+    ];
+    for (tail, body, dependencies, files, label) in cases {
+        let lib = format!("{}{tail}", source_with("0", "", body));
+        assert_eq!(
+            field_class_manifest(&lib, &diff("0"), dependencies, files)?,
+            ExposureClass::WeaklyExposed,
+            "{label}"
         );
     }
     Ok(())
