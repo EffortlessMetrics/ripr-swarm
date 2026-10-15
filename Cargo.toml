@@ -176,3 +176,8 @@ debug = "line-tables-only"
 # the normal dev/test profile and preserving every byte-integrity check.
 [profile.dev.package.sha2]
 opt-level = 3
+
+# Optimize retained JSON parsing without changing repository code settings or
+# debug assertions in the normal dev and inherited test profiles.
+[profile.dev.package.serde_json]
+opt-level = 3
