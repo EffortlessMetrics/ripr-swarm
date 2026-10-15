@@ -641,6 +641,15 @@ covered_by = ["npm --prefix packaging/npm/launcher pack --dry-run --json --ignor
 # ---------------------------------------------------------------------------
 
 [[allow]]
+glob = ".agents/skills/finish-pr/references/review-conversations.fixture.json"
+kind = "fixture_input"
+owner = "agents/review"
+surface = "fixtures"
+classification = "fixture"
+reason = "Synthetic GraphQL response data for the documented read-only finish-pr recipe; fixture cases are exercised separately from this structural file-policy check."
+covered_by = ["cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "crates/ripr/examples/**"
 kind = "fixture_input"
 owner = "analysis-fixtures"
