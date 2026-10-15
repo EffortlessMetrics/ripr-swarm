@@ -1788,6 +1788,17 @@ fn analyze_related_assertions(
                         (return_admission.expected_operand_value)(test, operand)
                     })
                 });
+            // #8051: a test that passes expecting the written collection
+            // empty never ran the owner's push on that path, so it cannot
+            // tell a deleted or changed push from a kept one either.
+            let self_computed = self_computed
+                || (matched
+                    && is_effect_family(&probe.family)
+                    && (field_write.is_some()
+                        || direct_collection_mutation_receiver(&probe.expression).is_some())
+                    && super::propagation_witness::assertion_expects_empty_collection(
+                        &assertion.text,
+                    ));
             // #6692: the owner pin is credited only through an assertion
             // that matched, from a test that may supply the oracle, with the
             // pin surviving the reveal-side defeats. The missing-field

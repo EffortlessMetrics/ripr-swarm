@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust test that expects a collection to be empty after the owner call (`assert_eq!(p.log, vec![])`, `assert!(p.log.is_empty())`, `assert_eq!(p.log.len(), 0)`) no longer credits a changed or deleted push into that collection as `exposed`. The test passing with an empty collection means the push did not run on that path, so the assertion cannot tell the push apart from its mutants (#8051).

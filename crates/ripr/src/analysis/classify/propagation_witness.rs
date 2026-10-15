@@ -1341,6 +1341,44 @@ pub(in crate::analysis) fn assertion_expects_default_like(assertion: &str) -> bo
         .any(|operand| is_default_like(operand))
 }
 
+/// #8051: whether an assertion expects a collection to be empty
+/// (`assert_eq!(p.log, vec![])`, `assert!(p.log.is_empty())`,
+/// `assert_eq!(p.log.len(), 0)`). A test that passes with an empty
+/// collection after the owner call never ran the owner's push on that path,
+/// so deleting or changing the push leaves the test passing: the assertion
+/// cannot discriminate it.
+pub(in crate::analysis) fn assertion_expects_empty_collection(assertion: &str) -> bool {
+    let text = assertion.trim().trim_end_matches(';').trim_end();
+    if let Some(at) = text.find("assert_eq!") {
+        let operands = super::reveal::macro_arguments(&text[at + "assert_eq!".len()..]);
+        let empty = |operand: &str| {
+            let operand = operand.trim().trim_start_matches('&').trim();
+            matches!(operand, "vec![]" | "Vec::new()" | "[]")
+                || (operand.starts_with("Vec::<") && operand.ends_with(">::new()"))
+        };
+        let zero_len =
+            |pair: [&str; 2]| pair[0].trim().ends_with(".len()") && pair[1].trim() == "0";
+        return match operands.as_slice() {
+            [left, right, ..] => {
+                empty(left) || empty(right) || zero_len([left, right]) || zero_len([right, left])
+            }
+            _ => false,
+        };
+    }
+    let Some(at) = text.find("assert!") else {
+        return false;
+    };
+    super::reveal::macro_arguments(&text[at + "assert!".len()..])
+        .first()
+        .is_some_and(|condition| {
+            let condition = condition.trim();
+            !condition.starts_with('!')
+                && condition
+                    .strip_suffix(".is_empty()")
+                    .is_some_and(|receiver| !receiver.contains(['&', '|', '!', '=', '<', '>']))
+        })
+}
+
 fn is_default_like(operand: &str) -> bool {
     let operand = operand.trim().trim_start_matches('&').trim();
     // `0 as u32` reads as its value.
@@ -3190,6 +3228,37 @@ mod tests {
             assigned_field_path(body, 1, 2, "self.count += 1", &none).as_deref(),
             Some("count")
         );
+    }
+
+    #[test]
+    fn empty_collection_expectations_cannot_confirm_a_push() {
+        for assertion in [
+            "assert_eq!(p.log, vec![]);",
+            "assert_eq!(vec![], p.log)",
+            "assert_eq!(p.log, Vec::new());",
+            "assert_eq!(p.log, Vec::<Entry>::new());",
+            "assert_eq!(&p.log, &[]);",
+            "assert_eq!(p.log.len(), 0);",
+            "assert_eq!(0, p.log.len());",
+            "assert!(p.log.is_empty());",
+            "assert!(p.history().is_empty())",
+        ] {
+            assert!(assertion_expects_empty_collection(assertion), "{assertion}");
+        }
+        for assertion in [
+            "assert_eq!(p.log, vec![Entry::Beat { n: 1 }]);",
+            "assert_eq!(p.log.len(), 1);",
+            "assert_eq!(p.count, 0);",
+            "assert!(!p.log.is_empty());",
+            "assert!(p.log.is_empty() || p.locked);",
+            "assert_ne!(p.log, vec![]);",
+            "assert!(p.log == vec![Entry::Beat { n: 1 }]);",
+        ] {
+            assert!(
+                !assertion_expects_empty_collection(assertion),
+                "{assertion}"
+            );
+        }
     }
 
     #[test]
