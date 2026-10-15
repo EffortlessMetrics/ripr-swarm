@@ -272,9 +272,11 @@ rejected alternative. Any can be reversed later without touching the rest.
    scrutinee is exactly a direct call of the owner (bare or path-qualified,
    optionally borrowed) whose arguments are all literals, so the test
    cannot hand the owner a variant value it built, and that settles on the
-   owner under the RIPR-SPEC-0197 same-name call-identity rule (with no
-   same-package rival, only a bare or `crate`/`self`/`super` path, since
-   `other::owner(..)` may name a foreign namesake); its pattern names the variant of the
+   owner under the RIPR-SPEC-0197 same-name call-identity rule (when that
+   rule builds no identity, only a bare or `crate`/`self`/`super` path, and
+   only when no other production function shares the owner's name, since
+   `other::owner(..)` may name a foreign namesake and the identity is also
+   absent for layouts it cannot classify); its pattern names the variant of the
    struct literal holding the changed initializer, with the same last path
    segment and, when both spell one, the same enclosing segment, exactly
    once; that group binds `f` to a literal (integer, float, `bool`, `char`

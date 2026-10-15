@@ -2120,6 +2120,9 @@ fn missing_field_value_discriminator(
             pushed_collection_compared_whole(owner, path, test, assertion, index)
         })
     };
+    // #6578: the variant-field pattern rule's workspace scan depends only on
+    // the variant name, so one probe pays for it once.
+    let variant_heads = std::cell::RefCell::new(std::collections::BTreeMap::<String, usize>::new());
     let field_already_observed = related_tests.iter().any(|test| {
         test.assertions.iter().any(|assertion| {
             matches!(
@@ -2162,16 +2165,37 @@ fn missing_field_value_discriminator(
                                     identity.resolve_call(test, index, qualifier)
                                         == super::call_identity::CallTarget::Owner
                                 }
-                                // No same-package rival to resolve against:
-                                // only a bare or crate-relative call stays
-                                // in the owner's crate; `other::owner(..)`
-                                // may name a foreign namesake.
-                                None => qualifier.iter().all(|segment| {
-                                    matches!(segment.as_str(), "crate" | "self" | "super")
-                                }),
+                                // No identity: only a bare or crate-relative
+                                // call, and only when no other production
+                                // function shares the owner's name (the
+                                // identity is also absent for layouts it
+                                // cannot classify); `other::owner(..)` may
+                                // name a foreign namesake.
+                                None => {
+                                    qualifier.iter().all(|segment| {
+                                        matches!(segment.as_str(), "crate" | "self" | "super")
+                                    }) && index
+                                        .functions()
+                                        .iter()
+                                        .filter(|function| {
+                                            function.name == owner.name
+                                                && !function.source_role.is_evidence_role()
+                                        })
+                                        .count()
+                                        == 1
+                                }
                             }
                         },
-                        &|last| super::variant_field_pattern::production_literal_heads(index, last),
+                        &|last| {
+                            *variant_heads
+                                .borrow_mut()
+                                .entry(last.to_string())
+                                .or_insert_with(|| {
+                                    super::variant_field_pattern::production_literal_heads(
+                                        index, last,
+                                    )
+                                })
+                        },
                     )
                 })
         })
