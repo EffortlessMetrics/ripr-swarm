@@ -18,6 +18,9 @@ const MAX_ERROR_FIELD_CHARS = 2048;
 
 const COMPLETE_PEM =
   /-----BEGIN [A-Z0-9 ]+-----[\s\S]*?-----END [A-Z0-9 ]+-----/g;
+// Applied after complete PEM replacement. Linear to end-of-string; no
+// backtracking. Fail-closed: an unmatched BEGIN drops the rest of this text.
+const PEM_UNTERMINATED = /-----BEGIN [A-Z0-9 ]+-----[\s\S]*$/g;
 // Bounded repeats: an unbounded `{32,}+` over a long base64-looking log
 // backtracks without bound when no PEM follows (see host hang diagnosis).
 const PEM_TAIL =
@@ -67,6 +70,9 @@ export function redactHostDiagnosticsText(text: string): string {
     redacted = redacted
       .replace(PEM_TAIL, '[redacted-pem-tail]')
       .replace(PEM_END_ONLY, '[redacted-pem-end]');
+  }
+  if (redacted.includes('-----BEGIN ')) {
+    redacted = redacted.replace(PEM_UNTERMINATED, '[redacted-pem]');
   }
   return redacted
     .replace(GITHUB_TOKEN, '[redacted-token]')
@@ -223,11 +229,15 @@ function serializeError(error: unknown): { message: string; stack?: string } | n
   }
   if (error instanceof Error) {
     return {
-      message: clipField(error.message, MAX_ERROR_FIELD_CHARS),
-      stack: error.stack === undefined ? undefined : clipField(error.stack, MAX_ERROR_FIELD_CHARS)
+      message: clipRedactedField(error.message),
+      stack: error.stack === undefined ? undefined : clipRedactedField(error.stack)
     };
   }
-  return { message: clipField(String(error), MAX_ERROR_FIELD_CHARS) };
+  return { message: clipRedactedField(String(error)) };
+}
+
+function clipRedactedField(text: string): string {
+  return clipField(redactHostDiagnosticsText(text), MAX_ERROR_FIELD_CHARS);
 }
 
 function clipEnv(value: string | undefined): string | null {

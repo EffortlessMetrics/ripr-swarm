@@ -171,6 +171,17 @@ suite('VS Code test host diagnostics', () => {
     assert.ok(redacted.includes('[redacted-pem-tail]'), redacted);
   });
 
+  test('redacts an unterminated PEM from BEGIN through the rest of the text', () => {
+    const redacted = redactHostDiagnosticsText(
+      ['before', '-----BEGIN PRIVATE KEY-----', 'unterminatedfakekeybody', 'after'].join('\n')
+    );
+    assert.ok(!redacted.includes('unterminatedfakekeybody'), redacted);
+    assert.ok(!redacted.includes('BEGIN PRIVATE KEY'), redacted);
+    assert.ok(redacted.includes('[redacted-pem]'), redacted);
+    assert.ok(redacted.includes('before'));
+    assert.ok(!redacted.includes('after'), redacted);
+  });
+
   test('redacts GitHub tokens that may appear in host logs', () => {
     const redacted = redactHostDiagnosticsText(
       'url=https://x-access-token:ghs_abcdefghijklmnopqrstuvwxyz012345@github.com/org/repo.git ghp_abcdefghijklmnopqrstuvwxyz0123 leftover'
@@ -179,6 +190,49 @@ suite('VS Code test host diagnostics', () => {
     assert.ok(!redacted.includes('ghp_abcdefghijklmnopqrstuvwxyz0123'), redacted);
     assert.ok(redacted.includes('[redacted-token]'), redacted);
     assert.ok(redacted.includes('x-access-token:[redacted]'), redacted);
+  });
+
+  test('redacts a PEM longer than the error clip from retention.json', () => {
+    const keyBody = 'MIIEvFAKEKEYMATERIAL'.repeat(160);
+    assert.ok(keyBody.length > 2048, String(keyBody.length));
+    const error = new Error(
+      [
+        'host hung',
+        '-----BEGIN PRIVATE KEY-----',
+        keyBody,
+        '-----END PRIVATE KEY-----'
+      ].join('\n')
+    );
+    retainHostDiagnostics({
+      artifactRoot: root,
+      userDataDir: resolveUserDataDir(root),
+      failed: true,
+      error
+    });
+    const identity = fs.readFileSync(
+      path.join(resolveHostDiagnosticsDir(root), HOST_DIAGNOSTICS_IDENTITY_FILE),
+      'utf8'
+    );
+    assert.ok(!identity.includes('FAKEKEYMATERIAL'), identity.slice(0, 400));
+    assert.ok(identity.includes('[redacted-pem]'), identity.slice(0, 400));
+  });
+
+  test('redacts an unterminated PEM from retention.json before clipping', () => {
+    const keyBody = 'MIIEvFAKEUNTERMINATED'.repeat(160);
+    assert.ok(keyBody.length > 2048, String(keyBody.length));
+    const error = new Error(`-----BEGIN RSA PRIVATE KEY-----\n${keyBody}`);
+    retainHostDiagnostics({
+      artifactRoot: root,
+      userDataDir: resolveUserDataDir(root),
+      failed: true,
+      error
+    });
+    const identity = fs.readFileSync(
+      path.join(resolveHostDiagnosticsDir(root), HOST_DIAGNOSTICS_IDENTITY_FILE),
+      'utf8'
+    );
+    assert.ok(!identity.includes('FAKEUNTERMINATED'), identity.slice(0, 400));
+    assert.ok(identity.includes('[redacted-pem]'), identity.slice(0, 400));
   });
 
   test('keeps retention.json parseable when copied-file metadata would overflow', () => {
