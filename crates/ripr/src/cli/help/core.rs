@@ -256,9 +256,10 @@ Options:
 Exit status:
   Complete and partial_with_limitations reports exit 0, including `exposed`
   and `weakly_exposed` findings. A non-zero exit means the analysis did not
-  complete, not that it disapproved of the diff. `unsupported_input` reports
-  exit 2 after the original report is written; limitations and recovery routes
-  remain available in that report. Usage and operational errors also exit 2.
+  complete, not that it disapproved of the diff.
+  `unsupported_input` reports exit 2 after the original report is written;
+  limitations and recovery routes remain available in that report. Usage and
+  operational errors also exit 2.
   Empty input is complete no_scope (exit 0). Read the typed outcome to
   distinguish partial analysis from complete analysis; a successful exit
   alone does not establish complete scope or a clean gate. Blocking belongs
