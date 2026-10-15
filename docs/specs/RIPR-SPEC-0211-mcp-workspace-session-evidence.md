@@ -166,11 +166,18 @@ official SDK transport:
   `content[0].text` is the compact JSON serialization of the structured
   document (no pretty-print inflation), and `structuredContent` repeats
   the same document only while the complete double-carry envelope still
-  measures under the 128-KiB response bound; past that point the response
+  measures under the id-aware response budget; past that point the response
   ships the compact text without `structuredContent` rather than failing a
   response the document guard already approved. A tool response is never
   sent over the cap: when even the compact-text envelope cannot fit, the
-  call fails closed with `result_too_large` naming both sizes.
+  call fails closed with `result_too_large` naming both sizes. The
+  id-aware budget is the 128-KiB response bound minus the JSON-serialized
+  request id of the call being answered (so client-controlled id escaping
+  is charged exactly) minus a fixed reserve for the JSON-RPC frame fields
+  and the `resultType` field a `2026-07-28` peer keeps (#7768); the same
+  reservation applies to the paging fit decision, so a page that passes it
+  still carries `structuredContent` on the wire whatever id the client
+  sent.
 - `ripr_list_gaps` accepts `offset` (default 0) and `limit` (minimum 1)
   over the narrowed (filtered) items in snapshot order. When the narrowed set
   would exceed the wire-calibrated tool-document ceiling (half the
@@ -227,9 +234,15 @@ official SDK transport:
   with `no_snapshot`; reads during an
   attempt report `analysis_in_flight`; unknown item ids fail closed with
   `item_not_found`; a document that cannot fit the 128-KiB response bound
-  fails closed with `result_too_large` — for tool responses the envelope
-  is measured in its final form before it is sent (#6021), so an approval
-  from the document-level guard can no longer be overturned by the wire.
+  fails closed with `result_too_large` — for tool and resource responses
+  the envelope is measured in its final form against the id-aware budget
+  (the bound minus the actual JSON-escaped request id and the fixed
+  JSON-RPC/`resultType` overhead, #7768) before it is sent (#6021), so an
+  approval from the document-level guard can no longer be overturned by
+  the wire for any legal request id. A request id so large that even the
+  typed refusal cannot fit keeps the documented correlated generic
+  fallback, and a fallback that also cannot fit still terminates with
+  `MCP output limit`.
   Reserved vocabulary
   (`config_invalid`, `workspace_ambiguous`, `static_limitation`,
   `cancelled`, `superseded`) is named on the wire for the slices that own
@@ -392,6 +405,14 @@ is not evidence that a resource with a particular identity exists.
   empty pages, independently sized structured-envelope overflow below the
   raw-document ceiling, raw-document overflow, all three string filters,
   typed refusals bound to the current snapshot, and same-session recovery.
+- `crates/ripr/tests/mcp_stdio.rs::long_request_ids_refuse_typed_before_the_wire_cap`
+  — the #7768 outer-response control: one legal escaping-heavy request id
+  sized from the actually measured empty-page envelope so the id-aware
+  budget excludes every page (typed `result_too_large` on the real stdio
+  wire where the envelope-only bound shipped a correlated `-32603`
+  fallback), a second id one notch smaller whose call still ships a
+  structured page, the same refusal/fit pair for the status resource read,
+  and same-session recovery after all of them.
 
 - `crates/ripr/src/mcp/workspace.rs::tests` — session lifecycle, typed
   failures, identity portability, boundedness, last-known-good retention;
