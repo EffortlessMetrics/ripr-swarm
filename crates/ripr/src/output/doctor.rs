@@ -1483,7 +1483,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
             "cargo_toml",
             DoctorStatus::Fail,
             Some(format!(
-                "no Cargo.toml found at {}; pass `--root <dir>` to target a crate or run `cargo init` to create a workspace",
+                "no Cargo.toml found at {}; pass `--root <dir>` to target a crate or run `cargo init` in the selected root to create a workspace",
                 human_path(root)
             )),
         );
@@ -4547,7 +4547,10 @@ mod tests {
             "cargo init",
             "check permissions",
         ];
-        !evidence.is_empty() && ACTIONABLE.iter().any(|marker| evidence.contains(marker))
+        // Only the repair clause after `;` counts. A path such as `/tmp/create`
+        // must not satisfy the helper by itself.
+        let repair = evidence.rsplit_once("; ").map_or("", |(_, rest)| rest);
+        !repair.is_empty() && ACTIONABLE.iter().any(|marker| repair.contains(marker))
     }
 
     fn assert_fail_checks_name_their_fix(report: &DoctorReport) -> Result<(), String> {
@@ -4581,8 +4584,12 @@ mod tests {
             !fail_evidence_names_its_fix("root directory does not exist at /tmp/absent"),
             "the pre-#5104 missing-root line named only state"
         );
+        assert!(
+            !fail_evidence_names_its_fix("no Cargo.toml found at /tmp/create"),
+            "a path that happens to contain an actionable verb is still state-only"
+        );
         assert!(fail_evidence_names_its_fix(
-            "no Cargo.toml found at .; pass `--root <dir>` to target a crate or run `cargo init` to create a workspace"
+            "no Cargo.toml found at .; pass `--root <dir>` to target a crate or run `cargo init` in the selected root to create a workspace"
         ));
         assert!(fail_evidence_names_its_fix(
             "root directory does not exist at /tmp/absent; create the directory or pass an existing path with `--root`"
@@ -4643,6 +4650,7 @@ mod tests {
             if !evidence.starts_with("no Cargo.toml found at")
                 || !evidence.contains("`--root <dir>`")
                 || !evidence.contains("cargo init")
+                || !evidence.contains("in the selected root")
             {
                 return Err(format!(
                     "cargo_toml fail evidence must keep the state and name the fix: {evidence:?}"
