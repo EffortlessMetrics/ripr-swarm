@@ -54037,7 +54037,8 @@ fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Resu
             "number":42,"title":"final snapshot","headRefOid":"1111111111111111111111111111111111111111",
             "baseRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"main",
             "headRefName":"candidate","isDraft":false,"mergeStateStatus":"CLEAN","reviewDecision":"APPROVED",
-            "latestReviews":[],"comments":[],
+            "latestReviews":[{"author":{"login":"fixture-reviewer"},"state":"APPROVED","submittedAt":"2026-10-15T01:00:00Z"}],
+            "reviews":[{"author":{"login":"fixture-reviewer"},"state":"APPROVED","submittedAt":"2026-10-15T01:00:00Z","commit":{"oid":"1111111111111111111111111111111111111111"}}],"comments":[],
             "statusCheckRollup":[{"__typename":"CheckRun","name":"rust","status":"COMPLETED","conclusion":"SUCCESS"}]
         });
         let mut last = first.clone();
