@@ -31,6 +31,6 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - fixtures/unwrap_err_generic_is_err/input/src/lib.rs:17 (weakly_exposed)
+    - ./src/lib.rs:17 (weakly_exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

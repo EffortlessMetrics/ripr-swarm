@@ -121,6 +121,13 @@ remainder that does not exist:
 The two format-pointer lines are identical in both states, so a consumer
 scraping them does not need to know which heading was used.
 
+Hidden finding locations use the same shared location renderer as selected
+and full findings: paths under the analysis root carry `./` and a
+workspace-relative path. Outside-root paths, parent-traversal remainders and
+unrooted relative paths retain the shared renderer's fallback spelling and
+encoding. This presentation rule also applies when no finding is selected;
+it does not re-coordinate base-side findings or change their currentness.
+
 When the hidden identity list exceeds its 20-finding window, its remainder
 line names `--format json with RIPR_CHECK_FINDINGS_BYTES=0` for every identity.
 Default check JSON has its own findings-array byte budget; the explicit

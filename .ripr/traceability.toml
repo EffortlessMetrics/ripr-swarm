@@ -9312,6 +9312,14 @@ id = "RIPR-SPEC-0122"
 name = "bounded human check output"
 spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
 tests = [
+  "crates/ripr/src/output/human/hidden_locations_tests.rs::absolute_root_selected",
+  "crates/ripr/src/output/human/hidden_locations_tests.rs::absolute_root_without_selection",
+  "crates/ripr/src/output/human/hidden_locations_tests.rs::relative_subdirectory_root_selected",
+  "crates/ripr/src/output/human/hidden_locations_tests.rs::relative_subdirectory_root_without_selection",
+  "crates/ripr/src/output/human/hidden_locations_tests.rs::dot_root_keeps_existing_locations",
+  "crates/ripr/src/output/human/hidden_locations_tests.rs::outside_parent_escape_and_unrooted_paths_keep_their_spelling",
+  "crates/ripr/src/output/human/hidden_locations_tests.rs::path_encoding_and_terminal_escaping_are_preserved",
+  "crates/ripr/src/output/human/hidden_locations_tests.rs::location_change_keeps_the_twenty_row_cap_and_continuation",
   "crates/ripr/tests/cli_smoke/sample_output.rs::retained_oracles_reject_wrong_contract_shape_count_and_refusal",
   "crates/ripr/tests/agent_stub_compiles.rs::ambiguous_at_files_refuse_with_disambiguation_and_no_write",
   "crates/ripr/tests/agent_stub_compiles.rs::ambiguous_at_tied_seams_refuse_without_weakening_nested_selection",
