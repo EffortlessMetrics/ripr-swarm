@@ -82,7 +82,9 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
             // The pinning conjuncts decide the kind, but the reading never
             // rises above what the rules below give the whole assertion: a
             // dropped compared or negated pattern still caps it
-            // (`a == b && matches!(..) == false`).
+            // (`a == b && matches!(..) == false`). A tie takes the rest,
+            // unlike `Chain`, because the fix is a kind change at equal
+            // strength.
             let whole = classify_after_bool_reading(line, scalar_integer_relation);
             let rest = classify_assertion(&rest);
             return if rest.strength.rank() <= whole.strength.rank() {

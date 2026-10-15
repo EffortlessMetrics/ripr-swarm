@@ -30,8 +30,10 @@ pub(super) enum BoolOperandReading {
     /// The operand is an `&&` chain with a pinning `==` conjunct and at
     /// least one conjunct that states only a relation
     /// (`a == b && !matches!(r, Err(E::Bad))`, `a == b && r != Err(E::Bad)`):
-    /// the same equality assertion over the other conjuncts. The relation conjunct pins
-    /// nothing, so it lends the reading no kind (rule 1; #7947).
+    /// the same equality assertion over the other conjuncts. The relation
+    /// conjunct pins nothing, so it lends the reading no kind (rule 1;
+    /// #7947). Only the equality-macro form produces it; condition macros
+    /// (`assert!`, `ensure!`) read `None` here.
     Rest(String),
 }
 
