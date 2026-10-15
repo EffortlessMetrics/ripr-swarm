@@ -2557,26 +2557,34 @@ fn typescript_route_kind<'a>(repair_kind: &'a str, behavior_kind: &str) -> &'a s
 }
 
 // The card and related rows use canonical check-JSON file/name spellings.
-// Placement may skip an earlier non-runnable candidate; row order is not
-// selected identity. Without one complete, unique match, omit precise location.
+// Placement may skip an earlier non-runnable candidate. A unique visible match
+// establishes selected identity only in a complete inventory with intact row
+// identities; capped or lossy rows can conceal a same-file/name candidate.
 fn python_selected_related_test_line(finding: &Value, card: &Value) -> Option<u64> {
     let file = string_at(card, &["suggested_location", "test_file"])?;
     let name = string_at(card, &["suggested_location", "test_name"])?;
     if file.trim().is_empty() || name.trim().is_empty() {
         return None;
     }
-    let mut matches = finding
-        .get("related_tests")?
-        .as_array()?
-        .iter()
-        .filter(|test| {
-            string_at(test, &["file"]) == Some(file) && string_at(test, &["name"]) == Some(name)
-        });
-    let selected = matches.next()?;
-    if matches.next().is_some() {
+    let tests = finding.get("related_tests")?.as_array()?;
+    if u64_at(finding, &["related_tests_total"])? != u64::try_from(tests.len()).ok()? {
         return None;
     }
-    u64_at(selected, &["line"]).filter(|line| *line > 0)
+    let mut selected = None;
+    for test in tests {
+        let row_file = string_at(test, &["file"])?;
+        let row_name = string_at(test, &["name"])?;
+        if row_file.trim().is_empty() || row_name.trim().is_empty() {
+            return None;
+        }
+        if row_file == file && row_name == name {
+            if selected.is_some() {
+                return None;
+            }
+            selected = Some(test);
+        }
+    }
+    u64_at(selected?, &["line"]).filter(|line| *line > 0)
 }
 
 fn first_related_test_line(finding: &Value) -> Option<u64> {
@@ -4362,6 +4370,7 @@ mod tests {
                 },
                 "oracle_alignment": "direct",
                 "alignment_reason": "strong_oracle_observes_owner_name",
+                "related_tests_total": 1,
                 "related_tests": [{
                     "name": "test_calculate_discount_smoke",
                     "file": "tests/test_pricing.py",

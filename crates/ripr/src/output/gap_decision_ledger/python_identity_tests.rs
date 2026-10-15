@@ -258,6 +258,9 @@ fn python_selected_identity_missing_unmatched_or_ambiguous_withholds_line() -> R
             }
             _ => return Err("unknown case".to_string()),
         }
+        if let Some(rows) = finding["related_tests"].as_array() {
+            finding["related_tests_total"] = json!(rows.len());
+        }
         assert_eq!(
             projected_record(&payload)?,
             expected_record(file, name, None, SECOND_COMMAND)?,
@@ -363,3 +366,373 @@ const EXPECTED_RECORD: &str = r#"{
     "python -m unittest tests.test_plain.CheckoutTests.test_same"
   ]
 }"#;
+
+fn capped_identity_output() -> Result<Value, String> {
+    bounded_identity_output(7, false, true)
+}
+
+fn bounded_identity_output(
+    early_count: usize,
+    selected_first: bool,
+    namesake: bool,
+) -> Result<Value, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("ripr-ledger-8132-{}-{stamp}", std::process::id()));
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    let result = (|| {
+        std::fs::write(root.join("src/pricing.py"), "def calculate_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n").map_err(|error| error.to_string())?;
+        let mut source =
+            "import unittest\nfrom src.pricing import calculate_discount\n".to_string();
+        let selected = if selected_first {
+            "class TestGood:\n    def test_same(self):\n        assert calculate_discount(150, 100)\n"
+        } else {
+            "class TestGood:\n    def test_same(self):\n        calculate_discount(150, 100)\n"
+        };
+        if selected_first {
+            source.push_str(selected);
+        }
+        for index in 0..early_count {
+            let order = if selected_first { "zzz" } else { "aaa" };
+            source.push_str(&format!("class Early{index}(unittest.TestCase):\n    def test_{order}{index}(self):\n        self.assertTrue(calculate_discount(150, 100))\n"));
+        }
+        if namesake {
+            source.push_str("class Bad(unittest.TestCase):\n    def test_same(self):\n        self.assertTrue(calculate_discount(150, 100))\n");
+        }
+        if !selected_first {
+            source.push_str(selected);
+        }
+        std::fs::write(root.join("tests/test_mixed.v2.py"), source)
+            .map_err(|error| error.to_string())?;
+        let options = AnalysisOptions {
+            root: root.clone(),
+            base: None,
+            diff_file: Some(root.join("change.patch")),
+            mode: AnalysisMode::Draft,
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            perl_producer_failure: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+            resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
+        };
+        std::fs::write(root.join("change.patch"), "diff --git a/src/pricing.py b/src/pricing.py\n--- a/src/pricing.py\n+++ b/src/pricing.py\n@@ -1,4 +1,4 @@\n def calculate_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\n").map_err(|error| error.to_string())?;
+        let analyzed = crate::analysis::run_analysis_with_oracle_policy(
+            &options,
+            &OraclePolicy::default(),
+            &[LanguageId::Python],
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(analyzed.findings.len(), 1);
+        assert_eq!(analyzed.findings[0].class, ExposureClass::WeaklyExposed);
+        let output = CheckOutput {
+            schema_version: "0.2".to_string(),
+            harness_projections: Vec::new(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("."),
+            base: None,
+            analysis_outcome: None,
+            summary: Summary::default(),
+            findings: analyzed.findings,
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            partial_scope: None,
+            analyzed_revisions: None,
+        };
+        serde_json::from_str(&crate::output::json::render(&output))
+            .map_err(|error| error.to_string())
+    })();
+    std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+    result
+}
+
+#[test]
+fn independent_review_capped_rows_must_not_lend_another_tests_line() -> Result<(), String> {
+    let payload = capped_identity_output()?;
+    let finding = &payload["findings"][0];
+    eprintln!(
+        "CAPPED_FINDING={}",
+        serde_json::to_string(finding).map_err(|e| e.to_string())?
+    );
+    assert_eq!(finding["related_tests_total"], 9);
+    assert_eq!(finding["related_tests"].as_array().ok_or("rows")?.len(), 8);
+    assert_eq!(
+        finding["python_repair_card"]["suggested_location"]["test_name"],
+        "test_same"
+    );
+    assert_eq!(
+        finding["python_repair_card"]["verify"]["command"],
+        "python -m pytest tests/test_mixed.v2.py::TestGood::test_same"
+    );
+    assert!(
+        finding["evidence"]
+            .as_array()
+            .ok_or("evidence")?
+            .iter()
+            .any(|v| v.as_str() == Some("suggested_test_line: 28"))
+    );
+    assert_eq!(finding["related_tests"][7]["name"], "test_same");
+    assert_eq!(finding["related_tests"][7]["line"], 25);
+    let record = projected_record(&payload)?;
+    eprintln!(
+        "CAPPED_RECORD={}",
+        serde_json::to_string(&record).map_err(|e| e.to_string())?
+    );
+    assert_eq!(
+        record["repair_route"]["target_line"],
+        Value::Null,
+        "selected pytest row was omitted by the JSON cap; visible unittest namesake must not supply its line"
+    );
+    assert_eq!(record, expected_pytest_record(None)?);
+    Ok(())
+}
+
+#[test]
+fn independent_review_complete_record_identity_controls() -> Result<(), String> {
+    let original = check_output("tests/test_checkout.v2.py")?;
+    for case in [
+        "reverse",
+        "other-file",
+        "other-name",
+        "duplicate-same-line",
+        "duplicate-without-line",
+        "negative",
+        "null-line",
+        "text-line",
+        "fraction-line",
+        "missing-file",
+        "missing-row-name",
+        "null-rows",
+        "object-rows",
+        "missing-rows",
+        "whitespace-name",
+        "nonobject-row",
+    ] {
+        let mut payload = original.clone();
+        let finding = &mut payload["findings"][0];
+        let mut line = Some(60);
+        let mut name = "test_same";
+        match case {
+            "reverse" => finding["related_tests"]
+                .as_array_mut()
+                .ok_or("rows")?
+                .reverse(),
+            "other-file" | "other-name" => {
+                let mut row = finding["related_tests"][1].clone();
+                row[if case == "other-file" { "file" } else { "name" }] = json!("other");
+                row["line"] = json!(90);
+                finding["related_tests"]
+                    .as_array_mut()
+                    .ok_or("rows")?
+                    .insert(0, row);
+            }
+            "duplicate-same-line" | "duplicate-without-line" => {
+                let mut row = finding["related_tests"][1].clone();
+                if case == "duplicate-without-line" {
+                    row.as_object_mut().ok_or("row")?.remove("line");
+                }
+                finding["related_tests"]
+                    .as_array_mut()
+                    .ok_or("rows")?
+                    .push(row);
+                line = None;
+            }
+            "negative" | "null-line" | "text-line" | "fraction-line" => {
+                finding["related_tests"][1]["line"] = match case {
+                    "negative" => json!(-1),
+                    "text-line" => json!("60"),
+                    "fraction-line" => json!(60.5),
+                    _ => Value::Null,
+                };
+                line = None;
+            }
+            "missing-file" | "missing-row-name" => {
+                finding["related_tests"][1]
+                    .as_object_mut()
+                    .ok_or("row")?
+                    .remove(if case == "missing-file" {
+                        "file"
+                    } else {
+                        "name"
+                    });
+                line = None;
+            }
+            "null-rows" | "object-rows" | "missing-rows" => {
+                if case == "missing-rows" {
+                    finding
+                        .as_object_mut()
+                        .ok_or("finding")?
+                        .remove("related_tests");
+                } else {
+                    finding["related_tests"] = if case == "null-rows" {
+                        Value::Null
+                    } else {
+                        json!({})
+                    };
+                }
+                line = None;
+            }
+            "whitespace-name" => {
+                name = " \t";
+                finding["python_repair_card"]["suggested_location"]["test_name"] = json!(name);
+                finding["related_tests"][1]["name"] = json!(name);
+                line = None;
+            }
+            "nonobject-row" => {
+                finding["related_tests"]
+                    .as_array_mut()
+                    .ok_or("rows")?
+                    .insert(0, json!("not a row"));
+                line = None;
+            }
+            _ => return Err("unknown review case".to_string()),
+        }
+        if let Some(rows) = finding["related_tests"].as_array() {
+            finding["related_tests_total"] = json!(rows.len());
+        }
+        assert_eq!(
+            projected_record(&payload)?,
+            expected_record("tests/test_plain.py", Some(name), line, SECOND_COMMAND)?,
+            "{case}"
+        );
+    }
+    Ok(())
+}
+
+fn expected_pytest_record(line: Option<u64>) -> Result<Value, String> {
+    let mut expected = expected_record(
+        "tests/test_mixed.v2.py",
+        Some("test_same"),
+        line,
+        "python -m pytest tests/test_mixed.v2.py::TestGood::test_same",
+    )?;
+    expected["repair_route"]["assertion_shape"] = json!(
+        "Assert the owner result or effect at `amount == threshold` first. Optional pytest shape: @pytest.mark.parametrize(\"amount, expected\", [(threshold - 1, ...), (threshold, ...), (threshold + 1, ...)]); fill expected values from domain behavior only."
+    );
+    expected["repair_route"]["stop_conditions"]
+        .as_array_mut().ok_or("expected stop conditions")?
+        .push(json!("Stop before adding parametrized below/above rows if their expected values are not clear; keep only the equality-boundary assertion."));
+    Ok(expected)
+}
+
+#[test]
+fn python_inventory_cap_boundaries_preserve_complete_records() -> Result<(), String> {
+    // Exercise below/at/above eight, a selected row retained/omitted, and
+    // same-file namesakes both visible and hidden by the real JSON producer.
+    for early_count in [5, 6, 7, 8] {
+        for selected_first in [false, true] {
+            for namesake in [false, true] {
+                let payload = bounded_identity_output(early_count, selected_first, namesake)?;
+                let finding = &payload["findings"][0];
+                let total = early_count + 1 + usize::from(namesake);
+                let selected_line = if selected_first {
+                    4
+                } else {
+                    4 + early_count * 3 + usize::from(namesake) * 3
+                };
+                let rows = finding["related_tests"].as_array().ok_or("rows")?;
+                assert_eq!(finding["related_tests_total"], total);
+                assert_eq!(rows.len(), total.min(8));
+                assert_eq!(
+                    finding["python_repair_card"]["suggested_location"]["test_file"],
+                    "tests/test_mixed.v2.py"
+                );
+                assert_eq!(
+                    finding["python_repair_card"]["suggested_location"]["test_name"],
+                    "test_same"
+                );
+                assert_eq!(
+                    finding["python_repair_card"]["verify"]["command"],
+                    "python -m pytest tests/test_mixed.v2.py::TestGood::test_same"
+                );
+                assert_eq!(
+                    rows.iter()
+                        .any(|row| row["name"] == "test_same" && row["line"] == selected_line),
+                    selected_first || total <= 8
+                );
+                let line = (total <= 8 && !namesake).then_some(selected_line as u64);
+                let expected = expected_pytest_record(line)?;
+                let actual = projected_record(&payload)?;
+                assert_eq!(
+                    actual, expected,
+                    "early={early_count}, selected_first={selected_first}, namesake={namesake}"
+                );
+                assert_eq!(projected_record(&payload)?, actual, "repeat projection");
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn python_lossy_inventory_withholds_precision_for_complete_record() -> Result<(), String> {
+    let original = check_output("tests/test_checkout.v2.py")?;
+    for case in [
+        "absent-total",
+        "null-total",
+        "text-total",
+        "negative-total",
+        "fraction-total",
+        "under-total",
+        "over-total",
+        "unselected-missing-file",
+        "unselected-missing-name",
+        "unselected-blank-file",
+        "unselected-null-name",
+    ] {
+        let mut payload = original.clone();
+        let finding = &mut payload["findings"][0];
+        match case {
+            "absent-total" => {
+                finding
+                    .as_object_mut()
+                    .ok_or("finding")?
+                    .remove("related_tests_total");
+            }
+            "null-total" => finding["related_tests_total"] = Value::Null,
+            "text-total" => finding["related_tests_total"] = json!("2"),
+            "negative-total" => finding["related_tests_total"] = json!(-2),
+            "fraction-total" => finding["related_tests_total"] = json!(2.5),
+            "under-total" => finding["related_tests_total"] = json!(1),
+            "over-total" => finding["related_tests_total"] = json!(3),
+            "unselected-missing-file" | "unselected-missing-name" => {
+                finding["related_tests"][0]
+                    .as_object_mut()
+                    .ok_or("row")?
+                    .remove(if case == "unselected-missing-file" {
+                        "file"
+                    } else {
+                        "name"
+                    });
+            }
+            "unselected-blank-file" => finding["related_tests"][0]["file"] = json!(" \t"),
+            "unselected-null-name" => finding["related_tests"][0]["name"] = Value::Null,
+            _ => return Err("unknown inventory case".to_string()),
+        }
+        assert_eq!(
+            projected_record(&payload)?,
+            expected_record(
+                "tests/test_plain.py",
+                Some("test_same"),
+                None,
+                SECOND_COMMAND
+            )?,
+            "{case}"
+        );
+    }
+    Ok(())
+}
