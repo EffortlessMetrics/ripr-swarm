@@ -1,0 +1,329 @@
+evidence/8004/repair-executable-identity/assertion-helper.log:29: new blank line at EOF.
+evidence/8004/repair-executable-identity/attempt-cfg.patch:104: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/attempt-cfg.patch:299: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/attempt-cfg.patch:326: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/attempt-cfg.patch:363: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/attempt-cfg.patch:561: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/attempt-cfg.patch:665: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/attempt-cfg.patch:824: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_dormant-async-mutant-compile.log:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_dormant-async-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_dormant-async-original-compile.log:13: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_dormant-async-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_dormant-closure-mutant-compile.log:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_dormant-closure-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_dormant-closure-original-compile.log:13: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_dormant-closure-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_dormant-plain-mutant-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_dormant-plain-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_dormant-plain-original-compile.log:24: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_dormant-plain-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_nested-invoked-mutant-compile.log:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_nested-invoked-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_nested-invoked-original-compile.log:13: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_nested-invoked-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_outer-call-mutant-compile.log:27: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_outer-call-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_outer-call-original-compile.log:19: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_controls_outer-call-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_input_src_lib-mutant-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_input_src_lib-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_input_src_lib-original-compile.log:24: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_dormant_body_input_src_lib-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_genuine-root-mutant-compile.log:35: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_genuine-root-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_genuine-root-original-compile.log:27: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_genuine-root-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_imported-foreign-mutant-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_imported-foreign-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_imported-foreign-original-compile.log:24: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_imported-foreign-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_imported-root-mutant-compile.log:27: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_imported-root-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_imported-root-original-compile.log:19: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_imported-root-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_intermediate-foreign-mutant-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_intermediate-foreign-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_intermediate-foreign-original-compile.log:24: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_intermediate-foreign-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_intermediate-root-mutant-compile.log:27: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_intermediate-root-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_intermediate-root-original-compile.log:19: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_intermediate-root-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_same-line-foreign-mutant-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_same-line-foreign-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_same-line-foreign-original-compile.log:24: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_same-line-foreign-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_unique-foreign-value-mutant-compile.log:45: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_unique-foreign-value-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_unique-foreign-value-original-compile.log:37: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_controls_unique-foreign-value-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_input_src_lib-mutant-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_input_src_lib-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_input_src_lib-original-compile.log:24: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_free_helper_identity_input_src_lib-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_module_type_shadow_controls_genuine-owner-mutant-compile.log:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_module_type_shadow_controls_genuine-owner-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_module_type_shadow_controls_genuine-owner-original-compile.log:13: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_module_type_shadow_controls_genuine-owner-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_module_type_shadow_input_src_lib-mutant-compile.log:40: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_module_type_shadow_input_src_lib-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_module_type_shadow_input_src_lib-original-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native-initial/inherent_receiver_module_type_shadow_input_src_lib-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_dormant-async-mutant-compile.log:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_dormant-async-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_dormant-async-original-compile.log:13: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_dormant-async-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_dormant-closure-mutant-compile.log:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_dormant-closure-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_dormant-closure-original-compile.log:13: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_dormant-closure-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_dormant-plain-mutant-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_dormant-plain-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_dormant-plain-original-compile.log:24: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_dormant-plain-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_nested-invoked-mutant-compile.log:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_nested-invoked-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_nested-invoked-original-compile.log:13: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_nested-invoked-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_outer-call-mutant-compile.log:27: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_outer-call-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_outer-call-original-compile.log:19: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_controls_outer-call-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_input_src_lib-mutant-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_input_src_lib-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_input_src_lib-original-compile.log:24: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_dormant_body_input_src_lib-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_generic-root-mutant-compile.log:35: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_generic-root-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_generic-root-original-compile.log:27: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_generic-root-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_genuine-root-mutant-compile.log:35: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_genuine-root-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_genuine-root-original-compile.log:27: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_genuine-root-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_imported-foreign-mutant-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_imported-foreign-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_imported-foreign-original-compile.log:24: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_imported-foreign-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_imported-root-mutant-compile.log:27: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_imported-root-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_imported-root-original-compile.log:19: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_imported-root-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-foreign-mutant-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-foreign-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-foreign-original-compile.log:24: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-foreign-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-root-mutant-compile.log:27: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-root-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-root-original-compile.log:19: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-root-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_qualified-test-module-helper-mutant-compile.log:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_qualified-test-module-helper-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_qualified-test-module-helper-original-compile.log:13: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_qualified-test-module-helper-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_same-line-foreign-mutant-compile.log:40: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_same-line-foreign-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_same-line-foreign-original-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_same-line-foreign-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_test-module-helper-mutant-compile.log:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_test-module-helper-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_test-module-helper-original-compile.log:13: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_test-module-helper-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_unique-foreign-value-mutant-compile.log:45: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_unique-foreign-value-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_unique-foreign-value-original-compile.log:37: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_controls_unique-foreign-value-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_input_src_lib-mutant-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_input_src_lib-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_input_src_lib-original-compile.log:24: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_free_helper_identity_input_src_lib-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_helper_scope_shadow_controls_genuine-module-mutant-compile.log:27: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_helper_scope_shadow_controls_genuine-module-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_helper_scope_shadow_controls_genuine-module-original-compile.log:19: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_helper_scope_shadow_controls_genuine-module-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_helper_scope_shadow_controls_receiver-type-parameter-mutant-compile.log:34: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_helper_scope_shadow_controls_receiver-type-parameter-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_helper_scope_shadow_controls_receiver-type-parameter-original-compile.log:26: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_helper_scope_shadow_controls_receiver-type-parameter-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_helper_scope_shadow_input_src_lib-mutant-compile.log:40: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_helper_scope_shadow_input_src_lib-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_helper_scope_shadow_input_src_lib-original-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_helper_scope_shadow_input_src_lib-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_module_type_shadow_controls_genuine-owner-mutant-compile.log:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_module_type_shadow_controls_genuine-owner-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_module_type_shadow_controls_genuine-owner-original-compile.log:13: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_module_type_shadow_controls_genuine-owner-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_module_type_shadow_input_src_lib-mutant-compile.log:40: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_module_type_shadow_input_src_lib-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_module_type_shadow_input_src_lib-original-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-native/inherent_receiver_module_type_shadow_input_src_lib-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/boundary-unit-second.log:8: new blank line at EOF.
+evidence/8004/repair-executable-identity/call-identity.log:41: new blank line at EOF.
+evidence/8004/repair-executable-identity/cli-rerun-integration.log:25: new blank line at EOF.
+evidence/8004/repair-executable-identity/cli-rerun-unit.log:50: new blank line at EOF.
+evidence/8004/repair-executable-identity/composition-assertion-helper.log:31: new blank line at EOF.
+evidence/8004/repair-executable-identity/composition-call-identity.log:40: new blank line at EOF.
+evidence/8004/repair-executable-identity/composition-cli-rerun-integration.log:25: new blank line at EOF.
+evidence/8004/repair-executable-identity/composition-cli-rerun-unit.log:50: new blank line at EOF.
+evidence/8004/repair-executable-identity/composition-name-scope.log:15: new blank line at EOF.
+evidence/8004/repair-executable-identity/composition-native-path.log:13: new blank line at EOF.
+evidence/8004/repair-executable-identity/composition-owner-delta.patch:12: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/composition-receiver-integration.log:17: new blank line at EOF.
+evidence/8004/repair-executable-identity/composition-related-tests.log:182: new blank line at EOF.
+evidence/8004/repair-executable-identity/composition-test-grip.log:395: new blank line at EOF.
+evidence/8004/repair-executable-identity/head-assertion-helper.log:29: new blank line at EOF.
+evidence/8004/repair-executable-identity/head-call-identity.log:40: new blank line at EOF.
+evidence/8004/repair-executable-identity/head-cli-rerun-integration.log:25: new blank line at EOF.
+evidence/8004/repair-executable-identity/head-cli-rerun-unit.log:50: new blank line at EOF.
+evidence/8004/repair-executable-identity/head-name-scope.log:15: new blank line at EOF.
+evidence/8004/repair-executable-identity/head-native-path.log:13: new blank line at EOF.
+evidence/8004/repair-executable-identity/head-policy-reports/corpus-summary.md:339: new blank line at EOF.
+evidence/8004/repair-executable-identity/head-policy-reports/dogfood.md:5278: new blank line at EOF.
+evidence/8004/repair-executable-identity/head-policy-reports/golden-drift.md:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/head-policy-reports/pr-shape.md:12: new blank line at EOF.
+evidence/8004/repair-executable-identity/head-receiver-integration.log:17: new blank line at EOF.
+evidence/8004/repair-executable-identity/head-related-tests.log:182: new blank line at EOF.
+evidence/8004/repair-executable-identity/head-test-grip.log:393: new blank line at EOF.
+evidence/8004/repair-executable-identity/later-main-final-shared.patch:14: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/later-main-final-shared.patch:29: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/later-main-final-shared.patch:69: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/later-main-relevant.patch:10: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/later-main-relevant.patch:24: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/later-main-relevant.patch:75: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/later-main-relevant.patch:75: new blank line at EOF.
+evidence/8004/repair-executable-identity/name-scope.log:14: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-path.log:13: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/dormant-nested-mutant-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/dormant-nested-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/dormant-nested-original-compile.log:24: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/dormant-nested-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/foreign-entry-mutant-compile.log:40: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/foreign-entry-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/foreign-entry-original-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/foreign-entry-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/foreign-last-hop-mutant-compile.log:52: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/foreign-last-hop-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/foreign-last-hop-original-compile.log:44: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/foreign-last-hop-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/foreign_helper-mutant-compile.log:26: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/foreign_helper-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/foreign_helper-original-compile.log:18: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/foreign_helper-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/local-helper-mutant-compile.log:33: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/local-helper-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/local-helper-original-compile.log:25: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/local-helper-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/local_wrapper-mutant-compile.log:29: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/local_wrapper-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/local_wrapper-original-compile.log:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/local_wrapper-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/macro_discard-mutant-compile.log:50: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/macro_discard-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/macro_discard-original-compile.log:44: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/macro_discard-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/module-direct-shadow-mutant-compile.log:40: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/module-direct-shadow-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/module-direct-shadow-original-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/module-direct-shadow-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/module-owner-positive-mutant-compile.log:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/module-owner-positive-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/module-owner-positive-original-compile.log:13: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/module-owner-positive-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/nested-invoked-mutant-compile.log:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/nested-invoked-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/nested-invoked-original-compile.log:13: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/nested-invoked-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/qualified-live-mutant-compile.log:29: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/qualified-live-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/qualified-live-original-compile.log:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/qualified-live-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/shadowed-owner-type-mutant-compile.log:40: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/shadowed-owner-type-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/shadowed-owner-type-original-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/shadowed-owner-type-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/sibling-helper-mutant-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/sibling-helper-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/sibling-helper-original-compile.log:24: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/sibling-helper-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/sibling-helper-positive-mutant-compile.log:27: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/sibling-helper-positive-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/sibling-helper-positive-original-compile.log:19: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/sibling-helper-positive-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/sibling-shadow-mutant-compile.log:29: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/sibling-shadow-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/sibling-shadow-original-compile.log:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/sibling-shadow-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/standard-mutant-compile.log:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/standard-mutant-run.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/standard-original-compile.log:13: new blank line at EOF.
+evidence/8004/repair-executable-identity/native-replay/standard-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/obsolete-composition3a/composition-owner-delta.patch:12: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/pre-caller-key-source.patch:11: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/pre-caller-key-source.patch:58: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/pre-caller-key-source.patch:124: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/pre-caller-key-source.patch:178: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/pre-caller-key-source.patch:359: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/pre-caller-key-source.patch:386: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/pre-caller-key-source.patch:423: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/pre-caller-key-source.patch:621: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/production-review.patch:160: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/production-review.patch:187: trailing whitespace.
++ 
+evidence/8004/repair-executable-identity/production-review.patch:187: new blank line at EOF.
+evidence/8004/repair-executable-identity/receiver-integration.log:17: new blank line at EOF.
+evidence/8004/repair-executable-identity/related-tests.log:182: new blank line at EOF.
+evidence/8004/repair-executable-identity/remote-body-before.md:81: new blank line at EOF.
+evidence/8004/repair-executable-identity/same-line-native/mutant-actual.log:20: new blank line at EOF.
+evidence/8004/repair-executable-identity/same-line-native/mutant-compile.log:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/same-line-native/mutant-decoy.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/same-line-native/original-actual.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/same-line-native/original-compile.log:13: new blank line at EOF.
+evidence/8004/repair-executable-identity/same-line-native/original-decoy.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/scope-boundary-unit.log:9: new blank line at EOF.
+evidence/8004/repair-executable-identity/scope-native/generic-module-shadow-mutant-compile.log:40: new blank line at EOF.
+evidence/8004/repair-executable-identity/scope-native/generic-module-shadow-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/scope-native/generic-module-shadow-original-compile.log:32: new blank line at EOF.
+evidence/8004/repair-executable-identity/scope-native/generic-module-shadow-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/scope-native/generic-receiver-shadow-mutant-compile.log:34: new blank line at EOF.
+evidence/8004/repair-executable-identity/scope-native/generic-receiver-shadow-mutant-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/scope-native/generic-receiver-shadow-original-compile.log:26: new blank line at EOF.
+evidence/8004/repair-executable-identity/scope-native/generic-receiver-shadow-original-run.log:6: new blank line at EOF.
+evidence/8004/repair-executable-identity/source3a-validation/head-assertion-helper.log:29: new blank line at EOF.
+evidence/8004/repair-executable-identity/source3a-validation/head-call-identity.log:40: new blank line at EOF.
+evidence/8004/repair-executable-identity/source3a-validation/head-cli-rerun-integration.log:25: new blank line at EOF.
+evidence/8004/repair-executable-identity/source3a-validation/head-cli-rerun-unit.log:50: new blank line at EOF.
+evidence/8004/repair-executable-identity/source3a-validation/head-name-scope.log:14: new blank line at EOF.
+evidence/8004/repair-executable-identity/source3a-validation/head-native-path.log:13: new blank line at EOF.
+evidence/8004/repair-executable-identity/source3a-validation/head-receiver-integration.log:17: new blank line at EOF.
+evidence/8004/repair-executable-identity/source3a-validation/head-related-tests.log:182: new blank line at EOF.
+evidence/8004/repair-executable-identity/source3a-validation/head-test-grip.log:393: new blank line at EOF.
+evidence/8004/repair-executable-identity/source3a-validation/reports/corpus-summary.md:336: new blank line at EOF.
+evidence/8004/repair-executable-identity/source3a-validation/reports/dogfood.md:5278: new blank line at EOF.
+evidence/8004/repair-executable-identity/source3a-validation/reports/golden-drift.md:21: new blank line at EOF.
+evidence/8004/repair-executable-identity/test-grip-pre-caller-key.log:392: new blank line at EOF.
+evidence/8004/repair-executable-identity/test-grip.log:393: new blank line at EOF.
