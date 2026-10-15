@@ -1001,6 +1001,140 @@ fn gate(body: &str, changed: &str) -> Option<ReturnPathGate> {
     return_path_gate(body, changed, body[..at].matches('\n').count())
 }
 
+/// #6578: with the changed line's old text, only the part that differs
+/// must run on every input. An unchanged closure elsewhere in the tail does
+/// not make the change conditional.
+#[test]
+fn an_unchanged_closure_leaves_the_changed_operand_unconditional() {
+    let body = |tail: &str| format!("fn total(lines: &[Line]) -> u64 {{\n    {tail}\n}}");
+    let gate_from =
+        |after: &str, before: Option<&str>| return_path_gate_from(&body(after), after, before, 1);
+    let tail = |fee: &str| format!("lines.iter().map(|l| l.cents).sum::<u64>() + {fee}");
+    assert!(matches!(
+        gate_from(&tail("25 * 2"), Some(&tail("50"))),
+        Some(ReturnPathGate::Any)
+    ));
+    // Every enclosing operator, parenthesis and cast evaluates the change.
+    for (after, before) in [
+        (
+            "(lines.iter().map(|l| l.cents).sum::<u64>() * 2 + 51) as u64",
+            "(lines.iter().map(|l| l.cents).sum::<u64>() * 2 + 50) as u64",
+        ),
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>() + u64::from(fee(51))",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + u64::from(fee(50))",
+        ),
+    ] {
+        assert!(
+            matches!(gate_from(after, Some(before)), Some(ReturnPathGate::Any)),
+            "{after}"
+        );
+    }
+    // Without the old text the whole tail is read, closure included.
+    assert!(gate_from(&tail("25 * 2"), None).is_none());
+    for (after, before) in [
+        // The change is inside the closure.
+        (
+            "lines.iter().map(|l| l.cents + 1).sum::<u64>()",
+            "lines.iter().map(|l| l.cents + 2).sum::<u64>()",
+        ),
+        // The changed part is an argument a combinator may skip, sits in a
+        // branch, or behind `&&`/`||`.
+        ("x.map_or(51, |v| v)", "x.map_or(50, |v| v)"),
+        (
+            "if ready() { 51 } else { lines.iter().map(|l| l.cents).sum::<u64>() }",
+            "if ready() { 50 } else { lines.iter().map(|l| l.cents).sum::<u64>() }",
+        ),
+        (
+            "u64::from(lines.iter().any(|l| l.cents > 0) && f(51))",
+            "u64::from(lines.iter().any(|l| l.cents > 0) && f(50))",
+        ),
+        (
+            "Option::map(x, |v| v).unwrap_or(51)",
+            "Option::map(x, |v| v).unwrap_or(50)",
+        ),
+        (
+            "Option::map_or(x, 51, |v| v) + 1",
+            "Option::map_or(x, 50, |v| v) + 1",
+        ),
+        (
+            "(Option::map_or)(x, 51, |v| v)",
+            "(Option::map_or)(x, 50, |v| v)",
+        ),
+        (
+            "x.unwrap_or(51) + lines.iter().map(|l| l.cents).sum::<u64>()",
+            "x.unwrap_or(50) + lines.iter().map(|l| l.cents).sum::<u64>()",
+        ),
+        // A name bound outside the closure carries the change into it.
+        (
+            "{ let k = 3; lines.iter().map(|l| l.cents * k).sum::<u64>() }",
+            "{ let k = 2; lines.iter().map(|l| l.cents * k).sum::<u64>() }",
+        ),
+        (
+            "{ const K: u64 = 3; lines.iter().map(|l| l.cents * K).sum::<u64>() }",
+            "{ const K: u64 = 2; lines.iter().map(|l| l.cents * K).sum::<u64>() }",
+        ),
+        // The changed value flows through a closure beside it in a call.
+        (
+            "items.iter().map(|l| l.cents).sum::<u64>() + 50",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 50",
+        ),
+        (
+            "lines[..1].iter().map(|l| l.cents).sum::<u64>() + 50",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 50",
+        ),
+        (
+            "lines.iter().fold(51, |acc, l| acc + l.cents)",
+            "lines.iter().fold(50, |acc, l| acc + l.cents)",
+        ),
+        // The changed method name, turbofish, or a deletion beside the
+        // closure.
+        (
+            "lines.iter().map(|l| l.cents).product::<u64>()",
+            "lines.iter().map(|l| l.cents).sum::<u64>()",
+        ),
+        (
+            "lines.iter().map(|l| l.cents).sum::<u32>() as u64",
+            "lines.iter().map(|l| l.cents).sum::<u64>() as u64",
+        ),
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>()",
+            "lines.iter().skip(1).map(|l| l.cents).sum::<u64>()",
+        ),
+        // The change removed a closure, macro or block that may have given
+        // the same value.
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 51",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + (|| 51)()",
+        ),
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 51",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + m!(51)",
+        ),
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 51",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + { 51 }",
+        ),
+        // String whitespace changed alongside the operand.
+        (
+            "\"a  b\".len() as u64 + lines.iter().map(|l| l.cents).sum::<u64>() + 1",
+            "\"a b\".len() as u64 + lines.iter().map(|l| l.cents).sum::<u64>() + 2",
+        ),
+        // A changed comment beside the change.
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 51 /* fee v2 */",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 50 /* fee v1 */",
+        ),
+        // A block around the change may skip it.
+        (
+            "'a: { if lines.is_empty() { break 'a 0; } lines.iter().map(|l| l.cents).sum::<u64>() + 51 }",
+            "'a: { if lines.is_empty() { break 'a 0; } lines.iter().map(|l| l.cents).sum::<u64>() + 50 }",
+        ),
+    ] {
+        assert!(gate_from(after, Some(before)).is_none(), "{after}");
+    }
+}
+
 #[test]
 fn an_early_return_is_pinned_when_it_is_the_only_source_of_its_value() {
     // bytesize's `as_whole_units`: the one `return None` is the only `None`.
@@ -1582,6 +1716,359 @@ fn only_a_plain_assert_eq_against_an_owner_free_value_pins() {
     // A `#[should_panic]` test passes exactly when the values differ.
     let tests = "use demo::weight;\n\n#[test]\n#[should_panic]\nfn weighs() {\n    assert_eq!(weight(4), 13);\n}\n";
     assert!(weight_admitted(tests).is_empty());
+}
+
+#[test]
+fn a_constant_initialized_through_the_owner_is_not_an_independent_expected_value() {
+    let test = |items: &str| {
+        format!(
+            "use demo::weight;\n{items}\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), EXPECTED);\n}}\n"
+        )
+    };
+    // RIPR-SPEC-0035: the constant moves with the owner, directly, through
+    // a `static`, or through another constant.
+    for items in [
+        "const EXPECTED: u32 = weight(4);",
+        "static EXPECTED: u32 = weight(4);",
+        "pub(crate) static mut EXPECTED: u32 = weight(4);",
+        "const BASE: u32 = weight(2);\nconst EXPECTED: u32 = BASE * 2;",
+        "const BASE: u32 = weight(2);\nconst MID: u32 = BASE + 1;\nconst EXPECTED: u32 = MID * 2;",
+    ] {
+        let tests = test(items);
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+    // The constant may live in another file, be renamed on import, name
+    // the owner through a rename, or be declared by a macro.
+    let across = |import: &str, operand: &str, other: &str| {
+        let tests = format!(
+            "use demo::weight;\n{import}\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), {operand});\n}}\n"
+        );
+        let index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests), ("src/other.rs", other)]);
+        let pin = establish(&index, "weight", "x * 3");
+        assert!(pin.is_some(), "the free owner must establish a pin");
+        pin.map(|pin| admitted_texts(&index, &pin))
+            .unwrap_or_default()
+    };
+    for (import, operand, other) in [
+        (
+            "use demo::other::EXPECTED;",
+            "EXPECTED",
+            "pub const EXPECTED: u32 = crate::weight(4);\n",
+        ),
+        (
+            "use demo::other::E as EXPECTED;",
+            "EXPECTED",
+            "pub const E: u32 = crate::weight(4);\n",
+        ),
+        (
+            "use demo::other::EXPECTED;",
+            "EXPECTED",
+            "use crate::weight as w;\npub const EXPECTED: u32 = w(4);\n",
+        ),
+        (
+            "use demo::other::EXPECTED;",
+            "EXPECTED",
+            "use crate::base::BASE as B;\npub const EXPECTED: u32 = B;\nmod base {\n    pub const BASE: u32 = crate::weight(4);\n}\n",
+        ),
+        (
+            "use demo::other::Table;",
+            "Table::EXPECTED",
+            "pub struct Table;\nimpl Table {\n    pub const EXPECTED: u32 = crate::weight(4);\n}\n",
+        ),
+        (
+            "use demo::other::EXPECTED;",
+            "EXPECTED.with(|e| *e)",
+            "thread_local! {\n    pub static EXPECTED: u32 = crate::weight(4);\n}\n",
+        ),
+        (
+            "use demo::other::EXPECTED;",
+            "*EXPECTED",
+            "lazy_static::lazy_static! {\n    pub static ref EXPECTED: u32 = crate::weight(4);\n}\n",
+        ),
+    ] {
+        assert!(
+            across(import, operand, other).is_empty(),
+            "{import} {operand} {other}"
+        );
+    }
+    // A constant built by some other type's same-named function, a method of
+    // that name, or a literal stays an independent expected value.
+    for other in [
+        "pub const EXPECTED: u32 = 12;\n",
+        "pub const EXPECTED: u32 = Table::weight(4);\n",
+        "pub const EXPECTED: u32 = TABLE.weight(4);\n",
+        "pub const EXPECTED: u32 = TABLE.weight;\n",
+    ] {
+        assert_eq!(
+            across("use demo::other::EXPECTED;", "EXPECTED", other),
+            vec!["assert_eq!(weight(4), EXPECTED);".to_string()],
+            "{other}"
+        );
+    }
+    let tests = test("const EXPECTED: u32 = 12; // not weight(4)");
+    assert_eq!(
+        weight_admitted(&tests),
+        vec!["assert_eq!(weight(4), EXPECTED);".to_string()]
+    );
+}
+
+#[test]
+fn a_constant_initializer_reaches_the_owner_only_in_the_pins_call_shape() {
+    let bare = PinCall::Bare;
+    let associated = PinCall::Associated {
+        type_name: "Table".to_string(),
+    };
+    let method = PinCall::Method {
+        receivers: vec![ReceiverType::Named("Counter".to_string())],
+        trait_scope: None,
+    };
+    for (initializer, shape, calls) in [
+        // A free function: bare, module-path, turbofish and value uses.
+        ("weight(4)", &bare, true),
+        ("crate::weight(4)", &bare, true),
+        ("super::weight (4)", &bare, true),
+        ("weight::<u32>(4)", &bare, true),
+        ("apply(weight, 4)", &bare, true),
+        ("<T as Tr>::weight(4)", &bare, true),
+        // Another type's function, a method, a field or a struct field.
+        ("Table::weight(4)", &bare, false),
+        ("Self::weight(4)", &bare, false),
+        ("TABLE.weight(4)", &bare, false),
+        ("TABLE.weight", &bare, false),
+        ("Limits { weight: 4 }", &bare, false),
+        // A non-ASCII qualifier is read whole, not split mid-character.
+        ("módulo::weight(4)", &bare, true),
+        ("Größe::weight(4)", &bare, false),
+        ("Größe::weight(4)", &associated, false),
+        // An associated function needs its own type, `Self` or an
+        // unreadable `<..>` qualifier.
+        ("Table::weight(4)", &associated, true),
+        ("Self::weight(4)", &associated, true),
+        ("Table::<u8>::weight(4)", &associated, true),
+        ("Other::weight(4)", &associated, false),
+        ("weight(4)", &associated, false),
+        ("Table::weight", &associated, false),
+        // A method needs a method call or its receiver's type.
+        ("COUNTER.weight()", &method, true),
+        ("Counter::weight(&COUNTER)", &method, true),
+        ("Other::weight(1)", &method, false),
+        ("weight(1)", &method, false),
+    ] {
+        assert_eq!(
+            initializer_calls_owner(initializer, "weight", shape),
+            calls,
+            "{initializer}"
+        );
+    }
+}
+
+#[test]
+fn text_declared_constants_read_macro_items_and_skip_non_declarations() {
+    assert_eq!(
+        text_declared_constants(
+            "pub static ref EXP: u32 = quota(2); static mut r#M: u8 = 1; const FOO: u8 = 2;"
+        ),
+        vec![
+            ("FOO".to_string(), ": u8 = 2".to_string()),
+            ("EXP".to_string(), ": u32 = quota(2)".to_string()),
+            ("M".to_string(), ": u8 = 1".to_string()),
+        ]
+    );
+    assert_eq!(
+        text_declared_constants(
+            "extern { static X: u32; } static A: [u32; 2] = [quota(1); 2]; const Y: u8 = 1; \
+             static B: Box<dyn Iterator<Item = u32>> = { let a = 2; quota(a) };"
+        ),
+        vec![
+            ("Y".to_string(), ": u8 = 1".to_string()),
+            ("A".to_string(), ": [u32; 2] = [quota(1); 2]".to_string()),
+            (
+                "B".to_string(),
+                ": Box<dyn Iterator<Item = u32>> = { let a = 2; quota(a) }".to_string()
+            ),
+        ]
+    );
+    for text in [
+        "extern { static X: u32; } const fn f() -> u32 { 1 }",
+        "fn f(p: *const u8, s: &'static str) -> u8 { 0 }",
+        "static ÉTAT: u32 = 1;",
+    ] {
+        assert!(text_declared_constants(text).is_empty(), "{text}");
+    }
+}
+
+#[test]
+fn a_method_owner_is_reached_only_through_a_method_shaped_constant() {
+    let admitted = |other: &str| {
+        let tests = "use demo::Counter;\nuse demo::other::EXPECTED;\n\n#[test]\nfn counts() {\n    let c = Counter::new();\n    assert_eq!(c.tally(), EXPECTED);\n}\n";
+        let index = index(&[(LIB, COUNTER_LIB), (TESTS, tests), ("src/other.rs", other)]);
+        let pin = establish(&index, "tally", "self.n + 1");
+        assert!(pin.is_some(), "tally must establish a pin");
+        pin.map(|pin| admitted_texts(&index, &pin).len())
+            .unwrap_or_default()
+    };
+    assert_eq!(admitted("pub const EXPECTED: usize = 1;\n"), 1);
+    assert_eq!(admitted("pub const EXPECTED: usize = tally(1);\n"), 1);
+    assert_eq!(
+        admitted("pub const EXPECTED: usize = Other::tally(1);\n"),
+        1
+    );
+    assert_eq!(
+        admitted("pub static EXPECTED: usize = crate::Counter::new().tally();\n"),
+        0
+    );
+}
+
+#[test]
+fn a_constant_counts_only_from_a_package_the_test_belongs_to_tests_or_names() {
+    let lib = "crates/core/src/lib.rs";
+    let admitted = |import: &str, constant_file: &str, initializer: &str| {
+        let tests = format!(
+            "use demo::weight;\n{import}\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), EXPECTED);\n}}\n"
+        );
+        let constant = format!("pub const EXPECTED: u32 = {initializer};\n");
+        let index = index(&[
+            (lib, WEIGHT_LIB),
+            ("crates/app/tests/weighs.rs", &tests),
+            (constant_file, &constant),
+        ]);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "weight" && function.file == Path::new(lib));
+        assert!(owner.is_some(), "the owner must be indexed");
+        let Some(owner) = owner else { return 0 };
+        let pin = OwnerReturnPin::establish(&return_probe(owner, "x * 3"), owner, &index);
+        assert!(pin.is_some(), "the free owner must establish a pin");
+        pin.map(|pin| admitted_texts(&index, &pin).len())
+            .unwrap_or_default()
+    };
+    for (import, constant_file) in [
+        // The owner's package, the test's own package, and a named
+        // test-support crate.
+        ("use demo::EXPECTED;", "crates/core/src/expected.rs"),
+        ("use common::EXPECTED;", "crates/app/tests/common.rs"),
+        ("use test_kit::EXPECTED;", "crates/test-kit/src/lib.rs"),
+    ] {
+        // A literal constant there pins; one built by the owner does not.
+        assert_eq!(admitted(import, constant_file, "12"), 1, "{constant_file}");
+        assert_eq!(
+            admitted(import, constant_file, "demo::weight(4)"),
+            0,
+            "{constant_file}"
+        );
+    }
+    // A same-named constant in a package the test never names does not
+    // withhold the pin from the test's own literal constant.
+    assert_eq!(
+        admitted(
+            "const EXPECTED: u32 = 12;",
+            "crates/other/src/lib.rs",
+            "demo::weight(4)"
+        ),
+        1
+    );
+}
+
+#[test]
+fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_constant() {
+    let value = |items: &str, body: &str, operand: &str| -> Option<String> {
+        let tests = format!("use demo::weight;\n{items}\n#[test]\nfn weighs() {{\n{body}\n}}\n");
+        let index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        assert_eq!(index.tests().len(), 1, "fixture must hold exactly one test");
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "weight");
+        assert!(owner.is_some(), "the owner must be indexed");
+        let owner = owner?;
+        expected_operand_value(&index, index.tests().at(0), operand, owner)
+            .map(|value| value.trim().to_string())
+    };
+    // RIPR-SPEC-0035: a readable `let`, a chain of them, or one constant
+    // yields its value.
+    assert_eq!(
+        value("", "let e = weight(2);\nassert_eq!(weight(2), e);", "e"),
+        Some("weight(2)".to_string())
+    );
+    assert_eq!(
+        value(
+            "",
+            "let a = weight(2);\nlet b: u32 = a;\nassert_eq!(weight(2), b);",
+            "b"
+        ),
+        Some("weight(2)".to_string())
+    );
+    assert_eq!(
+        value(
+            "const EXPECTED: u32 = weight(4);",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("weight(4)".to_string())
+    );
+    assert_eq!(
+        value(
+            "const EXPECTED: u32 = ::demo::weight(4);",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("::demo::weight(4)".to_string())
+    );
+    assert_eq!(
+        value(
+            "thread_local! { static EXPECTED: u32 = weight(4); }",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("weight(4)".to_string())
+    );
+    // An operand that is not a plain name, a name the test binds twice or
+    // outside a `let` (a loop variable), the owner's own name, and a name
+    // nothing binds yield nothing to read.
+    for (items, body, operand) in [
+        (
+            "",
+            "let e = weight(2);\nassert_eq!(weight(2), e + 1);",
+            "e + 1",
+        ),
+        (
+            "",
+            "let e = weight(2);\nassert_eq!(weight(2), fixture.e);",
+            "fixture.e",
+        ),
+        (
+            "",
+            "let e = weight(2);\nlet e = 6;\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        ("", "for e in [6] {\n    assert_eq!(weight(2), e);\n}", "e"),
+        (
+            "",
+            "let weight = 6;\nassert_eq!(super::weight(2), weight);",
+            "weight",
+        ),
+        ("", "assert_eq!(weight(2), EXPECTED);", "EXPECTED"),
+        // A `mut` binding may change after its `let`; an attribute may
+        // compile the `let` away; two same-named constants are ambiguous.
+        (
+            "",
+            "let mut e = weight(2);\ne = 6;\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        (
+            "",
+            "#[cfg(any())]\nlet e = weight(2);\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        (
+            "const EXPECTED: u32 = weight(4);\nmod other { pub const EXPECTED: u32 = 12; }",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
+        ),
+    ] {
+        assert_eq!(value(items, body, operand), None, "{body}");
+    }
 }
 
 #[test]
@@ -3945,6 +4432,156 @@ fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() -> 
         );
     }
     Ok(())
+}
+
+#[test]
+fn a_return_guard_that_spares_the_expected_value_is_an_analyzer_limit() {
+    // trap-tally-reached-assert-control / trap-steps-early-return.
+    let refusal = |body: &str| {
+        weight_refusal(
+            &format!("use demo::weight;\n#[test]\nfn weighs() {{\n{body}\n}}\n"),
+            &[],
+        )
+    };
+    let pin = "assert_eq!(weight(4), 12);";
+    for guard in [
+        "if weight(4) > 1000 { return; }",
+        "if 1000 < weight(4) { return; }",
+        "if weight(4) == 0 {\n    return;\n}",
+        "if weight( 4 ) >= 13 { return }",
+        "if weight(4) > 12 { return; }",
+        "if weight(4) <= 11 { return; }",
+        "if weight(4) < -1 { return; }",
+    ] {
+        let found = refusal(&format!("{guard}\n{pin}"));
+        assert_eq!(
+            found
+                .as_ref()
+                .and_then(AssertionRefusal::value_guard_subject),
+            Some("weight(4)"),
+            "{guard}"
+        );
+        assert!(
+            found.is_some_and(|refusal| refusal.is_analyzer_limit()),
+            "{guard}"
+        );
+    }
+    for guard in [
+        // The guard fires at the expected value: left to the guarded-return
+        // refusal.
+        "if weight(4) < 1000 { return; }",
+        "if weight(4) == 12 { return; }",
+        "if weight(4) >= 12 { return; }",
+        // The guard returns for every wrong value: a certain gap.
+        "if weight(4) != 12 { return }",
+        "if 12 != weight(4) { return; }",
+        // Another call, another operand shape, or a compound condition.
+        "if weight(5) > 1000 { return; }",
+        "if other(4) > 1000 { return; }",
+        "if weight(4) > LIMIT { return; }",
+        "if weight(4) > 1000 && true { return; }",
+        "if weight(4) > 10 > false { return; }",
+        "if !(weight(4) < 1000) { return; }",
+        // Anything else in the guard, an `else`, a second return, a value.
+        "if weight(4) > 1000 { println!(\"x\"); return; }",
+        "if weight(4) > 1000 { return; } else {}",
+        "if weight(4) > 1000 { return; }\nif weight(4) > 2000 { return; }",
+        "let _ = (); if weight(4) > 1000 { return (); }",
+        "{ if weight(4) > 1000 { return; } }",
+        "return;",
+    ] {
+        let found = refusal(&format!("{guard}\n{pin}"));
+        assert!(found.is_some(), "{guard}");
+        assert!(
+            found
+                .as_ref()
+                .and_then(AssertionRefusal::value_guard_subject)
+                .is_none(),
+            "{guard}"
+        );
+        assert!(
+            !found.is_some_and(|refusal| refusal.is_analyzer_limit()),
+            "{guard}"
+        );
+    }
+    // The guard reads the call the assertion compares, against a literal.
+    let found = refusal("if weight(4) > 1000 { return; }\nassert_eq!(weight(4), TWELVE);");
+    assert!(found.is_some_and(|refusal| refusal.value_guard_subject().is_none()));
+    let found = refusal("if weight(4) > 1000 { return; }\nassert_ne!(weight(4), 13);");
+    assert!(found.is_none_or(|refusal| refusal.value_guard_subject().is_none()));
+    // Whitespace inside a literal argument is not layout, and the compared
+    // value must be the call's own return: no projection, receiver or path
+    // (#7974 review).
+    for (guard, pin) in [
+        (
+            "if weight(4).wrapping_sub(weight(4)) > 1000 { return; }",
+            "assert_eq!(weight(4).wrapping_sub(weight(4)), 0);",
+        ),
+        (
+            "if weight(4).min(5) > 1000 { return; }",
+            "assert_eq!(weight(4).min(5), 5);",
+        ),
+        (
+            "if other::weight(4) > 1000 { return; }",
+            "assert_eq!(other::weight(4), 12);",
+        ),
+        (
+            "if (weight(4)) > 1000 { return; }",
+            "assert_eq!((weight(4)), 12);",
+        ),
+        (
+            "if weight(\"a b\") > 1000 { return; }",
+            "assert_eq!(weight(\"ab\"), 12);",
+        ),
+        (
+            "if weight(' ') > 1000 { return; }",
+            "assert_eq!(weight(' '), 12);",
+        ),
+    ] {
+        let found = refusal(&format!("{guard}\n{pin}"));
+        assert!(
+            found.is_some_and(|refusal| refusal.value_guard_subject().is_none()),
+            "{guard}"
+        );
+    }
+    // ripr does not know the type, so a neighbour of `e` outside the guard's
+    // spared side may not exist: an unsigned count at 0, a `u8` at 255.
+    for (guard, pin) in [
+        ("if weight(4) > 0 { return; }", "assert_eq!(weight(4), 0);"),
+        ("if weight(4) >= 1 { return; }", "assert_eq!(weight(4), 0);"),
+        (
+            "if weight(4) < 255 { return; }",
+            "assert_eq!(weight(4), 255);",
+        ),
+        (
+            "if weight(4) <= 254 { return; }",
+            "assert_eq!(weight(4), 255);",
+        ),
+    ] {
+        let found = refusal(&format!("{guard}\n{pin}"));
+        assert!(
+            !found.is_some_and(|refusal| refusal.is_analyzer_limit()),
+            "{guard}"
+        );
+    }
+    // A neighbour on the spared side, or one every type holds, is enough.
+    for (guard, pin) in [
+        ("if weight(4) > 1 { return; }", "assert_eq!(weight(4), 0);"),
+        (
+            "if weight(4) < 254 { return; }",
+            "assert_eq!(weight(4), 255);",
+        ),
+        (
+            "if weight(4) < 100 { return; }",
+            "assert_eq!(weight(4), 101);",
+        ),
+    ] {
+        let found = refusal(&format!("{guard}\n{pin}"));
+        assert!(
+            found.is_some_and(|refusal| refusal.is_analyzer_limit()),
+            "{guard}"
+        );
+    }
 }
 
 #[test]
@@ -8536,6 +9173,140 @@ fn a_scalar_rendering_compared_with_exact_text_pins() {
     assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
 }
 
+/// RIPR-SPEC-0197 rule 3 short-circuit tails (#7969): a pure `&&`/`||`
+/// chain pins only on a call that evaluates every operand.
+fn short_circuit_lib(tail: &str, test_items: &str) -> String {
+    format!(
+        "pub fn both_zero(x: i32, y: i32) -> bool {{\n    {tail}\n}}\n\nfn check(x: i32, y: i32, want: bool) {{\n    assert_eq!(both_zero(x, y), want);\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{test_items}\n}}\n"
+    )
+}
+
+#[test]
+fn a_short_circuit_tail_pins_only_on_a_call_that_runs_every_operand() {
+    const AND: &str = "x == 0 && 0 == y";
+    const OR: &str = "x != 0 || 0 == y";
+    for (tail, body, admitted) in [
+        // `(0, 0)` runs both operands of the `&&`; `(1, 0)` stops at `x`.
+        (AND, "        assert_eq!(both_zero(0, 0), true);", true),
+        (AND, "        assert_eq!(both_zero(1, 0), false);", false),
+        (AND, "        assert_eq!(false, both_zero(-1, 5));", false),
+        // `||` continues on a false first operand.
+        (OR, "        assert_eq!(both_zero(0, 4), false);", true),
+        (OR, "        assert_eq!(both_zero(3, 0), true);", false),
+        // An argument ripr cannot read never counts.
+        (
+            AND,
+            "        let x = 0;\n        assert_eq!(both_zero(x, 0), true);",
+            false,
+        ),
+        (AND, "        assert_eq!(both_zero(0i32, 0), true);", false),
+        // An unread last argument fails closed too.
+        (
+            AND,
+            "        let y = 0;\n        assert_eq!(both_zero(0, y), true);",
+            false,
+        ),
+        // A table row that runs both operands.
+        (
+            AND,
+            "        for (x, y, want) in [(1, 0, false), (0, 0, true)] {\n            assert_eq!(both_zero(x, y), want);\n        }",
+            true,
+        ),
+        (
+            AND,
+            "        for (x, y, want) in [(1, 0, false), (2, 0, false)] {\n            assert_eq!(both_zero(x, y), want);\n        }",
+            false,
+        ),
+    ] {
+        let lib = short_circuit_lib(
+            tail,
+            &format!("    #[test]\n    fn pins() {{\n{body}\n    }}"),
+        );
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, "both_zero", tail);
+        assert!(pin.is_some(), "the chain must establish a pin: {tail}");
+        let Some(pin) = pin else { return };
+        assert_eq!(!admitted_texts(&index, &pin).is_empty(), admitted, "{body}");
+    }
+}
+
+#[test]
+fn a_short_circuit_table_column_counts_only_inside_its_loop() {
+    // Outside the loop, `x` and `y` are the module's constants `(1, 0)`,
+    // which stop at `x == 0`; the loop's `(0, 0)` row is not that call.
+    const AND: &str = "x == 0 && 0 == y";
+    for (assertion, admitted) in [
+        (
+            "        assert_eq!(both_zero(x, y), want);\n        }",
+            true,
+        ),
+        (
+            "        }\n        assert_eq!(both_zero(x, y), false);",
+            false,
+        ),
+    ] {
+        let lib = short_circuit_lib(
+            AND,
+            &format!(
+                "    #[allow(non_upper_case_globals)]\n    const x: i32 = 1;\n    #[allow(non_upper_case_globals)]\n    const y: i32 = 0;\n\n    #[test]\n    fn pins() {{\n        for (x, y, want) in [(0, 0, true)] {{\n            let _ = (x, y, want);\n    {assertion}\n    }}"
+            ),
+        );
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, "both_zero", AND);
+        assert!(pin.is_some(), "the chain must establish a pin");
+        let Some(pin) = pin else { return };
+        assert_eq!(
+            !admitted_texts(&index, &pin).is_empty(),
+            admitted,
+            "{assertion}"
+        );
+    }
+}
+
+#[test]
+fn a_short_circuit_tail_refuses_a_body_with_earlier_statements() {
+    // `let x = x + 1;` rebinds the parameter the chain reads, so the call's
+    // `0` is not the value `x == 0` compares. The same pin without the
+    // statement is the control.
+    for (statement, admitted) in [("", true), ("    let x = x + 1;\n", false)] {
+        let lib = format!(
+            "pub fn both_zero(x: i32, y: i32) -> bool {{\n{statement}    x == 0 && y == 1\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn pins() {{\n        assert_eq!(both_zero(0, 1), true);\n    }}\n}}\n"
+        );
+        let index = index(&[(LIB, lib.as_str())]);
+        let owner = owner(&index, "both_zero");
+        // The probe sits on the chain's line, after any statement.
+        let mut probe = return_probe(owner, "x == 0 && y == 1");
+        probe.location = SourceLocation::new(
+            owner.file.clone(),
+            owner.start_line + 1 + usize::from(!statement.is_empty()),
+            1,
+        );
+        assert_eq!(
+            OwnerReturnPin::establish(&probe, owner, &index).is_some(),
+            admitted,
+            "{statement:?}"
+        );
+    }
+}
+
+#[test]
+fn a_short_circuit_tail_refuses_impure_or_mixed_chains() {
+    for tail in [
+        "x == 0 && check_y(y)",
+        "x == 0 && y + 1 == 1",
+        "x == 0 || y == 0 && x == y",
+        "(x == 0) && y == 0",
+        "x == 0 && y == LIMIT",
+    ] {
+        let lib = short_circuit_lib(
+            tail,
+            "    #[test]\n    fn pins() {\n        assert_eq!(both_zero(0, 0), true);\n    }",
+        );
+        let index = index(&[(LIB, &lib)]);
+        assert!(establish(&index, "both_zero", tail).is_none(), "{tail}");
+    }
+}
+
 #[test]
 fn an_integer_projection_that_keeps_the_value_pins() {
     // trap-ceiling-wide-min-control / trap-muffle-times-one-control: a
@@ -8665,4 +9436,24 @@ fn a_one_element_vec_indexed_at_zero_pins_the_owner() {
     let body = "assert_eq!(vec![crate::weight(4)][0], 12);";
     let lib = non_scalar_unit_tests("", body);
     assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+}
+
+#[test]
+fn a_direct_call_name_is_one_bare_call_ending_the_subject() {
+    for (subject, name) in [
+        ("weight(4)", Some("weight")),
+        (" weight ( 4 , [1, 2] ) ", Some("weight")),
+        ("_w(f(1))", Some("_w")),
+        ("weight(4).min(5)", None),
+        ("weight(4) + 1", None),
+        ("other::weight(4)", None),
+        ("x.weight(4)", None),
+        ("(weight(4))", None),
+        ("weight(4)(5)", None),
+        ("4weight(1)", None),
+        ("weight", None),
+        ("weight(4", None),
+    ] {
+        assert_eq!(direct_call_name(subject), name, "{subject}");
+    }
 }

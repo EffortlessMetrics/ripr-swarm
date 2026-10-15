@@ -2932,7 +2932,8 @@ fn build_seam_from_shape(
         expected_sink,
         crlf_pairs,
     )
-    .with_owner_call(owner_call);
+    .with_owner_call(owner_call)
+    .with_source_lines(shape.source_lines);
     // Span geometry is additional precision: when derivation fails (stale or
     // mismatched source), the seam keeps line-only behavior rather than
     // carrying wrong coordinates. Match-arm shapes are line-only by policy:
@@ -5595,6 +5596,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                     kind: ProbeShapeKind::UnsafeBoundary,
                     text: "owner_body".into(),
                     value_consumed: false,
+                    source_lines: None,
                 }],
                 ..FileFacts::default()
             },
@@ -5649,6 +5651,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                     kind: ProbeShapeKind::Predicate,
                     text: "x >= 0".into(),
                     value_consumed: false,
+                    source_lines: None,
                 }],
                 ..FileFacts::default()
             },

@@ -535,7 +535,7 @@ fn decimal_integer_value(text: &str) -> Option<String> {
 
 /// The helper call's arguments when each is a whole scalar literal and no
 /// comment or string precedes the call on its line; `None` otherwise.
-fn loan_call_literals(text: &str, helper: &str) -> Option<Vec<String>> {
+pub(in crate::analysis) fn loan_call_literals(text: &str, helper: &str) -> Option<Vec<String>> {
     let prefix = &text[..text.find(&format!("{helper}("))?];
     if text.contains("//") || text.contains("/*") || prefix.contains(['"', '\'']) {
         return None;

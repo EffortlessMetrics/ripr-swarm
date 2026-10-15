@@ -20,6 +20,7 @@ Linked issues:
 - #3727 (parser-backed call identity; this spec adds the owner's item
   container fact, not parser-derived `CallFact`)
 - #6675 (a binary bitwise `|` tail is unconditional; closures and `||` stay refused)
+- #7969 (a pure `&&`/`||` chain pins on a call that evaluates every operand)
 - #6692 (a hand-written `Clone` field pinned by `assert_eq!(recv.clone(), recv)` through derived equality)
 - #6957 (the owner's own enclosing module is not a shadow: nested
   production declarations keep their pin)
@@ -512,7 +513,8 @@ rule only for an assertion whose context was admitted.
      associated owner (shape 1 above).
 3. Return path. The changed expression must be the owner body's tail (or
    its final `return <expr>;`), and it must evaluate all of its parts on
-   every input: no closure, `|=` or non-binary `|`, no `&&`/`||`, no `if`, `match`,
+   every input: no closure, `|=` or non-binary `|`, no `&&`/`||` (except
+   the pure chains in "Short-circuit tails" below), no `if`, `match`,
    loop or `break`, and no combinator that skips its argument on some
    inputs (`map_or`, `unwrap_or`, `and_then`, `then`, ...). With
    `x.map_or(0, |v| v * 3)` changed, `assert_eq!(f(None), 0)` never runs
@@ -526,7 +528,9 @@ rule only for an assertion whose context was admitted.
    `Foo { f: |x| x }`, `[|x| x]`), so every closure still fails closed. A
    `|` inside a macro invocation's arguments
    (`matches!(k, A | B)`) or in a tail holding a `let` may separate pattern
-   alternatives, which short-circuit, so it is never binary. When the owner has no `?` and no other
+   alternatives, which short-circuit, so it is never binary. With a paired
+   old text, only the changed part of the tail is held to this rule
+   (Unchanged closures in a returned tail, below). When the owner has no `?` and no other
    `return`, any pinned value came through it. Otherwise the changed
    expression must be one `Ok(..)` (or `Some(..)`) constructor, the only
    one in the body, every other `return` must build `Err(..)` (or `None`),
@@ -835,7 +839,7 @@ rule only for an assertion whose context was admitted.
      module of the file are refused.
    - The helper runs to its end on every call: no attributes other than
      `#[track_caller]`, no generic parameters or `where` clause, not `async`,
-     `const` or `unsafe`, no `self` parameter, no return type, and no `return`
+     `const` or `unsafe`, no `self` parameter, and no `return`
      or `?` anywhere in its body. It passes the same escape gate as a test
      (only the trusted standard macros, no `break`, `continue` or `yield`) and
      the same item-context and cfg gates, and the macros it invokes join the
@@ -843,6 +847,11 @@ rule only for an assertion whose context was admitted.
      `macro_rules!` or `use` inside the helper's own body) is checked at the
      borrowed assertion's line as well as across the test's span, since the
      helper's scope never overlaps the test's.
+     An explicit return type is allowed (#7818): a synchronous call runs the
+     panic assertion even if the caller discards a returned `Result` or
+     `Option`. This lends only the `assert_eq!`, never the returned value or
+     error. An early exit, including an opaque `ensure!`/`bail!`, still refuses
+     the helper; rule 7a's separate fallible-literal grammar is unchanged.
    - The assertion sits on the helper's own eager path and is uniquely
      identified by its line and text, as rule 1 requires within a test.
    - The assertion must also reach the test's oracle facts through the
@@ -933,8 +942,12 @@ snapshot; a strong related oracle never substitutes for a missing premise.
    version requirement alone is insufficient. Before this query, capture both
    legacy `config` and `config.toml` at every `.cargo` directory from the query
    working directory through its filesystem ancestors, plus both files in the
-   effective `CARGO_HOME` (or Cargo's default home). Bind present bytes and
-   absent-file identities; unreadable files, indeterminate home/ancestry or
+   effective `CARGO_HOME` (or Cargo's default home). Use Cargo's canonical
+   resolver, including OS-home discovery when home environment inputs are
+   absent and default-home fallback for an empty `CARGO_HOME`; resolve relative
+   homes at the metadata query's working directory. Discovery never forwards
+   ambient environment to a quarantined child or prepares registry dependencies.
+   Bind present bytes and absent-file identities; unreadable files, indeterminate home/ancestry or
    unresolved config paths refuse the receipt. Parse every present file, not
    just the winning precedence entry. Initially reject any `[source]`, `paths`,
    `[patch]` or `[replace]` entry, or config `[env]` entry setting a `CARGO_*`
@@ -1058,7 +1071,9 @@ Implementation and validation obligations:
 2. Extend the existing owner-pin owner with private bounded extraction and
    composition modules under `syntax/owner_pin/` and `classify/owner_pin/`.
    Reuse cfg/source-role provenance, body identity and call-binding defeats;
-   do not broaden `plain_check_helper` or the existing helper producer.
+   do not broaden `plain_check_helper` for this fallible adapter or the existing
+   helper producer. Rule 7's later explicit-return panic-assertion extension
+   (#7818) does not admit fallible macros here.
 3. Add a lazily memoized dependency-identity query under `analysis/workspace/`,
    bounded to structurally eligible shapes and using the existing deadline,
    output budget and process policy. Failure yields no receipt, without fetching,
@@ -1130,6 +1145,60 @@ integer division is not for an arithmetic tail. Without this witness
 `assert_eq!(label(4), "w12")` on `fn label(x: u32) -> String { format!("w{}", x * 3) }`
 read as a false `weakly_exposed` gap, because the current-path witness
 refuses any macro in the path.
+
+### Unchanged closures in a returned tail (#6578)
+
+In `lines.iter().map(|l| l.cents).sum::<u64>() + 50` → `.. + 25 * 2` only
+`25 * 2` changed. The closure is the same in both versions, the changed
+operand of the outer `+` runs on every input, and its value reaches the
+sum without passing through the closure. `ChangedSpan` in
+`classify/changed_span.rs` takes the probe's paired old line, strips the
+longest common prefix and suffix, parses the new line as one tail
+expression and finds the smallest node covering the differing text.
+
+1. The return-path gate (rule 3) reads a tail its whole-text check refuses
+   more closely, and admits it only in one narrow shape. The changed span
+   holds no closure, block, item, `&&`/`||`, assignment, or text the rule-3
+   check reads as conditional. Every node from it up to and including the
+   tail is an operator that evaluates all its operands (arithmetic,
+   comparison or bitwise; not `&&`, `||` or an assignment), a parenthesis,
+   prefix operator, cast or argument list, or a call to a named function or
+   method that is not a skipping combinator and holds no closure anywhere.
+   A closure beside the change in a call can discard or transform it
+   (`items.iter().map(|l| ..)` with `items` changed, `fold(51, |acc, l| ..)`),
+   a skipping combinator may never run it (`x.map_or(51, |v| v)`), and a
+   block around it (labeled `break`, `const` item, `async`) can skip or
+   rebind it, so each refuses. A call through a non-path callee
+   (`(Option::map_or)(x, 51, f)`) cannot be named and refuses.
+2. The current-path propagation witness, which refuses any closure text in
+   the path, completes a direct return witness for a `return_value` probe
+   whose whole changed expression is the owner's return-value sink on the
+   probe's line when no closure encloses or sits inside the changed node,
+   the changed part passes rule 1, and the expression holds no macro,
+   `dyn`, `extern` or FFI name.
+3. Without a paired old text, when the new line does not parse as one tail
+   expression, or when the tail binds a name outside every closure (a
+   `let`, `if let`, `match` arm or `for`, which can carry the change into a
+   closure that may not run), both read the whole expression as before.
+   When the whole changed tail is one of RIPR-SPEC-0265's admitted adaptor
+   tails, that spec's rule 2 establishes the pin's adaptor gate instead:
+   its keeping-pair registry tells a closure-carried change apart there,
+   so this section's closure refusal does not override it (a change inside
+   a `map` + `sum` closure body reads through 0265, not as a refusal
+   here).
+
+The removed old text between the same prefix and suffix must be as plain
+as its replacement: a closure, block, macro, `?`, `return`, `break`,
+`async`, `unsafe`, `const`, `static`, or text the rule-3 check reads as
+conditional refuses, because it may have given the same value
+(`(|| 51)()` → `51`). A leading `return ` and trailing `;` are dropped from
+both texts; inner whitespace is kept, since it may sit in a string literal
+the change touched (`"a b"` → `"a  b"`). A change
+that reaches into a comment beside the tail (which parses outside it) is
+read whole. Limit: a named call outside the skipping combinators can still
+collapse the changed value (`max`, `clamp`, `saturating_sub`, an `as u8`
+cast), as it can in a tail with no closure; this rule adds no new class of
+such calls.
 
 ### Same-named module-level functions (#6544)
 
@@ -1342,6 +1411,55 @@ it. `assert_debug_eq` (which compares the `Debug` text), `expect_file!`, a
 qualified `expect_test::expect!`, and every `insta` macro stay
 `snapshot` / medium.
 
+### Short-circuit tails (#7969)
+
+Rule 3 refuses `&&`/`||` because a pin may never evaluate the changed
+part: `x == 0 && 0 == y` pinned only at `both_zero(1, 0)` returns `false`
+from `x == 0`, and the changed `0 == y` never runs. One shape is admitted,
+and only per pinned call:
+
+1. The owner has plain identifier parameters (no receiver, no pattern, no
+   generics), no `?`, no other `return` and no statement before the
+   tail (`let x = x + 1;` would make the call's arguments differ from the
+   values the chain reads), and its whole body is one
+   chain joined only by `&&` or only by `||` (a mix needs precedence and
+   refuses). Each operand is a `bool` parameter after any number of `!`,
+   or one comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) of two atoms, not
+   both literals, with no leading `!` (`!x == 0` is `(!x) == 0`). An atom
+   is a parameter, a plain integer or `bool` literal, an unescaped char
+   literal, or a parameter `%` or `/` a nonzero integer literal. Such an
+   operand cannot call, index, overflow, divide by a variable or write, so
+   skipping it changes only the value. Anything else (a call, field,
+   index, cast, parenthesis, macro, constant, float, `+`/`-`/`*`) refuses.
+2. The pinned call evaluates every operand on some run. ripr reads each
+   argument on each run: a plain literal, a column of a constant-row `for`
+   table in the test (RIPR-SPEC-0186) whose loop body holds the call, or, for an assertion borrowed from a
+   check helper (rule 7), the helper's parameter at each of the test's
+   eager calls. On at least one run every operand but the last must take
+   the value that does not short-circuit (`true` for `&&`, `false` for
+   `||`). A run with any argument ripr cannot read, the last operand's
+   included, never counts.
+3. Every other rule holds unchanged. The predicate twin pins through the
+   same gate, as for any bool owner's whole tail.
+4. Propagation (#8037). An admitted chain that is the owner's whole body
+   completes a DirectReturn witness on its line (limitation
+   `short_circuit_owner_tail`), as a constant tail and an admitted
+   iterator-adaptor tail (RIPR-SPEC-0265 rule 3) do: its operands are
+   comparisons of parameters with literals and make no calls, so its value
+   is the owner's return. Before this,
+   an `||` chain had no witness, because the closure-syntax guard reads any
+   paired pipes as an opaque closure, so its return-value probe stayed
+   `weakly_exposed` even when the pin held. Whether a pinned run evaluates
+   every operand stays item 2's run check, not this edge's.
+
+The run check reads values, not mutants: it shows the changed chain runs
+to its end on a pinned input, which is what rule 3 asks of any tail.
+Whether those inputs discriminate a boundary stays the infection stage's
+question. In `grid-equality-table` (`day % 7 == 6 || day % 7 == 0` over a
+table) the predicate keeps `infection_unknown` for computed operands; the
+return value, which before item 4 lacked a complete owner-bound
+propagation witness, is now credited through that witness and the pin.
+
 ### Exact projections
 
 For an owner whose declared return type is a built-in integer under the
@@ -1392,8 +1510,9 @@ reaches the ordinary token rule and reads `weakly_exposed`, still a gap.
   `grid-bool-helper` move the same way. No case gains a false `exposed`
   verdict and no other row changes. The other helper cells stay below
   `exposed` for the causes their inline `-exact` twins share: an `&&` tail
-  owner pin (`grid-equality-helper`), a changed arm pattern that selection
-  never credits (`grid-match-helper`), and the iterator-closure and `?`
+  owner pin (`grid-equality-helper`, credited since #7969), a changed arm
+  pattern that selection never credited (`grid-match-helper`, credited since
+  RIPR-SPEC-0229 decision 5, #7981), and the iterator-closure and `?`
   operand shapes (`grid-iter-helper`, `grid-try-helper`).
 - The bytes 7930d93 replay moves both `return_value` findings
   (`try_get_int`, `try_get_int_le`) from `weakly_exposed` to `exposed`, and
@@ -1531,6 +1650,11 @@ reaches the ordinary token rule and reads `weakly_exposed`, still a gap.
 - `use expect_test::expect;` under its own name makes a bare `expect!`
   expect-test's on the same manifest terms as `pretty_assertions`
   (inline expect-test pins, #6578).
+- Unchanged closures in a returned tail (#6578): in the RIPR-SPEC-0219
+  verdict corpus, `lib-pretty-total-path-qualified` is `credited`; a change
+  inside the closure, a value a closure captures through a `let`, and a
+  changed `map_or` default stay unrevealed
+  (`crates/ripr/tests/unchanged_closure_tail.rs`).
 
 ### Matched before/after observations
 
@@ -1714,7 +1838,9 @@ assertions. This repair shares the existing callback without that larger migrati
   constant-row table, cross-module and cross-file helpers, generic helpers
   and helpers with early exits keep the rule-1 refusal. A helper's arguments are its parameters, whose values stay
   unresolved (RIPR-SPEC-0229); rule 7 establishes execution and call identity
-  only.
+  only. The one exception is a short-circuit tail (#7969), whose run check
+  reads the plain literal a test passes at each eager helper call; it
+  resolves no other helper value.
 
 - Shared admission covers Rust `return_value`, `error_path` and `predicate`
   evidence from bare `assert_eq!` invocations, a bool owner's `assert!` and
@@ -1750,6 +1876,18 @@ assertions. This repair shares the existing callback without that larger migrati
 - No runtime claim: `exposed` stays a static reading. The matched compiled
   controls are independent evidence for the fixture contract only.
 
+- Short-circuit tails (#7969): `grid-equality-helper` moves from a false
+  actionable gap to `credited`. In the `authored-spec0197-short-circuit`
+  subject, `short-circuit-band-table` (`open && 3 <= level` over a table
+  whose `(3, true)` row runs both operands) stays `credited` (it already
+  read `exposed` through table boundary pairing; the pin must not undo it), and
+  `trap-short-circuit-skipped-operand` (`x == 0 && 0 == y` pinned only
+  with `x != 0`) stays a gap. No other row changes.
+- Short-circuit tail propagation (#8037): `grid-equality-table`
+  (`day % 7 == 6 || day % 7 == 0` over a table whose rows 0, 1 and 5 run
+  both operands) moves from a false actionable gap to `credited`. No other
+  row changes.
+
 ## Acceptance Examples
 
 - Given a trait default `try_get_int` whose changed tail is
@@ -1777,6 +1915,15 @@ assertions. This repair shares the existing callback without that larger migrati
   `use meter::Gauge;` asserting `assert_eq!(Gauge::reading(), 42)` confirms
   a change to `Gauge::reading`; the same test through `use meter::Gauge as
   Knob;`, `use meter::*;` or `use spare::Gauge;` does not (#6617).
+- Given `fn both_zero(x: i32, y: i32) -> bool { x == 0 && 0 == y }`
+  changed from `y == 0` and a test asserting only
+  `assert_eq!(both_zero(1, 0), false)` and `assert_eq!(both_zero(2, 0), false)`,
+  the finding stays below `exposed`: no pinned call evaluates `0 == y`.
+- Given `fn in_band(level: u8, open: bool) -> bool { open && 3 <= level }`
+  changed from `level >= 3` and a test asserting
+  `assert_eq!(in_band(level, open), want)` over the table
+  `[(3, true, true), (2, true, false), (5, false, false)]`, the finding
+  reads `exposed`: the `(3, true)` row evaluates both operands.
 - Given a trait default `next_word` and `impl Reader for Fixed` overriding
   it, a test asserting `assert_eq!(reader.next_word(), 7)` on a `Fixed`
   receiver does not confirm a change to the default.
@@ -1926,6 +2073,21 @@ assertions. This repair shares the existing callback without that larger migrati
   mutant fails; `raw_path_shadow_module_keeps_the_mutant_green` (#7098
   review) loads a rival `Unit` from a `#[r#path]`-named non-`.rs` module,
   and the mutant passes while the finding refuses.
+- Short-circuit tail propagation (#8037): `propagation_witness.rs`
+  `short_circuit_owner_tail_completes_only_an_admitted_chain`;
+  `crates/ripr/tests/short_circuit_or_tail.rs`
+  `an_or_tail_run_to_its_end_by_a_table_is_exposed` and
+  `an_or_tail_whose_changed_operand_never_runs_stays_below_exposed`.
+- Short-circuit tails (#7969): `owner_pin/short_circuit.rs` unit tests
+  `reads_homogeneous_comparison_chains_over_parameters`,
+  `refuses_anything_that_can_call_panic_or_mix_operators`,
+  `evaluates_operands_on_literal_values`; `owner_pin/tests.rs`
+  `a_short_circuit_tail_pins_only_on_a_call_that_runs_every_operand`,
+  `a_short_circuit_tail_refuses_impure_or_mixed_chains`,
+  `a_short_circuit_tail_refuses_a_body_with_earlier_statements`,
+  `a_short_circuit_table_column_counts_only_inside_its_loop`;
+  `owner_pin/tests/helper_pins.rs`
+  `a_short_circuit_tail_reads_helper_calls_by_parameter`.
 - Bool-owner unit tests: `a_bare_assert_pins_a_bool_owner_to_true_or_false`,
   `a_bare_assert_pins_nothing_on_a_non_bool_owner`,
   `a_bare_assert_keeps_the_owner_binding_defeats`; pairing unit test
@@ -1952,6 +2114,9 @@ assertions. This repair shares the existing callback without that larger migrati
   confirmation signals behind the family, oracle-kind and owner-binding
   defeats. `analyze_related_assertions` applies shared context before matching
   or credit and preserves refused assertions only as zero-oracle relations; `file_imports_own_item`; `::`-rooted `use` paths.
+- `crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs`:
+  `ShortCircuitTail` (#7969), the `ReturnPathGate::ShortCircuit` owner
+  side and its per-run test-side check.
 - `crates/ripr/src/analysis/classify/operand_pin.rs`: rule 7's
   operand-only pin, applied in `classifier/evidence.rs`.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: establishes the pin

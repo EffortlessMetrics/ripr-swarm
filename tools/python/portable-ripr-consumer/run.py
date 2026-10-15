@@ -588,7 +588,8 @@ def product_json_bytes(operation: str, stdout: bytes, out_dir: Path) -> bytes:
 
 
 def write_bytes_unfollowed(path: Path, data: bytes) -> None:
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    # Keep persisted bytes identical to the receipt digests on Windows too.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0)
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     try:

@@ -86,6 +86,20 @@ Supported bare keys, double-quoted entry string values, and the integer schema
 header retain their existing syntax. Single-quoted string values and quoted
 keys remain unsupported. This repair adds no broader TOML or calendar support.
 
+### Unused default suppression disclosure (#7759)
+
+After successful analysis, `ripr check` in human, human-full, JSON or GitHub
+format emits one stderr line when no explicit `--suppression-policy` was
+supplied and `.ripr/suppressions.toml` resolves to a file under the analyzed
+root. The line names the unused default path and the explicit flag needed
+to apply it. It is a presence disclosure, not validation: malformed unused
+content remains nonfatal. The command does not parse or apply this file,
+change stdout or change exit semantics. A foreign working-directory file,
+a missing file, or a directory at that path does not trigger the note.
+An explicit policy retains its loader and typed refusal contract from
+RIPR-SPEC-0241. Implicit SARIF/badge and repository consumers do not receive
+a false skipped-policy note and keep their existing policy authority.
+
 ## Required Evidence
 
 Repository configuration evidence should cover:
@@ -103,6 +117,8 @@ Repository configuration evidence should cover:
 - empty or malformed first values and third declarations retaining the original
   declaration identity, with valid field-name reuse across separate entries;
 - unsafe relative-path shapes being rejected where paths are configurable;
+- escaped NUL characters in relative paths being rejected before filesystem
+  use, while Unicode, spaces, and existing path normalization remain supported;
 - `ripr doctor` reporting loaded config path, missing-config defaults, and
   malformed config errors without printing config source text;
 - `ripr doctor` separating installed-binary analysis readiness (the default
@@ -130,6 +146,13 @@ This spec does not require:
 - unsaved-buffer overlays or deep editor analysis by default.
 
 ## Acceptance Examples
+
+A valid default policy matching `src/**` leaves ordinary check findings
+unchanged without the flag, while stderr explains how to apply it. With
+`--suppression-policy .ripr/suppressions.toml`, matching findings are marked
+suppressed and no skipped-policy note appears. An invalid unused file keeps
+the ordinary JSON document unchanged; the same file supplied explicitly
+produces the existing non-consumable `suppression_policy_invalid` refusal.
 
 ### Missing config preserves defaults
 
@@ -297,6 +320,11 @@ cargo-only).
 
 ## Test Mapping
 
+- `crates/ripr/tests/default_suppression_disclosure.rs` — real CLI explicit
+  opt-in, unchanged full stdout, malformed-unused versus explicit refusal,
+  analyzed-root/foreign-CWD/directory controls, and implicit-consumer note
+  exclusion. Expected prose and finding paths are literal consumer values.
+
 Current tests:
 
 - `crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_owner`
@@ -340,6 +368,9 @@ Current tests:
 - `crates/ripr/src/config.rs::tests::config_mode_applies_when_cli_mode_is_not_explicit`
 - `crates/ripr/src/config.rs::tests::malformed_or_unknown_config_is_actionable`
 - `crates/ripr/src/config.rs::tests::config_rejects_unsafe_suppression_paths`
+- `crates/ripr/src/config.rs::tests::relative_config_paths_reject_nul_before_filesystem_use`
+- `crates/ripr/src/config.rs::tests::relative_config_paths_preserve_normalization_spaces_and_unicode`
+- `crates/ripr/src/cli/commands/config.rs::tests::validate_rejects_a_nul_path_in_valid_toml`
 - `crates/ripr/src/config.rs::tests::oracle_policy_rewrites_configurable_oracle_strengths`
 - `crates/ripr/src/lsp/config.rs::tests::repo_config_sets_defaults_when_initialization_options_are_missing`
 - `crates/ripr/src/lsp/config.rs::tests::initialization_options_override_repo_config_defaults`

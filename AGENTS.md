@@ -337,6 +337,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo doc --workspace --no-deps
 cargo package -p ripr --list
+cargo xtask check-packaged-readme
 cargo publish -p ripr --dry-run
 cargo xtask check-static-language
 cargo xtask check-policy-all

@@ -56,6 +56,29 @@ Expected artifacts after a coverage run:
   The required Linux LLVM replay test fails if Rust or matching LLVM discovery
   fails; unsupported platforms exercise the adapter refusal control.
 
+The failure manifest also associates supported raw-profile binary IDs with GNU
+build IDs in instrumented Linux ELF files found only as direct entries in the
+coverage target's `debug`, `debug/deps`, `release`, and `release/deps`
+directories. It captures bounded
+identifiers and file metadata, never whole binaries. Exact ID equality and LLVM
+profile sections are required; distinct instrumented candidates with the same
+ID remain ambiguous, while duplicate directory entries of one executable
+(cargo's hard-linked `debug/<name>` copy of `debug/deps/<name>-<hash>`) collapse
+to a single candidate by file identity.
+Unavailable, unmatched within the inspected scope, and truncated results remain
+explicit. Inspection is limited to 1,024 directory entries, 256 files, 2 MiB of
+reads (64 KiB per file), 16 matches, 32 KiB of mapping JSON, and two seconds.
+The profile parser retains the valid prefix when a later ID exceeds the 32-ID
+limit, reports that profile as partial, and marks the aggregate mapping partial
+so unmatched retained IDs are not treated as definitive misses. An unavailable
+profile-ID input also keeps unmatched IDs inconclusive. A readable,
+structurally parsed executable without LLVM profile sections is counted as a
+noncandidate; malformed, unsupported, or unreadable inputs remain unavailable
+and can make the scope partial. Malformed/unsupported layouts and mapping
+failures do not discard profiles or change the original failed coverage
+result. A build-ID association does not
+identify an owning test, process termination, or the cause of a short profile.
+
 Codecov upload requires the `CODECOV_TOKEN` secret and runs only for trusted
 pushes, manual dispatches, and same-repo pull requests. Fork pull requests still
 generate `lcov.info` and upload the `rust-lcov` artifact, but skip Codecov

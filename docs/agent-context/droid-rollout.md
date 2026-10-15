@@ -5,6 +5,10 @@ Use this agent checklist when preparing or reviewing a PR that copies the
 [Roll out Factory Droid review](../how-to/roll-out-droid.md); keep this file
 thin and link back to that guide instead of duplicating every detail.
 
+Automatic PR review was retired in `ripr-swarm` under #5086. The retained
+setup covers trusted manual `@droid` commands and scheduled security scans;
+do not copy or restore the automatic review lane as part of this checklist.
+
 ## Inventory
 
 Record these target-repository facts before editing:
@@ -32,7 +36,6 @@ not ready.
 Most target repositories should receive or adapt:
 
 ```text
-.github/workflows/droid-review.yml
 .github/workflows/droid.yml
 .github/workflows/droid-security-scan.yml
 .factory/skills/review-guidelines/SKILL.md
@@ -51,8 +54,8 @@ notification rules, and local validation commands.
 Check for these before marking a rollout PR ready:
 
 ```text
-pull_request, not pull_request_target
-same-repo guard for automatic PR review
+pull_request, not pull_request_target, for trusted manual PR mentions
+same-repo guard for manual PR mentions
 trusted actor guard for manual @droid commands
 show_full_output: false on every Droid action step
 upload_debug_artifacts: false on every Droid action step
@@ -68,10 +71,8 @@ no reasoning_effort
 custom:MiniMax-M3-0
 review_depth: shallow
 action refs pinned to immutable SHAs
-per-PR concurrency for automatic review
 repo-scoped concurrency for scheduled security scan
 cancel-in-progress: false
-auto-review contents: read
 manual Droid contents: read
 security scan contents: read
 security_scan_schedule: true
@@ -85,7 +86,7 @@ If the target repository has a workflow allowlist or shell-line budget policy,
 update it for every Droid workflow. Do not invent that policy only for Droid
 unless the target repository explicitly wants the governance.
 
-The working `ripr` permission shape for auto-review, manual `@droid`, and
+The working `ripr` permission shape for manual `@droid` and
 scheduled security scan is `contents: read` (plus `pull-requests: write`,
 `issues: write`, and `actions: read`). That posture landed in #2498 after
 dropping `contents: write` and `id-token: write`. Do not expand the baseline

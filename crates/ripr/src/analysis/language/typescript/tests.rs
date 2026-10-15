@@ -7105,6 +7105,73 @@ fn oracle_metadata_emitted_for_literal_expected_value() {
     );
 }
 
+/// oxc represents `-1` / `+1` as unary operators over a NumericLiteral, not as
+/// a negative NumericLiteral node. Those signed numeric literals are
+/// compile-time constants, so `toBe(-1)` must not be reported as a dynamic
+/// matcher argument (#7647).
+#[test]
+fn oracle_metadata_treats_signed_numeric_literal_as_literal_expected() {
+    for (source, expected) in [
+        ("expect(add(2, 3)).toBe(-1);", "-1"),
+        ("expect(add(2, 3)).toBe(+1);", "+1"),
+    ] {
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(source),
+            None,
+        );
+        assert_eq!(assertions.len(), 1, "{source}");
+        let assertion = &assertions[0];
+        assert_eq!(
+            assertion.expected_value_or_variant.as_deref(),
+            Some(expected),
+            "{source}"
+        );
+        assert!(
+            !assertion.has_dynamic_matcher_arg,
+            "{source}: {assertion:?}"
+        );
+        assert_eq!(
+            assertion.oracle_confidence,
+            OracleConfidence::High,
+            "{source}"
+        );
+    }
+}
+
+/// Unary forms that are not a sign applied directly to a numeric literal stay
+/// dynamic: a negated identifier, a negated call, and boolean not (#7647).
+#[test]
+fn oracle_metadata_keeps_non_literal_unary_matcher_args_dynamic() {
+    for source in [
+        "expect(add(2, 3)).toBe(-x);",
+        "expect(add(2, 3)).toBe(-f());",
+        "expect(flag()).toBe(!true);",
+    ] {
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(source),
+            None,
+        );
+        assert_eq!(assertions.len(), 1, "{source}");
+        let assertion = &assertions[0];
+        assert!(assertion.has_dynamic_matcher_arg, "{source}: {assertion:?}");
+        assert!(
+            assertion.expected_value_or_variant.is_none(),
+            "{source}: {assertion:?}"
+        );
+        assert_eq!(
+            assertion.oracle_confidence,
+            OracleConfidence::Medium,
+            "{source}"
+        );
+    }
+}
+
 /// Oracle metadata: `has_dynamic_matcher_arg = true` and no expected value when
 /// the matcher argument is a variable (non-literal dynamic expression).
 #[test]
@@ -11253,12 +11320,12 @@ fn delta5_verify_command_stays_in_missing_list_when_runner_unresolved() -> Resul
 
 /// Mocha fail-closed control: a detected mocha framework has NO file-target
 /// command mapping, so with no lockfile/runner evidence the inferred command
-/// is `None`. The evidence MUST carry
-/// `typescript_package_limitation: typescript_test_runner_unresolved` (the
-/// limitation fires whenever the command is unresolved — even though a
-/// framework WAS detected) and MUST NOT invent a `typescript_verify_command`.
+/// is `None`. The evidence MUST NOT invent a `typescript_verify_command`.
+/// The runner is known (`typescript_test_runner: mocha`), so
+/// `typescript_test_runner_unresolved` must stay omitted (#7646): that
+/// limitation names a missing runner, not a missing file-target command.
 #[test]
-fn mocha_no_lockfile_emits_runner_unresolved_limitation() -> Result<(), String> {
+fn mocha_no_lockfile_omits_runner_unresolved_when_mocha_detected() -> Result<(), String> {
     let root = ts_unique_tempdir("mocha-no-lockfile")?;
 
     // package.json with mocha in devDependencies; NO lockfile → no runner
@@ -11340,19 +11407,181 @@ fn mocha_no_lockfile_emits_runner_unresolved_limitation() -> Result<(), String> 
         ));
     }
 
-    // The unresolved limitation MUST fire even though a framework was detected.
+    // The runner-unresolved limitation must NOT fire: mocha was detected.
     let has_limitation = finding
         .evidence
         .iter()
         .any(|ev| ev == "typescript_package_limitation: typescript_test_runner_unresolved");
-    if !has_limitation {
+    if has_limitation {
         return Err(format!(
-            "expected typescript_test_runner_unresolved limitation when the inferred command is None; evidence={:?}",
+            "mocha was detected, so typescript_test_runner_unresolved must not appear beside typescript_test_runner: mocha; evidence={:?}",
             finding.evidence
         ));
     }
 
     Ok(())
+}
+
+const RUNNER_UNRESOLVED_LIMITATION: &str =
+    "typescript_package_limitation: typescript_test_runner_unresolved";
+
+/// #7646: vitest resolved, no related test → no verify command, and do not
+/// stamp `typescript_test_runner_unresolved` next to `typescript_test_runner:
+/// vitest`. The missing related test is not an unknown runner.
+#[test]
+fn vitest_without_related_test_omits_runner_unresolved_limitation() -> Result<(), String> {
+    let root = ts_unique_tempdir("vitest-no-related-test")?;
+
+    ts_write_file(
+        &root.join("package.json"),
+        r#"{"name":"pkg","scripts":{"test":"vitest"},"devDependencies":{"vitest":"^1.0.0"}}"#,
+    )?;
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function applyDiscount(amount: number, threshold: number): number {\n  if (amount >= threshold) {\n    return amount - 10;\n  }\n  return amount;\n}\n",
+    )?;
+
+    let finding = analyze_ts_probe_at_threshold(&root)?;
+    let _ = std::fs::remove_dir_all(&root);
+
+    if !finding.related_tests.is_empty() {
+        return Err(format!(
+            "setup: expected no related tests; got {:?}",
+            finding.related_tests
+        ));
+    }
+
+    let has_runner_name = finding
+        .evidence
+        .iter()
+        .any(|ev| ev == "typescript_test_runner: vitest");
+    if !has_runner_name {
+        return Err(format!(
+            "expected typescript_test_runner: vitest; evidence={:?}",
+            finding.evidence
+        ));
+    }
+
+    if finding
+        .evidence
+        .iter()
+        .any(|ev| ev.starts_with("typescript_verify_command:"))
+    {
+        return Err(format!(
+            "no related test: no verify command should be invented; evidence={:?}",
+            finding.evidence
+        ));
+    }
+
+    if finding
+        .evidence
+        .iter()
+        .any(|ev| ev == RUNNER_UNRESOLVED_LIMITATION)
+    {
+        return Err(format!(
+            "vitest was detected with no related test: typescript_test_runner_unresolved must not contradict typescript_test_runner: vitest; evidence={:?}",
+            finding.evidence
+        ));
+    }
+
+    Ok(())
+}
+
+/// #7646 negative control: no framework and no package-manager runner. The
+/// limitation still names the missing runner even when a related test exists
+/// (so a no-op that always omits the limitation cannot pass).
+#[test]
+fn unknown_runner_emits_runner_unresolved_limitation() -> Result<(), String> {
+    let root = ts_unique_tempdir("unknown-runner")?;
+
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function applyDiscount(amount: number, threshold: number): number {\n  if (amount >= threshold) {\n    return amount - 10;\n  }\n  return amount;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/lib.test.ts"),
+        "import { applyDiscount } from '../src/lib';\ntest('stub', () => {\n  applyDiscount(50, 100);\n});\n",
+    )?;
+
+    let finding = analyze_ts_probe_at_threshold(&root)?;
+    let _ = std::fs::remove_dir_all(&root);
+
+    if finding.related_tests.is_empty() {
+        return Err("setup: expected a related test so command inference actually ran".to_string());
+    }
+
+    if finding
+        .evidence
+        .iter()
+        .any(|ev| ev.starts_with("typescript_test_runner: "))
+    {
+        return Err(format!(
+            "setup: runner must be unknown; evidence={:?}",
+            finding.evidence
+        ));
+    }
+
+    if finding
+        .evidence
+        .iter()
+        .any(|ev| ev.starts_with("typescript_verify_command:"))
+    {
+        return Err(format!(
+            "unknown runner: no command should be invented; evidence={:?}",
+            finding.evidence
+        ));
+    }
+
+    if !finding
+        .evidence
+        .iter()
+        .any(|ev| ev == RUNNER_UNRESOLVED_LIMITATION)
+    {
+        return Err(format!(
+            "expected typescript_test_runner_unresolved when the runner is unknown; evidence={:?}",
+            finding.evidence
+        ));
+    }
+
+    Ok(())
+}
+
+fn analyze_ts_probe_at_threshold(root: &Path) -> Result<crate::domain::Finding, String> {
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.to_path_buf(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("src/lib.ts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "  if (amount >= threshold) {".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files)?;
+    result.findings.into_iter().next().ok_or_else(|| {
+        format!(
+            "expected at least one finding; got none (changed_files={})",
+            result.changed_files
+        )
+    })
 }
 
 /// Control 3 (cockpit delta #5, issue #1245 — unchanged-case guard):
@@ -13647,6 +13876,138 @@ fn expected_side_is_live_unique_line_still_folds_liveness() {
             "999",
         ),
         Some(false)
+    );
+}
+
+/// Signed matcher text (`-1`, `+1`) is a numeric expected value. On the
+/// discount boundary it matches neither 90 nor 100, so it is dead rather
+/// than an unparsed `None` that would leave the witness standing (#7647).
+#[test]
+fn expected_side_is_live_treats_signed_numeric_literals_as_numbers() {
+    let owner = boundary_witness_owner();
+    for expected in ["-1", "+1"] {
+        assert_eq!(
+            expected_side_is_live(
+                &owner,
+                "  if (total >= 100) {",
+                "total",
+                "100",
+                &["100".to_string()],
+                expected,
+            ),
+            Some(false),
+            "{expected}"
+        );
+    }
+}
+
+/// A changed branch that returns `-1` is live when the matcher pins that
+/// same signed literal.
+#[test]
+fn expected_side_is_live_credits_a_signed_live_expected_value() {
+    let owner = TypeScriptOwner {
+        name: "polarity".to_string(),
+        file: PathBuf::from("src/lib.ts"),
+        start_line: 1,
+        end_line: 6,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        exported_as_default: false,
+        class_default_export: false,
+        module_entries: Vec::new(),
+        imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+        arity: Some(1),
+        params: vec!["n".to_string()],
+        source_text: Some(
+            concat!(
+                "export function polarity(n: number): number {\n",
+                "    if (n <= 0) {\n",
+                "        return -1;\n",
+                "    }\n",
+                "    return 1;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    if (n <= 0) {",
+            "n",
+            "0",
+            &["0".to_string()],
+            "-1",
+        ),
+        Some(true)
+    );
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    if (n <= 0) {",
+            "n",
+            "0",
+            &["0".to_string()],
+            "1",
+        ),
+        Some(false)
+    );
+}
+
+/// Jest `toBe` uses `Object.is`, so `toBe(-0)` does not pass against a
+/// `return 0` branch even though IEEE equality treats the zeros as equal.
+#[test]
+fn expected_side_is_live_does_not_equate_negative_zero_with_zero() {
+    let owner = TypeScriptOwner {
+        name: "gate".to_string(),
+        file: PathBuf::from("src/lib.ts"),
+        start_line: 1,
+        end_line: 6,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        exported_as_default: false,
+        class_default_export: false,
+        module_entries: Vec::new(),
+        imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+        arity: Some(1),
+        params: vec!["n".to_string()],
+        source_text: Some(
+            concat!(
+                "export function gate(n: number): number {\n",
+                "    if (n <= 0) {\n",
+                "        return 0;\n",
+                "    }\n",
+                "    return 1;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    if (n <= 0) {",
+            "n",
+            "0",
+            &["0".to_string()],
+            "-0",
+        ),
+        Some(false)
+    );
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    if (n <= 0) {",
+            "n",
+            "0",
+            &["0".to_string()],
+            "0",
+        ),
+        Some(true)
     );
 }
 

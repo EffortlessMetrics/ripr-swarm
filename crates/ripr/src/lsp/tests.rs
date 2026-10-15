@@ -15688,9 +15688,18 @@ fn execute_command_collect_context_returns_packet_for_known_finding() -> Result<
         // that diff source with the session root — re-running it re-selects
         // the finding the packet ships with, instead of exiting 2 with "no
         // finding matched" against the committed default-branch diff.
+        // #7937: the root spelling comes from the same binding owner the
+        // packet builder uses (`bound_root` + `shell_arg`), not a hardcoded
+        // POSIX literal — a rooted `/workspace` binds to the process drive
+        // on Windows and renders the bound drive-absolute form, and the
+        // pin must accept the producer's own replayable form on every host.
         if let Some(witness) = expected_context_packet.witness.as_mut() {
-            witness.explain_command =
-                "ripr explain --root /workspace --worktree probe:pricing:88:predicate".to_string();
+            witness.explain_command = format!(
+                "ripr explain --root {} --worktree probe:pricing:88:predicate",
+                crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+                    "/workspace"
+                )),
+            );
         }
         let expected_json =
             crate::output::json::render_context_packet_dto(&expected_context_packet);
@@ -20760,6 +20769,28 @@ fn report_kind_and_items(report: &serde_json::Value) -> (Option<&str>, usize) {
     )
 }
 
+fn report_is_quarantine_withdrawal(report: &serde_json::Value) -> bool {
+    let (kind, items) = report_kind_and_items(report);
+    kind == Some("full")
+        && items == 1
+        && report
+            .pointer("/items/0/code")
+            .and_then(serde_json::Value::as_str)
+            == Some("ripr-diagnostic-quarantine-withdrawn")
+}
+
+fn last_diagnostics_are_quarantine_withdrawal(diagnostics: Option<Vec<Diagnostic>>) -> bool {
+    matches!(
+        diagnostics.as_deref(),
+        Some([diagnostic])
+            if matches!(
+                &diagnostic.code,
+                Some(tower_lsp_server::ls_types::NumberOrString::String(code))
+                    if code == "ripr-diagnostic-quarantine-withdrawn"
+            )
+    )
+}
+
 async fn workspace_status_json(backend: &Backend) -> Result<serde_json::Value, String> {
     backend
         .execute_command(ExecuteCommandParams {
@@ -20825,10 +20856,9 @@ async fn dirty_document_withdraws_line_local_diagnostics_and_discloses() -> Resu
 
     // Its line-local diagnostics are withdrawn under a distinct result id.
     let withdrawn = pull_document_json(backend, &fixture.uri_a, None).await?;
-    let (kind, items) = report_kind_and_items(&withdrawn);
-    if kind != Some("full") || items != 0 {
+    if !report_is_quarantine_withdrawal(&withdrawn) {
         return Err(format!(
-            "expected an empty full report for the dirty document: {withdrawn}"
+            "expected a quarantine marker for the dirty document: {withdrawn}"
         ));
     }
     let quarantined_id = withdrawn
@@ -20864,12 +20894,14 @@ async fn dirty_document_withdraws_line_local_diagnostics_and_discloses() -> Resu
     if !quarantine.withdrawal_disclosed {
         return Err("withdrawal must be disclosed".to_string());
     }
-    // The client-visible baseline carries an empty set for the dirty document.
-    if backend
-        .last_diagnostics_for_uri_for_test(&fixture.uri_a)
-        .is_none_or(|diagnostics| !diagnostics.is_empty())
-    {
-        return Err("client-visible baseline must be empty for the dirty document".to_string());
+    // The client-visible baseline carries the quarantine marker.
+    if !last_diagnostics_are_quarantine_withdrawal(
+        backend.last_diagnostics_for_uri_for_test(&fixture.uri_a),
+    ) {
+        return Err(
+            "client-visible baseline must carry the quarantine marker for the dirty document"
+                .to_string(),
+        );
     }
 
     // The other (clean) document is unaffected on both pull transports.
@@ -20895,7 +20927,7 @@ async fn dirty_document_withdraws_line_local_diagnostics_and_discloses() -> Resu
         .get("items")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| format!("expected workspace report items: {workspace_json}"))?;
-    for (uri, expect_empty) in [
+    for (uri, expect_marker) in [
         (fixture.uri_a.as_str(), true),
         (fixture.uri_b.as_str(), false),
     ] {
@@ -20903,13 +20935,10 @@ async fn dirty_document_withdraws_line_local_diagnostics_and_discloses() -> Resu
             .iter()
             .find(|entry| entry.get("uri").and_then(serde_json::Value::as_str) == Some(uri))
             .ok_or_else(|| format!("missing workspace report for {uri}: {workspace_json}"))?;
-        let count = entry
-            .get("items")
-            .and_then(serde_json::Value::as_array)
-            .map_or(0, Vec::len);
-        if (count == 0) != expect_empty {
+        let is_marker = report_is_quarantine_withdrawal(entry);
+        if is_marker != expect_marker {
             return Err(format!(
-                "workspace report wrong for {uri} (expect_empty={expect_empty}): {entry}"
+                "workspace report wrong for {uri} (expect_marker={expect_marker}): {entry}"
             ));
         }
     }
@@ -22365,9 +22394,15 @@ async fn unsaved_buffer_text_never_enters_snapshot_or_status_payloads() -> Resul
     if snapshot_json.contains("UNSAVED_BUFFER_MARKER") {
         return Err("unsaved buffer text leaked into snapshot diagnostics".to_string());
     }
-    // The committed client-visible baseline for the dirty document is empty.
-    if backend.last_diagnostics_for_uri_for_test(&fixture.uri_a) != Some(Vec::new()) {
-        return Err("client-visible baseline must be empty for the dirty document".to_string());
+    // The committed client-visible baseline for the dirty document is the
+    // quarantine marker, never the unsaved buffer text.
+    if !last_diagnostics_are_quarantine_withdrawal(
+        backend.last_diagnostics_for_uri_for_test(&fixture.uri_a),
+    ) {
+        return Err(
+            "client-visible baseline must carry the quarantine marker for the dirty document"
+                .to_string(),
+        );
     }
     // Pull serves nothing for the dirty document.
     let report = pull_document_json(backend, &fixture.uri_a, None).await?;
@@ -22377,9 +22412,10 @@ async fn unsaved_buffer_text_never_enters_snapshot_or_status_payloads() -> Resul
     {
         return Err("unsaved buffer text leaked into the pull report".to_string());
     }
-    let (_, items) = report_kind_and_items(&report);
-    if items != 0 {
-        return Err(format!("expected an empty pull report: {report}"));
+    if !report_is_quarantine_withdrawal(&report) {
+        return Err(format!(
+            "expected a quarantine marker pull report: {report}"
+        ));
     }
     // The workspace status payload names the quarantine with digest
     // identities only — no unsaved text.
@@ -22469,8 +22505,7 @@ async fn superseded_transaction_leaves_document_state_unadvanced() -> Result<(),
     // Pull still serves the committed (previous) snapshot's authority: the
     // dirty document is withdrawn against it, the clean one is served.
     let withdrawn = pull_document_json(backend, &fixture.uri_a, None).await?;
-    let (_, withdrawn_items) = report_kind_and_items(&withdrawn);
-    if withdrawn_items != 0 {
+    if !report_is_quarantine_withdrawal(&withdrawn) {
         return Err(format!(
             "expected the dirty document to stay withdrawn: {withdrawn}"
         ));
@@ -22548,8 +22583,7 @@ async fn externally_changed_disk_content_does_not_falsely_clear_quarantine() -> 
         return Err("analyzed identity must come from the persisted bytes".to_string());
     }
     let withdrawn = pull_document_json(backend, &fixture.uri_a, None).await?;
-    let (_, items) = report_kind_and_items(&withdrawn);
-    if items != 0 {
+    if !report_is_quarantine_withdrawal(&withdrawn) {
         return Err(format!(
             "expected the stale buffer's diagnostics to be withdrawn: {withdrawn}"
         ));
@@ -22887,12 +22921,11 @@ fn framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save() -> 
                 )
                 .await?;
                 next_id += 1;
-                let (kind, items) = report_kind_and_items(&report);
                 let quarantined = report
                     .get("resultId")
                     .and_then(serde_json::Value::as_str)
                     .is_some_and(|id| id.ends_with(":quarantined"));
-                if kind == Some("full") && items == 0 && quarantined {
+                if quarantined && report_is_quarantine_withdrawal(&report) {
                     return Ok::<(), String>(());
                 }
             }
@@ -24062,8 +24095,13 @@ fn framed_advance_while_quarantined_republishes_the_withdrawal() -> Result<(), S
             );
         }
         let params = &second[0];
-        if !params["diagnostics"].as_array().is_none_or(Vec::is_empty) {
-            return Err(format!("the republish must clear, not serve: {params:?}"));
+        let diagnostics = params["diagnostics"].as_array();
+        if diagnostics.is_none_or(|items| {
+            items.len() != 1 || items[0]["code"] != "ripr-diagnostic-quarantine-withdrawn"
+        }) {
+            return Err(format!(
+                "the republish must serve the withdrawal marker, not saved-state findings: {params:?}"
+            ));
         }
         if params.get("version").and_then(serde_json::Value::as_i64) != Some(10) {
             return Err(format!("the republish must bind version 10: {params:?}"));

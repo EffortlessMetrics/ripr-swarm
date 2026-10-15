@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0228-keyed-getter-rewritten-before-read",
+  "subject_id": "authored-keyed-getter",
+  "diff": "cases/spec0228-keyed-getter-rewritten-before-read.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 104
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "unit_test_assert_eq_keyed_getter_rewritten_before_read",
+  "hard_case": "false-credit trap: same key, verified getter and an expected value other than the fallback, but another method rewrites the entry between the owner call and the read (rule 3)",
+  "spec_examples": [
+    "RIPR-SPEC-0228#20"
+  ],
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.stock.insert(sku.to_owned(), qty + 1);",
+        "mutated_line": "self.stock.insert(sku.to_owned(), qty + 1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the stored count changes"
+      },
+      {
+        "replacement": "",
+        "mutated_line": "",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the count is no longer stored"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "set_replaces_the_fill fills \"BOLT\" with 3, sets \"BOLT\" to 5 and asserts count(\"BOLT\") == 5, so a changed or deleted fill insert passes. Spec cell: RIPR-SPEC-0228 example 20, a write through the binding between the owner call and the read hides the insert.",
+  "labeling_observation": {
+    "ripr_commit": "cec8c3a28",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -6,7 +6,8 @@
 //! `no_static_path` findings:
 //!
 //! - a bounded transitive or macro path from a test toward the owner exists
-//!   but is unresolved (RIPR-SPEC-0114, RIPR-SPEC-0118);
+//!   but is unresolved (RIPR-SPEC-0114, RIPR-SPEC-0118), or, checked after
+//!   every other witness, a transitive chain past five hops (#8047);
 //! - the owner is a trait-impl method, which operators, formatting macros
 //!   and generic calls run without naming it, test-reached code names the
 //!   impl's self type, and, for a std trait with its own call syntax
@@ -552,8 +553,18 @@ fn unresolved_reach_summary(
     }) {
         return Some(summary);
     }
-    cached(context, format!("id:{}", owner_fn.id.0), || {
+    if let Some(summary) = cached(context, format!("id:{}", owner_fn.id.0), || {
         trait_dispatch_reach_summary(owner_fn, context)
+    }) {
+        return Some(summary);
+    }
+    // Last: a chain past five hops never displaces a shallower or more
+    // specific witness (#8047).
+    cached(context, format!("deep:{owner_name}"), || {
+        let witness = context
+            .transitive_reach
+            .deep_transitive_witness(owner_name)?;
+        Some(transitive_summary(owner_name, &witness))
     })
 }
 

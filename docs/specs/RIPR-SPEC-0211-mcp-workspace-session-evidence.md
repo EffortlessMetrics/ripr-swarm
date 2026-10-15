@@ -8,6 +8,8 @@ Created: 2026-10-06
 
 Linked issues:
 
+- #7767 (unknown-resource recovery remains useful to message-only clients)
+
 - #7314 (optional tool arguments reject explicit null consistently with
   their advertised non-null input types)
 - #3089 (this slice: status, refresh, bounded gap list, and evidence
@@ -164,11 +166,18 @@ official SDK transport:
   `content[0].text` is the compact JSON serialization of the structured
   document (no pretty-print inflation), and `structuredContent` repeats
   the same document only while the complete double-carry envelope still
-  measures under the 128-KiB response bound; past that point the response
+  measures under the id-aware response budget; past that point the response
   ships the compact text without `structuredContent` rather than failing a
   response the document guard already approved. A tool response is never
   sent over the cap: when even the compact-text envelope cannot fit, the
-  call fails closed with `result_too_large` naming both sizes.
+  call fails closed with `result_too_large` naming both sizes. The
+  id-aware budget is the 128-KiB response bound minus the JSON-serialized
+  request id of the call being answered (so client-controlled id escaping
+  is charged exactly) minus a fixed reserve for the JSON-RPC frame fields
+  and the `resultType` field a `2026-07-28` peer keeps (#7768); the same
+  reservation applies to the paging fit decision, so a page that passes it
+  still carries `structuredContent` on the wire whatever id the client
+  sent.
 - `ripr_list_gaps` accepts `offset` (default 0) and `limit` (minimum 1)
   over the narrowed (filtered) items in snapshot order. When the narrowed set
   would exceed the wire-calibrated tool-document ceiling (half the
@@ -179,7 +188,11 @@ official SDK transport:
   narrowed set exactly once. Pages are sized so the complete double-carry
   envelope measures under the response bound: a paged success always
   carries `structuredContent`, as the tool's advertised `outputSchema`
-  requires. The generated `next_page` route pins the snapshot identity,
+  requires. Empty pages obey the same structured-envelope bound: echoed
+  filters can exceed it even when the raw document fits. Such a page fails
+  closed with the existing typed `result_too_large` refusal and current
+  snapshot identity instead of a text-only success. The generated `next_page`
+  route pins the snapshot identity,
   filters, and explicit limit, so
   a refresh between pages fails closed with `stale_snapshot` instead of
   mixing snapshots. Only a listing that cannot fit even one page — for
@@ -221,9 +234,15 @@ official SDK transport:
   with `no_snapshot`; reads during an
   attempt report `analysis_in_flight`; unknown item ids fail closed with
   `item_not_found`; a document that cannot fit the 128-KiB response bound
-  fails closed with `result_too_large` — for tool responses the envelope
-  is measured in its final form before it is sent (#6021), so an approval
-  from the document-level guard can no longer be overturned by the wire.
+  fails closed with `result_too_large` — for tool and resource responses
+  the envelope is measured in its final form against the id-aware budget
+  (the bound minus the actual JSON-escaped request id and the fixed
+  JSON-RPC/`resultType` overhead, #7768) before it is sent (#6021), so an
+  approval from the document-level guard can no longer be overturned by
+  the wire for any legal request id. A request id so large that even the
+  typed refusal cannot fit keeps the documented correlated generic
+  fallback, and a fallback that also cannot fit still terminates with
+  `MCP output limit`.
   Reserved vocabulary
   (`config_invalid`, `workspace_ambiguous`, `static_limitation`,
   `cancelled`, `superseded`) is named on the wire for the slices that own
@@ -233,6 +252,25 @@ official SDK transport:
   configuration loading, no model provider, and no repair-ready claim
   anywhere. MCP does not call the LSP server, parse LSP diagnostics, or
   read VS Code artifacts as authority.
+
+### Unknown-resource recovery (#7767)
+
+An unrecognized resource URI returns a bounded, static human-readable message
+naming `ripr://workspace/status` and all five advertised templates:
+`ripr://snapshot/{snapshot_id}`, `ripr://gap/{canonical_id}`,
+`ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
+`ripr://repair-card/{canonical_id}`. The latter repair routes retain the
+identity and typed-failure authorities in RIPR-SPEC-0214 and RIPR-SPEC-0215.
+The same routes remain in the existing `error.data.available` and
+`error.data.resource_templates` arrays. A client displaying only
+`error.message` can discover a next request without inspecting structured
+error data. The message does not echo the unrecognized caller URI.
+
+The SDK still maps resource misses to the negotiated error code; this adds
+no protocol-version decision, schema field, route, or session mutation.
+Recognized resource routes keep their existing missing/stale-identity
+errors rather than receiving this generic route list. Listing a template
+is not evidence that a resource with a particular identity exists.
 
 ## Required Evidence
 
@@ -335,7 +373,20 @@ official SDK transport:
    repair-attempt link until a session transaction binds one; missing
    producer fields remain typed states.
 
+6. After a client reads an unknown URI, the correlated error names the
+   status URI and every template in both prose and structured arrays. A
+   recognized snapshot read before refresh still reports `no_snapshot`,
+   and the same connection can subsequently read the valid status resource.
+
 ## Test Mapping
+
+- `crates/ripr/tests/mcp_stdio.rs::rejection_arms_survive_the_stdio_transport`
+  — literal complete recovery prose and arrays, retained recognized-route
+  refusal, then valid status recovery on the same session.
+- `crates/ripr/tests/mcp_sdk.rs::official_sdk_legacy_client_lists_calls_and_reads_status`
+  and `official_sdk_discovery_client_lists_calls_and_reads_status` — the
+  same literal recovery contract through the official SDK lifecycles,
+  preserving the SDK-owned negotiated resource-miss code.
 
 - `crates/ripr/tests/mcp_stdio.rs::refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation`
   — actual committed multi-item analysis over raw stdio: literal IDs, counts,
@@ -349,6 +400,19 @@ official SDK transport:
   — direct stored-fact narrowing/readiness and continuation controls.
 - `crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_filters_at_the_dispatch_edge`
   — argument admission before refresh; this is not successful narrowing proof.
+- `crates/ripr/tests/mcp_stdio.rs::empty_gap_pages_keep_structured_outcomes_at_the_response_bound`
+  — real committed analysis with nonempty subjects before filtering, fitting
+  empty pages, independently sized structured-envelope overflow below the
+  raw-document ceiling, raw-document overflow, all three string filters,
+  typed refusals bound to the current snapshot, and same-session recovery.
+- `crates/ripr/tests/mcp_stdio.rs::long_request_ids_refuse_typed_before_the_wire_cap`
+  — the #7768 outer-response control: one legal escaping-heavy request id
+  sized from the actually measured empty-page envelope so the id-aware
+  budget excludes every page (typed `result_too_large` on the real stdio
+  wire where the envelope-only bound shipped a correlated `-32603`
+  fallback), a second id one notch smaller whose call still ships a
+  structured page, the same refusal/fit pair for the status resource read,
+  and same-session recovery after all of them.
 
 - `crates/ripr/src/mcp/workspace.rs::tests` — session lifecycle, typed
   failures, identity portability, boundedness, last-known-good retention;

@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-spec0263-macro-calls-owner-back",
+  "origin": "authored",
+  "version_label": "authored 2026-10-14 for RIPR-SPEC-0263 acceptance example 6 (a guarded push a local macro's call back into the owner enters)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "a1d5ef1df242a20322bb181f121059d4a6fde1c677948a20a5e5370b47f890a8"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "1464b1cecc4817d1bbb1934d815fe07ded93f8c7cc3e0fa8a9846c9888c30bf1"
+    }
+  ]
+}

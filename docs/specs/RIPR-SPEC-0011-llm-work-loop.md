@@ -491,6 +491,12 @@ the changed analysis inputs), bounded by the attempt authority. Rule 2 still
 resumes that attempt, but its reason names the refusal before repeating the
 command. The next after phase that reaches the durable finish clears it.
 
+Commit contention and changed-underfoot refusals map to exit 3 only when the
+whole error is the authority's retry sentence with a valid attempt ID. An
+operational error containing that sentence in a path remains an exit-2 error.
+A rejected commit state check preserves manifest bytes and releases the lock,
+allowing a later refusal observation and after-phase finish to proceed.
+
 Rerunning the after phase of an attempt that is no longer awaiting its edit is
 refused with the attempt's documented state, whether it finished or ended, the
 workflow receipt path, and the next step (`ripr agent status`, or a new

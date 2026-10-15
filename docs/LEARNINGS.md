@@ -3,6 +3,65 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-14: One path can spell three ways on Windows; compare at a shared owner (#7937)
+
+Fifteen lib tests failed deterministically on Windows at a Linux-green main.
+The diagnosis grouped them into one family — the same path spelled three
+host-dependent ways — with four distinct leak sites:
+
+- `fs::canonicalize` returns the verbatim `\\?\F:\...` form on Windows. A
+  canonicalized root carried into a component comparison against a
+  plain-spelled counterpart misses (`Prefix(VerbatimDisk)` is a different
+  component from `Prefix(Disk)`): the cargo-metadata inventory anchored
+  verbatim roots against cargo's plain echoed keys, and the gap-ledger
+  selected root dropped stamped entries whose file did not exist (the
+  `canonicalize(path)` fallback arm cannot rescue an absent file). Compare
+  both sides in the plain drive family (`plain_drive_verbatim_path`,
+  `strip_absolute_root`), not at each call site.
+- `components()` round-trips re-synthesize with the native separator. A
+  confinement that re-pushed each accepted component spelled git's
+  `src/a.rs` as `src\a.rs` in every Windows consumer while tests, goldens
+  and rendered locations spell `/`. When a boundary accepts components of
+  a TEXT path (diff paths are always `/`), re-join with the text's own
+  separator.
+- A rooted path (`/tmp/x`) is absolute on POSIX but only rooted on Windows,
+  where `PathBuf::join` rewrites it against the process drive. Two
+  producers of the same string must pass the root through the SAME
+  spelling owner (`root_display` vs `bound_root` disagreed); a test
+  expectation must call that owner, not rebuild the spelling from
+  `Path::display`.
+
+Durable rules: (1) never compare paths across a canonicalize boundary
+without normalizing both sides to one family; (2) never rebuild a rendered
+path spelling in a test — call the producer's own owner; (3) a stamped
+entry with `digest: null` is legal and must survive derivation for absent
+files, so lexical prefix strips must not depend on `canonicalize`
+succeeding; (4) these failures are invisible to a Linux-only lib CI lane —
+a Windows lib run at the exact base is the discriminator.
+## 2026-10-15: Pytest evidence must not skip the unittest scan (#7664)
+
+`detect_python_test_frameworks` collects a set. Config markers and
+`import pytest` add pytest; they must not `return` before the unittest
+import scan. Doctor emits one `test_surfaces[]` row per confirmed
+framework. The singular `detect_python_test_framework` is pytest-first
+primary-of-set for adapter repo-input, not mixed catalog authority.
+Django `tests.py` admission stays #7706.
+
+A 4096-byte evidence prefix that cuts `import unittest_extra` after
+`import unittest` is not unittest evidence. Read one extra byte; if the
+file continues and the last line is not newline-terminated (and the extra
+byte is not that newline), drop the incomplete line. Fail-closed is
+correct; a false `python: unittest` surface is not.
+
+`from unittest import mock` is not a runner. Parenthesized and multiline
+forms (`from unittest import (mock)` / `from unittest import (\n    mock,\n)`)
+must be accumulated and have delimiters stripped before that mock-only
+check; classifying each line independently treats `(` as a non-mock name.
+Strip `#` comments before joining those lines, or `mock,  # patching`
+becomes a `#` token and mints a false unittest surface. Explicit
+backslash continuations (`from unittest import \\\n    mock`) must wait
+for the next line; classifying `\\` as a name is the same false surface.
+
 ## 2026-10-12: A timed-out pilot packet must not keep the previous run's repo-exposure (#7425)
 
 `ripr pilot` reuses `--out`. The timeout path writes only `pilot-summary.{json,md}`.
