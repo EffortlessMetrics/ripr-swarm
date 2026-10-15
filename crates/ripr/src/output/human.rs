@@ -970,7 +970,9 @@ pub(crate) fn render_finding_with_context_command(
 /// Follow a bash command line with its PowerShell form when PowerShell needs a
 /// different one, so a path or ref with an apostrophe still pastes as one
 /// argument. Commands that run unchanged print nothing extra, which keeps the
-/// ordinary output byte-identical.
+/// ordinary output byte-identical. Commands with no honest translation print
+/// the shared unavailable disclosure so a PowerShell reader is not left with
+/// silent Bash (#5422).
 fn push_powershell_variant(out: &mut String, indent: &str, command: &str) {
     if let Some(line) = crate::output::markdown::powershell_text_variant(command) {
         out.push_str(&format!("{indent}(PowerShell) {line}\n"));
@@ -3519,6 +3521,19 @@ mod tests {
             Path::new("."),
         );
         assert!(!plain.contains("(PowerShell)"), "{plain}");
+        let unavailable = super::render_finding_with_context_command(
+            &finding,
+            &config,
+            "ripr context --root 'foo\u{201c}bar' --at probe:x",
+            Path::new("."),
+        );
+        assert!(
+            unavailable.contains(&format!(
+                "Next: ripr context --root 'foo\u{201c}bar' --at probe:x\n(PowerShell) {}\n",
+                crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE
+            )),
+            "{unavailable}"
+        );
     }
 
     /// #4321: the exhaustive surface prints each finding's id once, so the

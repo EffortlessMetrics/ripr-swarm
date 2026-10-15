@@ -29,9 +29,11 @@
 //! of that shape. A bare mention such as `ripr pilot` is prose, not a paste
 //! target. A line labelled `(PowerShell)` is the PowerShell form of the command
 //! before it; a command with no such line is pasted unchanged into PowerShell,
-//! which is the contract `COMMAND_SHELL_DISCLOSURE` prints. Commands in
-//! Markdown and plain text are pasted from a foreign directory; JSON-carried
-//! commands are portable records meant to run at the repository root.
+//! which is the contract `COMMAND_SHELL_DISCLOSURE` prints. A `(PowerShell)`
+//! line that is the unavailable disclosure is not a pasteable form: PowerShell
+//! paste is skipped for that command. Commands in Markdown and plain text are
+//! pasted from a foreign directory; JSON-carried commands are portable records
+//! meant to run at the repository root.
 //!
 //! Shells absent from a machine are skipped with a notice. `RIPR_PASTE_REQUIRE`
 //! lists the shells whose absence fails; the paste workflow sets it per OS.
@@ -52,6 +54,11 @@ use paste_shell::{Case, Outcome, Shell};
 const MARK_HEAD: &str = "ZQ";
 const MARK_TAIL: &str = "QZ";
 const CANARIES: [&str; 3] = ["ROOTCANARY", "FILECANARY", MARK_TAIL];
+/// Pinned here rather than imported from production: the harness must refuse
+/// to paste this sentence as a command even if a renderer rewords it later
+/// without updating this string, and the extract test below names it.
+const POWERSHELL_UNAVAILABLE_DISCLOSURE: &str =
+    "PowerShell form unavailable for unsupported or compound commands";
 
 /// Where a command is pasted from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -70,6 +77,9 @@ struct Printed {
     powershell: Option<String>,
     /// Carried in a JSON string: pasted into POSIX shells only.
     bash_only: bool,
+    /// The PowerShell line was the shared unavailable disclosure, not a
+    /// pasteable command. PowerShell paste is skipped; Bash still pastes.
+    powershell_unavailable: bool,
 }
 
 fn hostile_root_name() -> String {
@@ -362,6 +372,10 @@ fn code_spans(line: &str) -> Vec<String> {
         .collect()
 }
 
+fn is_powershell_unavailable_disclosure(form: &str) -> bool {
+    form.contains(POWERSHELL_UNAVAILABLE_DISCLOSURE)
+}
+
 /// Remainder after a `(PowerShell)` label that sits outside code spans.
 ///
 /// A Bash command can mention `(PowerShell):` inside its own span. That text
@@ -436,6 +450,7 @@ fn extract_text(
                     bash: body.to_string(),
                     powershell: None,
                     bash_only: false,
+                    powershell_unavailable: false,
                 });
             }
             continue;
@@ -444,7 +459,11 @@ fn extract_text(
             if let (Some(form), Some(previous)) =
                 (code_spans(line).into_iter().next(), found.last_mut())
             {
-                previous.powershell = Some(form);
+                if is_powershell_unavailable_disclosure(&form) {
+                    previous.powershell_unavailable = true;
+                } else {
+                    previous.powershell = Some(form);
+                }
             }
             continue;
         }
@@ -462,7 +481,11 @@ fn extract_text(
             if let (Some(form), Some(previous)) = (form, found.last_mut())
                 && !form.is_empty()
             {
-                previous.powershell = Some(form.to_string());
+                if is_powershell_unavailable_disclosure(form) {
+                    previous.powershell_unavailable = true;
+                } else {
+                    previous.powershell = Some(form.to_string());
+                }
             }
             continue;
         }
@@ -521,6 +544,7 @@ fn extract_text(
                 bash: candidate,
                 powershell: None,
                 bash_only: false,
+                powershell_unavailable: false,
             });
         }
     }
@@ -543,6 +567,7 @@ fn extract_json(source: &str, value: &Value, subcommands: &BTreeSet<String>) -> 
             // A JSON field holds one string and names no shell, so the record
             // is Bash by contract and has no PowerShell form to paste.
             bash_only: true,
+            powershell_unavailable: false,
         })
         .collect()
 }
@@ -1062,7 +1087,8 @@ fn printed_commands_paste_unchanged_in_every_shell_from_a_foreign_directory() ->
     // One case per distinct printed form per flow. The PowerShell pairing is
     // part of the identity, so a site that prints a command with its
     // PowerShell form cannot hide another that prints it without one.
-    let mut unique: BTreeMap<(String, Origin, String, Option<String>), Printed> = BTreeMap::new();
+    let mut unique: BTreeMap<(String, Origin, String, Option<String>, bool), Printed> =
+        BTreeMap::new();
     for printed in &collected.printed {
         unique
             .entry((
@@ -1070,6 +1096,7 @@ fn printed_commands_paste_unchanged_in_every_shell_from_a_foreign_directory() ->
                 printed.origin,
                 printed.bash.clone(),
                 printed.powershell.clone(),
+                printed.powershell_unavailable,
             ))
             .or_insert_with(|| printed.clone());
     }
@@ -1128,7 +1155,7 @@ fn printed_commands_paste_unchanged_in_every_shell_from_a_foreign_directory() ->
             .iter()
             .enumerate()
             .filter_map(|(id, printed)| {
-                if shell.is_powershell() && printed.bash_only {
+                if shell.is_powershell() && (printed.bash_only || printed.powershell_unavailable) {
                     return None;
                 }
                 let command = if shell.is_powershell() {
@@ -1344,4 +1371,24 @@ fn extract_text_does_not_pair_powershell_text_inside_a_bash_code_span() {
         "ripr check --root '(PowerShell):' --diff HEAD"
     );
     assert_eq!(found[1].powershell, None);
+}
+
+/// #5422: a typographic double quote has no honest PowerShell translation.
+/// The plain-text surface must print the shared disclosure, and the harness
+/// must not treat that sentence as a pasteable PowerShell command.
+#[test]
+fn extract_text_marks_unavailable_powershell_disclosure_and_does_not_paste_it() {
+    let command = "ripr check --root 'foo\u{201c}bar' --diff HEAD";
+    let found = extracted(&format!(
+        "`{command}`\n  (PowerShell) `{POWERSHELL_UNAVAILABLE_DISCLOSURE}`\n"
+    ));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].bash, command);
+    assert_eq!(found[0].powershell, None, "{found:?}");
+    assert!(found[0].powershell_unavailable, "{found:?}");
+
+    let silent = extracted(&format!("`{command}`\n"));
+    assert_eq!(silent.len(), 1, "{silent:?}");
+    assert!(!silent[0].powershell_unavailable, "{silent:?}");
+    assert_eq!(silent[0].powershell, None);
 }
