@@ -1,0 +1,16 @@
+[
+  {
+    "path": "/workspace/review8004-evidence/extras/async-function-operand.rs",
+    "name": "subject",
+    "relation": null,
+    "native_reaches": false,
+    "label": "async-function-operand"
+  },
+  {
+    "path": "/workspace/review8004-evidence/extras/async-function-named-intermediate.rs",
+    "name": "subject",
+    "relation": null,
+    "native_reaches": false,
+    "label": "async-function-named-intermediate"
+  }
+]

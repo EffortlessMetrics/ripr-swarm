@@ -1,0 +1,13 @@
+   Compiling ripr v0.11.0 (/workspace/review8004/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.44s
+     Running tests/native_path_roots.rs (/workspace/review8004-target/debug/deps/native_path_roots-5b7acc13101b5a51)
+
+running 5 tests
+test common::fixture_git::tests::resolves_the_subcommand_past_global_options ... ok
+test common::fixture_git::tests::zero_deadline_reports_timeouts_without_retrying_state ... ok
+test spaced_root_check_and_file_fact_cache_round_trip ... ok
+test long_root_check_round_trips_or_names_the_windows_path_limit ... ok
+test unicode_root_check_and_file_fact_cache_round_trip ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.93s
+

@@ -1,0 +1,156 @@
+[
+  {
+    "id": "PRRT_kwDOSiSx0c6sjseL",
+    "path": "crates/ripr/src/analysis/classify/related_tests.rs",
+    "line": 3161,
+    "resolved": false,
+    "outdated": false,
+    "comments": [
+      {
+        "id": 4277308099,
+        "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004#discussion_r4277308099",
+        "summary": "**🚀 Performance & Scalability** | **🔵 Trivial** | **🏗️ Heavy lift**\n\n**Memoize the syntax-backed receiver check for each test.**\n\n`inherent_receiver_call_resolves` parses the complete `test.body` each time it is called (`parse_clean_source_file(&test.body)`). After the parse, it walks all descendants. For each supported assertion macro, it also formats and parses one synthetic source file per operand.\n\nIn the compact path, `match_direct_owner_call` calls this function inside the loop over `tests_by_call_name[owner.name]`. That loop runs once per seam. Before this change, the receiver check ran only when `same_name_count > 1`. It now runs f"
+      }
+    ]
+  },
+  {
+    "id": "PRRT_kwDOSiSx0c6skxnp",
+    "path": "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
+    "line": null,
+    "resolved": false,
+    "outdated": true,
+    "comments": [
+      {
+        "id": 4277766911,
+        "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004#discussion_r4277766911",
+        "summary": "<!-- devin-review-comment {\"id\": \"BUG_pr-review-job-0472b7b123544c0d95ade3bd900c0c40_0001\", \"file_path\": \"crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs\", \"start_line\": 1563, \"end_line\": 1572, \"side\": \"RIGHT\", \"based_on_repo_rules\": false, \"kind\": \"bug\"} -->\n\n🔴 **Foreign helper falsely reaches private owner**\n\nWhen `read_as_object()` calls only a foreign receiver's `as_object`, the helper graph still credits the private inherent owner. `helper_name_carries_owner_token` accepts the name without checking that helper call's receiver. Repository reach evidence then attributes an unrelated test to the owner.\n\n\n\n<!-- devin-re"
+      }
+    ]
+  },
+  {
+    "id": "PRRT_kwDOSiSx0c6skxo-",
+    "path": "crates/ripr/src/analysis/classify/related_tests.rs",
+    "line": 3256,
+    "resolved": false,
+    "outdated": false,
+    "comments": [
+      {
+        "id": 4277767036,
+        "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004#discussion_r4277767036",
+        "summary": "<!-- devin-review-comment {\"id\": \"BUG_pr-review-job-0472b7b123544c0d95ade3bd900c0c40_0002\", \"file_path\": \"crates/ripr/src/analysis/classify/related_tests.rs\", \"start_line\": 3121, \"end_line\": 3129, \"side\": \"RIGHT\", \"based_on_repo_rules\": false, \"kind\": \"bug\"} -->\n\n🔴 **Shadowed assertion macro falsely credits owner**\n\nWhen a module-level `assert_eq!` ignores its arguments, `inherent_assertion_arguments_resolve` still treats their calls as executed. The shadow check inspects `StmtList` but not module item lists. A test can receive direct-owner credit without running the owner.\n\n\n\n<!-- devin-review-badge-begin -->\n<a href=\"https://app.devin.ai/r"
+      }
+    ]
+  },
+  {
+    "id": "PRRT_kwDOSiSx0c6skxqR",
+    "path": "crates/ripr/src/analysis/classify/related_tests.rs",
+    "line": null,
+    "resolved": false,
+    "outdated": true,
+    "comments": [
+      {
+        "id": 4277767155,
+        "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004#discussion_r4277767155",
+        "summary": "<!-- devin-review-comment {\"id\": \"BUG_pr-review-job-0472b7b123544c0d95ade3bd900c0c40_0003\", \"file_path\": \"crates/ripr/src/analysis/classify/related_tests.rs\", \"start_line\": 3049, \"end_line\": 3052, \"side\": \"RIGHT\", \"based_on_repo_rules\": false, \"kind\": \"bug\"} -->\n\n🟡 **Expired sibling shadow hides real calls**\n\nAfter an inner block shadows `value`, `inherent_receiver_call_resolves` can reject a genuine later `value.as_object()` call. The text prefilter reads the expired inner `let`, so the scope-aware matcher never runs. Genuine owner tests lose direct-call credit.\n\n\n\n<!-- devin-review-badge-begin -->\n<a href=\"https://app.devin.ai/review/effor"
+      }
+    ]
+  },
+  {
+    "id": "PRRT_kwDOSiSx0c6skxrE",
+    "path": "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
+    "line": null,
+    "resolved": false,
+    "outdated": true,
+    "comments": [
+      {
+        "id": 4277767243,
+        "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004#discussion_r4277767243",
+        "summary": "<!-- devin-review-comment {\"id\": \"BUG_pr-review-job-0472b7b123544c0d95ade3bd900c0c40_0004\", \"file_path\": \"crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs\", \"start_line\": 1560, \"end_line\": 1564, \"side\": \"RIGHT\", \"based_on_repo_rules\": false, \"kind\": \"bug\"} -->\n\n🟡 **Same-named wrappers lose genuine reach**\n\nWhen `Wrapper::as_object` forwards to `JsonValue::as_object`, the self-name filter removes its real delegation. Tests calling the wrapper cannot pass [match_direct_owner_call](https://github.com/effortlessmetrics/ripr-swarm/blob/15ca898ad1d3571d104ce1ae20b629fe2f55fc86/crates/ripr/src/analysis/test_grip_evidence/related"
+      }
+    ]
+  },
+  {
+    "id": "PRRT_kwDOSiSx0c6st_A4",
+    "path": "changelog.d/7415-inherent-receiver-admission.md",
+    "line": null,
+    "resolved": true,
+    "outdated": true,
+    "comments": [
+      {
+        "id": 4281627330,
+        "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004#discussion_r4281627330",
+        "summary": "**🎯 Functional Correctness** | **🟡 Minor** | **⚡ Quick win**\n\n\n\n**Scope the wrapper claim to the repository consumer.**\n\nThe local-wrapper fixture produces different attribution: the repository report gives `wrapper_route` `helper_owner_call`, but the diff golden gives it `weak_token_substring`. Update the changelog unless the diff consumer is changed to emit the same helper attribution.\n\n\n\n\n\n<!-- fingerprinting:phantom:medusa:pangolin -->\n\n<!-- cr-indicator-types:potential_issue -->\n\n<!-- cr-comment:v1:cc607ac4d7e35c7bea55707b -->\n\n<!-- This is an auto-generated comment by CodeRabbit -->\n\n✅ Addressed in commits 3a0b937 to 8bbc8dd"
+      }
+    ]
+  },
+  {
+    "id": "PRRT_kwDOSiSx0c6st_BD",
+    "path": "crates/ripr/src/analysis/classify/related_tests.rs",
+    "line": 3056,
+    "resolved": false,
+    "outdated": false,
+    "comments": [
+      {
+        "id": 4281627347,
+        "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004#discussion_r4281627347",
+        "summary": "**🚀 Performance & Scalability** | **🟠 Major** | **🏗️ Heavy lift**\n\n\n\n**Reuse one `OwnerPinSyntax` for the analysis run.**\n\n`inherent_receiver_call_resolves` creates a fresh `OwnerPinSyntax` for every invocation. Calls that reach targeted macro binding or unit-struct resolution then repeat the workspace scans that `OwnerPinSyntax` is designed to memoize. The full classifier and compact `tests_by_call_name` path can invoke this repeatedly across owner/test matches. Helper traversal can also repeat it for each checked hop. The existing parsed-body work does not cache these scans.\n\nPass a shared run-scoped `OwnerPinSyntax` from the owning anal"
+      }
+    ]
+  },
+  {
+    "id": "PRRT_kwDOSiSx0c6suP-A",
+    "path": "crates/ripr/src/analysis/test_grip_evidence/related_tests.rs",
+    "line": null,
+    "resolved": false,
+    "outdated": true,
+    "comments": [
+      {
+        "id": 4281736026,
+        "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004#discussion_r4281736026",
+        "summary": "**[P1] Repository direct calls bypass the existing module-type shadow refusal**\n\nVerified current and inherited on exact parent43. With root `JsonValue::as_object` and a distinct `tests::JsonValue::as_object`, the test calls only its module-local type. Diff correctly retains weak/low; this repository route calls only the syntax receiver checker and gives the root owner direct/high, making all four owner seams strongly_gripped. Fresh compact output agrees. The native test passes both original and root-owner mutant; a paired genuine-owner test kills the mutant.\n\nThe helper last-hop route already uses `inherent_owner_call_resolves`, which includ"
+      }
+    ]
+  },
+  {
+    "id": "PRRT_kwDOSiSx0c6suP-G",
+    "path": "crates/ripr/src/analysis/classify/related_tests.rs",
+    "line": 3134,
+    "resolved": false,
+    "outdated": false,
+    "comments": [
+      {
+        "id": 4281736034,
+        "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004#discussion_r4281736034",
+        "summary": "**[P1] Uncalled nested function bodies supply direct-owner credit**\n\nVerified current and inherited on exact parent43. A test only defines `fn dormant() { let value = JsonValue::Object(7); assert_eq!(value.as_object(), Some(7)); }` and then asserts `7 == 7`. Both descendant sweeps enter the dormant function. Diff emits direct/high and full/fresh compact repository output strongly grips all four owner seams, although the test never executes the owner. Native original and owner-mutant tests both pass; adding an actual `dormant()` invocation makes the mutant fail.\n\nExclude nested item/function bodies from the outer test's executable syntax. If n"
+      }
+    ]
+  },
+  {
+    "id": "PRRT_kwDOSiSx0c6suP-O",
+    "path": "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
+    "line": null,
+    "resolved": false,
+    "outdated": true,
+    "comments": [
+      {
+        "id": 4281736044,
+        "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004#discussion_r4281736044",
+        "summary": "**[P1] Explicit foreign free-helper entry borrows a same-named root helper**\n\nVerified current and inherited on exact parent43. Root `read_as_object()` genuinely calls the owner, while sibling `foreign::read_as_object()` only returns `Some(7)`. A test calling exclusively the explicit foreign path passes this name/spelling predicate for the unrelated root helper. Full repository output grants helper/high and strongly grips all four owner seams; fresh compact output agrees. The native test survives the owner mutation, while changing it to call the root helper kills that mutation.\n\nBind the free-helper entry to the actual module/function declara"
+      }
+    ]
+  },
+  {
+    "id": "PRRT_kwDOSiSx0c6sw7xu",
+    "path": "crates/ripr/src/analysis/classify/related_tests.rs",
+    "line": 3297,
+    "resolved": false,
+    "outdated": false,
+    "comments": [
+      {
+        "id": 4282848781,
+        "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004#discussion_r4282848781",
+        "summary": "[P1, source-derived; native/CLI confirmation blocked by environment provisioning] Assertion operand parsing omits the async exclusion used by the outer executable walk. `assert_eq!({ let _ = async { JsonValue::Object(7).as_object() }; 7 }, 7)` passes this operand's refusal scan (wildcard lets allowed), then its dormant method call reaches `resolves`. The future is never polled. Apply executable-body filtering here as well and retain paired native/full/compact/diff controls, including a genuine outer call. The existing dormant-async matrix case places async outside the assertion and does not exercise this route."
+      }
+    ]
+  }
+]

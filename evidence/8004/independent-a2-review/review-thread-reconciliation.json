@@ -1,0 +1,26 @@
+{
+  "existing_threads": 11,
+  "actions": "No thread replies, resolution or bot contact.",
+  "correctness_findings": [
+    "Module/type shadow, dormant nested item/closure/async-block, actual free-helper declaration/entry/intermediate identity and same-line caller scope are covered by independently executed a2 units, original 34-case full/fresh-compact/diff reports, paired native controls and same-line reports.",
+    "Invoked nested functions remain statically unsupported despite native mutant failure.",
+    "The earlier assertion-operand async-block finding is fixed for the original 12 operand controls."
+  ],
+  "remaining_blocker": {
+    "priority": "P1",
+    "kind": "verified_current",
+    "scope": "async function helper body is treated as executed by constructing an unpolled future",
+    "source": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
+    "cases": [
+      42,
+      44,
+      45
+    ],
+    "full_repository_wrong_owner_rows": 12,
+    "strongly_gripped_owner_rows": 8,
+    "fresh_compact": "all grip counts match; no detailed compact-row claim",
+    "diff": "conservative for these helper routes"
+  },
+  "performance": "Both parsing/cache concerns remain open under #8005 and are nonblocking per its issue boundary. The earlier prototype benchmark comment is comparison-only on another frozen source, not a2 performance evidence. Correctness does not refute the concerns.",
+  "changelog": "Current text scopes same-name wrapper retention to repository consumers; resolved wording thread was not changed."
+}

@@ -1,0 +1,22 @@
+{
+  "source": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
+  "source_tree": "6bd2c8c772cfbb11eb9c8ae709fff98d465e7f85",
+  "source_worktree": "/workspace/review8004",
+  "composition_worktree": "/workspace/review8004-composition",
+  "common_git": "/workspace/ripr-swarm/.git",
+  "owned_target": "/workspace/review8004-target",
+  "evidence": "/workspace/review8004-evidence",
+  "reserve_bytes": 8589934592,
+  "estimated_peak_additional_bytes": 17179869184,
+  "initial_available_bytes": 30506070016,
+  "tmp_reserve_bytes": 4294967296,
+  "mandatory_witnesses": "frozen source CLI and native original/mutant outputs retained through review; raw logs and stimulus sources retained",
+  "preexisting_target": "/workspace/ripr-swarm/target preserved, not reused",
+  "toolchain_environment": {
+    "CARGO_HOME": "/workspace/.cargo",
+    "RUSTUP_HOME": "/workspace/.rustup",
+    "PATH": "/workspace/.cargo/bin:/usr/bin:/bin",
+    "CARGO_BUILD_JOBS": "4"
+  },
+  "initial_toolchain_failure": "rustup default /home/agent/.rustup read-only; recovered using existing workspace homes"
+}

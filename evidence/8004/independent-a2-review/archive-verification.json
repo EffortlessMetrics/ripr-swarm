@@ -1,0 +1,14 @@
+{
+  "cli-evidence.tar.gz": {
+    "entries": 1418,
+    "bytes": 563088,
+    "sha256": "5e5e405d5410c1863e178abbf9a9fb9d6a65bebd1dc2b485cfe93d7e8192d5f8",
+    "complete_member_byte_verification": true
+  },
+  "native-evidence.tar.gz": {
+    "entries": 289,
+    "bytes": 20790,
+    "sha256": "28b351125514199ee6b7b91b487a09ea643f30afb6b03cc24348e90690867dcf",
+    "complete_member_byte_verification": true
+  }
+}

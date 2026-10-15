@@ -1,0 +1,27 @@
+{
+  "run": 38752016669,
+  "job": 116480559230,
+  "head": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
+  "actual_checkout": "ef9978d9445b89486bcdb2dbe6360e5a7204371a",
+  "parents": [
+    "8a55a5be744368ff3592709957451c6ba04d8a4a",
+    "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524"
+  ],
+  "feature": "--no-default-features --features lang-rust",
+  "failure": "structural_workspace_markers::scalar_marker_preserves_cargo_uv_git_and_unmarked_root_boundaries; uv Python markers without lang-python",
+  "cli_smoke": {
+    "passed": 477,
+    "failed": 1,
+    "ignored": 0
+  },
+  "ownership": "Harrier/#8126; no duplicate repair",
+  "lines": [
+    "2026-10-15T14:30:47.7725180Z HEAD is now at ef9978d94 Merge a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524 into 8a55a5be744368ff3592709957451c6ba04d8a4a",
+    "2026-10-15T14:38:36.5275293Z test structural_workspace_markers::scalar_marker_preserves_cargo_uv_git_and_unmarked_root_boundaries ... FAILED",
+    "2026-10-15T14:38:55.4603479Z ---- structural_workspace_markers::scalar_marker_preserves_cargo_uv_git_and_unmarked_root_boundaries stdout ----",
+    "2026-10-15T14:38:55.4604033Z thread 'structural_workspace_markers::scalar_marker_preserves_cargo_uv_git_and_unmarked_root_boundaries' (100537) panicked at crates/ripr/tests/cli_smoke/structural_workspace_markers.rs:182:9:",
+    "2026-10-15T14:38:55.4607087Z uv: Output { status: ExitStatus(unix_wait_status(512)), stdout: \"{\\n  \\\"analysis_scope\\\": {\\n    \\\"basis\\\": \\\"analysis_failed\\\",\\n    \\\"downstream_consumable\\\": false,\\n    \\\"limitation\\\": \\\"analysis_failed\\\",\\n    \\\"repair_route\\\": \\\"analysis/failure\\\",\\n    \\\"run_status\\\": \\\"analysis_failed\\\",\\n    \\\"scope\\\": \\\"diff\\\"\\n  },\\n  \\\"findings\\\": [],\\n  \\\"mode\\\": \\\"draft\\\",\\n  \\\"root\\\": \\\"/home/runner/work/ripr-swarm/ripr-uv-1792075116502055646-61391-460/repo\\\",\\n  \\\"run_limitations\\\": [\\n    {\\n      \\\"basis\\\": \\\"analysis_failed\\\",\\n      \\\"category\\\": \\\"analysis_failed\\\",\\n      \\\"downstream_consumable\\\": false,\\n      \\\"message\\\": \\\"Python project markers were detected, but this ripr binary was built without Cargo feature `lang-python`; use a Python-enabled ripr binary or add `ripr.toml` with `[languages] enabled = [\\\\\\\"rust\\\\\\\"]` to keep Python preview disabled\\\",\\n      \\\"repair_route\\\": \\\"analysis/failure\\\",\\n      \\\"run_status\\\": \\\"analysis_failed\\\"\\n    }\\n  ],\\n  \\\"schema_version\\\": \\\"0.2\\\",\\n  \\\"summary\\\": {\\n    \\\"changed_files_by_language\\\": [],\\n    \\\"changed_rust_files\\\": 0,\\n    \\\"exposed\\\": 0,\\n    \\\"findings\\\": 0,\\n    \\\"infection_unknown\\\": 0,\\n    \\\"no_static_path\\\": 0,\\n    \\\"probes\\\": 0,\\n    \\\"propagation_unknown\\\": 0,\\n    \\\"reachable_unrevealed\\\": 0,\\n    \\\"static_unknown\\\": 0,\\n    \\\"weakly_exposed\\\": 0\\n  },\\n  \\\"tool\\\": \\\"ripr\\\"\\n}\\n\", stderr: \"ripr: resolved workspace root to /home/runner/work/ripr-swarm/ripr-uv-1792075116502055646-61391-460/repo (pyproject.toml contains [tool.uv.workspace])\\nripr: Python project markers were detected, but this ripr binary was built without Cargo feature `lang-python`; use a Python-enabled ripr binary or add `ripr.toml` with `[languages] enabled = [\\\"rust\\\"]` to keep Python preview disabled\\n\" }",
+    "2026-10-15T14:38:55.4610183Z     structural_workspace_markers::scalar_marker_preserves_cargo_uv_git_and_unmarked_root_boundaries",
+    "2026-10-15T14:38:55.4610543Z test result: FAILED. 477 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 235.73s"
+  ]
+}

@@ -1,0 +1,57 @@
+[
+  {
+    "label": "cli-build",
+    "argv": [
+      "cargo",
+      "build",
+      "--locked",
+      "-p",
+      "ripr",
+      "--bin",
+      "ripr"
+    ],
+    "cwd": "/workspace/review8004",
+    "head": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
+    "tree": "6bd2c8c772cfbb11eb9c8ae709fff98d465e7f85",
+    "exit": 0,
+    "seconds": 353.83
+  },
+  {
+    "label": "same-line",
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--lib",
+      "same_line_helper_callers_keep_distinct_module_function_identity",
+      "--",
+      "--nocapture"
+    ],
+    "cwd": "/workspace/review8004",
+    "head": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
+    "tree": "6bd2c8c772cfbb11eb9c8ae709fff98d465e7f85",
+    "exit": 0,
+    "seconds": 1.64
+  },
+  {
+    "label": "receiver",
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--test",
+      "private_inherent_receiver",
+      "--",
+      "--test-threads=4"
+    ],
+    "cwd": "/workspace/review8004",
+    "head": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
+    "tree": "6bd2c8c772cfbb11eb9c8ae709fff98d465e7f85",
+    "exit": 0,
+    "seconds": 314.27
+  }
+]

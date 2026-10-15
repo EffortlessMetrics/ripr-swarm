@@ -1,0 +1,31 @@
+{
+  "startup": "Selected environment provisioned before local work; read-only connected GitHub inspection continued during provisioning.",
+  "failed_toolchain_probe": {
+    "operation": "rustup show active-toolchain using default home",
+    "observed_error": "could not create home directory: /home/agent/.rustup: Read-only file system (os error 30)",
+    "individual_exit": "not separately captured; enclosing multi-operation shell ended 128 at git cat-file before the concurrent fetch completed",
+    "classification": "environment/setup, not candidate test failure"
+  },
+  "recovery": {
+    "operation": "rustc -Vv and all later Cargo/native checks using existing /workspace/.cargo and /workspace/.rustup",
+    "exit": 0,
+    "credentials_or_settings_changes": false
+  },
+  "fetch": "Original asynchronous git fetch completed with native 0; requested objects subsequently materialized normally.",
+  "source_cli_attempts": [
+    {
+      "cases": 44,
+      "reports": 132,
+      "exit": 1,
+      "meaning": "Four rows reflected an initially overbroad reviewer expectation for unsupported owner_value helper graph; four rows were genuine async-function helper false credit. Raw results unchanged."
+    },
+    {
+      "new_cases": 2,
+      "reports": 6,
+      "exit": 1,
+      "meaning": "Two additional async-function helper cases each have four false owner rows."
+    }
+  ],
+  "adjudication": "The native-positive owner_value graph remains statically unsupported. Only reviewer expectation changed; raw output, native truth and initial failed receipt remain. Final source and composition classification retain three source blockers.",
+  "canonical_delivery_history": "Packet 7a1170e535e410ad5227c3d8b807f15869e922b7 independently hash-verified, including prior capacity/SIGINT, Perl preflight73, recovery subprocess 0 receipts and restored-executable identity. These historical local commands were not rerun here."
+}

@@ -1,0 +1,9 @@
+{
+  "head": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
+  "draft": true,
+  "mergeable": false,
+  "state": "open",
+  "base_sha_metadata": "a142074061128a85e76c1ac494b9939f3a58428b",
+  "source_branch": "rook/7415-private-target-attribution",
+  "receipt_written_utc": "2026-10-15T16:08:22.309723+00:00"
+}

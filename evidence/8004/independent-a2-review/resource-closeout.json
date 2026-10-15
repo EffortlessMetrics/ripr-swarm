@@ -1,0 +1,19 @@
+{
+  "original_worktree": {
+    "path": "/workspace/ripr-swarm",
+    "branch": "work",
+    "head": "a142074061128a85e76c1ac494b9939f3a58428b",
+    "status": ""
+  },
+  "review_worktrees": [
+    "/workspace/review8004",
+    "/workspace/review8004-composition"
+  ],
+  "review_head": "c1689922ca1d47f27e9fcac9d66f19f75423d5cd",
+  "review_status": "",
+  "retained": "Both review-owned worktrees, owned target, frozen source/composition CLIs and native witnesses retained for the open source blocker and recovery, respecting no destructive cleanup. No archive or unique work deleted.",
+  "all_owned_drivers_terminal": true,
+  "cargo_rustc_processes": "    PID    PPID COMMAND\n",
+  "available_bytes": 20281888768,
+  "reserve_bytes": 8589934592
+}

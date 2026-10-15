@@ -1,0 +1,580 @@
+[
+  {
+    "path": "/workspace/review8004-evidence/native/00/mutant",
+    "bytes": 6885808,
+    "sha256": "22f665cdcc2baaed62933fd21c2fe44dd2056bb12241bb2cbf630885f4effa70",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/00/original",
+    "bytes": 6885824,
+    "sha256": "71fe66b5e91b8520745c4614cac62a42f91632920d56dcdb7c7e5abb40ed139d",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/01/mutant",
+    "bytes": 6884072,
+    "sha256": "47f297fb1df887add2c2295d592420af25c281c84f07f0c406d148cc5dcac2e7",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/01/original",
+    "bytes": 6884072,
+    "sha256": "909281fc8b1659faf52b7c0e5a11b144700bbc6d6d691d77352b1979a6977399",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/02/mutant",
+    "bytes": 6885776,
+    "sha256": "70ef1454e84fd8ca0066a32621adf9e004f2f82765bc2fa19ed94b4ed527ef72",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/02/original",
+    "bytes": 6885792,
+    "sha256": "fa686dcf25db97b39fab36114bbdc29b8faa5fc8ccebaaf5869b6a8c31afbdee",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/03/mutant",
+    "bytes": 6885840,
+    "sha256": "6f7707064b1201a0c73bbd0d1d995a7bab02e2905feeabb3480a8e24e5a4700c",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/03/original",
+    "bytes": 6885872,
+    "sha256": "d255ddaa7bf38c31fd6661879baadd5516c734aa7b85a8429cd3af72337686f1",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/04/mutant",
+    "bytes": 6884072,
+    "sha256": "fbf5524bf5f129206f20941cecd12360c5fa498edd6e0f4f5ee62530784daa69",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/04/original",
+    "bytes": 6884072,
+    "sha256": "d9f7620eaace2ffa32d7afd798f7294b4d3034faa8b7c3fe94364e5145d20c80",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/05/mutant",
+    "bytes": 6884072,
+    "sha256": "d64895946695394efa4788b95b17a4e970e45ab02d3d6e426d93abb6e22f99aa",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/05/original",
+    "bytes": 6884072,
+    "sha256": "395d295d621acef7defd918893d5d5dd3ed353393a2c05f79d1315151e252803",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/06/mutant",
+    "bytes": 6884392,
+    "sha256": "35fc3d76e0f64bf618126aa8af1af69a724678060df8a10d004f45885b67db7c",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/06/original",
+    "bytes": 6884392,
+    "sha256": "f71a3a997a1f380ddb0e840425612927adba7032ecbabf003be36958f88c87af",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/07/mutant",
+    "bytes": 6885840,
+    "sha256": "fb0f6de01071080343845467def9e350bce67dfd41ba5125b3d4678d1147a255",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/07/original",
+    "bytes": 6885872,
+    "sha256": "6484dd933910ef6fb87d0a091dc94646eb29152fe911cb96b2be3fbeae2813f3",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/08/mutant",
+    "bytes": 6885968,
+    "sha256": "158e9795194e7b2c618db359e8d1ac1b6f973184e6f8750d82d1e78f063106ad",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/08/original",
+    "bytes": 6886000,
+    "sha256": "cfee8644fb96b492ab9b6bd8c2837d3185a94d8df9f60d8a3c4e69fa718a4dc2",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/09/mutant",
+    "bytes": 6885952,
+    "sha256": "672a4ee9dfacceffa4c39d499884c2b56cd8e763acd9137b936454d07c38a052",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/09/original",
+    "bytes": 6885984,
+    "sha256": "f53115b271985a5f3d2b44ff02c9a60a4931cd2c50c542f34d9d6e607d6c85d8",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/10/mutant",
+    "bytes": 6886032,
+    "sha256": "f3f6c1896f3a9d2bbc2a76528760c47228effc1e759d1db96c7c347615002d3d",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/10/original",
+    "bytes": 6886048,
+    "sha256": "d1d548e4169c0fbb4a38ba7297296f91a8555bd1b3be5f66c1df4695b0803f41",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/11/mutant",
+    "bytes": 6885776,
+    "sha256": "af95076b5c96a51e3aee48c1e8d45f3147ec2f421c7dcba8cdf9f46dcdb35469",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/11/original",
+    "bytes": 6885792,
+    "sha256": "4ff635ea2926a7e4e5d6048230e08943a1559bf19bd6cfb5f88bd8302c3a4c62",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/12/mutant",
+    "bytes": 6885952,
+    "sha256": "79035783129f891f058741b031399929262c303585d1f89c76c1d29b0c8cde93",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/12/original",
+    "bytes": 6885984,
+    "sha256": "7d4e4fa497b3e09e9c1e195464d256e18b841068a478c5c99898bfd2b4138a69",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/13/mutant",
+    "bytes": 6885896,
+    "sha256": "a0d84d6ffd544cedcd0cd2b361af1b95b998100d303f92dac9d13d75156a3c85",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/13/original",
+    "bytes": 6885912,
+    "sha256": "5e7f55171a72650137b09b482fb41d866f69d34c9a7b3a55f33bb9badc8886ad",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/14/mutant",
+    "bytes": 6886072,
+    "sha256": "5e890267f99ca406b3f65d8dce2aaa27dd3e23f6f8947cdd2908d3f3716548f7",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/14/original",
+    "bytes": 6886104,
+    "sha256": "9fe9fb03e082a70adbb612d7f7d836d6c0fc34130892fa9e8868e4673883ec2f",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/15/mutant",
+    "bytes": 6885776,
+    "sha256": "d10bfd1d4673d912828d0ae23d599d5134ff683d20e0d65bee7b40fbfac15610",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/15/original",
+    "bytes": 6885792,
+    "sha256": "959e7e3856a5ad5071dd0c71ed429f4785254b949e2b2f84c435d9d2435a77c5",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/16/mutant",
+    "bytes": 6885952,
+    "sha256": "ca89f4fbd746485b158b21a781be3c15c5e02a0de560dc3d06a4918ee24cd12b",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/16/original",
+    "bytes": 6885984,
+    "sha256": "dd9c429d823e6eb3d2c9421daadd3d7d08589dadb0228aa3e85311c3ee24b37f",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/17/mutant",
+    "bytes": 6885960,
+    "sha256": "f3ba67c74236fe86605c33aaad8a88aa127c63c1dce85ace266c8301a5c6aa69",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/17/original",
+    "bytes": 6885992,
+    "sha256": "0a4d939471fe5de4f9bdba2c09f5a097dec1d7e35dcf44e0dc36a95b6d70d6ab",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/18/mutant",
+    "bytes": 6885960,
+    "sha256": "292aea1582cfc91bc2a1aa2f8cbf0b8a2a513dc10c189e3b3ae4e8ba913f2416",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/18/original",
+    "bytes": 6885992,
+    "sha256": "271a47a32a4150c4e93eb772e1f9b7796cc0dae3419c502ef6dbb5e3b95fc03b",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/19/mutant",
+    "bytes": 6885912,
+    "sha256": "d1abb8979fa0774e2278581977fa06885878ac15867b2dfa1ee4ff664bb343da",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/19/original",
+    "bytes": 6885928,
+    "sha256": "847cb728b56013c3f1e5a701081f9d98a9704e4b1473c35f04ca0e2311a636e0",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/20/mutant",
+    "bytes": 6886024,
+    "sha256": "036c24097e9a97e8470334a674a40e3645e239963556f9b6724eb3285e34e481",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/20/original",
+    "bytes": 6886040,
+    "sha256": "4184507b200cf85d5f81769a4d569408b95f938973954a625673dcbc0656c555",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/21/mutant",
+    "bytes": 6886096,
+    "sha256": "b7667a40ca2941a25e8d222bf656b16e99fb52e113a5d95c75017db26361b433",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/21/original",
+    "bytes": 6886128,
+    "sha256": "2574100cdb17e5bca6cc2c21db9a91bc5f3bdfaec6751d67a5dfe51c16b9ee1a",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/22/mutant",
+    "bytes": 6884256,
+    "sha256": "6f14a2281bd789bdbc20b3ad07a1963e2a9f332ad3514d4c92835e9e5edf6434",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/22/original",
+    "bytes": 6884256,
+    "sha256": "c4e86997f509683f01ebdbc24889cbc4f53af0899a31a0f38b6dc94fb56ce5f8",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/23/mutant",
+    "bytes": 6884256,
+    "sha256": "f1be7484024b8cc8753b42e6128d05460d80ed0150d7eba3bb4fb7dda880ed41",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/23/original",
+    "bytes": 6884256,
+    "sha256": "7285f028875ef76b1afbbecabf105b190f3751475c944bc2bdd47ab82de5ae00",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/24/mutant",
+    "bytes": 6884072,
+    "sha256": "0fe41b9a888c14bb898655192402d2ce9b3d7658d6790f0e83a4c674f7ed89bd",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/24/original",
+    "bytes": 6884072,
+    "sha256": "c64b4ba15acb3ad8c1b47672154f6e698cd7f3cf616fd136aa4c576dfbf1ea64",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/25/mutant",
+    "bytes": 6884072,
+    "sha256": "bbbcf3ef65de4db099231b396f04a1ea2baa4ed26b95d7cc6fdb51c20a0bd00e",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/25/original",
+    "bytes": 6884072,
+    "sha256": "59b1f1abe2af21ff9d2e892bbf67b6bcdecc2ab812b38367255c08dc795e2382",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/26/mutant",
+    "bytes": 6885840,
+    "sha256": "f864f9f664a699852cd3e33a74a1380c1b040a8c6d95c75569880fc588982d55",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/26/original",
+    "bytes": 6885872,
+    "sha256": "233b8f34c0e739e4c4a9b5ae586abf9cbceaccec27096bde22b453dade99e947",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/27/mutant",
+    "bytes": 6886024,
+    "sha256": "5e5f9316a68627d34d819b6fed10a6214288119011026c903c36473b00a49b9a",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/27/original",
+    "bytes": 6886056,
+    "sha256": "8aba9dd979c08f211c4daaefaaf15e17f5d698f0534ad26513532ccdcd038415",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/28/mutant",
+    "bytes": 6884256,
+    "sha256": "8c1f651eafa053d1f3ff9e6b2f6d841b4108f91c5aab3f2db7a957613b77e75e",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/28/original",
+    "bytes": 6884256,
+    "sha256": "8a2d21b1b788481a5f3854fbe1f5622f937e570db05d56b0a0e71833d81d05c6",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/29/mutant",
+    "bytes": 6884256,
+    "sha256": "ca9010003ae7584b5488516674645b0c722db95a0285c5e4328d8332d40213d8",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/29/original",
+    "bytes": 6884256,
+    "sha256": "1944360325c707d94d597c6a0fe79d914679a4f950c804749f9e38cf584526c9",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/30/mutant",
+    "bytes": 6884072,
+    "sha256": "2c496866f241a0edd0f3f793b439fd904f7290eb2b1c1fef7799f0f9062addf0",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/30/original",
+    "bytes": 6884072,
+    "sha256": "56322cab18e5dd64ff4912b830240fd8ac2c84819d689594a5a176265d23f7d0",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/31/mutant",
+    "bytes": 6884072,
+    "sha256": "115fc6e060883a5bebc2a6c0e95ebc8570ed7ea986140f594dcb90f61ab662c6",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/31/original",
+    "bytes": 6884072,
+    "sha256": "b978e48ca4bdef61bc81917e8e4ec132b58fdc7e9dcae0582981d2b279227fda",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/32/mutant",
+    "bytes": 6885952,
+    "sha256": "6266b485a50774c8064f548bf34ed65223f066a07bbc4e23a98acede459928ae",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/32/original",
+    "bytes": 6885984,
+    "sha256": "26e0631ec34d40486a21bf988d97b3938d5d826ed29fcb829d98b3f753f4efc1",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/33/mutant",
+    "bytes": 6886152,
+    "sha256": "85a28bc9c7875f050997eaab98ea375c1778c8586306c7c00131bedf6b0d3593",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native/33/original",
+    "bytes": 6886184,
+    "sha256": "14083c20b9b1bac8c7bcc657edf27e97d01acdc2773934da9cc3fbe7d652cc60",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-extras/00/mutant",
+    "bytes": 6884280,
+    "sha256": "d3c176d898722e0a41c59216e1c6c327c68353701442eed49b6f49ab9743399b",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-extras/00/original",
+    "bytes": 6884280,
+    "sha256": "7be64857de632bc6229a3d6a0013be2419b8df1ed6d2b6ba0d468849e524af45",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-extras/01/mutant",
+    "bytes": 6884312,
+    "sha256": "3a5d5101ede31f5e1a5d43f699db96a5ae290095d8e907c5a3ce1925636bfba5",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-extras/01/original",
+    "bytes": 6884312,
+    "sha256": "9fc14f7096ee2b4615778888b16ef02a91063bf5a3cde6badf8cb04978b0e1e1",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-extras/02/mutant",
+    "bytes": 6884128,
+    "sha256": "f1396d9c5d17892e9090beac4ef16bb2cd1ead3a1a66d8da238835f3297a707a",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-extras/02/original",
+    "bytes": 6884128,
+    "sha256": "f2371cdb1b6354f287949ca3959978f608a9577588b7796611e38aea7ab8567e",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-extras/03/mutant",
+    "bytes": 6886040,
+    "sha256": "ad05845d6ddfce129638c327ba2a6dfa2d477cc8c3e0d6e0d21a8e9d8118bcf6",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-extras/03/original",
+    "bytes": 6886072,
+    "sha256": "e0bc93eb8edb68fae98b126fcafea8d1680a703ca9462979144df04747a8d649",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-extras/04/mutant",
+    "bytes": 6886080,
+    "sha256": "9b579e0256bf67e0e835573cde43944b0771d8d5f2b4a7bdffe8980b0a973ce3",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-extras/04/original",
+    "bytes": 6886080,
+    "sha256": "223c04815b4c0c67177333544efdd160f13d1e8b4a3e643005ed7000969903c6",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-extras/05/mutant",
+    "bytes": 6886272,
+    "sha256": "5fdc79305fba54a81ed474f4aec0f826ca98089a6aaa1b907919e049bf87f6d0",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-extras/05/original",
+    "bytes": 6886288,
+    "sha256": "2f7c7b1ba5e2e7b3ab822bd72addf6187efa7838b736d76e51d4f8dedc9c542c",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-extras/06/mutant",
+    "bytes": 6886080,
+    "sha256": "d4d5a963d6f26a92ba7be5413426e3e48663fb2955c79eeca60860b710da5fc3",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-extras/06/original",
+    "bytes": 6886080,
+    "sha256": "53fb242bc9b744ccba077f0aade1a3ca8aab7de2d46fb10bc996ce2c6e0d4f0f",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-extras/07/mutant",
+    "bytes": 6886400,
+    "sha256": "9177e8b0c47a3c2cd9d3bb443cc0ed4f961ddda19249cc56009f98433d202a2c",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-extras/07/original",
+    "bytes": 6886416,
+    "sha256": "ccb65f483126195577e91edb6c465013a2ae43e18defe43f30e10cb93fc65872",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-async-functions/00/mutant",
+    "bytes": 6884440,
+    "sha256": "a2d9cd88fc39c91dc5135ce3ace3232337b9c85118839dc40771b6584318412e",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-async-functions/00/original",
+    "bytes": 6884440,
+    "sha256": "eb8ebc73e4cdf62c441af051c007cb2ae6d63f04b8f839b4badc98960cdf6169",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-async-functions/01/mutant",
+    "bytes": 6886128,
+    "sha256": "25d45fe50bd775186ce72bb7209c718ce720ba5365a27e18bd5b76ccf6a781e8",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-async-functions/01/original",
+    "bytes": 6886144,
+    "sha256": "a36ab9faa80d73b5ef00058683f3672f40e05d8d5b4d52bbe0dfeb22b4287dc2",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-async-additional/00/mutant",
+    "bytes": 6884440,
+    "sha256": "7dc49e992f96f33b5387d839d6376fc747c4973fc1ea2fcd6119d20e2763adcb",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-async-additional/00/original",
+    "bytes": 6884440,
+    "sha256": "870cb75c5a63f956ee22bfd4276132711dd10786b8199ace04e361968d1398b2",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-async-additional/01/mutant",
+    "bytes": 6886152,
+    "sha256": "4f72aa04533d198c228422ef6626d17893824a62d0990f33cfc530c7d8f25d0b",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/native-async-additional/01/original",
+    "bytes": 6886152,
+    "sha256": "6025f622daceb4173295c4ec268ec1224bdcc55414688bd7fb99a1159b1dc71f",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/same-line-native/mutant",
+    "bytes": 6887320,
+    "sha256": "49bbfdc55574d8ada257dfe662e5fb9e0ad3732130cccfd891014729f6deeaeb",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/same-line-native/original",
+    "bytes": 6887352,
+    "sha256": "fdc593e70845bfe5d4bcfe799b7387f891c49f28590b3fde71c2eb4a1c0b3366",
+    "retained": "open-review native witness; not part of small durable packet"
+  },
+  {
+    "path": "/workspace/review8004-evidence/source-ripr",
+    "bytes": 217442080,
+    "sha256": "5135a61629fb232c4f003cbbfe3037d4425a4247cd9a176165f33b2bb3d5a008",
+    "source": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
+    "retained": "source witness; distinct from mutable Cargo output"
+  },
+  {
+    "path": "/workspace/review8004-target/debug/deps/ripr-4dfb141009a72db0",
+    "bytes": 415540272,
+    "sha256": "c8cff82a4af2256903769c613cf2380931c27a670f0c348bb543102a7b09f4ad",
+    "source": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
+    "retained": "mutable Cargo source-unit binary; consumers finished, raw execution logs retained; not a frozen independent copy"
+  }
+]

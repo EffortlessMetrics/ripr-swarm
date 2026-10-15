@@ -1,0 +1,48 @@
+{
+  "source": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
+  "source_tree": "6bd2c8c772cfbb11eb9c8ae709fff98d465e7f85",
+  "integration_main": "ef12e0258a63e2476fcf9509d867152d6b36df80",
+  "composition": "c1689922ca1d47f27e9fcac9d66f19f75423d5cd",
+  "composition_tree": "459a971d4e5505e7152c7778d26600ec9aff2fe4",
+  "source_units": {
+    "grip": 387,
+    "related": 175,
+    "owner-pin": 221,
+    "identity": 33,
+    "name-scope": 8
+  },
+  "source_unique_units_passed": 824,
+  "source_receiver_integrations_passed": 9,
+  "composition_integrations": {
+    "receiver": 9,
+    "assertion-helper": 23,
+    "native-path": 5,
+    "suppression": 1,
+    "structural": 4
+  },
+  "native_unique_cases": 46,
+  "native_original_pass": 46,
+  "native_mutant_fail": 17,
+  "native_mutant_survive": 29,
+  "native_matrix_executions": 92,
+  "native_same_line_filtered_executions": 4,
+  "native_all_runs_nonempty": true,
+  "source_matrix_reports": 138,
+  "composition_matrix_reports": 138,
+  "same_line_cli_reports": 6,
+  "total_unique_cli_reports": 282,
+  "original_matrix_34_case_violations": 0,
+  "blocking_async_function_cases": [
+    42,
+    44,
+    45
+  ],
+  "fresh_compact_metrics_match_full": true,
+  "detailed_compact_row_claim": false,
+  "disposition": "REPAIR_REQUIRED",
+  "hosted_default_feature_required_checks": "not established; no Ready transition performed",
+  "broad_local_and_windows_runtime_qualification": "not repeated for source with confirmed blocker",
+  "observed_utc": "2026-10-15T16:08:21.416833+00:00",
+  "wrong_full_repository_owner_rows_per_reviewed_tree": 12,
+  "strongly_gripped_wrong_owner_rows_per_reviewed_tree": 8
+}

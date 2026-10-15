@@ -1,0 +1,38 @@
+[
+  {
+    "head": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
+    "argv": [
+      "/workspace/review8004-target/debug/deps/ripr-4dfb141009a72db0",
+      "analysis::classify::related_tests",
+      "--test-threads=4"
+    ],
+    "exit": 0
+  },
+  {
+    "head": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
+    "argv": [
+      "/workspace/review8004-target/debug/deps/ripr-4dfb141009a72db0",
+      "analysis::classify::owner_pin",
+      "--test-threads=4"
+    ],
+    "exit": 0
+  },
+  {
+    "head": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
+    "argv": [
+      "/workspace/review8004-target/debug/deps/ripr-4dfb141009a72db0",
+      "analysis::classify::call_identity",
+      "--test-threads=4"
+    ],
+    "exit": 0
+  },
+  {
+    "head": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
+    "argv": [
+      "/workspace/review8004-target/debug/deps/ripr-4dfb141009a72db0",
+      "analysis::syntax::name_scope",
+      "--test-threads=4"
+    ],
+    "exit": 0
+  }
+]

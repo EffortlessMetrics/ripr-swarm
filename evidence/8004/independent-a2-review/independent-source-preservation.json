@@ -1,0 +1,18 @@
+{
+  "base": {
+    "count": 294,
+    "complete_rows_preserved": true,
+    "metadata_equal": true
+  },
+  "candidate": {
+    "count": 309,
+    "complete_rows_preserved": true,
+    "metadata_equal": true
+  },
+  "main": {
+    "count": 297,
+    "complete_rows_preserved": true,
+    "metadata_equal": true
+  },
+  "final_count": 316
+}

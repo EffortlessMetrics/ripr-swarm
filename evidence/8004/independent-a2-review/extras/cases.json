@@ -1,0 +1,86 @@
+[
+  {
+    "path": "/workspace/review8004-evidence/extras/direct-debug-async.rs",
+    "name": "subject",
+    "relation": null,
+    "native_reaches": false,
+    "label": "direct-debug-async"
+  },
+  {
+    "path": "/workspace/review8004-evidence/extras/direct-ne-async.rs",
+    "name": "subject",
+    "relation": null,
+    "native_reaches": false,
+    "label": "direct-ne-async"
+  },
+  {
+    "path": "/workspace/review8004-evidence/extras/direct-nested-async.rs",
+    "name": "subject",
+    "relation": null,
+    "native_reaches": false,
+    "label": "direct-nested-async"
+  },
+  {
+    "path": "/workspace/review8004-evidence/extras/direct-debug-mixed.rs",
+    "name": "subject",
+    "relation": "direct_owner_call",
+    "native_reaches": true,
+    "label": "direct-debug-mixed"
+  },
+  {
+    "path": "/workspace/review8004-evidence/extras/helper-last-hop-async.rs",
+    "name": "subject",
+    "relation": null,
+    "native_reaches": false,
+    "label": "helper-last-hop-async"
+  },
+  {
+    "path": "/workspace/review8004-evidence/extras/helper-last-hop-mixed.rs",
+    "name": "subject",
+    "relation": "helper_owner_call",
+    "native_reaches": true,
+    "label": "helper-last-hop-mixed"
+  },
+  {
+    "path": "/workspace/review8004-evidence/extras/intermediate-async.rs",
+    "name": "subject",
+    "relation": null,
+    "native_reaches": false,
+    "label": "intermediate-async"
+  },
+  {
+    "path": "/workspace/review8004-evidence/extras/intermediate-mixed.rs",
+    "name": "subject",
+    "relation": null,
+    "native_reaches": true,
+    "label": "intermediate-mixed"
+  },
+  {
+    "path": "/workspace/review8004-evidence/extras/async-function-helper.rs",
+    "name": "subject",
+    "relation": null,
+    "native_reaches": false,
+    "label": "async-function-helper"
+  },
+  {
+    "path": "/workspace/review8004-evidence/extras/async-function-intermediate.rs",
+    "name": "subject",
+    "relation": null,
+    "native_reaches": false,
+    "label": "async-function-intermediate"
+  },
+  {
+    "path": "/workspace/review8004-evidence/extras/async-function-operand.rs",
+    "name": "subject",
+    "relation": null,
+    "native_reaches": false,
+    "label": "async-function-operand"
+  },
+  {
+    "path": "/workspace/review8004-evidence/extras/async-function-named-intermediate.rs",
+    "name": "subject",
+    "relation": null,
+    "native_reaches": false,
+    "label": "async-function-named-intermediate"
+  }
+]

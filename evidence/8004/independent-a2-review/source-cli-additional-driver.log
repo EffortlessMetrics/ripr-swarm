@@ -1,0 +1,8 @@
+44 /workspace/review8004-evidence/extras/async-function-operand.rs [['helper_owner_call', 'helper_owner_call', 'helper_owner_call', 'helper_owner_call'], None, ['same_test_file', 'same_test_file']]
+45 /workspace/review8004-evidence/extras/async-function-named-intermediate.rs [['helper_owner_call', 'helper_owner_call', 'helper_owner_call', 'helper_owner_call'], None, ['same_test_file', 'same_test_file']]
+{"cases": 46, "reports": 6, "violations": [[44, "repo-exposure-json", "helper_owner_call", null], [44, "repo-exposure-json", "helper_owner_call", null], [44, "repo-exposure-json", "helper_owner_call", null], [44, "repo-exposure-json", "helper_owner_call", null], [45, "repo-exposure-json", "helper_owner_call", null], [45, "repo-exposure-json", "helper_owner_call", null], [45, "repo-exposure-json", "helper_owner_call", null], [45, "repo-exposure-json", "helper_owner_call", null]]}
+Traceback (most recent call last):
+  File "/workspace/review8004-evidence/cli.py", line 57, in <module>
+    assert not violations
+           ^^^^^^^^^^^^^^
+AssertionError

@@ -1,0 +1,22 @@
+   Compiling zerocopy v0.8.57
+   Compiling bitflags v2.13.2
+   Compiling tokio v1.53.2
+   Compiling rmcp v3.5.1
+   Compiling oxc_syntax v0.130.0
+   Compiling oxc_regular_expression v0.130.0
+   Compiling tokio-util v0.7.20
+   Compiling ls-types v0.0.6
+   Compiling oxc_ast v0.130.0
+   Compiling ppv-lite86 v0.2.21
+   Compiling tower-lsp-server v0.23.0
+   Compiling rand_chacha v0.3.1
+   Compiling rand v0.8.8
+   Compiling oxc_ecmascript v0.130.0
+   Compiling phf_generator v0.11.3
+   Compiling phf_codegen v0.11.3
+   Compiling unicode_names2_generator v1.3.0
+   Compiling unicode_names2 v1.3.0
+   Compiling rustpython-parser v0.4.0
+   Compiling oxc_parser v0.130.0
+   Compiling ripr v0.11.0 (/workspace/review8004/crates/ripr)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5m 53s
