@@ -49142,6 +49142,27 @@ fn stage_vscode_license_notices_copies_root_texts_and_cleans_up() -> Result<(), 
 }
 
 #[test]
+fn stage_vscode_license_notices_cleans_up_after_partial_write_failure() -> Result<(), String> {
+    with_temp_cwd("stage-vscode-licenses-partial", |root| {
+        let extension_dir = root.join("editors/vscode");
+        fs::create_dir_all(&extension_dir)
+            .map_err(|err| format!("failed to create {}: {err}", extension_dir.display()))?;
+        // A directory at LICENSE-APACHE makes the second write fail after MIT is staged.
+        fs::create_dir_all(extension_dir.join("LICENSE-APACHE"))
+            .map_err(|err| format!("failed to create blocking LICENSE-APACHE directory: {err}"))?;
+        let notices = complete_license_notices();
+        let Err(error) = super::stage_vscode_license_notices(&extension_dir, &notices) else {
+            return Err("a blocked Apache destination must fail staging".to_string());
+        };
+        assert!(error.contains("LICENSE-APACHE"), "{error}");
+        if extension_dir.join("LICENSE-MIT").exists() {
+            return Err("partial staging must not leave LICENSE-MIT behind".to_string());
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn stage_vscode_license_notices_fails_when_existing_copy_differs() -> Result<(), String> {
     with_temp_cwd("stage-vscode-licenses-conflict", |root| {
         let extension_dir = root.join("editors/vscode");

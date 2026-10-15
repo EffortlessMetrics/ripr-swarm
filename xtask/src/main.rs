@@ -1744,7 +1744,7 @@ fn stage_vscode_license_notices(
     extension_dir: &Path,
     notices: &RepositoryLicenseNotices,
 ) -> Result<StagedVscodeLicenseNotices, String> {
-    let mut created = Vec::new();
+    let mut staged = StagedVscodeLicenseNotices { paths: Vec::new() };
     for (name, bytes) in [
         (STAGED_LICENSE_MIT, notices.mit.as_slice()),
         (STAGED_LICENSE_APACHE, notices.apache.as_slice()),
@@ -1767,9 +1767,9 @@ fn stage_vscode_license_notices(
         }
         fs::write(&path, bytes)
             .map_err(|err| format!("failed to stage {name} into {}: {err}", path.display()))?;
-        created.push(path);
+        staged.paths.push(path);
     }
-    Ok(StagedVscodeLicenseNotices { paths: created })
+    Ok(staged)
 }
 
 fn cleanup_staged_vscode_license_notices(paths: &[PathBuf]) -> Result<(), String> {
