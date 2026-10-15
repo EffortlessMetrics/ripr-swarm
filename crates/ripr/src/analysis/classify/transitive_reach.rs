@@ -589,6 +589,40 @@ impl<'a> ReachGraph<'a> {
         reaching
     }
 
+    /// The reaching names past the bounded walk (RIPR-SPEC-0114 example 5,
+    /// #8047): the same reverse sweep continues level by level beyond
+    /// `MAX_TRANSITIVE_DEPTH` and stops at the first deeper level a test
+    /// calls into, returning every name reached so far. `None` when no
+    /// chain of any length reaches a name a test calls. Only consulted when
+    /// the bounded walk names no witness, so a chain within the bound keeps
+    /// its witness.
+    fn names_reaching_past_walk(&self, owner_name: &str) -> Option<HashSet<&'a str>> {
+        let mut reaching: HashSet<&'a str> = HashSet::new();
+        let mut frontier: Vec<&str> = vec![owner_name];
+        let mut seen: HashSet<&str> = HashSet::from([owner_name]);
+        let mut depth = 0;
+        while !frontier.is_empty() {
+            depth += 1;
+            let mut next = Vec::new();
+            for callee in frontier {
+                for caller in self.callers.get(callee).into_iter().flatten() {
+                    if seen.insert(caller) {
+                        reaching.insert(caller);
+                        next.push(*caller);
+                    }
+                }
+            }
+            if depth > MAX_TRANSITIVE_DEPTH {
+                let level: HashSet<&str> = next.iter().copied().collect();
+                if !self.tests_calling_any(&level).is_empty() {
+                    return Some(reaching);
+                }
+            }
+            frontier = next;
+        }
+        None
+    }
+
     /// Whether a test gives a name-only reason to believe its call to
     /// `entry` lands on a function that reaches the owner, rather than on an
     /// unrelated function that shares the name (#5481: a unit test calling
@@ -837,6 +871,21 @@ impl<'a> TransitiveReachIndex<'a> {
         if reaching.is_empty() {
             return None;
         }
+        // A chain longer than the walk is still a path ripr does not trace:
+        // name the same limit rather than leave a bare gap (#8047).
+        self.witness_through(owner_name, &reaching).or_else(|| {
+            let deeper = graph.names_reaching_past_walk(owner_name)?;
+            self.witness_through(owner_name, &deeper)
+        })
+    }
+
+    /// The best witnessing test among those calling a name in `reaching`.
+    fn witness_through(
+        &self,
+        owner_name: &str,
+        reaching: &HashSet<&'a str>,
+    ) -> Option<TransitiveWitness> {
+        let graph = self.graph();
 
         // One witness per test: its best entry symbol that reaches the owner,
         // where an entry the test body corroborates (see
@@ -858,13 +907,13 @@ impl<'a> TransitiveReachIndex<'a> {
         // per file. A test with no call to a reaching name and no derive
         // entry in its file has no witness, so only the others are visited.
         let mut derive_by_file: HashMap<&Path, Option<(String, &str)>> = HashMap::new();
-        let mut candidates = graph.tests_calling_any(&reaching);
+        let mut candidates = graph.tests_calling_any(reaching);
         if !graph.derive_entries.is_empty() {
             for (test_index, test) in graph.all_tests.iter().enumerate() {
                 let derive = derive_by_file
                     .entry(test.file.as_path())
                     .or_insert_with(|| {
-                        graph.derive_entry(self.index, &test.file, &reaching, owner_name)
+                        graph.derive_entry(self.index, &test.file, reaching, owner_name)
                     });
                 if derive.is_some() {
                     candidates.push(test_index);
@@ -892,7 +941,7 @@ impl<'a> TransitiveReachIndex<'a> {
                     let name = callee.name.as_str();
                     let self_types = receiver_types
                         .entry(name)
-                        .or_insert_with(|| graph.entry_receiver_types(name, &reaching, owner_name));
+                        .or_insert_with(|| graph.entry_receiver_types(name, reaching, owner_name));
                     let uncorroborated = self_types.as_ref().is_some_and(|self_types| {
                         !graph.test_calls_on_any_type(test_index, name, self_types)
                     });
@@ -3226,22 +3275,59 @@ mod tests {
         );
     }
 
-    // (c-ii) Path at depth=6 -> exceeds MAX_TRANSITIVE_DEPTH=5, NOT found.
-    // fn_e is popped at depth=5, its calls include fn_f -> push fn_f at depth=6.
-    // fn_f is popped at depth=6, 6 > 5 -> continue. inner NOT reached.
+    // (c-ii) Path at depth=6 -> past MAX_TRANSITIVE_DEPTH=5, the walk
+    // continues until a level a test calls into, and names the same limit
+    // (RIPR-SPEC-0114 example 5, #8047).
+    fn six_hop_chain() -> Vec<FunctionSummary> {
+        vec![
+            make_fn("fn_a", vec!["fn_b"]),
+            make_fn("fn_b", vec!["fn_c"]),
+            make_fn("fn_c", vec!["fn_d"]),
+            make_fn("fn_d", vec!["fn_e"]),
+            make_fn("fn_e", vec!["fn_f"]),
+            make_fn("fn_f", vec!["inner"]),
+        ]
+    }
+
     #[test]
-    fn given_path_depth_6_then_witness_is_none() {
-        let fn_a = make_fn("fn_a", vec!["fn_b"]);
-        let fn_b = make_fn("fn_b", vec!["fn_c"]);
-        let fn_c = make_fn("fn_c", vec!["fn_d"]);
-        let fn_d = make_fn("fn_d", vec!["fn_e"]);
-        let fn_e = make_fn("fn_e", vec!["fn_f"]);
-        let fn_f = make_fn("fn_f", vec!["inner"]);
+    fn given_path_depth_6_then_the_walk_past_the_bound_names_a_witness() {
         let index = index_with(
-            vec![fn_a, fn_b, fn_c, fn_d, fn_e, fn_f],
+            six_hop_chain(),
             vec![make_test("test_too_deep", vec!["fn_a"])],
         );
-        assert!(find_transitive_witness("inner", &index).is_none());
+        let witness = find_transitive_witness("inner", &index);
+        assert_eq!(
+            witness
+                .as_ref()
+                .map(|w| (w.test_name.as_str(), w.entry_symbol.as_str())),
+            Some(("test_too_deep", "fn_a"))
+        );
+        // A test whose calls reach nothing on the chain stays without one.
+        let unrelated = index_with(
+            six_hop_chain(),
+            vec![make_test("test_elsewhere", vec!["fn_unrelated"])],
+        );
+        assert!(find_transitive_witness("inner", &unrelated).is_none());
+    }
+
+    #[test]
+    fn a_witness_within_the_bound_wins_over_a_deeper_one() {
+        // `test_deep` sorts first by line, but the bounded walk already
+        // names `test_near`, so the deeper walk never runs.
+        let index = index_with(
+            six_hop_chain(),
+            vec![
+                make_test_at("test_deep", "tests/it.rs", 1, vec!["fn_a"]),
+                make_test_at("test_near", "tests/it.rs", 10, vec!["fn_e"]),
+            ],
+        );
+        let witness = find_transitive_witness("inner", &index);
+        assert_eq!(
+            witness
+                .as_ref()
+                .map(|w| (w.test_name.as_str(), w.other_test_count)),
+            Some(("test_near", 0))
+        );
     }
 
     // (c-iii) Macro call in chain is skipped; no path found through a macro entry.

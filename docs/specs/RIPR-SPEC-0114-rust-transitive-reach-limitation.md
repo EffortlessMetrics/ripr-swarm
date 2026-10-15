@@ -67,6 +67,12 @@ the Rust adapter runs a bounded BFS walk over the lexical call facts in the Rust
    - Stop when callee name not found in-crate (external / unresolved).
    - Stop when depth > 5.
 4. If the owner's name is reached within depth ≤ 5: a candidate path was found.
+5. Only when step 4 names no witness, the same walk continues past depth 5,
+   level by level, and stops at the first deeper level whose names a test
+   calls (#8047). A chain of any length that a test enters is still a path
+   ripr does not trace, so it names the same limitation; a chain no test
+   enters still finds nothing. A witness within depth 5 always wins, so the
+   deeper walk never changes the named witness of a shallower path.
 
 ### When found
 
@@ -97,7 +103,10 @@ Genuinely-untested stays genuinely-untested.
 - NEVER change the classification from `no_static_path` (or from `weakly_exposed` on the
   proximity-only path, #7071). No promotion of any kind.
 - Walk is NAME matching over LEXICAL call facts only — no AST resolution, no visibility tracking.
-- Depth is bounded at MAX 5 hops; any callee beyond depth 5 is not walked.
+- The witness walk is bounded at MAX 5 hops. Past it, the walk only asks
+  whether a test enters the chain at any depth, and names the same
+  limitation when one does (#8047); it never ranks a deeper witness above a
+  shallower one.
 - Macro invocations (`name!`) stop the walk immediately at that branch.
 - Callees not found in the production function set stop that branch (fail-closed on external deps).
 - The message uses "may" language: "may call toward this change through a path ripr does not fully trace."
@@ -116,7 +125,8 @@ Genuinely-untested stays genuinely-untested.
 - Promoting `no_static_path` to `weakly_exposed` or higher — that is the next P3 slice.
 - Tracing macro invocations or generic dispatch — explicit fail-closed boundary.
 - Tracking visibility (pub vs pub(crate)) — not available in lexical call facts.
-- Depth > 5 paths — explicit fail-closed boundary.
+- Reach credit through a chain of any depth. A path past 5 hops names the
+  limitation only (#8047); the classification never changes.
 
 ## Acceptance Examples
 
@@ -143,8 +153,13 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
    No limitation fires (no candidate path found through macros). Classification stays bare `no_static_path`.
 
 5. **Depth boundary**: test → fn_a → fn_b → fn_c → fn_d → fn_e → fn_f → owner (6 hops) —
-   exceeds depth 5. No candidate path.
-   Classification stays bare `no_static_path`.
+   exceeds the 5-hop witness walk, so the walk continues past it and finds the
+   test entering the chain at `fn_a` (#8047). Result: the same limitation as
+   example 1, naming that test. Classification unchanged (`no_static_path`, or
+   `weakly_exposed` when proximity-only). The verdict corpus row
+   `tokens-base-six-hop-chain` (a proximity-only `weakly_exposed` owner six helper
+   hops from its only pinning test) reads `limited`. A 6-hop chain no test
+   enters still finds nothing.
 
 6. **Existing tests found directly**: direct-call classifier finds a test for the owner (related_tests
    non-empty, with at least one relation that is not proximity-only). BFS does NOT run. Finding classified normally (infection_unknown or higher).
@@ -159,8 +174,9 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
 - Positive fixture: `fixtures/rust_transitive_reach_positive/` — limitation fires.
 - Test-helper public API fixture: `fixtures/rust_transitive_reach_test_helper_chain/` — limitation fires.
 - Negative fixture: `fixtures/rust_transitive_reach_negative/` — limitation does NOT fire.
-- Unit tests covering: positive path, no path, depth-5 boundary (found), depth-6 (not found),
-  macro skip, external callee stop, honest message language.
+- Unit tests covering: positive path, no path, depth-5 boundary (found), depth-6 (found by
+  the walk past the bound, not found when no test enters the chain), a witness within the
+  bound winning over a deeper one, macro skip, external callee stop, honest message language.
 - JSON evidence and human output surface the limitation detail: last established
   edge, first unresolved edge, analyzer route, and non-claim.
 
@@ -172,8 +188,11 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
   — no path, limitation does not fire
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_path_at_depth_5_then_witness_is_captured`
   — depth 5 boundary: still finds
-- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_path_depth_6_then_witness_is_none`
-  — depth 6 boundary: does NOT find (fail-closed)
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_path_depth_6_then_the_walk_past_the_bound_names_a_witness`
+  — depth 6: the walk past the bound names the entering test; a test that enters no
+  chain name still finds nothing (#8047)
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_witness_within_the_bound_wins_over_a_deeper_one`
+  — a witness within 5 hops is named before the deeper walk runs (#8047)
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_macro_call_in_test_calls_then_macro_is_skipped`
   — macro invocations skipped
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_callee_not_in_crate_then_walk_stops_fail_closed`
