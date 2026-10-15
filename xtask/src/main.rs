@@ -272,9 +272,10 @@ use no_panic::{
 use policy::{
     check_allow_attributes, check_changelog_fragments, check_ci_lane_whitelist, check_covered_by,
     check_doc_roles, check_droid_review_config, check_executable_files, check_file_policy,
-    check_local_context, check_network_policy, check_no_panic_family, check_positioning_language,
-    check_process_policy, check_product_copy, check_proof_packs, check_release_targets,
-    check_static_language, check_text_encoding, check_workflows, qualify_python_wheelhouse,
+    check_local_context, check_network_policy, check_no_panic_family, check_packaged_readme,
+    check_positioning_language, check_process_policy, check_product_copy, check_proof_packs,
+    check_release_targets, check_static_language, check_text_encoding, check_workflows,
+    qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
