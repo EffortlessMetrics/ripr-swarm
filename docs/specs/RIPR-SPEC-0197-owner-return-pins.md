@@ -1437,8 +1437,9 @@ and only per pinned call:
 4. Propagation (#8037). An admitted chain that is the owner's whole body
    completes a DirectReturn witness on its line (limitation
    `short_circuit_owner_tail`), as a constant tail and an admitted
-   iterator-adaptor tail (RIPR-SPEC-0265 rule 3) do: its operands cannot
-   call, panic or write, so its value is the owner's return. Before this,
+   iterator-adaptor tail (RIPR-SPEC-0265 rule 3) do: its operands are
+   comparisons of parameters with literals and make no calls, so its value
+   is the owner's return. Before this,
    an `||` chain had no witness, because the closure-syntax guard reads any
    paired pipes as an opaque closure, so its return-value probe stayed
    `weakly_exposed` even when the pin held. Whether a pinned run evaluates

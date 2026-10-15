@@ -4,9 +4,12 @@
 //! An admitted `||` chain that is the owner's whole body completes its
 //! return-value witness, so a constant-row table that runs every operand
 //! exposes the return-value probe. Whether a pinned run evaluates every
-//! operand stays the owner pin's run check: a table that never evaluates
-//! the changed operand keeps the probe below `exposed` (the #7970 shape).
+//! operand stays the owner pin's run check: with the same owner and diff, a
+//! table or direct calls that never evaluate the changed operand keep the
+//! probe below `exposed` (the #7970 shape) while its propagation stays
+//! complete, so the refusal comes from observation, not from the edge.
 
+use ripr::domain::StageState;
 use ripr::{
     CheckInput, CheckOutput, ExposureClass, Mode, OutputFormat, ProbeFamily, check_workspace,
 };
@@ -26,6 +29,14 @@ fn table_test(crate_name: &str, call: &str, rows: &str, pattern: &str) -> String
     format!(
         "use {crate_name}::*;\n\n#[test]\nfn table() {{\n    let cases = [{rows}];\n    for ({pattern}, want) in cases {{\n        assert_eq!({call}, want);\n    }}\n}}\n"
     )
+}
+
+fn direct_test(crate_name: &str, asserts: &[&str]) -> String {
+    let body: String = asserts
+        .iter()
+        .map(|assert| format!("    {assert}\n"))
+        .collect();
+    format!("use {crate_name}::*;\n\n#[test]\nfn direct() {{\n{body}}}\n")
 }
 
 fn single_line_diff(source: &str, old_line: &str) -> String {
@@ -93,14 +104,15 @@ impl Drop for TempRepo {
     }
 }
 
-/// The class of the single current return-value finding on line 2, after
-/// asserting the fixture produced it from the changed tail.
+/// The class and propagation state of the single current return-value
+/// finding on line 2, after asserting the fixture produced it from the
+/// changed tail.
 fn return_value_class(
     source: &str,
     old_line: &str,
     tail: &str,
     test_source: &str,
-) -> Result<ExposureClass, String> {
+) -> Result<(ExposureClass, StageState), String> {
     let repo = TempRepo::create(source, test_source, &single_line_diff(source, old_line))?;
     let output = repo.check()?;
     let mut matches = output.findings.iter().filter(|finding| {
@@ -120,7 +132,7 @@ fn return_value_class(
             finding.probe.expression
         ));
     }
-    Ok(finding.class.clone())
+    Ok((finding.class.clone(), finding.ripr.propagate.state.clone()))
 }
 
 #[test]
@@ -131,24 +143,44 @@ fn an_or_tail_run_to_its_end_by_a_table_is_exposed() -> Result<(), String> {
         "(0, true), (1, false), (5, false), (6, true), (13, true)",
         "day",
     );
-    assert_eq!(
-        return_value_class(WEEKEND_SOURCE, WEEKEND_OLD, WEEKEND_TAIL, &test)?,
-        ExposureClass::Exposed
+    let (class, propagate) = return_value_class(WEEKEND_SOURCE, WEEKEND_OLD, WEEKEND_TAIL, &test)?;
+    assert_eq!(class, ExposureClass::Exposed);
+    assert_eq!(propagate, StageState::Yes);
+    // The same owner and diff the refusals below use: `x == 1` lets the
+    // changed `y == 1` run in every row.
+    let test = table_test(
+        "short_circuit_or_tail",
+        "either(x, y)",
+        "(1, 1, true), (1, 0, false)",
+        "x, y",
     );
+    let (class, _) = return_value_class(EITHER_SOURCE, EITHER_OLD, EITHER_TAIL, &test)?;
+    assert_eq!(class, ExposureClass::Exposed);
     Ok(())
 }
 
 #[test]
 fn an_or_tail_whose_changed_operand_never_runs_stays_below_exposed() -> Result<(), String> {
     // Every row has `x == 0`, so `||` returns before the changed `y == 1`
-    // runs (#7970): the witness completes, but the pin's run check refuses.
-    let test = table_test(
+    // runs (#7970), though the rows hit its boundary values: the witness
+    // completes, and the pin's run check refuses.
+    let table = table_test(
         "short_circuit_or_tail",
         "either(x, y)",
-        "(0, 3, true), (0, 0, true)",
+        "(0, 1, true), (0, 0, true), (0, 2, true)",
         "x, y",
     );
-    let class = return_value_class(EITHER_SOURCE, EITHER_OLD, EITHER_TAIL, &test)?;
-    assert_ne!(class, ExposureClass::Exposed);
+    let direct = direct_test(
+        "short_circuit_or_tail",
+        &[
+            "assert_eq!(either(0, 1), true);",
+            "assert_eq!(either(0, 2), true);",
+        ],
+    );
+    for test in [table, direct] {
+        let (class, propagate) = return_value_class(EITHER_SOURCE, EITHER_OLD, EITHER_TAIL, &test)?;
+        assert_ne!(class, ExposureClass::Exposed, "{test}");
+        assert_eq!(propagate, StageState::Yes, "{test}");
+    }
     Ok(())
 }

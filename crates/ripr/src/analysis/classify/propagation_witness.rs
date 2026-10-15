@@ -370,8 +370,8 @@ pub(in crate::analysis) fn constant_tail_witness(
 
 /// The line of the owner's tail when the owner's whole body is one
 /// admitted short-circuit chain (`ShortCircuitTail`) whose normalized text
-/// is `identity`. Its operands cannot call, panic or write, so the chain's
-/// value is the owner's return.
+/// is `identity`. Its operands are comparisons of parameters with literals
+/// and make no calls, so the chain's value is the owner's return.
 fn short_circuit_owner_tail_line(
     owner: &crate::analysis::facts::FunctionSummary,
     changed: &str,
