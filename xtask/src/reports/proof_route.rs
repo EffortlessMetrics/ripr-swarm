@@ -794,6 +794,9 @@ fn parse_preflight_receipt(
             unreadable("preflight receipt has no supported reuse contract")
         };
     }
+    if value.get("reuse_unavailable_reason") != Some(&Value::Null) {
+        return unreadable("preflight receipt does not declare reuse available");
+    }
     let binding: PreflightBinding = match value
         .get("reuse_binding")
         .cloned()
@@ -826,7 +829,22 @@ fn parse_preflight_receipt(
         {
             return unreadable("preflight receipt command identities differ from the current plan");
         }
-        match command.get("status").and_then(Value::as_str) {
+        let exit_code = match command.get("exit_code") {
+            Some(Value::Null) => None,
+            Some(value) => match value.as_i64().and_then(|code| i32::try_from(code).ok()) {
+                Some(code) => Some(code),
+                None => return unreadable("preflight receipt has an invalid command exit code"),
+            },
+            None => return unreadable("preflight receipt carries no command exit code"),
+        };
+        let status = command.get("status").and_then(Value::as_str);
+        if (status == Some("pass") && exit_code != Some(0))
+            || (status == Some("not_run") && exit_code.is_some())
+        {
+            return unreadable("preflight receipt command status contradicts its exit code");
+        }
+        // A timeout may fail with code 0, and launch/signal failures have no code.
+        match status {
             Some("pass") if !failed => {}
             Some("fail") if !failed => failed = true,
             Some("not_run") if failed => {}
@@ -1128,11 +1146,12 @@ mod tests {
             "head": {"sha": "executed-sha"},
             "base": {"sha": "base-sha"},
             "reuse_binding": test_binding("executed-sha"),
+            "reuse_unavailable_reason": null,
             "overall_status": "fail",
             "commands": [
-                {"command": "test a", "packs": ["p"], "status": "pass", "duration_ms": 12},
-                {"command": "test b", "packs": ["p"], "status": "fail", "duration_ms": 34},
-                {"command": "test c", "packs": ["p"], "status": "not_run", "duration_ms": 0}
+                {"command": "test a", "packs": ["p"], "status": "pass", "duration_ms": 12, "exit_code": 0},
+                {"command": "test b", "packs": ["p"], "status": "fail", "duration_ms": 34, "exit_code": 1},
+                {"command": "test c", "packs": ["p"], "status": "not_run", "duration_ms": 0, "exit_code": null}
             ]
         })
     }
@@ -1141,6 +1160,94 @@ mod tests {
         ["test a", "test b", "test c"]
             .map(|command| (command.to_string(), vec!["p".to_string()]))
             .to_vec()
+    }
+
+    fn assert_receipt_refused(value: &Value, reason: &str) {
+        for head in ["executed-sha", "published-sha"] {
+            let status = parse_preflight_receipt(
+                &value.to_string(),
+                head,
+                Some(&test_binding(head)),
+                &receipt_plan(),
+            );
+            assert_eq!(
+                status,
+                PreflightReceiptStatus::Unreadable(reason.to_string())
+            );
+            assert!(preflight_receipt_line(&status).contains(reason));
+        }
+    }
+
+    #[test]
+    fn contradictory_or_missing_exit_evidence_refuses_receipt_reuse() -> Result<(), String> {
+        for index in 0..3 {
+            let mut value = bound_receipt();
+            value["commands"][index]
+                .as_object_mut()
+                .ok_or("fixture command")?
+                .remove("exit_code");
+            assert_receipt_refused(&value, "preflight receipt carries no command exit code");
+            for malformed in [json!("0"), json!(false), json!(0.5), json!(i64::MAX)] {
+                let mut value = bound_receipt();
+                value["commands"][index]["exit_code"] = malformed;
+                assert_receipt_refused(
+                    &value,
+                    "preflight receipt has an invalid command exit code",
+                );
+            }
+        }
+        for (index, code) in [(0, json!(23)), (0, Value::Null), (2, json!(0))] {
+            let mut value = bound_receipt();
+            value["commands"][index]["exit_code"] = code;
+            assert_receipt_refused(
+                &value,
+                "preflight receipt command status contradicts its exit code",
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unavailable_or_missing_reuse_verdict_refuses_receipt_reuse() -> Result<(), String> {
+        let mut value = bound_receipt();
+        value
+            .as_object_mut()
+            .ok_or("fixture receipt")?
+            .remove("reuse_unavailable_reason");
+        assert_receipt_refused(&value, "preflight receipt does not declare reuse available");
+        for reason in [
+            json!("execution boundary observations changed"),
+            json!(""),
+            json!(false),
+        ] {
+            let mut value = bound_receipt();
+            value["reuse_unavailable_reason"] = reason;
+            assert_receipt_refused(&value, "preflight receipt does not declare reuse available");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn timeout_and_unavailable_exit_codes_preserve_failed_outcomes() {
+        for code in [Value::Null, json!(0), json!(1)] {
+            let mut value = bound_receipt();
+            value["commands"][1]["exit_code"] = code;
+            for head in ["executed-sha", "published-sha"] {
+                let status = parse_preflight_receipt(
+                    &value.to_string(),
+                    head,
+                    Some(&test_binding(head)),
+                    &receipt_plan(),
+                );
+                assert!(matches!(
+                    status,
+                    PreflightReceiptStatus::Fresh { ref overall_status, passed: 1, failed: 1, not_run: 1, .. }
+                    | PreflightReceiptStatus::CarriedForward { ref overall_status, passed: 1, failed: 1, not_run: 1, .. }
+                    if overall_status == "fail"
+                ));
+                assert!(preflight_receipt_line(&status).contains("status `fail`"));
+            }
+        }
     }
 
     #[test]
@@ -1218,7 +1325,12 @@ mod tests {
         for pointer in [
             "/reuse_binding",
             "/commands",
+            "/reuse_binding/execution_head_sha",
+            "/reuse_binding/source_tree",
+            "/reuse_binding/base_sha",
+            "/reuse_binding/merge_base_sha",
             "/reuse_binding/environment_digest",
+            "/reuse_binding/plan_digest",
         ] {
             let mut value = bound_receipt();
             *value.pointer_mut(pointer).ok_or("fixture pointer")? = Value::Null;
@@ -1647,13 +1759,14 @@ mod tests {
             "mode": PROOF_PREFLIGHT_MODE,
             "base": {"sha": "base-sha"},
             "reuse_binding": binding,
+            "reuse_unavailable_reason": null,
             "head": {"rev": "HEAD", "sha": "head-sha"},
             "overall_status": "fail",
             "commands": [
-                {"command": "a", "packs": ["p"], "status": "pass"},
-                {"command": "b", "packs": ["p"], "status": "pass"},
-                {"command": "c", "packs": ["p"], "status": "fail"},
-                {"command": "d", "packs": ["p"], "status": "not_run"},
+                {"command": "a", "packs": ["p"], "status": "pass", "exit_code": 0},
+                {"command": "b", "packs": ["p"], "status": "pass", "exit_code": 0},
+                {"command": "c", "packs": ["p"], "status": "fail", "exit_code": 1},
+                {"command": "d", "packs": ["p"], "status": "not_run", "exit_code": null},
             ],
         });
         let text = serde_json::to_string(&receipt_json)
