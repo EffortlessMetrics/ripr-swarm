@@ -48913,6 +48913,318 @@ fn vsix_inventory_bounds_entry_count_and_unpacked_size() -> Result<(), String> {
     Ok(())
 }
 
+const POINTER_LICENSE: &str = "\
+MIT OR Apache-2.0
+
+The ripr VS Code extension is distributed under the same license terms as the
+ripr repository. See the repository root for LICENSE-MIT and LICENSE-APACHE.
+";
+const COMPLETE_MIT_NOTICE: &str = "\
+MIT License
+
+Copyright (c) 2026 ripr contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the \"Software\"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+";
+const COMPLETE_APACHE_NOTICE: &str = "\
+Apache License
+Version 2.0, January 2004
+http://www.apache.org/licenses/
+
+TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+1. Definitions.
+
+\"License\" shall mean the terms and conditions for use, reproduction,
+and distribution as defined by Sections 1 through 9 of this document.
+";
+
+fn complete_license_notices() -> super::RepositoryLicenseNotices {
+    super::RepositoryLicenseNotices {
+        mit: COMPLETE_MIT_NOTICE.as_bytes().to_vec(),
+        apache: COMPLETE_APACHE_NOTICE.as_bytes().to_vec(),
+    }
+}
+
+fn write_license_fixture(root: &Path, name: &str, body: &str) -> Result<(), String> {
+    let path = root.join(name);
+    fs::write(&path, body).map_err(|err| format!("failed to write {}: {err}", path.display()))
+}
+
+#[test]
+fn vsix_license_notices_accept_byte_identical_mit_and_apache() -> Result<(), String> {
+    with_temp_cwd("vsix-license-accept", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("licensed.vsix");
+        write_packaging_test_vsix(
+            &vsix,
+            &[
+                ("[Content_Types].xml", "<Types/>"),
+                ("extension.vsixmanifest", "<PackageManifest/>"),
+                ("extension/package.json", "{}"),
+                ("extension/LICENSE", POINTER_LICENSE),
+                ("extension/LICENSE-MIT", COMPLETE_MIT_NOTICE),
+                ("extension/LICENSE-APACHE", COMPLETE_APACHE_NOTICE),
+            ],
+        )?;
+        let summary = super::verify_packaged_vsix(&vsix, &notices)?;
+        assert!(
+            summary.starts_with("VSIX inventory: 6 entries, "),
+            "{summary}"
+        );
+        super::verify_packaged_vsix_license_notices(&vsix, &notices)?;
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_pointer_only_license() -> Result<(), String> {
+    with_temp_cwd("vsix-license-pointer", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("pointer.vsix");
+        write_packaging_test_vsix(
+            &vsix,
+            &[
+                ("[Content_Types].xml", "<Types/>"),
+                ("extension.vsixmanifest", "<PackageManifest/>"),
+                ("extension/package.json", "{}"),
+                ("extension/LICENSE", POINTER_LICENSE),
+            ],
+        )?;
+        // Inventory bounds still pass; the missing complete notices are the defect.
+        super::verify_packaged_vsix_inventory(&vsix)?;
+        let Err(error) = super::verify_packaged_vsix(&vsix, &notices) else {
+            return Err(
+                "a VSIX that ships only editors/vscode/LICENSE must be rejected".to_string(),
+            );
+        };
+        assert!(error.contains("extension/LICENSE-MIT"), "{error}");
+        assert!(error.contains("editors/vscode/LICENSE"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_missing_apache_member() -> Result<(), String> {
+    with_temp_cwd("vsix-license-missing-apache", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("mit-only.vsix");
+        write_packaging_test_vsix(
+            &vsix,
+            &[
+                ("extension/package.json", "{}"),
+                ("extension/LICENSE-MIT", COMPLETE_MIT_NOTICE),
+            ],
+        )?;
+        let Err(error) = super::verify_packaged_vsix_license_notices(&vsix, &notices) else {
+            return Err("a VSIX missing LICENSE-APACHE must be rejected".to_string());
+        };
+        assert!(error.contains("extension/LICENSE-APACHE"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_mutated_notice_bytes() -> Result<(), String> {
+    with_temp_cwd("vsix-license-mutated", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("mutated.vsix");
+        write_packaging_test_vsix(
+            &vsix,
+            &[
+                ("extension/LICENSE-MIT", COMPLETE_MIT_NOTICE),
+                (
+                    "extension/LICENSE-APACHE",
+                    &format!("{COMPLETE_APACHE_NOTICE}\nchanged\n"),
+                ),
+            ],
+        )?;
+        let Err(error) = super::verify_packaged_vsix_license_notices(&vsix, &notices) else {
+            return Err("a VSIX with mutated Apache notice bytes must be rejected".to_string());
+        };
+        assert!(error.contains("extension/LICENSE-APACHE"), "{error}");
+        assert!(
+            error.contains("does not match the repository notice"),
+            "{error}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_pointer_bytes_under_complete_name() -> Result<(), String> {
+    with_temp_cwd("vsix-license-named-pointer", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("named-pointer.vsix");
+        write_packaging_test_vsix(
+            &vsix,
+            &[
+                ("extension/LICENSE-MIT", POINTER_LICENSE),
+                ("extension/LICENSE-APACHE", COMPLETE_APACHE_NOTICE),
+            ],
+        )?;
+        let Err(error) = super::verify_packaged_vsix_license_notices(&vsix, &notices) else {
+            return Err(
+                "a short pointer shipped as LICENSE-MIT must not satisfy the complete notice"
+                    .to_string(),
+            );
+        };
+        assert!(error.contains("extension/LICENSE-MIT"), "{error}");
+        assert!(
+            error.contains("does not match the repository notice"),
+            "{error}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn load_repository_license_notices_rejects_pointer_and_empty_files() -> Result<(), String> {
+    with_temp_cwd("load-license-notices", |root| {
+        write_license_fixture(root, "LICENSE-MIT", POINTER_LICENSE)?;
+        write_license_fixture(root, "LICENSE-APACHE", COMPLETE_APACHE_NOTICE)?;
+        let Err(pointer) = super::load_repository_license_notices(root) else {
+            return Err(
+                "the short VS Code LICENSE pointer must not load as LICENSE-MIT".to_string(),
+            );
+        };
+        assert!(pointer.contains("LICENSE-MIT"), "{pointer}");
+        assert!(
+            pointer.contains("complete repository notices must be at least"),
+            "{pointer}"
+        );
+
+        write_license_fixture(root, "LICENSE-MIT", COMPLETE_MIT_NOTICE)?;
+        write_license_fixture(root, "LICENSE-APACHE", "")?;
+        let Err(empty) = super::load_repository_license_notices(root) else {
+            return Err("an empty LICENSE-APACHE must not load as a complete notice".to_string());
+        };
+        assert!(empty.contains("LICENSE-APACHE"), "{empty}");
+
+        write_license_fixture(root, "LICENSE-APACHE", COMPLETE_APACHE_NOTICE)?;
+        let loaded = super::load_repository_license_notices(root)?;
+        assert_eq!(loaded, complete_license_notices());
+        Ok(())
+    })
+}
+
+#[test]
+fn stage_vscode_license_notices_copies_root_texts_and_cleans_up() -> Result<(), String> {
+    with_temp_cwd("stage-vscode-licenses", |root| {
+        let extension_dir = root.join("editors/vscode");
+        fs::create_dir_all(&extension_dir)
+            .map_err(|err| format!("failed to create {}: {err}", extension_dir.display()))?;
+        write_license_fixture(root, "LICENSE-MIT", COMPLETE_MIT_NOTICE)?;
+        write_license_fixture(root, "LICENSE-APACHE", COMPLETE_APACHE_NOTICE)?;
+        let notices = super::load_repository_license_notices(root)?;
+        let staged = super::stage_vscode_license_notices(&extension_dir, &notices)?;
+        let staged_mit = extension_dir.join("LICENSE-MIT");
+        let staged_apache = extension_dir.join("LICENSE-APACHE");
+        assert_eq!(
+            fs::read(&staged_mit).map_err(|err| format!("read staged MIT: {err}"))?,
+            COMPLETE_MIT_NOTICE.as_bytes()
+        );
+        assert_eq!(
+            fs::read(&staged_apache).map_err(|err| format!("read staged Apache: {err}"))?,
+            COMPLETE_APACHE_NOTICE.as_bytes()
+        );
+        staged.cleanup()?;
+        if staged_mit.exists() || staged_apache.exists() {
+            return Err("staging cleanup must remove files this step created".to_string());
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn stage_vscode_license_notices_fails_when_existing_copy_differs() -> Result<(), String> {
+    with_temp_cwd("stage-vscode-licenses-conflict", |root| {
+        let extension_dir = root.join("editors/vscode");
+        fs::create_dir_all(&extension_dir)
+            .map_err(|err| format!("failed to create {}: {err}", extension_dir.display()))?;
+        write_license_fixture(&extension_dir, "LICENSE-MIT", POINTER_LICENSE)?;
+        let notices = complete_license_notices();
+        let Err(error) = super::stage_vscode_license_notices(&extension_dir, &notices) else {
+            return Err("a conflicting pre-existing LICENSE-MIT must block staging".to_string());
+        };
+        assert!(error.contains("already exists and differs"), "{error}");
+        assert_eq!(
+            fs::read_to_string(extension_dir.join("LICENSE-MIT"))
+                .map_err(|err| format!("read conflicting MIT: {err}"))?,
+            POINTER_LICENSE
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn stage_vscode_license_notices_leaves_matching_preexisting_files() -> Result<(), String> {
+    with_temp_cwd("stage-vscode-licenses-preexisting", |root| {
+        let extension_dir = root.join("editors/vscode");
+        fs::create_dir_all(&extension_dir)
+            .map_err(|err| format!("failed to create {}: {err}", extension_dir.display()))?;
+        write_license_fixture(&extension_dir, "LICENSE-MIT", COMPLETE_MIT_NOTICE)?;
+        write_license_fixture(&extension_dir, "LICENSE-APACHE", COMPLETE_APACHE_NOTICE)?;
+        let notices = complete_license_notices();
+        let staged = super::stage_vscode_license_notices(&extension_dir, &notices)?;
+        staged.cleanup()?;
+        if !extension_dir.join("LICENSE-MIT").exists()
+            || !extension_dir.join("LICENSE-APACHE").exists()
+        {
+            return Err(
+                "matching pre-existing notices must remain after staging cleanup".to_string(),
+            );
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn load_repository_license_notices_accepts_repo_root_files() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let notices = super::load_repository_license_notices(&super::repo_root()?)?;
+        if notices.mit.len() < super::COMPLETE_LICENSE_NOTICE_MIN_BYTES {
+            return Err("repository LICENSE-MIT is shorter than a complete notice".to_string());
+        }
+        if notices.apache.len() < super::COMPLETE_LICENSE_NOTICE_MIN_BYTES {
+            return Err("repository LICENSE-APACHE is shorter than a complete notice".to_string());
+        }
+        if notices.mit == notices.apache {
+            return Err("repository MIT and Apache notices must stay distinct".to_string());
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn verify_packaged_vsix_accepts_real_repository_notice_bytes() -> Result<(), String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir
+        .parent()
+        .ok_or_else(|| "failed to resolve repo root from CARGO_MANIFEST_DIR".to_string())?;
+    let notices = super::load_repository_license_notices(repo_root)?;
+    let mit = String::from_utf8(notices.mit.clone()).map_err(|err| err.to_string())?;
+    let apache = String::from_utf8(notices.apache.clone()).map_err(|err| err.to_string())?;
+    with_temp_cwd("vsix-real-notices", |root| {
+        let vsix = root.join("real.vsix");
+        write_packaging_test_vsix(
+            &vsix,
+            &[
+                ("extension/package.json", "{}"),
+                ("extension/LICENSE-MIT", &mit),
+                ("extension/LICENSE-APACHE", &apache),
+            ],
+        )?;
+        super::verify_packaged_vsix(&vsix, &notices)?;
+        Ok(())
+    })
+}
+
 #[test]
 fn vscode_package_version_reads_extension_manifest() -> Result<(), String> {
     with_temp_cwd("vscode-package-version", |root| {
