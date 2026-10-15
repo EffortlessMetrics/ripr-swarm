@@ -657,16 +657,6 @@ impl ClassifiedProbeEvidence {
                 call_cannot_store: &|impl_type, method, field, expected| {
                     method_cannot_store(context.index, impl_type, method, field, expected)
                 },
-                payload_equality_admitted: &|qualifier, variant| {
-                    context.owner_fn.is_some_and(|owner| {
-                        crate::analysis::classify::payload_equality_admitted(
-                            owner,
-                            qualifier,
-                            variant,
-                            context.index,
-                        )
-                    })
-                },
             },
             arm_selector.as_ref(),
         );

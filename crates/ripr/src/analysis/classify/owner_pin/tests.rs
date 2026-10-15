@@ -1192,7 +1192,7 @@ fn an_early_err_return_needs_to_be_the_only_err_source() {
         sibling[..at].matches('\n').count(),
     );
     assert!(
-        matches!(&gate, Some(ReturnPathGate::ErrVariant { qualifier, variant })
+        matches!(&gate, Some(ReturnPathGate::ErrVariant { qualifier, variant, .. })
             if qualifier == "E" && variant == "Negative"),
         "{}",
         gate.is_some()
@@ -1247,7 +1247,7 @@ fn an_early_err_variant_return_is_pinned_when_no_other_exit_builds_it() {
     let gate_of = |text: &str| gate(text, changed);
     let positive = gate_of(&body("return Err(E::Zero { at: x });", "Ok(x)"));
     assert!(
-        matches!(&positive, Some(ReturnPathGate::ErrVariant { qualifier, variant })
+        matches!(&positive, Some(ReturnPathGate::ErrVariant { qualifier, variant, .. })
             if qualifier == "E" && variant == "Negative"),
         "the sibling-variant exit must leave the variant gate"
     );
@@ -1300,14 +1300,24 @@ fn config_pin(
     family: ProbeFamily,
     expression: &str,
 ) -> (RustIndex, Option<OwnerReturnPin>) {
-    let index = index(&[(LIB, lib), (TESTS, MISSING_EQUALS_TESTS)]);
+    config_pin_with(lib, MISSING_EQUALS_TESTS, family, expression)
+}
+
+/// [`config_pin`] read against the test file `tests`.
+fn config_pin_with(
+    lib: &str,
+    tests: &str,
+    family: ProbeFamily,
+    expression: &str,
+) -> (RustIndex, Option<OwnerReturnPin>) {
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
     let pin = {
         let owner = owner(&index, "parse_pairs");
         let line = owner.start_line
             + owner
                 .body
                 .lines()
-                .position(|line| line.contains("MissingEquals"))
+                .position(|line| line.contains("ConfigError::MissingEquals"))
                 .unwrap_or(0);
         let probe = Probe {
             family,
@@ -1385,31 +1395,144 @@ fn an_early_err_variant_pin_admits_only_its_variant_through_derived_equality() {
     );
 }
 
-/// #7063: a written-out `assert_eq!` against the changed variant pins its
-/// payload only when the enum's `==` is derived over by-value fields and the
-/// owner builds the variant once, with no `?` converting another error in.
+/// #7063: an early error-variant pin reads `ConfigError::MissingEquals` as
+/// the one construction of that variant only when nothing else in the owner
+/// can build it unseen: no `use` brings the variant in under a bare or alias
+/// spelling, no import or alias rebinds the enum, every sibling exit names a
+/// declared variant ending at its payload, and the derived `==` compares
+/// each field by value.
 #[test]
-fn a_variant_equality_pins_the_payload_only_of_a_single_construction() {
-    let admitted = |lib: &str| {
-        let index = index(&[(LIB, lib)]);
-        let owner = owner(&index, "parse_pairs");
-        payload_equality_admitted(owner, "ConfigError", "MissingEquals", &index)
+fn an_early_err_variant_pin_refuses_what_can_build_its_variant_unseen() {
+    let changed = "return Err(ConfigError::MissingEquals { line: idx + 1 });";
+    let families = [
+        (ProbeFamily::ErrorPath, changed),
+        (ProbeFamily::ReturnValue, changed),
+        (ProbeFamily::FieldConstruction, "line: idx + 1"),
+    ];
+    let pinned = |lib: &str| {
+        families
+            .iter()
+            .map(|(family, expression)| config_pin(lib, family.clone(), expression).1.is_some())
+            .collect::<Vec<_>>()
     };
-    assert!(admitted(MISSING_EQUALS_LIB));
-    let manual = MISSING_EQUALS_LIB.replace(
+    assert_eq!(pinned(MISSING_EQUALS_LIB), vec![true, true, true]);
+    let first_exit = |exit: &str| {
+        MISSING_EQUALS_LIB.replace(
+            "    let mut keys = Vec::new();\n",
+            &format!("    if text.is_empty() {{\n        {exit}\n    }}\n    let mut keys = Vec::new();\n"),
+        )
+    };
+    let with_use = |statement: &str, exit: &str| format!("{statement}\n{}", first_exit(exit));
+    let refused = [
+        // A bare or aliased spelling of the variant builds it unseen.
+        with_use(
+            "use ConfigError::MissingEquals;",
+            "return Err(MissingEquals { line: 0 });",
+        ),
+        with_use(
+            "use ConfigError::*;",
+            "return Err(MissingEquals { line: 0 });",
+        ),
+        with_use(
+            "use self::ConfigError::MissingEquals as M;",
+            "return Err(M { line: 0 });",
+        ),
+        // The import alone already opens that door, even through a
+        // workspace path that does not rebind the enum itself.
+        format!("use ConfigError::MissingEquals;\n{MISSING_EQUALS_LIB}"),
+        format!("use crate::ConfigError::MissingEquals;\n{MISSING_EQUALS_LIB}"),
+        format!("use self::ConfigError::*;\n{MISSING_EQUALS_LIB}"),
+        // An import or alias rebinds the enum name the probe reads.
+        format!("use other::ConfigError;\n{MISSING_EQUALS_LIB}"),
+        // A sibling that is not a declared variant (an associated constant
+        // may hold any variant), or one whose argument goes on past the
+        // payload into a call that may return any variant.
+        first_exit("return Err(ConfigError::NO_EQUALS);"),
+        first_exit("return Err(ConfigError::EmptyKey { line: 0 }.relabel());"),
+        first_exit("return Err(ConfigError::EmptyKey { line: 0 }).map(|v| v);"),
+        // A field whose `==` is not by value, or a field attribute.
+        MISSING_EQUALS_LIB.replace(
+            "MissingEquals { line: usize },",
+            "MissingEquals { line: Span },",
+        ) + "\n#[derive(Debug, Clone)]\npub struct Span(usize);\n\nimpl PartialEq for Span {\n    fn eq(&self, _other: &Self) -> bool {\n        true\n    }\n}\n\nimpl Eq for Span {}\n",
+        MISSING_EQUALS_LIB.replace(
+            "MissingEquals { line: usize },",
+            "MissingEquals {\n        #[serde(skip)]\n        line: usize,\n    },",
+        ),
+    ];
+    for lib in &refused {
+        assert_eq!(pinned(lib), vec![false, false, false], "{lib}");
+    }
+    // A declared sibling variant on another exit leaves the pin in place.
+    let sibling = first_exit("return Err(ConfigError::EmptyKey { line: 0 });");
+    assert_eq!(pinned(&sibling), vec![true, true, true]);
+    // The only `Err` exit, under the `Err` head gate, is held to the same
+    // derived `==`: a hand-written one may ignore the payload.
+    let only = MISSING_EQUALS_LIB.replace(
+        "        if key.trim().is_empty() {\n            return Err(ConfigError::EmptyKey { line: line_no });\n        }\n",
+        "",
+    );
+    assert_ne!(only, MISSING_EQUALS_LIB);
+    assert_eq!(pinned(&only)[..2], [true, true]);
+    let only_manual = only.replace(
         "#[derive(Debug, Clone, PartialEq, Eq)]",
         "#[derive(Debug, Clone)]",
     ) + "\nimpl PartialEq for ConfigError {\n    fn eq(&self, _other: &Self) -> bool {\n        true\n    }\n}\n";
-    let second = MISSING_EQUALS_LIB.replace(
-        "return Err(ConfigError::EmptyKey { line: line_no });",
-        "return Err(ConfigError::MissingEquals { line: 0 });",
+    assert_eq!(pinned(&only_manual)[..2], [false, false]);
+}
+
+/// #7063: the early error-variant pin admits an equality only when one of
+/// its operands is the owner call or a local bound directly from it
+/// (`let r = owner(..);`, `let e = owner(..).unwrap_err();` or
+/// `.expect_err("..")`), never an equality on another function's result
+/// beside an unrelated owner assertion.
+#[test]
+fn an_early_err_variant_pin_reads_only_the_owner_result() {
+    let changed = "return Err(ConfigError::MissingEquals { line: idx + 1 });";
+    let lib = format!(
+        "{MISSING_EQUALS_LIB}\npub fn parse_section(text: &str) -> Result<String, ConfigError> {{\n    Err(ConfigError::MissingEquals {{ line: text.len() }})\n}}\n"
     );
-    let question = MISSING_EQUALS_LIB.replace(
-        "keys.push(key.trim().to_string());",
-        "keys.push(check(key)?);",
-    );
-    for lib in [manual, second, question] {
-        assert!(!admitted(&lib), "{lib}");
+    let admitted_in = |body: &str| {
+        let tests = format!(
+            "use demo::{{parse_pairs, parse_section, ConfigError}};\n\n#[test]\nfn reads() {{\n{body}\n}}\n"
+        );
+        let (index, pin) = config_pin_with(&lib, &tests, ProbeFamily::ErrorPath, changed);
+        assert!(pin.is_some(), "the pin must establish for {body}");
+        pin.map(|pin| admitted_texts(&index, &pin))
+            .unwrap_or_default()
+    };
+    for (body, expected) in [
+        (
+            "    let r = parse_pairs(\"port\");\n    assert_eq!(r, Err(ConfigError::MissingEquals { line: 1 }));",
+            "assert_eq!(r, Err(ConfigError::MissingEquals { line: 1 }));",
+        ),
+        (
+            "    let e = parse_pairs(\"port\").unwrap_err();\n    assert_eq!(e, ConfigError::MissingEquals { line: 1 });",
+            "assert_eq!(e, ConfigError::MissingEquals { line: 1 });",
+        ),
+        (
+            "    let e = parse_pairs(\"port\").expect_err(\"no equals\");\n    assert_eq!(ConfigError::MissingEquals { line: 1 }, e);",
+            "assert_eq!(ConfigError::MissingEquals { line: 1 }, e);",
+        ),
+        (
+            "    assert_eq!(parse_pairs(\"port\").unwrap_err(), ConfigError::MissingEquals { line: 1 });",
+            "assert_eq!(parse_pairs(\"port\").unwrap_err(), ConfigError::MissingEquals { line: 1 });",
+        ),
+    ] {
+        assert_eq!(admitted_in(body), vec![expected.to_string()], "{body}");
+    }
+    for body in [
+        // Another function's result beside an owner assertion that
+        // compares nothing.
+        "    assert!(parse_pairs(\"port\").is_err());\n    assert_eq!(parse_section(\"[x\"), Err(ConfigError::MissingEquals { line: 7 }));",
+        "    let e = parse_section(\"[x\").unwrap_err();\n    assert_eq!(e, ConfigError::MissingEquals { line: 2 });",
+        // The owner's result, but a sibling variant or the `Ok` side.
+        "    let e = parse_pairs(\"= 1\").unwrap_err();\n    assert_eq!(e, ConfigError::EmptyKey { line: 1 });",
+        "    let e = parse_pairs(\"a = 1\").unwrap();\n    assert_eq!(e, vec![\"a\".to_string()]);",
+        // An `unwrap_err` binding read through a derived value.
+        "    let e = parse_pairs(\"port\").unwrap_err().clone();\n    assert_eq!(e, ConfigError::MissingEquals { line: 1 });",
+    ] {
+        assert_eq!(admitted_in(body), Vec::<String>::new(), "{body}");
     }
 }
 

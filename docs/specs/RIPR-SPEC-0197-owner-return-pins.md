@@ -1508,23 +1508,44 @@ idx + 1 });` got no pin and read as a gap although
 1. Variant gate. When the `Err` head gate refuses, a changed early
    `return Err(Type::Variant ..);` still pins when no other exit can build
    `Type::Variant`: every other `return` and the tail are one `Ok(..)` call
-   or one `Err(..)` call constructing a different variant of the same
-   `Type` (a bare variant, another enum's path or an opaque `Err(e)` /
-   `Err(f(..))` refuses, since it may hold the changed variant), the body
-   has no `?` (a converted callee error may be any variant), no `return`
-   sits in a closure, `async`/`const` block or nested `fn`, and the changed
-   value evaluates all of its parts, as for the head gate. The owner's file
-   must not bind `Ok` or `Err` as a value, or rebind `Type` through an
-   import or alias.
-2. Payload equality. `Type` is declared once in the workspace, derives
-   `PartialEq` (no hand-written `impl PartialEq` anywhere), and every field
-   of every variant compares by value under RIPR-SPEC-0225 rule 4. A
-   whole-value pin then compares the changed variant's payload too.
-3. Expected value. The pinned value is one `Err(..)` call whose exact variant
-   has the same two trailing path segments (`Err(crate::ConfigError::
+   or one `Err(..)` call whose whole argument is `Type::Sibling`, optionally
+   followed by one `(..)` or `{ .. }` payload that ends the argument, for a
+   different `Sibling` of the same `Type`. A bare or aliased variant,
+   another enum's path, an opaque `Err(e)` / `Err(f(..))`, or a sibling
+   followed by more (`Err(Type::A { .. }.relabel())`) refuses, since it may
+   hold the changed variant. The body has no `?` (a converted callee error
+   may be any variant), no `return` sits in a closure, `async`/`const` block
+   or nested `fn`, and the changed value evaluates all of its parts, as for
+   the head gate. The owner's file must not bind `Ok` or `Err` as a value.
+2. Owner's enum. `Type` is declared once in the workspace and every sibling
+   the gate read is one of its declared variants (an associated constant
+   such as `Type::NO_EQUALS` may hold any variant). The owner's file must
+   not rebind `Type` through an import or alias, and must not bring any of
+   its variants in by `use` (`use ConfigError::MissingEquals;`,
+   `use ConfigError::*;`, `use self::ConfigError::MissingEquals as M;`),
+   which would let a bare or aliased spelling build the changed variant
+   unseen.
+3. Payload equality. `Type` derives `PartialEq` (no hand-written
+   `impl PartialEq` anywhere), and every field of every variant has no
+   attribute and compares by value under RIPR-SPEC-0225 rule 4. A
+   whole-value pin then compares the changed variant's payload too. The same
+   rule holds a payload-carrying `Err(Type::Variant ..)` that is the body's
+   one `Err` exit under rule 3's `Err` head gate, when `Type` is a
+   workspace enum declaring `Variant`; an associated-function payload
+   (`Err(String::from(..))`) keeps the head gate.
+4. Expected value. The pinned assertion is one plain `assert_eq!` with one
+   operand that is the owner call or a local bound directly from it
+   (`let r = owner(..);`), compared with one `Err(..)` call whose exact
+   variant has the same two trailing path segments (`Err(crate::ConfigError::
    MissingEquals { line: 2 })` qualifies; `Err(ConfigError::EmptyKey { .. })`
-   and `Ok(..)` do not), and the test's file must not rebind `Type`.
-4. Field probes. A `field_construction` probe on one field initializer of
+   and `Ok(..)` do not). The owner call may also end in `.unwrap_err()` or
+   `.expect_err("..")`, directly or in a local bound from it
+   (`let e = owner(..).unwrap_err();`), compared with the bare variant
+   (`assert_eq!(e, ParseError::TooLong(12))`). The test's file must not
+   rebind `Type`. An equality on another function's result
+   (`assert_eq!(parse_section(..), Err(ConfigError::MissingEquals { .. }))`)
+   is never the pin, whatever else the test asserts on the owner.
+5. Field probes. A `field_construction` probe on one field initializer of
    such a construction written on one line (`line: idx + 1` inside
    `return Err(ConfigError::MissingEquals { line: idx + 1 });`) gets the same
    pin, with one brace payload and the initializer as one of its top-level
@@ -1532,32 +1553,41 @@ idx + 1 });` got no pin and read as a gap although
    field-value discriminator the way a credited clone-field pin does
    (#6692). A construction spread over several lines, or a field the line
    does not initialize, gets none.
-5. Propagation. The flow producer names an error-variant sink by its
-   variant alone (`Result::Err(ConfigError::MissingEquals)`), so a
-   payload-carrying source never shared its identity. The witness edge is
+6. Propagation. The flow producer names an error-variant sink by its
+   variant alone (`Result::Err(ConfigError::MissingEquals)`), so a source
+   that carries a payload never shared its identity. The witness edge is
    established, as for the call-free constructor of rule 3, when the sink
    is the error variant on the changed line itself, the changed text is one
    `Err(..)` constructor (optionally after `return`) of that exact variant,
-   and its payload is call-free: no call or tuple parentheses, macro,
-   closure, `?`, string or nested brace literal. A tuple payload
+   and any payload is call-free: no call or tuple parentheses, macro,
+   closure, `?`, string or nested brace literal. A unit variant
+   (`Err(E::V)`) has no payload and qualifies; a tuple payload
    (`Err(E::V(x))`) reads as a call and stays a candidate.
-6. Payload-only changes. A completed witness must not let a variant-only
+7. Payload-only changes. A completed witness must not let a variant-only
    oracle credit a change the variant does not show. For an `error_path` or
    `return_value` probe whose changed error construction carries a payload
    (a `(..)` or `{ .. }` after the variant path) and whose old text builds
-   the same variant, or has no old text, observation is confirmed only by a
-   whole-value equality: the owner pin of rules 1 to 3, or one plain
-   `assert_eq!` with an operand that constructs the changed variant (two
-   trailing path segments, optionally inside `Err(..)`) with its payload
-   written out, no `_` and no `..`, on an enum that passes rule 2 while the
-   owner body spells that variant exactly once and has no `?`
-   (`let e = validate(..).unwrap_err(); assert_eq!(e, ParseError::TooLong(12));`).
+   the same variant, or has no old text (repo mode), observation is
+   confirmed only by the owner pin of rules 1 to 4: an `assert_eq!` tied to
+   the owner call. A written-out equality not tied to the owner call,
    `assert!(matches!(r, Err(E::V { .. })))`, `matches!(e, E::V(_))`, a
    guarded match on the variant, `assert_ne!` and token overlap do not
    confirm it. A change that replaces the variant is still confirmed by a
-   variant pin (RIPR-SPEC-0107 Control B). Residual: a `field_construction`
-   probe is credited only through the owner pin, so the `unwrap_err`
-   equality above leaves the payload field's own probe weakly exposed.
+   variant pin (RIPR-SPEC-0107 Control B). Named residuals, each left below
+   `exposed` rather than credited on a reading that can be wrong:
+   - a literal-field pattern
+     (`assert!(matches!(owner(..), Err(E::V { line: 2 })))`) pins only the
+     fields it names, not the whole value, so it is not read as a payload
+     pin for an `error_path` or `return_value` probe; the
+     `field_construction` probe of a field it names keeps its own credit
+     from the #6578 variant-field pattern rule, which requires a direct
+     owner call as the scrutinee;
+   - a variant built inside a `?` (`let v = s.ok_or(E::V(x))?;`) gets no
+     early error-variant gate (the `?` is the error exit), so even
+     `assert_eq!(owner(..), Err(E::V(3)))` does not confirm its payload;
+   - beside those pattern pins, a `field_construction` probe is credited
+     only through the owner pin of rule 5, which needs a one-line brace
+     payload.
 
 ## Required Evidence
 
@@ -2003,11 +2033,11 @@ assertions. This repair shares the existing callback without that larger migrati
   error-variant pins (#7063:
   `an_early_err_variant_return_is_pinned_when_no_other_exit_builds_it`,
   `an_early_err_variant_pin_admits_only_its_variant_through_derived_equality`,
-  `a_variant_equality_pins_the_payload_only_of_a_single_construction`; in
+  `an_early_err_variant_pin_refuses_what_can_build_its_variant_unseen`,
+  `an_early_err_variant_pin_reads_only_the_owner_result`; in
   `propagation_witness.rs`,
   `a_payload_carrying_err_on_its_own_line_completes_the_error_witness`; in
-  `reveal.rs`, `a_payload_change_needs_the_whole_value_owner_pin` and
-  `only_a_written_out_variant_equality_pins_the_payload`);
+  `reveal.rs`, `a_payload_change_needs_the_whole_value_owner_pin`);
   literal `matches!` pins
   (`a_literal_matches_pattern_pins_the_owner_value`); rendered scalar pins
   (`a_scalar_rendering_compared_with_exact_text_pins`,

@@ -1751,7 +1751,16 @@ enum ReturnPathGate {
     /// must be one `Err(..)` call constructing that same `Type::Variant`, and
     /// `Type` is a workspace enum compared by its derived `==`, so a
     /// whole-value pin compares the variant's payload too.
-    ErrVariant { qualifier: String, variant: String },
+    ///
+    /// `siblings` are the other variants the remaining exits build; each,
+    /// like `variant`, must be a declared variant of `Type`
+    /// ([`error_enum_admits_variant_pin`]), so an associated constant
+    /// (`Type::NO_EQUALS`) never passes for a sibling.
+    ErrVariant {
+        qualifier: String,
+        variant: String,
+        siblings: Vec<String>,
+    },
     /// #6692: a field of a hand-written `Clone::clone`'s returned struct
     /// literal. The pinned value must be the clone's own receiver
     /// (`assert_eq!(w.clone(), w)`), compared through a derived
@@ -1863,8 +1872,31 @@ impl OwnerReturnPin {
         // #7063: an early error-variant pin reads the other exits' variants
         // of the owner's own error enum, and the pinned `==` must compare the
         // variant's payload.
-        if let ReturnPathGate::ErrVariant { qualifier, .. } = &path
-            && !error_enum_admits_variant_pin(qualifier, owner, index)
+        // A payload-carrying `Err(Type::Variant ..)` of a workspace enum
+        // under the `Err` head gate is held to the same variant rules: its
+        // payload is pinned only through `Type`'s derived `==`
+        // (RIPR-SPEC-0197 early error-variant pins, rule 3). An associated
+        // function call (`Err(String::from(..))`) keeps the `Err` head gate.
+        let path = match path {
+            ReturnPathGate::Head("Err") => match payload_variant_construction(&probe.expression)
+                .filter(|(qualifier, variant)| {
+                    workspace_enum_declares_variant(qualifier, variant, index)
+                }) {
+                Some((qualifier, variant)) => ReturnPathGate::ErrVariant {
+                    qualifier,
+                    variant,
+                    siblings: Vec::new(),
+                },
+                None => ReturnPathGate::Head("Err"),
+            },
+            other => other,
+        };
+        if let ReturnPathGate::ErrVariant {
+            qualifier,
+            variant,
+            siblings,
+        } = &path
+            && !error_enum_admits_variant_pin(qualifier, variant, siblings, owner, index)
         {
             return None;
         }
@@ -2141,15 +2173,19 @@ impl OwnerReturnPin {
         if !names_field {
             return None;
         }
-        let path = return_path_gate_from(&owner.body, statement, None, changed_line)?;
-        if !matches!(
-            path,
-            ReturnPathGate::Head("Err") | ReturnPathGate::ErrVariant { .. }
-        ) || !error_enum_admits_variant_pin(&qualifier, owner, index)
-        {
+        let siblings = match return_path_gate_from(&owner.body, statement, None, changed_line)? {
+            ReturnPathGate::Head("Err") => Vec::new(),
+            ReturnPathGate::ErrVariant { siblings, .. } => siblings,
+            _ => return None,
+        };
+        if !error_enum_admits_variant_pin(&qualifier, &variant, &siblings, owner, index) {
             return None;
         }
-        let path = ReturnPathGate::ErrVariant { qualifier, variant };
+        let path = ReturnPathGate::ErrVariant {
+            qualifier,
+            variant,
+            siblings,
+        };
         if path.prelude_names().iter().any(|name| {
             index
                 .files()
@@ -2238,10 +2274,20 @@ impl OwnerReturnPin {
         // RIPR-SPEC-0225 decision 6: beside an `Ok(..)`/`Some(..)` tail, the
         // test may compare `owner(..).unwrap()` (or `.expect("..")`) with the
         // bare literal; that reads as comparing the call with the wrapped one.
+        // #7063: beside an early error-variant gate the test may compare
+        // `owner(..).unwrap_err()` (or `.expect_err("..")`) with the bare
+        // variant; that reads as comparing the call with `Err(..)` of it.
         let unwrap_wrapper = match &self.path {
             ReturnPathGate::WholeValueField(gate) => gate.wrapper,
+            ReturnPathGate::ErrVariant { .. } => Some("Err"),
             _ => None,
         };
+        let unwrap_read: fn(&str) -> Option<&str> =
+            if matches!(self.path, ReturnPathGate::ErrVariant { .. }) {
+                unwrapped_err_call
+            } else {
+                unwrapped_call
+            };
         let mut unwrapped = false;
         // RIPR-SPEC-0265: the text of the owner call, when one operand is it,
         // so an adaptor gate can read the argument the call passes.
@@ -2293,7 +2339,7 @@ impl OwnerReturnPin {
                 });
             let unwrapped_direct = unwrap_wrapper.and_then(|_| {
                 let shape = |at: usize| {
-                    unwrapped_call(operands[at])
+                    unwrap_read(operands[at])
                         .and_then(|call| self.awaited_call_shape(call, &self.name))
                 };
                 match (shape(0), shape(1)) {
@@ -2348,7 +2394,13 @@ impl OwnerReturnPin {
                         (None, Some((call, text))) => (call, operands[0], Some(text)),
                         // RIPR-SPEC-0225 rule 1: `let c = owner(..);` named
                         // only by its `let` and this comparison.
-                        (None, None) if matches!(self.path, ReturnPathGate::WholeValueField(_)) => {
+                        (None, None)
+                            if matches!(
+                                self.path,
+                                ReturnPathGate::WholeValueField(_)
+                                    | ReturnPathGate::ErrVariant { .. }
+                            ) =>
+                        {
                             let bound_whole = |at: usize| {
                                 let initializer =
                                     bound_owner_initializer(test, operands[at], &self.name)?;
@@ -2356,7 +2408,7 @@ impl OwnerReturnPin {
                                     .map(|call| (call, false))
                                     .or_else(|| {
                                         unwrap_wrapper
-                                            .and(unwrapped_call(initializer))
+                                            .and(unwrap_read(initializer))
                                             .and_then(|call| {
                                                 self.awaited_call_shape(call, &self.name)
                                             })
@@ -3462,7 +3514,9 @@ impl ReturnPathGate {
                 constructor_call_span(expected.trim(), head).is_some()
             }
             Self::Exact(value) => expected.trim() == *value,
-            Self::ErrVariant { qualifier, variant } => {
+            Self::ErrVariant {
+                qualifier, variant, ..
+            } => {
                 constructor_call_span(expected.trim(), "Err").is_some()
                     && error_variant_key(expected.trim())
                         .is_some_and(|(q, v)| q == *qualifier && v == *variant)
@@ -3683,6 +3737,24 @@ fn unwrapped_call(operand: &str) -> Option<&str> {
         return Some(call.trim_end());
     }
     let (call, message) = operand.strip_suffix(')')?.rsplit_once(".expect(")?;
+    let message = message.trim();
+    let literal = message
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .is_some_and(|inner| !inner.contains(['"', '\\']));
+    literal.then(|| call.trim_end())
+}
+
+/// #7063: the call `operand` unwraps the error of, when it is
+/// `<call>.unwrap_err()` or `<call>.expect_err("..")` with one plain string
+/// literal message. Both panic on `Ok`, so a passing comparison of the
+/// unwrapped value reads the call's `Err` payload.
+fn unwrapped_err_call(operand: &str) -> Option<&str> {
+    let operand = operand.trim();
+    if let Some(call) = operand.strip_suffix(".unwrap_err()") {
+        return Some(call.trim_end());
+    }
+    let (call, message) = operand.strip_suffix(')')?.rsplit_once(".expect_err(")?;
     let message = message.trim();
     let literal = message
         .strip_prefix('"')
@@ -4230,13 +4302,48 @@ fn early_return_gate(
 /// the one exact error variant an `Err(..)` construction builds, read by the
 /// shared RIPR-SPEC-0106 identity owner. A bare `Err(Variant ..)` (a glob
 /// import of the variants) names no enum and is refused.
+///
+/// The text must be exactly one `Err(..)` call whose argument is the path,
+/// optionally followed by one `(..)` or `{ .. }` payload that ends the
+/// argument: `Err(E::V { line: 0 }.relabel())` or `Err(E::V(1) + x)` is a
+/// computed value that may be any variant, and is refused. Whether the last
+/// segment is a declared variant (not an associated constant such as
+/// `E::NO_EQUALS`) is [`error_enum_admits_variant_pin`]'s question.
 fn error_variant_key(text: &str) -> Option<(String, String)> {
-    let path = super::text::exact_error_variant(text)?;
-    let mut segments = path.rsplit("::");
+    let text = text.trim();
+    constructor_call_span(text, "Err")?;
+    let argument = text.strip_prefix("Err(")?.strip_suffix(')')?.trim();
+    let head_len = argument
+        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
+        .unwrap_or(argument.len());
+    let head = &argument[..head_len];
+    let rest = argument[head_len..].trim_start();
+    if !rest.is_empty() {
+        let masked = mask_comments_and_strings(rest);
+        let (open, close) = match masked.as_bytes().first() {
+            Some(b'(') => (b'(', b')'),
+            Some(b'{') => (b'{', b'}'),
+            _ => return None,
+        };
+        if matching_close(&masked, 0, open, close)? + 1 != masked.len() {
+            return None;
+        }
+    }
+    let mut segments = head.rsplit("::");
     let variant = segments.next()?.trim();
     let qualifier = segments.next()?.trim();
     (is_plain_identifier(variant) && is_plain_identifier(qualifier))
         .then(|| (qualifier.to_string(), variant.to_string()))
+}
+
+/// #7063: the enum and variant of a changed `[return ]Err(Type::Variant(..))`
+/// or `Err(Type::Variant { .. })` whose variant carries a payload.
+fn payload_variant_construction(expression: &str) -> Option<(String, String)> {
+    let text = expression.trim().trim_end_matches(';').trim_end();
+    let text = text.strip_prefix("return ").map_or(text, str::trim);
+    let key = error_variant_key(text)?;
+    let argument = text.strip_prefix("Err(")?.strip_suffix(')')?;
+    argument.trim_end().ends_with([')', '}']).then_some(key)
 }
 
 /// #7063: a changed early `return Err(Type::Variant ..);` beside other
@@ -4265,10 +4372,18 @@ fn err_variant_gate(
     }
     // `Some` when `value` is an exit that cannot build the changed variant,
     // `None` when it may.
+    let siblings = std::cell::RefCell::new(BTreeSet::new());
     let other_exit = |value: &str| {
-        constructor_call_span(value, "Ok").is_some()
-            || (constructor_call_span(value, "Err").is_some()
-                && error_variant_key(value).is_some_and(|(q, v)| q == qualifier && v != variant))
+        if constructor_call_span(value, "Ok").is_some() {
+            return true;
+        }
+        match error_variant_key(value) {
+            Some((q, v)) if q == qualifier && v != variant => {
+                siblings.borrow_mut().insert(v);
+                true
+            }
+            _ => false,
+        }
     };
     let mut changed_returns = 0usize;
     for offset in whole_word_offsets(inner, "return") {
@@ -4286,8 +4401,11 @@ fn err_variant_gate(
     }
     let (after_semicolon, after_brace) = top_level_tail_starts(inner);
     let tail = collapse_whitespace(&inner_text[after_semicolon.max(after_brace)..]);
-    (changed_returns == 1 && other_exit(tail.trim()))
-        .then_some(ReturnPathGate::ErrVariant { qualifier, variant })
+    (changed_returns == 1 && other_exit(tail.trim())).then(|| ReturnPathGate::ErrVariant {
+        qualifier,
+        variant,
+        siblings: siblings.into_inner().into_iter().collect(),
+    })
 }
 
 /// Whether `text` starts with the whole word `word`.
@@ -5189,54 +5307,52 @@ fn derived_equality<'a>(
 }
 
 /// #7063: whether an early error-variant pin may read `qualifier` as the
-/// owner's own error enum: the owner's file names the one workspace
-/// declaration (no import or alias rebinds it), and its `==` is the derived
-/// one over fields that each compare by value, so a whole-value pin of one
-/// variant compares that variant's payload. Every field of every variant is
-/// held to this, a superset of the pinned variant's own.
+/// owner's own error enum and `variant` and `siblings` as its variants:
+/// - the owner's file names the one workspace declaration (no import or
+///   alias rebinds `qualifier`) and brings none of its variants in by `use`
+///   (`use ConfigError::*`, `use ConfigError::MissingEquals as M`), which
+///   would let a bare spelling build the variant unseen;
+/// - every one of them is a declared variant of `qualifier`, not an
+///   associated constant or function that may build any variant;
+/// - its `==` is the derived one over fields that each compare by value
+///   ([`error_enum_compares_payload`]).
 fn error_enum_admits_variant_pin(
     qualifier: &str,
+    variant: &str,
+    siblings: &[String],
     owner: &FunctionSummary,
     index: &RustIndex,
 ) -> bool {
-    index
-        .files()
-        .get(&owner.file)
-        .is_some_and(|facts| !declaring_file_rebinds(&facts.source, qualifier, true, index))
+    let owner_file_names_enum = index.files().get(&owner.file).is_some_and(|facts| {
+        !declaring_file_rebinds(&facts.source, qualifier, true, index)
+            && !file_use_statements(&facts.source).iter().any(|statement| {
+                let masked = mask_comments_and_strings(statement);
+                whole_word_offsets(&masked, qualifier)
+                    .into_iter()
+                    .any(|offset| {
+                        masked[offset + qualifier.len()..]
+                            .trim_start()
+                            .starts_with("::")
+                    })
+            })
+    });
+    owner_file_names_enum
+        && derived_equality(qualifier, index).is_some_and(|(facts, _)| {
+            std::iter::once(variant)
+                .chain(siblings.iter().map(String::as_str))
+                .all(|name| facts.variants.iter().any(|declared| declared == name))
+        })
         && error_enum_compares_payload(qualifier, index)
 }
 
-/// #7063: whether an `assert_eq!` against `qualifier::variant` with a
-/// written-out payload pins the payload of the owner's changed construction
-/// of it: the enum's `==` compares payloads ([`error_enum_compares_payload`]),
-/// and the owner body spells that variant once, with no `?` that may convert
-/// a callee's error into it, so any such value the owner returns is built
-/// there. A second spelling (another exit, a helper binding) leaves the
-/// pinned value's source open.
-pub(in crate::analysis) fn payload_equality_admitted(
-    owner: &FunctionSummary,
-    qualifier: &str,
-    variant: &str,
-    index: &RustIndex,
-) -> bool {
-    let masked = mask_comments_and_strings(&owner.body);
-    let spellings = whole_word_offsets(&masked, variant)
-        .into_iter()
-        .filter(|offset| masked[..*offset].trim_end().ends_with("::"))
-        .count();
-    let qualified = whole_word_offsets(&masked, variant)
-        .into_iter()
-        .filter(|offset| {
-            masked[..*offset]
-                .trim_end()
-                .strip_suffix("::")
-                .is_some_and(|before| before.trim_end().ends_with(qualifier))
-        })
-        .count();
-    !masked.contains('?')
-        && spellings == 1
-        && qualified == 1
-        && error_enum_compares_payload(qualifier, index)
+/// #7063: whether an indexed file declares an enum `qualifier` with a
+/// variant `variant`, whatever its `==`.
+fn workspace_enum_declares_variant(qualifier: &str, variant: &str, index: &RustIndex) -> bool {
+    index.files().values().any(|facts| {
+        facts.source.contains(qualifier)
+            && local_type_equality(&facts.source, qualifier)
+                .is_some_and(|facts| facts.variants.iter().any(|name| name == variant))
+    })
 }
 
 /// #7063: whether `qualifier` names one workspace type whose `==` is the
