@@ -282,11 +282,13 @@ intermediate free-function hop must contain an executable call bound to the
 candidate's actual module/function declaration. The existing helper-name graph
 only supplies candidates. Caller-scope memos distinguish function names even
 when declarations share a line; an ambiguous same-name/same-line lookup refuses.
+Function type-parameter names also refuse borrowing a same-spelled module or
+nominal receiver type, without resolving any type argument or value flow.
 Explicit foreign paths, wrong imports, dormant local
 helpers and unplaced bindings cannot borrow a same-named root helper's owner
 credit. Genuine root/imported helpers and same-name inherent wrapper delegation
 retain repository reach. Diff helper evidence remains conservative; repository
-helper reach is not a new diff-helper claim. The three executable-identity
+helper reach is not a new diff-helper claim. The executable-identity
 fixtures and their paired native/full/compact/diff matrix pin this boundary.
 Repeated parsing and per-call `OwnerPinSyntax` cache loss remain substantive,
 unbenchmarked performance concerns tracked by #8005; correctness controls do

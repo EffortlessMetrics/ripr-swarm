@@ -12,4 +12,5 @@
 - Repository direct calls share the complete owner/module refusal with diff
   calls. Dormant nested functions, closures and async bodies do not supply
   executed receiver calls; free-helper entries and intermediate hops bind to
-  their actual module/function identity instead of a shared name (#7415, #8004).
+  their actual module/function identity instead of a shared name. Function type
+  parameters cannot borrow same-spelled module or owner-type credit (#7415, #8004).

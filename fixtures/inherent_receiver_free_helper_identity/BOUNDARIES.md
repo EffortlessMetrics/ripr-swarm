@@ -1,6 +1,6 @@
 # Executable owner identity boundaries
 
-The 19 entries in `cases.json` bind complete native sources to expected repository
+The 22 entries in `cases.json` bind complete native sources to expected repository
 relations. `native_reaches` records the independent one-arm mutation result;
 `relation` records bounded static admission. Neither rewrites the other.
 
@@ -60,3 +60,10 @@ Both retain one row on each of four owner seams; only `actual` gets helper/high.
 A same-name/same-line source lookup that cannot select one declaration refuses
 instead of borrowing the first one. This is identity correctness, not a parsing
 or `OwnerPinSyntax` performance claim.
+
+Function type parameters can shadow module or nominal receiver-type names. The
+three helper-scope controls refuse those declarations while preserving a genuine
+module-qualified helper through an unrelated type parameter. This compares
+names in the parser's declaration scope; no argument type, trait dispatch,
+factory return or parameter/field value is followed. The two negative native
+subjects survive the owner mutant and the genuine-module positive rejects it.

@@ -17,7 +17,7 @@ use super::nesting::parse_clean_source_file;
 use super::ra::LineIndex;
 use ra_ap_syntax::{
     AstNode, SyntaxNode,
-    ast::{self, HasGenericArgs, HasModuleItem, HasName},
+    ast::{self, HasGenericArgs, HasGenericParams, HasModuleItem, HasName},
 };
 use std::collections::BTreeSet;
 
@@ -90,6 +90,22 @@ pub(crate) enum UseBinding {
     Opaque,
 }
 
+/// Declared type-parameter names share the type/module path namespace. This
+/// records names only; it does not resolve their bounds or inferred arguments.
+pub(crate) fn function_type_param_names(function: &ast::Fn) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    if let Some(parameters) = function.generic_param_list() {
+        for parameter in parameters.generic_params() {
+            if let ast::GenericParam::TypeParam(parameter) = parameter
+                && let Some(name) = parameter.name()
+            {
+                names.insert(name.text().trim_start_matches("r#").to_string());
+            }
+        }
+    }
+    names
+}
+
 /// The name scopes of the function named `fn_name` whose `fn` keyword sits
 /// on `fn_line`. `None` when the source does not parse cleanly or holds no
 /// such function, so a caller fails closed.
@@ -128,6 +144,7 @@ pub(crate) fn name_scopes_for_fn(
             let mut scope = NameScope {
                 modules: modules_of(&ancestor),
                 fn_body: true,
+                defines: function_type_param_names(&enclosing_fn),
                 ..NameScope::default()
             };
             if let Some(body) = enclosing_fn.body() {
@@ -535,5 +552,18 @@ mod tests {
     fn same_named_functions_on_one_line_have_no_unique_scope() {
         let source = "mod left { fn check() {} } mod right { fn check() {} }";
         assert!(name_scopes_for_fn(source, 1, "check").is_none());
+    }
+    #[test]
+    fn function_type_parameters_refuse_module_name_borrowing() {
+        let source = "fn check<'a, helpers, const N: usize>() {}";
+        let scopes = name_scopes_for_fn(source, 1, "check");
+        assert!(
+            scopes.as_ref().is_some_and(|scopes| scopes
+                .scopes
+                .first()
+                .is_some_and(
+                    |scope| scope.defines.contains("helpers") && !scope.defines.contains("N")
+                ))
+        );
     }
 }

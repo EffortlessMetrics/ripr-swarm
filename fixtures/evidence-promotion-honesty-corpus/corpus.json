@@ -9326,6 +9326,103 @@
           "class": "weakly_exposed"
         }
       ]
+    },
+    {
+      "id": "rust_repo_inherent_receiver_helper_scope_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json",
+      "vector": "function_type_parameter_has_no_repository_declaration_identity",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_inherent_receiver_helper_type_parameter",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json",
+      "vector": "function_type_parameter_has_no_repository_declaration_identity",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        }
+      ]
+    },
+    {
+      "id": "rust_diff_inherent_receiver_helper_scope_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/inherent_receiver_helper_scope_shadow",
+      "vector": "function_type_parameter_has_no_repository_declaration_identity",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }

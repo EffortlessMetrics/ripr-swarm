@@ -19690,7 +19690,7 @@ fn inherent_executable_owner_identity_boundary_matrix() -> Result<(), String> {
         "../../../../../fixtures/inherent_receiver_free_helper_identity/cases.json"
     ))
     .map_err(|error| error.to_string())?;
-    assert_eq!(cases.len(), 19, "complete hypothesis-led matrix");
+    assert_eq!(cases.len(), 22, "complete hypothesis-led matrix");
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
     for case in cases {
         let source = std::fs::read_to_string(fixtures.join(&case.path))

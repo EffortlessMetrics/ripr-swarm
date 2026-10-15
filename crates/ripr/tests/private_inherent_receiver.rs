@@ -476,7 +476,7 @@ fn executable_owner_identity_boundaries_agree_in_diff() -> Result<(), String> {
         "../../../fixtures/inherent_receiver_free_helper_identity/cases.json"
     ))
     .map_err(|error| error.to_string())?;
-    assert_eq!(cases.len(), 19);
+    assert_eq!(cases.len(), 22);
     let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
     for case in cases {
         let source = std::fs::read_to_string(fixtures.join(&case.path))

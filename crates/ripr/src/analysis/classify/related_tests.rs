@@ -3137,8 +3137,7 @@ fn executable_call_resolves(
             .all(|scope| {
                 !ast::Item::can_cast(scope.kind())
                     && !ast::ClosureExpr::can_cast(scope.kind())
-                    && !ast::BlockExpr::cast(scope)
-                        .is_some_and(|block| block.async_token().is_some())
+                    && ast::BlockExpr::cast(scope).is_none_or(|block| block.async_token().is_none())
             })
     };
     syntax
@@ -3177,6 +3176,21 @@ fn inherent_call_node_resolves(
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
 ) -> bool {
+    if !ast::MethodCallExpr::can_cast(node.kind()) && !ast::CallExpr::can_cast(node.kind()) {
+        return false;
+    }
+    // A declared type parameter can hide the nominal owner name. Refuse its
+    // spelling without inferring a bound, argument type or factory result.
+    if original_scope
+        .unwrap_or(&node)
+        .ancestors()
+        .filter_map(ast::Fn::cast)
+        .any(|function| {
+            crate::analysis::syntax::function_type_param_names(&function).contains(impl_type)
+        })
+    {
+        return false;
+    }
     if let Some(call) = ast::MethodCallExpr::cast(node.clone()) {
         return call.name_ref().is_some_and(|name| name.text() == method)
             && call.receiver().is_some_and(|receiver| {
