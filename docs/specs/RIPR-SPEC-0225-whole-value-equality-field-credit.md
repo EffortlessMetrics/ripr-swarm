@@ -20,7 +20,7 @@ Linked plan:
 
 Linked issues:
 
-- #7858 (fields of a returned array element; decision 8)
+- #7858 (fields of a returned array element; decision 9)
 
 Linked PRs:
 
@@ -303,7 +303,7 @@ rejected alternative. Any can be reversed later without touching the rest.
    (lib-assert-matches-variant-field-pinned moves gap to credited; the
    `{ .. }`, `pos: _`, guarded and alternative controls stay unconfirmed).
 
-8. **Fields of a returned array element (2026-10-15, #7858).** When the
+9. **Fields of a returned array element (2026-10-15, #7858).** When the
    owner is a free function whose whole body is one array literal of struct
    literals of the same type, none with a `..base` and no attribute anywhere
    in the array (a `#[cfg]` element may be compiled out and shift every
@@ -504,7 +504,7 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
   `fixtures/evidence-promotion-honesty-corpus/corpus.json`, the
   should-stay-`weakly_exposed` control for the `String::from` shadow
   refusal (#7066 review).
-- Decision 8: `crates/ripr/tests/returned_element_field_pin.rs` (the
+- Decision 9: `crates/ripr/tests/returned_element_field_pin.rs` (the
   membership and index pins read `exposed`; the `total: 33` decoy, a
   computed sibling, another element's index, a shadowed receiver, a faked
   or skipped assertion, a nested module's same-name `rows`, a callable
@@ -533,7 +533,7 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
   adds `expected_item_literal` in `expected_binding.rs`, covered by
   `an_expected_helper_or_default_base_reads_as_its_literal`.
 
-- `crates/ripr/src/analysis/classify/element_field_pin.rs`: decision 8
+- `crates/ripr/src/analysis/classify/element_field_pin.rs`: decision 9
   (`observes_returned_element_field`), consumed in
   `crates/ripr/src/analysis/classifier/evidence.rs` where it clears the
   `FieldValue` missing discriminator next to reveal's owner-pin credit.

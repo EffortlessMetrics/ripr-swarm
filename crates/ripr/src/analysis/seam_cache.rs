@@ -456,7 +456,7 @@ pub(crate) struct CachedSeamLimitInfo {
 /// panic-assertion helper loans (#7818); neither standalone `1.75` is reusable.
 /// `1.77`: a whole same-line comparison tail reaches its owner's return
 /// (#8042). Old entries can keep a predicate's propagation unknown.
-/// `1.78`: RIPR-SPEC-0225 decision 8 credits a field built in one element
+/// `1.78`: RIPR-SPEC-0225 decision 9 credits a field built in one element
 /// of a returned array (#7858). Old entries keep that field's gap.
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.78";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
@@ -4473,7 +4473,7 @@ mod tests {
         // 1.74 -> 1.75: literal variant-field patterns pin the field (#6578).
         // 1.75 -> 1.76: compose both independently allocated 1.75 semantics (#7818).
         // 1.76 -> 1.77: same-line returned comparisons gain a real sink (#8042).
-        // 1.77 -> 1.78: returned-element field pins (RIPR-SPEC-0225 decision 8).
+        // 1.77 -> 1.78: returned-element field pins (RIPR-SPEC-0225 decision 9).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.78");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,

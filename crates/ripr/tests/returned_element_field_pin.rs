@@ -1,4 +1,4 @@
-//! End-to-end witness for #7858 (RIPR-SPEC-0225 decision 8).
+//! End-to-end witness for #7858 (RIPR-SPEC-0225 decision 9).
 //!
 //! A field constructed inside an array the owner returns reads `exposed`
 //! when a test pins that element alone: by its literal index, or through an

@@ -207,18 +207,25 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// computed once per run over the once-built module-name set.
     /// The index is immutable, so the memo never goes stale.
     unit_struct_facts: OnceCell<UnitStructFacts>,
-    /// RIPR-SPEC-0225 decision 8: whether the workspace is closed for
+    /// RIPR-SPEC-0225 decision 9: whether the workspace is closed for
     /// iteration, a whole-index scan computed once per run.
     iteration_closed: OnceCell<bool>,
-    /// RIPR-SPEC-0225 decision 8: the names a workspace macro may declare a
+    /// RIPR-SPEC-0225 decision 9: the names a workspace macro may declare a
     /// type under, `None` when any name may be declared.
     macro_type_names: OnceCell<Option<BTreeSet<String>>>,
+    /// RIPR-SPEC-0225 decision 9: [`field_builtin_integer`] answers per
+    /// [`FieldIntegerKey`]; the index is immutable, so none goes stale.
+    field_integer_memo: RefCell<BTreeMap<FieldIntegerKey, Option<&'static str>>>,
     withheld: WithheldMacroBindings,
 }
 
 /// #7097: a bare-call binding verdict key: owner file, owner line, owner
 /// name, test file, test line.
 type BareCallKey = (PathBuf, usize, String, PathBuf, usize);
+
+/// RIPR-SPEC-0225 decision 9: a field-integer key: owner file, owner name,
+/// record type name, field name.
+type FieldIntegerKey = (PathBuf, String, String, String);
 
 /// #6974: run-scoped answers for [`OwnerReturnPin::path_reaches_owner`].
 #[derive(Clone, Debug, Default)]
@@ -4976,7 +4983,7 @@ fn initialized_field_name(expression: &str) -> Option<&str> {
 /// How deep [`type_compares_by_value`] follows workspace field types.
 const EQUALITY_DEPTH_LIMIT: usize = 4;
 
-/// RIPR-SPEC-0225 decision 8: the primitive integer type `field` of
+/// RIPR-SPEC-0225 decision 9: the primitive integer type `field` of
 /// `type_name` is declared with, when `type_name` is the struct a record
 /// literal in the owner's body names, so comparing the field to an integer
 /// literal is the built-in `==`. The struct is declared exactly once in the
@@ -4988,6 +4995,27 @@ const EQUALITY_DEPTH_LIMIT: usize = 4;
 /// name that no workspace type, alias, rename or foreign import rebinds in
 /// the owner's file. Anything else refuses.
 pub(in crate::analysis) fn field_builtin_integer(
+    owner: &FunctionSummary,
+    type_name: &str,
+    field: &str,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> Option<&'static str> {
+    let key = (
+        owner.file.clone(),
+        owner.name.clone(),
+        type_name.to_owned(),
+        field.to_owned(),
+    );
+    if let Some(found) = syntax.field_integer_memo.borrow().get(&key) {
+        return *found;
+    }
+    let found = field_builtin_integer_uncached(owner, type_name, field, index, syntax);
+    syntax.field_integer_memo.borrow_mut().insert(key, found);
+    found
+}
+
+fn field_builtin_integer_uncached(
     owner: &FunctionSummary,
     type_name: &str,
     field: &str,
