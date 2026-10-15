@@ -279,12 +279,24 @@ function copyLogTail(source: string, destination: string, cap: number): number {
   if (buffer.includes(0)) {
     return 0;
   }
-  let text = redactHostDiagnosticsText(buffer.toString('utf8'));
-  if (Buffer.byteLength(text, 'utf8') > cap) {
-    const encoded = Buffer.from(text, 'utf8');
-    text = encoded.subarray(encoded.length - cap).toString('utf8');
-  }
+  const redacted = Buffer.from(redactHostDiagnosticsText(buffer.toString('utf8')), 'utf8');
+  const encoded = redacted.length > cap ? utf8Suffix(redacted, cap) : redacted;
   fs.mkdirSync(path.dirname(destination), { recursive: true });
-  fs.writeFileSync(destination, text, 'utf8');
-  return Buffer.byteLength(text, 'utf8');
+  fs.writeFileSync(destination, encoded);
+  return encoded.length;
+}
+
+function utf8Suffix(buffer: Buffer, cap: number): Buffer {
+  if (buffer.length <= cap) {
+    return buffer;
+  }
+  let start = buffer.length - cap;
+  while (start < buffer.length) {
+    const byte = buffer[start];
+    if (byte === undefined || (byte & 0xc0) !== 0x80) {
+      break;
+    }
+    start += 1;
+  }
+  return buffer.subarray(start);
 }

@@ -236,6 +236,28 @@ suite('VS Code test host diagnostics', () => {
     assert.ok(identitySize <= MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES, String(identitySize));
   });
 
+  test('log tail cap stays inside the byte budget across a multibyte cut', () => {
+    const euro = '€';
+    writeLog(
+      root,
+      'unicode.log',
+      euro.repeat(Math.floor(MAX_HOST_DIAGNOSTICS_FILE_BYTES / 3) + 2)
+    );
+    retainHostDiagnostics({
+      artifactRoot: root,
+      userDataDir: resolveUserDataDir(root),
+      failed: true,
+      error: new Error('host hung')
+    });
+    const copied = fs.readFileSync(
+      path.join(resolveHostDiagnosticsDir(root), HOST_LOG_DIR_NAME, 'unicode.log')
+    );
+    const copiedText = copied.toString('utf8');
+    assert.ok(copied.length <= MAX_HOST_DIAGNOSTICS_FILE_BYTES, String(copied.length));
+    assert.ok(!copiedText.includes('\uFFFD'), copiedText.slice(0, 16));
+    assert.ok(copiedText.includes(euro), copiedText.slice(0, 16));
+  });
+
   test('caps an oversized host log to the per-file tail bound', () => {
     const marker = 'UNRESPONSIVE-TAIL';
     const body = `${'#'.repeat(MAX_HOST_DIAGNOSTICS_FILE_BYTES + 2048)}\n${marker}\n`;
