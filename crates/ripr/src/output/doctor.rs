@@ -1012,7 +1012,10 @@ impl DoctorRootPath {
             ),
             Self::Missing => (
                 DoctorStatus::Fail,
-                format!("root directory does not exist at {}", human_path(root)),
+                format!(
+                    "root directory does not exist at {}; create the directory or pass an existing path with `--root`",
+                    human_path(root)
+                ),
             ),
             Self::NotADirectory => (
                 DoctorStatus::Fail,
@@ -1024,7 +1027,7 @@ impl DoctorRootPath {
             Self::Unreadable => (
                 DoctorStatus::Fail,
                 format!(
-                    "cannot determine whether {} is a directory",
+                    "cannot determine whether {} is a directory; check permissions or pass `--root` naming an accessible directory",
                     human_path(root)
                 ),
             ),
@@ -1479,7 +1482,10 @@ fn evaluate_doctor_core_with_probe_for_profile(
         report.add_check(
             "cargo_toml",
             DoctorStatus::Fail,
-            Some(format!("no Cargo.toml found at {}", human_path(root))),
+            Some(format!(
+                "no Cargo.toml found at {}; pass `--root <dir>` to target a crate or run `cargo init` to create a workspace",
+                human_path(root)
+            )),
         );
     }
     match root_path.unusable_skip_reason() {
@@ -4528,6 +4534,133 @@ mod tests {
             "the root failure stays the one real signal: {report:?}"
         );
         Ok(())
+    }
+
+    /// `DOCTOR_FAILED_LINE` claims every `!` line names the check and its
+    /// fix (#5104). State-only evidence used to falsify that sentence.
+    fn fail_evidence_names_its_fix(evidence: &str) -> bool {
+        const ACTIONABLE: &[&str] = &[
+            "--root",
+            "install",
+            "create",
+            "run `",
+            "cargo init",
+            "check permissions",
+        ];
+        !evidence.is_empty() && ACTIONABLE.iter().any(|marker| evidence.contains(marker))
+    }
+
+    fn assert_fail_checks_name_their_fix(report: &DoctorReport) -> Result<(), String> {
+        let fails: Vec<&DoctorCheck> = report
+            .checks
+            .iter()
+            .filter(|check| check.status == DoctorCheckStatus::Fail)
+            .collect();
+        if fails.is_empty() {
+            return Err(format!("expected at least one Fail check: {report:?}"));
+        }
+        for check in fails {
+            let evidence = check.evidence.as_deref().unwrap_or_default();
+            if !fail_evidence_names_its_fix(evidence) {
+                return Err(format!(
+                    "{} fail evidence must name a fix so DOCTOR_FAILED_LINE stays true: {evidence:?}",
+                    check.name
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn fail_evidence_helper_rejects_the_old_state_only_lines() {
+        assert!(
+            !fail_evidence_names_its_fix("no Cargo.toml found at ."),
+            "the pre-#5104 cargo_toml line named only state"
+        );
+        assert!(
+            !fail_evidence_names_its_fix("root directory does not exist at /tmp/absent"),
+            "the pre-#5104 missing-root line named only state"
+        );
+        assert!(fail_evidence_names_its_fix(
+            "no Cargo.toml found at .; pass `--root <dir>` to target a crate or run `cargo init` to create a workspace"
+        ));
+        assert!(fail_evidence_names_its_fix(
+            "root directory does not exist at /tmp/absent; create the directory or pass an existing path with `--root`"
+        ));
+    }
+
+    /// #5104: a missing root's `!` line must name the repair, not only the
+    /// state, so the closing sentence is true when the reader looks up.
+    #[test]
+    fn missing_root_fail_line_names_the_fix() -> Result<(), String> {
+        let missing = unique_test_dir("doctor-5104-missing-root").join("absent");
+        assert!(!missing.exists(), "fixture root must stay missing");
+        let report = evaluate_doctor_core(&missing, &[]);
+        let root = check(&report, "root_directory")?;
+        if root.name != "root_directory" || root.status != DoctorCheckStatus::Fail {
+            return Err(format!(
+                "JSON check id and fail status must stay unchanged: {root:?}"
+            ));
+        }
+        let evidence = root.evidence.as_deref().unwrap_or_default();
+        if !evidence.starts_with("root directory does not exist at")
+            || !evidence.contains("create the directory")
+            || !evidence.contains("`--root`")
+        {
+            return Err(format!(
+                "missing-root fail evidence must keep the state and name the fix: {evidence:?}"
+            ));
+        }
+        assert_fail_checks_name_their_fix(&report)?;
+        let rendered = report.render_text();
+        if !rendered.contains(&format!("! {evidence}")) || !rendered.contains(DOCTOR_FAILED_LINE) {
+            return Err(format!(
+                "human render must keep the ! line and closing claim: {rendered}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #5104: `cargo_toml` fail used to name only the missing manifest.
+    /// The common confused-user shape is a multi-crate repo whose selected
+    /// root has no Cargo.toml; the line must say `--root` or `cargo init`.
+    #[test]
+    fn cargo_toml_fail_line_names_the_fix() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "doctor-5104-no-manifest",
+            &[("src/lib.rs", "pub fn f() {}\n")],
+        )?;
+        isolate_as_git_root(&root)?;
+        let (report, _probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::Rust]);
+        let cargo_toml = check(&report, "cargo_toml")?;
+        let result = (|| {
+            if cargo_toml.name != "cargo_toml" || cargo_toml.status != DoctorCheckStatus::Fail {
+                return Err(format!(
+                    "JSON check id and fail status must stay unchanged: {cargo_toml:?}"
+                ));
+            }
+            let evidence = cargo_toml.evidence.as_deref().unwrap_or_default();
+            if !evidence.starts_with("no Cargo.toml found at")
+                || !evidence.contains("`--root <dir>`")
+                || !evidence.contains("cargo init")
+            {
+                return Err(format!(
+                    "cargo_toml fail evidence must keep the state and name the fix: {evidence:?}"
+                ));
+            }
+            assert_fail_checks_name_their_fix(&report)?;
+            let rendered = report.render_text();
+            if !rendered.contains(&format!("! {evidence}"))
+                || !rendered.contains(DOCTOR_FAILED_LINE)
+            {
+                return Err(format!(
+                    "human render must keep the ! line and closing claim: {rendered}"
+                ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
     }
 
     #[test]
