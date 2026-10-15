@@ -136,6 +136,7 @@ jobs:
       # fresh, so a lock-only pin never reaches it (#3787). Build the packaged
       # crate the way that command does: drop its lockfile and re-resolve.
       - name: Unlocked install resolution (release surface)
+        shell: bash
         if: contains(toJSON(inputs), '"subject_sha"') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
         run: |
           cargo package -p ripr --no-verify
@@ -146,6 +147,7 @@ jobs:
           cargo generate-lockfile
           cargo check --target-dir "$RUNNER_TEMP/unlocked-target"
       - name: Release readiness (release surface)
+        shell: bash
         if: contains(toJSON(inputs), '"subject_sha"') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
         run: |
           release_version="$(cargo pkgid -p ripr | sed 's/.*#//')"

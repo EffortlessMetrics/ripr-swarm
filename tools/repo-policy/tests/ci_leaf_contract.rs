@@ -37,21 +37,38 @@ fn body(step: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WorkflowShell {
+    ImplicitBash,
+    Bash,
+}
+
+// Linux Actions shell templates, including the implicit/explicit Bash distinction:
+// https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
 fn run(script: &str, overrides: &[(&str, &str)]) -> TestResult<Output> {
+    run_with_shell(WorkflowShell::ImplicitBash, script, overrides)
+}
+
+fn run_with_shell(
+    shell: WorkflowShell,
+    script: &str,
+    overrides: &[(&str, &str)],
+) -> TestResult<Output> {
     let mut cmd = Command::new("timeout");
-    cmd.args([
-        "--kill-after=1s",
-        "5s",
-        "bash",
-        "--noprofile",
-        "--norc",
-        "-eo",
-        "pipefail",
-        "-c",
-        script,
-    ])
-    .env_remove("BASH_ENV")
-    .env_remove("ENV");
+    cmd.args(["--kill-after=1s", "5s", "bash"]);
+    match shell {
+        WorkflowShell::ImplicitBash => {
+            cmd.arg("-e");
+        }
+        WorkflowShell::Bash => {
+            cmd.args(["--noprofile", "--norc", "-eo", "pipefail"]);
+        }
+    }
+    cmd.args(["-c", script])
+        .env_remove("BASH_ENV")
+        .env_remove("ENV")
+        .env_remove("SHELLOPTS")
+        .env_remove("BASHOPTS");
     for (key, value) in [
         ("PROFILE", "qualification"),
         ("REQUEST", "123-1"),
@@ -96,6 +113,60 @@ fn run(script: &str, overrides: &[(&str, &str)]) -> TestResult<Output> {
     );
     Ok(output)
 }
+fn mapping<'a>(scope: &'a str, indent: usize, key: &str) -> Option<&'a str> {
+    let marker = format!("{}{key}:\n", " ".repeat(indent));
+    let offset = scope
+        .match_indices(&marker)
+        .find(|(offset, _)| *offset == 0 || scope.as_bytes()[offset - 1] == b'\n')?
+        .0
+        + marker.len();
+    let tail = &scope[offset..];
+    let end = tail
+        .lines()
+        .scan(0, |offset, line| {
+            let start = *offset;
+            *offset += line.len() + 1;
+            Some((start, line))
+        })
+        .find(|(_, line)| {
+            !line.trim().is_empty()
+                && !line.trim_start().starts_with('#')
+                && line.len() - line.trim_start().len() <= indent
+        })
+        .map_or(tail.len(), |(offset, _)| offset);
+    Some(&tail[..end])
+}
+
+fn default_shell(scope: &str, indent: usize) -> Option<&str> {
+    let defaults = mapping(scope, indent, "defaults")?;
+    let run = mapping(defaults, indent + 2, "run")?;
+    let prefix = format!("{}shell: ", " ".repeat(indent + 4));
+    run.lines()
+        .find_map(|line| line.strip_prefix(&prefix))
+        .map(str::trim)
+}
+
+fn effective_shell(source: &str, name: &str, step: &str) -> TestResult<WorkflowShell> {
+    let declared = step
+        .lines()
+        .find_map(|line| line.strip_prefix("        shell: "))
+        .map(str::trim)
+        .or_else(|| default_shell(job(source, name), 4))
+        .or_else(|| default_shell(source, 0));
+    match declared {
+        None => Ok(WorkflowShell::ImplicitBash),
+        Some("bash") => Ok(WorkflowShell::Bash),
+        Some(other) => Err(format!("Unmodelled workflow shell: {other}").into()),
+    }
+}
+
+fn named_step<'a>(source: &'a str, name: &str, step: &str) -> &'a str {
+    let prefix = format!("      - name: {step}");
+    let tail = job(source, name).split_once(&prefix).unwrap_or_default().1;
+    assert!(!tail.is_empty(), "missing step: {step}");
+    tail.split_once("\n      - ").map_or(tail, |(step, _)| step)
+}
+
 fn guard(source: &str) -> String {
     format!(
         "git() {{ case \"$*\" in 'rev-parse HEAD') echo \"$ACTUAL\";; 'rev-parse HEAD^{{tree}}') echo \"$ACTUAL_TREE\";; 'show -s --format=%P HEAD') echo \"$PARENTS\";; *) return 91;; esac; }}\n{}",
@@ -495,72 +566,164 @@ fn selected_rust_runtime_cannot_be_pruned_by_event_diff_or_missing_history() -> 
 
 #[test]
 fn unlocked_install_and_readiness_preserve_each_native_failure() -> TestResult {
-    let release = job(WORKFLOW, "release-proof");
-    let unlocked = release
-        .split_once("      - name: Unlocked install resolution")
-        .unwrap_or_default()
-        .1;
-    let unlocked = body(unlocked);
-    let readiness = release
-        .split_once("      - name: Release readiness")
-        .unwrap_or_default()
-        .1;
-    let readiness = body(readiness);
     let stub = r#"
         cargo() {
           local stage="$1"
           printf 'reached:cargo-%s\n' "$stage" >&2
+          if [[ "$stage" == pkgid && "$PKGID_STDOUT" != empty ]]; then printf 'ripr#0.11.0\n'; fi
           [[ "$FAIL_COMMAND" != "cargo-$stage" ]] || return 47
-          if [[ "$stage" == pkgid ]]; then printf 'ripr#0.11.0\n'; fi
         }
         tar() { echo reached:tar >&2; [[ "$FAIL_COMMAND" != tar ]]; }
         cd() { echo reached:cd >&2; [[ "$FAIL_COMMAND" != cd ]]; }
         rm() { echo reached:rm >&2; [[ "$FAIL_COMMAND" != rm ]]; }
     "#;
-    assert!(
-        run(&format!("{stub}\n{unlocked}"), &[("FAIL_COMMAND", "")])?
-            .status
-            .success()
-    );
-    for command in [
-        "cargo-package",
-        "cargo-pkgid",
-        "tar",
-        "cd",
-        "rm",
-        "cargo-generate-lockfile",
-        "cargo-check",
+    for (name, commands) in [
+        (
+            "Unlocked install resolution",
+            &[
+                "cargo-package",
+                "cargo-pkgid",
+                "tar",
+                "cd",
+                "rm",
+                "cargo-generate-lockfile",
+                "cargo-check",
+            ][..],
+        ),
+        ("Release readiness", &["cargo-pkgid", "cargo-xtask"][..]),
     ] {
-        let output = run(&format!("{stub}\n{unlocked}"), &[("FAIL_COMMAND", command)])?;
-        assert!(!output.status.success(), "masked {command}");
+        let step = named_step(WORKFLOW, "release-proof", name);
+        let shell = effective_shell(WORKFLOW, "release-proof", step)?;
+        let script = format!("{stub}\n{}", body(step));
         assert!(
-            String::from_utf8_lossy(&output.stderr).contains(&format!("reached:{command}")),
-            "did not reach {command}"
+            run_with_shell(shell, &script, &[("FAIL_COMMAND", "")])?
+                .status
+                .success(),
+            "positive setup: {name}"
         );
+        for command in commands {
+            let output = run_with_shell(shell, &script, &[("FAIL_COMMAND", command)])?;
+            assert!(!output.status.success(), "masked {name}/{command}");
+            let trace = String::from_utf8(output.stderr)?;
+            assert!(
+                trace.contains(&format!("reached:{command}")),
+                "did not reach {name}/{command}"
+            );
+        }
+        for stdout in ["valid", "empty"] {
+            let output = run_with_shell(
+                shell,
+                &script,
+                &[("FAIL_COMMAND", "cargo-pkgid"), ("PKGID_STDOUT", stdout)],
+            )?;
+            assert_eq!(
+                output.status.code(),
+                Some(47),
+                "pkgid native status: {name}/{stdout}"
+            );
+            let trace = String::from_utf8(output.stderr)?;
+            assert!(trace.contains("reached:cargo-pkgid"));
+            for downstream in [
+                "reached:tar",
+                "reached:cd",
+                "reached:rm",
+                "reached:cargo-generate-lockfile",
+                "reached:cargo-check",
+                "reached:cargo-xtask",
+            ] {
+                assert!(
+                    !trace.contains(downstream),
+                    "ran {downstream} after pkgid failed: {name}"
+                );
+            }
+        }
     }
-    for command in ["cargo-pkgid", "cargo-xtask"] {
+    // Original payload's package/cd masking remains a separate known-wrong control.
+    let prior = named_step(ORIGINAL, "release-proof", "Unlocked install resolution");
+    for command in ["cargo-package", "cd"] {
         assert!(
-            !run(
-                &format!("{stub}\n{readiness}"),
+            run_with_shell(
+                effective_shell(ORIGINAL, "release-proof", prior)?,
+                &format!("{stub}\n{}", body(prior)),
                 &[("FAIL_COMMAND", command)]
             )?
             .status
             .success()
         );
     }
-    // Pin the known wrong predecessor's masked package and directory failures.
-    let prior = ORIGINAL
-        .split_once("      - name: Unlocked install resolution")
-        .unwrap_or_default()
-        .1;
-    let prior = body(prior);
-    for command in ["cargo-package", "cd"] {
+    Ok(())
+}
+
+#[test]
+fn effective_shell_precedence_matches_the_actual_workflow_declarations() -> TestResult {
+    assert!(
+        run_with_shell(WorkflowShell::ImplicitBash, "false | true", &[])?
+            .status
+            .success()
+    );
+    assert!(
+        !run_with_shell(WorkflowShell::Bash, "false | true", &[])?
+            .status
+            .success()
+    );
+    let scope = "jobs:\n  release-proof:\n    steps:\n";
+    assert_eq!(
+        effective_shell(scope, "release-proof", "")?,
+        WorkflowShell::ImplicitBash
+    );
+    let workflow_default = format!("defaults:\n  run:\n    shell: bash\n{scope}");
+    assert_eq!(
+        effective_shell(&workflow_default, "release-proof", "")?,
+        WorkflowShell::Bash
+    );
+    let job_default =
+        "jobs:\n  release-proof:\n    defaults:\n      run:\n        shell: bash\n    steps:\n";
+    assert_eq!(
+        effective_shell(job_default, "release-proof", "")?,
+        WorkflowShell::Bash
+    );
+    let conflicting_job = format!("defaults:\n  run:\n    shell: unsupported\n{job_default}");
+    assert_eq!(
+        effective_shell(&conflicting_job, "release-proof", "")?,
+        WorkflowShell::Bash
+    );
+    let unsupported_job = job_default.replace("shell: bash", "shell: unsupported");
+    let error = effective_shell(&unsupported_job, "release-proof", "")
+        .err()
+        .ok_or("unsupported shell must refuse")?;
+    assert!(error.to_string().contains("Unmodelled workflow shell"));
+    assert_eq!(
+        effective_shell(&unsupported_job, "release-proof", "        shell: bash\n")?,
+        WorkflowShell::Bash
+    );
+    Ok(())
+}
+
+#[test]
+fn removing_the_declared_shell_reproduces_masked_pkgid_failures() -> TestResult {
+    let implicit = WORKFLOW.replace("        shell: bash\n", "");
+    let stub = r#"
+        cargo() {
+          echo "reached:$1" >&2
+          if [[ "$1" == pkgid ]]; then printf 'ripr#0.11.0\n'; return 47; fi
+        }
+        tar() { return 0; }
+        cd() { return 0; }
+        rm() { return 0; }
+    "#;
+    for (name, downstream) in [
+        ("Unlocked install resolution", "reached:check"),
+        ("Release readiness", "reached:xtask"),
+    ] {
+        let step = named_step(&implicit, "release-proof", name);
+        let shell = effective_shell(&implicit, "release-proof", step)?;
+        assert_eq!(shell, WorkflowShell::ImplicitBash);
+        let output = run_with_shell(shell, &format!("{stub}\n{}", body(step)), &[])?;
         assert!(
-            run(&format!("{stub}\n{prior}"), &[("FAIL_COMMAND", command)])?
-                .status
-                .success(),
-            "negative control should expose the old false success"
+            output.status.success(),
+            "missing-shell control must expose false success"
         );
+        assert!(String::from_utf8(output.stderr)?.contains(downstream));
     }
     Ok(())
 }

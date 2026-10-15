@@ -107,5 +107,38 @@ source policy checks and local contracts remain separate from hosted proof.
 Changelog: `changelog.d/4987-ci-exact-subject-leaf.md`, canonical Internal / CI
 fragment with issue reference. Local worktree `/workspace/ci-4987` and proof
 scratch `/workspace/ci-4987-proof` remain retained for parent continuation. The
-10-GiB additional build budget and 15-GiB reserve apply; no existing resources
+12-GiB additional build budget and 15-GiB reserve apply; no existing resources
 are deleted or relabeled as delivered hosted evidence.
+
+
+## Successor repair: effective release shell
+
+[Independent review 5528944270](https://github.com/EffortlessMetrics/ripr-swarm/pull/8082#pullrequestreview-5528944270)
+reproduced a source/oracle mismatch in `efaa7fa7f391adc07c3816c84053284ad7f7b922`,
+also present unchanged in integrated `f9829d91b78dd765bd7bc25523a88e8fef74f249`.
+The earlier harness supplied `-eo pipefail` to every script, but the two release
+steps used the implicit Linux shell. Its `-e` alone can mask a failed
+`cargo pkgid | sed` producer. The earlier passing source tests did not establish
+that pipeline's failure propagation under the actual workflow shell.
+
+Both unlocked-install and release-readiness steps now explicitly declare
+`shell: bash`, which enables GitHub's documented Bash pipeline failure behavior.
+The [official shell contract](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell)
+also specifies that step declarations override job and workflow defaults.
+The updated harness resolves that precedence from the literal workflow, rejects
+unsupported shell templates and uses implicit Bash without pipefail when no
+shell is declared. Mode controls independently distinguish `false | true`.
+
+Before the YAML repair, the updated suite produced 11 passes and the intended
+`masked Unlocked install resolution/cargo-pkgid` failure. Controls inject both
+empty output and a valid package ID followed by native failure 47; both steps
+must preserve that status and stop before any downstream extraction, directory,
+lockfile, check or readiness command. Removing the shell declarations restores
+the false-success counterexample for each step. Original package/cd masking
+controls remain separate. This is source-shell proof, not hosted product proof.
+
+Only the two step shell declarations, dedicated test, this correction record and
+existing changelog change in the successor. Inputs, result wiring, payload bodies,
+triggers, selection, caller files and activation hold remain unchanged. PR8082's
+integrator should apply the successor atop the already integrated leaf; it needs
+no second caller or activation change for this repair.
