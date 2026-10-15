@@ -5841,6 +5841,7 @@ id = "RIPR-SPEC-0062"
 name = "Cross-language oracle graph"
 spec = "docs/specs/RIPR-SPEC-0062-cross-language-oracle-graph.md"
 tests = [
+  # FFI attribute literal/trivia/raw-identifier regressions: #8090.
   "crates/ripr/tests/ffi_attribute_literals.rs::raw_doc_string_cannot_invent_a_binding_attribute",
   "crates/ripr/tests/ffi_attribute_literals.rs::raw_doc_string_cannot_hide_a_real_binding_attribute",
   "crates/ripr/tests/ffi_attribute_literals.rs::comment_cannot_invent_a_binding_attribute",

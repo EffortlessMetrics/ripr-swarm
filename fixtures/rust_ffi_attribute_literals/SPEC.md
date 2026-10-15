@@ -4,6 +4,8 @@ Spec: RIPR-SPEC-0062
 
 Owner: analysis-fixtures
 
+Issue: [#8090](https://github.com/EffortlessMetrics/ripr-swarm/issues/8090)
+
 ## Given
 
 Three Rust functions change the same threshold. `ordinary` has a raw doc
