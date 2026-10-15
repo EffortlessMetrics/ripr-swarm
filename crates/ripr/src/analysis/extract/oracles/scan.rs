@@ -526,6 +526,14 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
             OracleStrength::Strong,
         ));
     }
+    if let Some(pin) = accepted_err_arm_pin(shape) {
+        return Some(guarded_match_fact(
+            shape,
+            line,
+            truncate_chars(&pin, PIN_TEXT_MAX_CHARS),
+            OracleStrength::Strong,
+        ));
+    }
     // Every Err arm must fail loudly on its own text. A guarded accept arm
     // (`Err(e) if <pin> => {}`) is terminal only when it can route: it has
     // a guard, its body is trivial, and every catch-all arm fails loudly.
@@ -771,6 +779,61 @@ fn asserted_err_arm_pin(shape: &GuardedMatchShape) -> Option<String> {
         .collect();
     let alternation_or_guard = pattern.contains('|') || split_pattern_guard(&pattern).1.is_some();
     (is_variant_path(&head) && !alternation_or_guard).then_some(pattern)
+}
+
+/// The exact error pin of the RIPR-SPEC-0175 accepted-Err form:
+///
+/// ```text
+/// match owner(..) {
+///     Ok(<pattern>) => <diverges>,
+///     Err(Type::Variant) => {}
+///     Err(other) => <diverges>,
+/// }
+/// ```
+///
+/// The test passes exactly when the owner returns `Err(Type::Variant)`,
+/// because every other arm fails loudly and the compiler's exhaustiveness
+/// check routes every other result to one of them. Every condition is
+/// required:
+/// - exactly one arm stays quiet: an unguarded `Err(<unit variant path>)`
+///   whose body is trivial (`{}`), so the pin is the arm's selection
+///   itself;
+/// - every other arm (Ok, Err and catch-all alike) terminates under
+///   [`arm_terminates`], so no second result can end the test quietly;
+/// - at least one Ok or catch-all arm exists, as for every guarded match.
+///
+/// A second quiet arm, a guard on the accept arm, a binding or wildcard
+/// (`Err(e) => {}`, `Err(_) => {}`), a payload pattern
+/// (`Err(Type::Wrap(_))`), or an accept body that does anything returns
+/// `None`, and the shape keeps its existing meaning.
+fn accepted_err_arm_pin(shape: &GuardedMatchShape) -> Option<String> {
+    let mut quiet_err = shape
+        .err_patterns
+        .iter()
+        .zip(shape.err_bodies.iter())
+        .filter(|(_, body)| !arm_terminates(body));
+    let (pattern, body) = quiet_err.next()?;
+    if quiet_err.next().is_some() || !arm_body_is_trivial(body) {
+        return None;
+    }
+    let (pattern_proper, guard) = split_pattern_guard(pattern);
+    if guard.is_some() {
+        return None;
+    }
+    let pin = pattern_proper
+        .trim()
+        .strip_prefix("Err(")?
+        .strip_suffix(')')?
+        .trim();
+    if !is_variant_path(pin) {
+        return None;
+    }
+    let others_terminate = shape
+        .ok_bodies
+        .iter()
+        .chain(shape.catch_all_bodies.iter())
+        .all(|body| arm_terminates(body));
+    others_terminate.then(|| pin.to_string())
 }
 
 /// The single statement of an arm body: an expression body, or a
@@ -4932,6 +4995,80 @@ mod asserted_err_arm_tests {
             "        Ok(left) => panic!(\"{left}\"),\n        Err(_) => assert_eq!(e, PayError::Insufficient),",
             // A payload variant compared by value is not a unit-variant pin.
             "        Ok(left) => panic!(\"{left}\"),\n        Err(e) => assert_eq!(e, PayError::Wrap(1)),",
+        ] {
+            assert!(scan_one(arms).is_empty(), "must not pin: {arms}");
+        }
+    }
+}
+
+/// RIPR-SPEC-0175 accepted-Err form: one quiet `Err(Type::Variant) => {}`
+/// arm with every other arm failing loudly.
+#[cfg(test)]
+mod accepted_err_arm_tests {
+    use super::guarded_result_match_scan;
+    use crate::analysis::facts::OracleFact;
+    use crate::domain::{OracleKind, OracleStrength};
+
+    fn scan_one(arms: &str) -> Vec<OracleFact> {
+        let body = format!(
+            "#[test]\nfn overdraws() {{\n    match withdraw(&mut wallet, 20) {{\n{arms}\n    }}\n}}\n"
+        );
+        guarded_result_match_scan(&body, 1).oracles
+    }
+
+    #[test]
+    fn quiet_variant_arm_beside_loud_arms_pins_the_variant() {
+        let oracles = scan_one(
+            "        Ok(_) => panic!(\"overdraw succeeded\"),\n        Err(PayError::Insufficient) => {}\n        Err(other) => panic!(\"wrong error {other:?}\"),",
+        );
+        assert_eq!(oracles.len(), 1, "{oracles:?}");
+        assert_eq!(oracles[0].kind, OracleKind::GuardedResultMatch);
+        assert_eq!(oracles[0].strength, OracleStrength::Strong);
+        assert_eq!(
+            oracles[0].text,
+            "match withdraw(..) { Ok(..) => .., Err(..) => PayError::Insufficient }"
+        );
+        assert_eq!(oracles[0].ok_value_observed, Some(false));
+    }
+
+    #[test]
+    fn arm_order_catch_all_and_braced_bodies_also_pin() {
+        for arms in [
+            // The accept arm first, a loud catch-all in place of `Err(other)`.
+            "        Err(PayError::Insufficient) => {}\n        Ok(left) => { panic!(\"left {left}\"); }\n        _ => unreachable!(),",
+            // No Ok arm: a loud catch-all routes success and other errors.
+            "        Err(PayError::Insufficient) => {}\n        other => panic!(\"{other:?}\"),",
+        ] {
+            let oracles = scan_one(arms);
+            assert_eq!(oracles.len(), 1, "must pin: {arms}");
+            assert!(
+                oracles[0].text.contains("=> PayError::Insufficient"),
+                "{}",
+                oracles[0].text
+            );
+        }
+    }
+
+    #[test]
+    fn a_second_quiet_arm_or_a_loose_accept_arm_never_pins() {
+        for arms in [
+            // A quiet Ok arm lets success pass.
+            "        Ok(_) => {}\n        Err(PayError::Insufficient) => {}\n        Err(other) => panic!(\"{other:?}\"),",
+            // A quiet second error lets the sibling variant pass.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(PayError::Limit) => {}\n        Err(other) => panic!(\"{other:?}\"),",
+            // A quiet catch-all swallows whatever reaches it.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        _ => {}",
+            // A binding or wildcard accept arm names no variant.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(e) => {}",
+            "        Ok(_) => panic!(\"ok\"),\n        Err(_) => {}",
+            // A guarded accept arm belongs to the routing form, not this one.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) if strict => {}\n        Err(other) => panic!(\"{other:?}\"),",
+            // A payload pattern is not a unit-variant pin.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Wrap(_)) => {}\n        Err(other) => panic!(\"{other:?}\"),",
+            // An accept arm that acts is not trivial.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => log(\"fine\"),\n        Err(other) => panic!(\"{other:?}\"),",
+            // A catch-all whose failure is conditional can return quietly.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(other) => { if strict { panic!(\"{other:?}\"); } }",
         ] {
             assert!(scan_one(arms).is_empty(), "must not pin: {arms}");
         }

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Result match that accepts one exact unit error variant quietly (`Err(PayError::Insufficient) => {}`) while every other arm fails loudly now reads as a strong pin of that variant (RIPR-SPEC-0175 accepted-Err form). A second quiet arm, a guard, a binding, wildcard or payload accept arm, or a conditional failure elsewhere keeps the match unrecognized (corpus case `checkout-withdraw-guarded-match-pin`) (#7063).

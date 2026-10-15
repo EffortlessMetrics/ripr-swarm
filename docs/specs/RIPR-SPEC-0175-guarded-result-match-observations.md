@@ -17,6 +17,8 @@ Linked issues:
 - #3709 (derive owner-bound guarded Result observations)
 - #3727 (parser-backed shadow/item facts for seam-callee defeat — Slice A)
 - #6673 (asserted-Err form: diverging Ok arm, exact assertion Err arm)
+- #7063 (accepted-Err form: one quiet `Err(Type::Variant) => {}` arm beside
+  loud arms; corpus case `checkout-withdraw-guarded-match-pin`)
 - #1528 (downstream qualification parent; the #13162 comparison)
 - #3284 / RIPR-SPEC-0154 (the Err-return guard family this extends; that spec
   excluded match-arm Err forms as a non-goal)
@@ -223,6 +225,32 @@ the #13162 `expect_response` comparison shape.
   with the rest of this grammar): a test-local `macro_rules!` that
   redefines `assert_eq!`, `assert!`, `matches!`, or `panic!` is not
   detected here.
+- The accepted-Err form (#7063, corpus case
+  `checkout-withdraw-guarded-match-pin`). The Err-arm grammar above refuses
+  a quiet Err arm, yet one shape with a quiet arm is still an exact pin, and
+  it emits a strong fact with that variant as its pin:
+
+  ```rust
+  match withdraw(&mut wallet, 20) {
+      Ok(_) => panic!("overdraw succeeded"),
+      Err(PayError::Insufficient) => {}
+      Err(other) => panic!("wrong error {other:?}"),
+  }
+  ```
+
+  Every condition is required. Exactly one arm stays quiet: an unguarded
+  `Err(<unit variant path>)` arm whose body is trivial (`{}`). Every other
+  arm, whether Ok, Err or catch-all, terminates under the divergence
+  grammar above. Because the compiler's exhaustiveness check routes every
+  other result to one of those loud arms, the test passes exactly when the
+  owner returns that error. A second quiet arm, a quiet Ok or catch-all
+  arm, a guard on the accept arm (that belongs to the routing form), a
+  binding or wildcard accept arm (`Err(e) => {}`, `Err(_) => {}`), a
+  payload pattern (`Err(PayError::Wrap(_)) => {}`), an accept body that
+  does anything, and a conditional failure in another arm all stay
+  unrecognized as a pin and keep their existing meaning. The scrutinee
+  rules, the shadow defeat, and the reveal-side gates below apply
+  unchanged.
 - A same-named local `fn` or `let` binding in the test body defeats the
   oracle for a BARE one-segment scrutinee (the shared #3714 shadow
   authority): a shadowed name is not the resolved callee. A qualified
@@ -514,10 +542,23 @@ the #13162 `expect_response` comparison shape.
   `return Err(PayError::Insufficient)` line.
 - Reject (#6673): the same match with `Ok(_) => {}`, with a third
   `_ => {}` arm, or with `Err(_) => {}` beside an asserting Ok arm.
+- Accept (accepted-Err form): `match withdraw(&mut wallet, 20) {
+  Ok(_) => panic!(..), Err(PayError::Insufficient) => {}, Err(other) =>
+  panic!(..) }` credits the changed `return Err(PayError::Insufficient)`
+  line.
+- Reject (accepted-Err form): the same match with a quiet Ok arm, a second
+  quiet `Err(PayError::Limit) => {}` arm, a quiet catch-all, a guarded or
+  payload accept arm, or a conditional `panic!` in the `Err(other)` arm. The
+  same match whose quiet arm pins the sibling `Err(PayError::Frozen)` does not
+  credit the changed `Insufficient` line.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/extract/oracles/scan.rs::guarded_result_match_tests`
+- `crates/ripr/src/analysis/extract/oracles/scan.rs::accepted_err_arm_tests`
+  (accepted-Err form positives, and the quiet-Ok, second-quiet-arm,
+  quiet catch-all, binding, wildcard, guard, payload, acting-body and
+  conditional-failure negatives)
 - `crates/ripr/src/analysis/extract/oracles/scan.rs::asserted_err_arm_tests`
   (#6673 asserted-Err form, positives and the quiet-Ok, catch-all, guard,
   other-value, `assert_ne!`, multi-statement, alternation and payload
