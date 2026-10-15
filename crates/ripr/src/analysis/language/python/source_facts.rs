@@ -14,6 +14,7 @@ use rustpython_parser::{
     text_size::{TextRange, TextSize},
 };
 use std::{
+    io::Read,
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
@@ -144,12 +145,12 @@ pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
                 continue;
             }
             // Bounded evidence read: the import line is at the top of the
-            // file, so a small prefix suffices.
-            let Ok(bytes) = std::fs::read(entry.path()) else {
+            // file, so a small prefix suffices. Read at most that prefix so a
+            // large test_*.py cannot exhaust memory when config markers keep
+            // the unittest scan running (#7664 review).
+            let Some(text) = read_framework_evidence_prefix(&entry.path()) else {
                 continue;
             };
-            let prefix = &bytes[..bytes.len().min(4096)];
-            let text = String::from_utf8_lossy(prefix);
             if !saw_pytest && text.lines().any(is_pytest_import_line) {
                 saw_pytest = true;
             }
@@ -176,6 +177,18 @@ pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
 /// repo-input still stores a single `Option`; doctor prints the full set.
 pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> {
     detect_python_test_frameworks(root).into_iter().next()
+}
+
+/// Bytes inspected for framework import evidence. The read itself stops here.
+const PYTHON_FRAMEWORK_EVIDENCE_PREFIX_BYTES: u64 = 4096;
+
+fn read_framework_evidence_prefix(path: &Path) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut buf = Vec::new();
+    file.take(PYTHON_FRAMEWORK_EVIDENCE_PREFIX_BYTES)
+        .read_to_end(&mut buf)
+        .ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
 /// Whether a line is a real pytest import statement — `import pytest`,

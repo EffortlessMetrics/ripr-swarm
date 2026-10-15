@@ -216,6 +216,36 @@ fn detect_python_test_frameworks_reports_both_when_config_and_unittest_coexist()
 }
 
 #[test]
+fn detect_python_test_frameworks_reads_only_the_file_prefix() -> Result<(), String> {
+    // Prefix contract (#7664 review): an import after 4096 bytes is ignored,
+    // and an import at the start of a larger file still counts.
+    let root = unique_test_root("prefix-late");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let mut late = " ".repeat(4096);
+    late.push_str("import unittest\n");
+    std::fs::write(root.join("test_late.py"), late)
+        .map_err(|err| format!("write late file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        Vec::<&str>::new()
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("prefix-early");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let mut early = String::from("import unittest\n");
+    early.push_str(&" ".repeat(8192));
+    std::fs::write(root.join("test_early.py"), early)
+        .map_err(|err| format!("write early file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
 fn detect_python_test_frameworks_reports_both_when_one_file_imports_both() -> Result<(), String> {
     let root = unique_test_root("same-file-both");
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
