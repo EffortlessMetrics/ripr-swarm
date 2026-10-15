@@ -1,0 +1,9 @@
+{
+  "commit": "525d1e7d489710bb4cabb5b7a1cf2047eaf993ad",
+  "fresh_independent_git_store": "/workspace/repair8004/readback.git",
+  "packet_files_read_back_equal": 6,
+  "archive_members_read_and_verified": 5464,
+  "archive_sha256": "ba735ee291c29ac30508e43376686235fda66add86c46a250e1c2d57468ca0f1",
+  "archive_bytes": 4135816,
+  "source_head": "77474e347bbdd8ef2101b7f9865e65f094df44c1"
+}
