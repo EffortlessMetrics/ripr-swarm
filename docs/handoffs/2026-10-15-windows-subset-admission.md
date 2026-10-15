@@ -476,14 +476,14 @@ The repaired suite executes6/6; logs `docs-routing-before.log` and
 is a test-adapter repair, not a production routing behavior change.
 
 
-### Wheel successor — four-child source graph, feature-shell finding unresolved
+### Wheel successor — four-child source graph, feature-shell repair integrated
 
 Reviewed wheel leaf `c9b70660a522cc53f722ced42c2e12dfefbe9e15` was supplied
 explicitly by its owner on `codex/4987-wheel-callable-leaf`, verified at the
 published ref, and merged cleanly at
 `bc2304cf390ab364b9fd39a35ccacbd4be2fbe79`. Its workflow remains byte-identical
-to that leaf. This supersedes the earlier wheel-integration wait; the CI source
-and tests remain untouched while their assigned author repairs review5528944270.
+to that leaf. This supersedes the earlier wheel-integration wait. The subsequent
+CI author repair described below is integrated without concurrent leaf edits.
 
 The shared `python-wheel` job passes the same seven admitted strings as Windows,
 printed and feature CI: qualification profile, native run-attempt request, H, B,
@@ -500,14 +500,18 @@ Two new pre-wiring controls fail on composed baselinebc2304cf at missing-call
 and false-green wheel-result assertions (native101). The existing docs decision
 fixture gains only a successful wheel prerequisite; its negative assertions and
 named-step binding remain. Existing old source/test green records are historical
-and do not override unresolved CI effective-shell failure semantics.
+and do not replace the independent effective-shell repair proof below.
 
-**REPAIR_REQUIRED:** independent review5528944270 established that implicit
-release-step Bash lacks pipefail while the CI harness enables it; pkgid failure
-can therefore be masked by sed. CI author task01a13e13-ebfc-748e-9631-9af8ba91a0cd
-owns the focused source/test successor. Do not edit that leaf concurrently or
-clear the finding before integrating its exact reviewed repair and affected
-proof. Wheel/caller proof is a separate dimension, not overall source acceptance.
+**Historical finding5528944270 — source repair integrated:** implicit release-step
+Bash lacked pipefail while the original CI harness enabled it, allowing pkgid
+failure to be masked by sed. The assigned CI author supplied reviewed successor
+`327d7289d6408789f75bb3550143c93ba1f73977`, integrated at
+`3247bf14963c597798639a56c05b9ba03cff206d`. Both release steps now declare Bash;
+the harness derives the effective production shell. Independent real-script
+controls preserve native47 with valid stdout and prevent downstream commands;
+removing either shell reproduces the false green. The source finding is addressed.
+Combined wheel/caller local proof and hosted native qualification remain separate;
+this correction grants no activation or overall qualification.
 
 The delegated wheel handoff requests combined check-fast/precommit because its
 broad local epoch stalled on I/O. Combined executor is Linux x86_64/Bash/Rust1.95,
