@@ -97,6 +97,7 @@ fn execute_review_stream(
         "EXECUTE",
         "PRIOR_RESULT",
         "WINDOWS_RESULT",
+        "PASTE_RESULT",
         "TARGET",
         "REASON",
         "ROUTE_RESULT",
@@ -189,6 +190,7 @@ fn final_result_replays_all_independent_terminal_vectors() -> Result<(), String>
             .find(|v| v["id"] == case["event_case"])
             .ok_or("event missing")?;
         let mut environment = case["environment"].clone();
+        environment["PASTE_RESULT"] = json!("success");
         environment["LABEL"] = event["contexts"]["github"]["event"]["label"]["name"].clone();
         let requested = event["expected"]["qualification_request"]
             .as_bool()
@@ -352,7 +354,7 @@ fn terminal_cancellation_check_rejects_green_dependencies_and_prior_success() ->
     let aggregate = body("Summarize routed result")?;
     let guard = body("Reject workflow cancellation before final result")?;
     // Separate steps: exit 0 in the reuse branch must not bypass the terminal guard.
-    let mut env = json!({"ADMISSION_RESULT":"success", "EXECUTE":"true", "PRIOR_RESULT":"none", "WINDOWS_RESULT":"success",
+    let mut env = json!({"ADMISSION_RESULT":"success", "EXECUTE":"true", "PRIOR_RESULT":"none", "WINDOWS_RESULT":"success", "PASTE_RESULT":"success",
         "DOCS_DETECT_RESULT":"success", "DOCS_ONLY":"false", "DOCS_GATE_RESULT":"skipped", "ROUTE_RESULT":"success", "TARGET":"github", "GITHUB_RESULT":"success", "EVENT_NAME":"pull_request"});
     let terminal = WORKFLOW
         .split_once("      - name: Reject workflow cancellation before final result\n")
@@ -592,5 +594,85 @@ fn tied_review_order_challenge_pins_input_order_not_review_id() -> Result<(), St
             );
         }
     }
+    Ok(())
+}
+
+#[test]
+fn printed_child_is_mandatory_and_native_failures_reach_the_aggregate() -> Result<(), String> {
+    let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
+    let live = &vectors["live_drift_cases"][0];
+    let script = body("Summarize routed result")?;
+    let mut env = json!({"ADMISSION_RESULT":"success", "EXECUTE":"true", "PRIOR_RESULT":"none",
+        "WINDOWS_RESULT":"success", "PASTE_RESULT":"success", "DOCS_DETECT_RESULT":"success",
+        "DOCS_ONLY":"false", "ROUTE_RESULT":"success", "TARGET":"github", "GITHUB_RESULT":"success",
+        "EVENT_NAME":"pull_request", "DOCS_GATE_RESULT":"success"});
+    for docs in ["false", "true"] {
+        env["DOCS_ONLY"] = json!(docs);
+        for result in [
+            "success",
+            "failure",
+            "skipped",
+            "cancelled",
+            "timed_out",
+            "",
+            "neutral",
+        ] {
+            env["PASTE_RESULT"] = json!(result);
+            assert_eq!(
+                execute(&script, &live["live_pull_request"], &live["reviews"], &env)?,
+                result == "success",
+                "docs={docs}, printed result={result}"
+            );
+        }
+    }
+    // Native prior-result reuse skips children only after admission/final refresh.
+    env["EXECUTE"] = json!("false");
+    env["PRIOR_RESULT"] = json!("success");
+    env["PASTE_RESULT"] = json!("skipped");
+    assert!(execute(
+        &script,
+        &live["live_pull_request"],
+        &live["reviews"],
+        &env
+    )?);
+    env["PRIOR_RESULT"] = json!("failure");
+    assert!(!execute(
+        &script,
+        &live["live_pull_request"],
+        &live["reviews"],
+        &env
+    )?);
+    Ok(())
+}
+
+#[test]
+fn printed_call_binds_every_admitted_input_and_required_dependency() -> Result<(), String> {
+    let (_, call) = WORKFLOW
+        .split_once("  printed-command:\n")
+        .ok_or("printed call missing")?;
+    let (call, _) = call.split_once("  result:\n").ok_or("result missing")?;
+    assert!(call.contains("needs: [admission]"));
+    assert!(call.contains("if: needs.admission.outputs.execute == 'true'"));
+    assert!(call.contains("uses: ./.github/workflows/printed-command-paste.yml"));
+    for binding in [
+        "proof_profile: qualification",
+        "request_id: ${{ format('{0}-{1}', github.run_id, github.run_attempt) }}",
+        "head_sha: ${{ github.event.pull_request.head.sha }}",
+        "base_sha: ${{ github.event.pull_request.base.sha }}",
+        "subject_sha: ${{ github.sha }}",
+        "subject_tree: ${{ needs.admission.outputs.tree }}",
+        "workflow_generation: ${{ github.workflow_sha }}",
+    ] {
+        assert!(call.contains(binding), "missing {binding}");
+    }
+    assert!(!call.contains("continue-on-error"));
+    let (_, result) = WORKFLOW.split_once("  result:\n").ok_or("result missing")?;
+    let dependency = result
+        .lines()
+        .find(|line| line.starts_with("    needs:"))
+        .ok_or("needs missing")?;
+    assert!(dependency.contains(", printed-command]"));
+    assert!(result.contains("PASTE_RESULT: ${{ needs.printed-command.result }}"));
+    assert!(result.contains("    if: always()"));
     Ok(())
 }

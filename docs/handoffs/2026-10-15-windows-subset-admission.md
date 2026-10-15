@@ -346,3 +346,61 @@ repo-policy target under `/workspace/windows-subset-proof`; >=8 GiB reserve and
 <=128 MiB additional focused output are retained for this slice (29 GiB free
 observed). Independent pagination artifacts live under `pagination-independent`;
 original and mutation witnesses remain retained for the parent/rehearsal owner.
+
+
+## Shared caller continuation — source integration, activation held
+
+The successor is `codex/4987-caller-paste-integration`. Its ancestry preserves
+`0cf965fcdfca893e7ce9b89767ee7f88937f1822` and reviewed printed-command leaf
+`624177123a396ddb3272196ffe4d3349d1305470`. Old owner/leaf refs were checked
+unchanged before shared edits. The inherited no-PR hold is superseded for this
+successor by the user's explicit draft-PR assignment. Source publication does
+not authorize Ready, a merge-ready label, dispatch, merge or cutover.
+
+Combined contract:
+
+- Only a fresh native `labeled: merge-ready` event admits work. Exact open,
+  non-Draft same-repository H/base B/integration commit G with ordered parents
+  `[B,H]`, tree T, trusted actor and current review/thread state remain mandatory.
+- Both Windows subset and printed-command are conservatively mandatory for every
+  admitted execution, including docs-only subjects. There is no new selector.
+  Each local reusable call receives `proof_profile=qualification`, request ID
+  `run_id-run_attempt`, exact H/B/G/T and `github.workflow_sha` as workflow
+  generation. The leaf independently checks checkout/tree/parents/generation
+  before product execution; this is not a second admission authority.
+- The existing always-running protected result depends on both child jobs and
+  accepts only native `success` for each newly executed child. Missing, skipped,
+  neutral, failed, timed-out or cancelled printed results refuse, even when all
+  Rust/docs/Windows results are green. The final readiness refresh and terminal
+  cancellation refusal remain. Prior exact-subject required-success reuse remains
+  the existing admission owner's route and does not rerun children.
+- The printed leaf's legacy PR, schedule and manual routes remain byte-identical
+  to the reviewed leaf. Removing the legacy PR trigger is deferred until the
+  complete graph is reviewed for cutover; duplicate execution has not been
+  eliminated. No deployment, release, credential, protection or settings change.
+- `ci.yml` and `python-wheel-qualification.yml` remain their owners' files and
+  are unchanged. Their callable revisions, selected obligations and aggregate
+  wiring are outstanding. This two-child source integration is not graph-wide
+  zero-early-launch acceptance and must not be activated as a completed graph.
+
+The merge of leaf ancestry also brings already-landed main history; its conflicts
+retain current Droid retirement plus the candidate's labeled admission law, and
+both process-test allowances. No product changes are authored in this successor.
+Rollback reverts this coherent candidate through normal repository procedures.
+
+Observed combined-baseline `cargo check --locked -p repo-policy --all-targets`
+passed on Linux x86_64 with Rust1.95.0. Initial offline resolution lacked locked
+tokio-util0.7.20; normal locked resolution succeeded. New controls against
+02f9a30ba failed at the intended missing-call and false-success assertions (2/2,
+exit101). After wiring, native-admission10/10 and printed-leaf6/6 passed, including
+real extracted Bash/jq replay and existing guard-removal controls. These are
+local mocked-API/source controls, not native Actions, macOS/Windows product proof,
+API/token/check association, scheduler behavior, savings or merge readiness.
+
+Resources: own worktree `/workspace/caller-integration`, shared Git common store
+`/workspace/ripr-swarm/.git`, own target/log root
+`/workspace/caller-integration-proof`. Observed30GiB free and16GiB available RAM;
+peak additional budget4GiB, reserve8GiB, two Cargo jobs. No original witness was
+available locally; immutable source refs are preserved and prior external proof
+stays attributed to its original executor. These resources are retained for
+independent review and parent continuation; no unrelated resources are removed.

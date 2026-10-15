@@ -340,9 +340,22 @@ jobs:
       subject_tree: ${{ needs.admission.outputs.tree }}
       workflow_generation: ${{ github.workflow_sha }}
 
+  printed-command:
+    needs: [admission]
+    if: needs.admission.outputs.execute == 'true'
+    uses: ./.github/workflows/printed-command-paste.yml
+    with:
+      proof_profile: qualification
+      request_id: ${{ format('{0}-{1}', github.run_id, github.run_attempt) }}
+      head_sha: ${{ github.event.pull_request.head.sha }}
+      base_sha: ${{ github.event.pull_request.base.sha }}
+      subject_sha: ${{ github.sha }}
+      subject_tree: ${{ needs.admission.outputs.tree }}
+      workflow_generation: ${{ github.workflow_sha }}
+
   result:
     name: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}
-    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, docs-gate, windows-subset]
+    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, docs-gate, windows-subset, printed-command]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -390,6 +403,7 @@ jobs:
           EXECUTE: ${{ needs.admission.outputs.execute }}
           PRIOR_RESULT: ${{ needs.admission.outputs.prior_result }}
           WINDOWS_RESULT: ${{ needs.windows-subset.result }}
+          PASTE_RESULT: ${{ needs.printed-command.result }}
           TARGET: ${{ needs.route.outputs.router_target }}
           REASON: ${{ needs.route.outputs.router_reason }}
           ROUTE_RESULT: ${{ needs.route.result }}
@@ -424,6 +438,7 @@ jobs:
           fi
           [ "$EXECUTE" = true ] || { echo 'Incomplete native request' >&2; exit 1; }
           [ "$WINDOWS_RESULT" = success ] || { echo 'Selected Windows evidence missing/failed' >&2; exit 1; }
+          [ "$PASTE_RESULT" = success ] || { echo 'Selected printed-command evidence missing/failed' >&2; exit 1; }
           status=pass
           message="selected implementation job succeeded"
           if [ "$DOCS_DETECT_RESULT" != "success" ]; then
