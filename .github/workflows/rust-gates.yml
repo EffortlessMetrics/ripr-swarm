@@ -160,7 +160,19 @@ jobs:
         if: ${{ !inputs.use-scratch }}
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ripr-swarm-rust-small-${{ runner.os }}
+          # New namespace also isolates fallback restores from old whole-target
+          # archives containing foreign fixture/report state (#7685, #4987).
+          shared-key: ripr-swarm-rust-deps-v1-${{ runner.os }}
+          # Keep the enclosing target for rust-cache's dependency pruning, but
+          # archive only the native Cargo profiles this lane builds. Never add
+          # target/ itself: fixture scratch and qualification reports live there.
+          workspaces: ". -> target"
+          cache-targets: false
+          cache-directories: |
+            target/debug
+            target/release
+          cache-workspace-crates: false
+          cache-bin: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Start sccache server
