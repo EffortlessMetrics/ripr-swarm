@@ -656,8 +656,10 @@ fn is_bool_test(side: &str) -> bool {
 
 /// Masked `text` with the inside of every call's argument list blanked: a
 /// parenthesis after a callee (see `strip_grouping_opens`) opens arguments,
-/// and the callee and its parentheses stay (`r.eq(  )`, `matches!(  )`).
-/// Grouping parentheses keep their contents.
+/// and the callee and its parentheses stay (`r.eq(  )`). Grouping
+/// parentheses, macro arguments (`matches!(..)`) and the argument of a
+/// call that carries a test through (`bool::from(..)`, `From::from(..)`,
+/// `Not::not(..)`) keep their contents.
 fn blank_call_arguments(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut call_depth = 0usize;
@@ -683,7 +685,9 @@ fn blank_call_arguments(text: &str) -> String {
             '(' => {
                 depth += 1;
                 let head = text.get(..index).unwrap_or_default();
-                if strip_grouping_opens(&format!("{head}(")).ends_with('(') {
+                if strip_grouping_opens(&format!("{head}(")).ends_with('(')
+                    && !carries_test_through(head)
+                {
                     call_depth = depth;
                 }
             }
@@ -694,6 +698,19 @@ fn blank_call_arguments(text: &str) -> String {
         out.push(ch);
     }
     out
+}
+
+/// Whether `head` ends with a path callee that passes its argument's test
+/// through: a conversion (`bool::from`, `From::from`, `Into::<u8>::into`)
+/// or a negation (`Not::not`). Reading such a call as opaque would hide the
+/// test from the bitwise operator around it (review of #8101).
+fn carries_test_through(head: &str) -> bool {
+    let head = head.trim_end();
+    let name_start = head
+        .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .map_or(0, |index| index + 1);
+    let (path, name) = head.split_at(name_start);
+    matches!(name, "from" | "into" | "not") && path.trim_end().ends_with("::")
 }
 
 /// The non-literal operand of a comparison with a boolean literal, whether
@@ -1191,8 +1208,9 @@ fn strip_grouping_opens(before: &str) -> &str {
             text = rest.trim_end();
         } else if let Some(rest) = text.strip_suffix('(') {
             let head = rest.trim_end();
-            let callee = head
+            let callee = (head
                 .ends_with(|ch: char| ch.is_alphanumeric() || matches!(ch, '_' | ')' | ']' | '?'))
+                && !ends_with_keyword(head))
                 || closes_turbofish(head);
             if callee {
                 return text;
@@ -1202,6 +1220,22 @@ fn strip_grouping_opens(before: &str) -> &str {
             return text;
         }
     }
+}
+
+/// Whether `text` ends with a keyword after which a parenthesis groups an
+/// expression rather than opening call arguments (`if (..)`, `match (..)`).
+fn ends_with_keyword(text: &str) -> bool {
+    let word_start = text
+        .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .map_or(0, |index| index + 1);
+    let word = text.get(word_start..).unwrap_or_default();
+    let raw = text
+        .get(..word_start)
+        .is_some_and(|head| head.ends_with("r#"));
+    !raw && matches!(
+        word,
+        "if" | "while" | "match" | "return" | "in" | "else" | "break" | "yield" | "move"
+    )
 }
 
 /// Whether `text` ends with the `>` of a turbofish (`foo::<T>`,

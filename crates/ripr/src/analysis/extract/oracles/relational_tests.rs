@@ -1122,7 +1122,36 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         }
     }
     // #8101: a turbofish call and a comparison nested inside a call's
-    // arguments read as their plain spellings do.
+    // arguments read as a pinned value, while a call that carries the test
+    // through, a grouping parenthesis and a keyword's parenthesis still cap.
+    for (text, expected) in [
+        ("assert!(foo::<T>(matches!(x, A)).is_ok());", &exact),
+        ("assert_eq!(flags | compute(|v| v == 1), EXPECTED);", &exact),
+        ("assert_eq!(mask & lookup(a == b), X);", &exact),
+        ("assert_eq!(flags | compute(v), EXPECTED);", &exact),
+        ("assert_eq!(<u8 as From<bool>>::from(x), 1);", &exact),
+        ("assert_eq!(Into::<u8>::into(c), 97);", &exact),
+        (
+            "assert_eq!(flag ^ bool::from(r == Err(E::Bad)), expected);",
+            &weak,
+        ),
+        ("assert_eq!(flags | u8::from(a == b), x);", &weak),
+        (
+            "assert_eq!(flag ^ std::ops::Not::not(r == Err(E::Bad)), expected);",
+            &weak,
+        ),
+        (
+            "assert_eq!(flag & From::from(r == Err(E::Bad)), expected);",
+            &weak,
+        ),
+        ("assert_eq!(flags | (a == b), X);", &weak),
+        (
+            "assert!(flag == if (ready && matches!(r, Ok(3))) { false } else { true });",
+            &weak,
+        ),
+    ] {
+        require_classification(text, expected)?;
+    }
     for (text, plain) in [
         (
             "assert!(foo::<T>(matches!(x, A)).is_ok());",
