@@ -139,14 +139,16 @@ pub(super) fn production_literal_heads(
 /// The field a `name: value` initializer sets; a shorthand `name` reads a
 /// local, not a literal, and is left out.
 fn initialized_field(expression: &str) -> Option<&str> {
-    let (name, _) = expression.trim().split_once(':')?;
+    let (name, value) = expression.trim().split_once(':')?;
     let name = name.trim();
     let mut chars = name.chars();
     let valid = chars
         .next()
         .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
         && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
-    (valid && !expression.trim().contains("::")).then_some(name)
+    // `a::b` is a path, not `name: value`; a path inside the value
+    // (`pos: usize::from(i)`) still initializes `pos`.
+    (valid && !value.starts_with(':')).then_some(name)
 }
 
 /// The path segments before the `{` that opens the struct literal holding
@@ -607,5 +609,7 @@ mod tests {
         ));
         // A shorthand initializer reads a local, never a literal.
         assert!(initialized_field("pos").is_none());
+        assert!(initialized_field("crate::pos").is_none());
+        assert_eq!(initialized_field("pos: usize::from(i)"), Some("pos"));
     }
 }

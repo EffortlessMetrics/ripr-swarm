@@ -2157,11 +2157,19 @@ fn missing_field_value_discriminator(
                         &test.body,
                         &assertion.text,
                         &|qualifier| {
-                            super::call_identity::shared_owner_call_identity(index, owner)
-                                .is_none_or(|identity| {
+                            match super::call_identity::shared_owner_call_identity(index, owner) {
+                                Some(identity) => {
                                     identity.resolve_call(test, index, qualifier)
                                         == super::call_identity::CallTarget::Owner
-                                })
+                                }
+                                // No same-package rival to resolve against:
+                                // only a bare or crate-relative call stays
+                                // in the owner's crate; `other::owner(..)`
+                                // may name a foreign namesake.
+                                None => qualifier.iter().all(|segment| {
+                                    matches!(segment.as_str(), "crate" | "self" | "super")
+                                }),
+                            }
                         },
                         &|last| super::variant_field_pattern::production_literal_heads(index, last),
                     )

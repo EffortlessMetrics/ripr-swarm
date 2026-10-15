@@ -76,6 +76,18 @@ fn pos_finding(assertions: &str, items: &str, test_items: &str) -> Result<Value,
 
 #[test]
 fn a_literal_variant_field_pattern_on_the_owner_result_is_exposed() -> Result<(), String> {
+    // Each pattern alone pins the field.
+    for assertions in [
+        "assert_matches!(parse_num(\"x1\"), Err(ParseError::BadDigit { pos: 0 }));",
+        "assert_matches!(crate::parse_num(\"1x\"), Err(ParseError::BadDigit { pos: 1 }));",
+    ] {
+        let finding = pos_finding(assertions, "", "")?;
+        assert_eq!(finding["oracle_kind"], "exact_error_variant", "{finding}");
+        assert_eq!(
+            finding["classification"], "exposed",
+            "{assertions}: {finding}"
+        );
+    }
     let finding = pos_finding(
         "assert_matches!(parse_num(\"x1\"), Err(ParseError::BadDigit { pos: 0 }));\n        assert_matches!(parse_num(\"1x\"), Err(ParseError::BadDigit { pos: 1 }));",
         "",
@@ -93,6 +105,8 @@ fn a_pattern_that_leaves_the_field_open_stays_unconfirmed() -> Result<(), String
         "assert_matches!(parse_num(\"x1\"), Err(ParseError::BadDigit { pos: p }) if p < 5);",
         "assert_matches!(parse_num(\"x1\"), Err(ParseError::BadDigit { pos: 0 | 1 }));",
         "assert_matches!(parse_num(\"x1\"), Err(ParseError::BadDigit { pos: 0..5 }));",
+        // A foreign namesake, with no local rival to resolve against.
+        "let _ = parse_num(\"x1\");\n        assert_matches!(other::parse_num(\"x1\"), Err(ParseError::BadDigit { pos: 0 }));",
         "assert_matches!(parse_num(\"x1\"), Err(ParseError::BadDigit { pos: 0.. }));",
     ] {
         let finding = pos_finding(assertions, "", "")?;
