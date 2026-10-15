@@ -1249,6 +1249,11 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             provenance["rows_tree"],
             "e7f8f98f10d0d368e3d07fa2fdd86a8bad87ac22"
         );
+        assert_eq!(
+            provenance["corpus_blob"],
+            "8ef7a4bec9b0e6594e676ec9089db205ade40af3"
+        );
+        assert_eq!(provenance["approved"], "EffortlessMetrics/ripr-swarm#7325");
         // Only value, status, source and samples moved.
         for key in [
             "board",
