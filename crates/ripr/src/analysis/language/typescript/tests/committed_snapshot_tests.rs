@@ -459,5 +459,24 @@ fn hinted_snapshot_sharing_its_counter_stays_medium() -> Result<(), String> {
     // A second snapshot call in the body.
     let two = "test(\"price\", () => {\n  expect(price(150)).toMatchSnapshot(\"cap\");\n  expect(price(90)).toMatchSnapshot(\"cap\");\n});\n";
     assert_eq!(strengths("snap-hint-two", two, &files)?, medium(2));
+    // A string naming the matcher next to a call the body count misses:
+    // the hint must not be read from the string.
+    let mentioned = "test(\"price\", () => {\n  const doc = 'x.toMatchSnapshot(\"cap\")';\n  expect(price(150)).toMatchSnapshot<number>(\"real\");\n});\n";
+    assert_eq!(
+        strengths("snap-hint-mentioned", mentioned, &files)?,
+        medium(1)
+    );
+    // Vitest keys a hint `<title> > <hint>`, so a top-level `price` shares
+    // the counter of `price > cap` even though its hint is not read.
+    let vitest = format!("{VITEST_HEADER}{}", entry("price > cap 1", "140"));
+    let vitest_files = [
+        (SNAP_PATH, vitest.as_str()),
+        ("vitest.config.ts", "export default { test: {} };"),
+    ];
+    let vitest_shared = "describe(\"price\", () => {\n  test(\"cap\", () => {\n    expect(price(150)).toMatchSnapshot();\n  });\n});\ntest(\"price\", () => {\n  expect(price(90)).toMatchSnapshot(\"cap\");\n});\n";
+    assert_eq!(
+        strengths("snap-hint-vitest-shared", vitest_shared, &vitest_files)?,
+        medium(2)
+    );
     Ok(())
 }

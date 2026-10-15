@@ -104,8 +104,9 @@ runner's entry for it can be named and is committed:
 - the test body holds exactly one such call, and this assertion is its
   only `toMatchSnapshot`, with no argument or with the rule 2 hint;
 - no other test's describe titles and title join to the same key, or to a
-  `<titles>` that the key extends with `: `, since that test's call may
-  carry a hint that makes the same key and would share the counter;
+  `<titles>` that the key extends with `: ` under Jest or ` > ` under
+  Vitest, since that test's call may carry a hint that makes the same key
+  and would share the counter;
 - no title holds `` ` ``, `\`, `$`, a line break or nothing, which the file
   escapes or the runner formats;
 - the file holds the entry `<titles> 1` exactly once, at the start of a
@@ -124,7 +125,9 @@ non-empty and counts per that name in `SnapshotState.match`). A call reads under
 one argument is a single- or double-quoted string literal, followed by
 `)` after optional whitespace, that is not empty (Jest drops an empty
 hint) and holds no `` ` ``, `$`, `\` or line break, so its source text is
-its value and the file writes it unescaped. A template, an identifier, a
+its value and the file writes it unescaped. The body must name
+`toMatchSnapshot` once, so the hint read is the credited call's even when a
+string or comment also names the matcher. A template, an identifier, a
 concatenation, a comment before the literal, a second argument, and every
 Vitest hint keep the RIPR-SPEC-0243 reading.
 
@@ -194,7 +197,9 @@ RIPR-SPEC-0243 ladder, including the observation guard.
    `priceSnapHint cap 1`, or with a second entry `priceSnapHint: cap 2`;
    a template, identifier, concatenated, empty or `$`- or `\`-holding
    hint; a second test titled `priceSnapHint` or `priceSnapHint: cap`;
-   or a Vitest file: medium.
+   a string naming `toMatchSnapshot` beside the call; or a Vitest file:
+   medium. Under Vitest, `describe("price")` / `test("cap")` beside a
+   top-level `test("price")` reads medium, as both may key `price > cap`.
 5. A `snapshotResolver` or `updateSnapshot` in `jest.config.js`, a
    `resolveSnapshotPath`, `update: true` or `update : true` in
    `vitest.config.ts`, a `snapshotEnvironment` or `"update": true` there,

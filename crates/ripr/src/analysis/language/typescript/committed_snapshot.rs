@@ -31,19 +31,20 @@ fn snapshot_calls(text: &str) -> usize {
 /// snapshot file writes unescaped: no `` ` ``, `$`, `\`, line break or
 /// matching quote inside, and not empty (Jest drops an empty hint). Any
 /// other argument (a template, an identifier, a property matcher, a comment,
-/// a second argument) is `None`.
+/// a second argument) is `None`, and so is a body that names
+/// `toMatchSnapshot` more than once, even in a string or comment, since the
+/// hint read must come from the call the assertion credits.
 fn literal_hint(body: &str) -> Option<&str> {
-    let mut calls = body
-        .match_indices("toMatchSnapshot")
-        .filter_map(|(index, matched)| {
-            body.get(index + matched.len()..)?
-                .trim_start()
-                .strip_prefix('(')
-        });
-    let rest = calls.next()?.trim_start();
-    if calls.next().is_some() {
+    let mut mentions = body.match_indices("toMatchSnapshot");
+    let (index, matched) = mentions.next()?;
+    if mentions.next().is_some() {
         return None;
     }
+    let rest = body
+        .get(index + matched.len()..)?
+        .trim_start()
+        .strip_prefix('(')?
+        .trim_start();
     let quote = rest
         .chars()
         .next()
@@ -94,14 +95,19 @@ pub(crate) fn promote_committed_snapshots(
         };
         // Tests whose titles join to the same key share its counter, and so
         // does a test titled `<title>` whose call carries a hint: Jest keys
-        // it `<title>: <hint>`, and that hint may make this key.
+        // it `<title>: <hint>` and Vitest `<title> > <hint>`, and that hint
+        // may make this key.
+        let hint_join = match snapshots.runner {
+            SnapshotRunner::Jest => ": ",
+            SnapshotRunner::Vitest => " > ",
+        };
         let sharing = titles
             .iter()
             .filter(|title| {
                 *title == key
                     || key
                         .strip_prefix(title.as_str())
-                        .is_some_and(|rest| rest.starts_with(": "))
+                        .is_some_and(|rest| rest.starts_with(hint_join))
             })
             .count();
         if sharing != 1 {
