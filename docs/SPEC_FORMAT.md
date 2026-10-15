@@ -63,9 +63,10 @@ Planned tests:
 - `boundary_disclosure_is_not_promoted`
 ```
 
-`check-traceability` recognizes a nonempty named bullet under `Planned tests:`
+`check-traceability` recognizes an unindented nonempty named bullet under an
+unindented `Planned tests:` label
 in that section as a planned mapping and reports it as advisory. Empty labels,
-placeholder items, comments, and fenced examples do not satisfy this obligation.
+placeholder items, comments, and fenced or indented examples do not satisfy this obligation.
 Keep future references out of the manifest's current `tests` and `fixtures`
 arrays until their files exist; all registered current paths still must exist,
 and `::symbol` resolution remains advisory. This does not claim implementation,

@@ -5892,7 +5892,7 @@ fn traceability_recommended_fixes() -> &'static [&'static str] {
         "Known spec IDs are listed in docs/specs/README.md.",
         "Keep every docs/specs/RIPR-SPEC-*.md file represented in the manifest.",
         "Use valid RIPR-SPEC-NNNN IDs (exactly 4 digits) in specs, fixtures, and manifest entries.",
-        "List only paths that exist, or leave planned fields empty until the artifact exists.",
+        "List only existing paths in current reference arrays; leave those arrays empty until artifacts exist.",
         "For an accepted contract without current tests or fixtures, declare named obligations under `Planned tests:` in its Test Mapping section.",
     ]
 }
@@ -5975,22 +5975,23 @@ fn validate_trace_behavior(
 fn has_explicit_planned_test_mapping(text: &str) -> bool {
     let mut in_mapping = false;
     let mut planned_list = false;
-    let mut fence = None;
+    let mut fence: Option<(char, usize)> = None;
     let mut comment = false;
     for line in text.lines() {
         let trimmed = line.trim();
-        if let Some(delimiter) = fence {
-            if trimmed.starts_with(delimiter) {
+        if let Some((delimiter, length)) = fence {
+            let count = trimmed.chars().take_while(|ch| *ch == delimiter).count();
+            if count >= length && trimmed[count..].trim().is_empty() {
                 fence = None;
             }
             continue;
         }
         if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            fence = Some(if trimmed.starts_with('`') {
-                "```"
-            } else {
-                "~~~"
-            });
+            let delimiter = if trimmed.starts_with('`') { '`' } else { '~' };
+            fence = Some((
+                delimiter,
+                trimmed.chars().take_while(|ch| *ch == delimiter).count(),
+            ));
             continue;
         }
         if comment {
@@ -6011,6 +6012,11 @@ fn has_explicit_planned_test_mapping(text: &str) -> bool {
         }
         if line.starts_with("## ") {
             break;
+        }
+        // The qualified native form is unindented, excluding Markdown code blocks.
+        if line.starts_with(char::is_whitespace) && !trimmed.is_empty() {
+            planned_list = false;
+            continue;
         }
         if trimmed.eq_ignore_ascii_case("Planned tests:") {
             planned_list = true;
