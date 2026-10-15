@@ -51,7 +51,7 @@ local `git merge-tree` runs of open PR heads against `main`:
 
 Ready alone does not request qualification. Follow the [shared handoff](PR_AUTOMATION.md#draft-to-ready-handoff), obtain current independent source review and local proof, then add `merge-ready` to the non-Draft exact head. Read native queued/running requests first; do not repeat a slow unchanged request. Unrelated labels cannot emit the protected result or displace qualification concurrency.
 
-After green, make the final current-state/vision decision, refresh exact-head review and current integration prerequisites, then use normal protected expected-head squash. No native merge queue or protection bypass. Head/base/readback operations are not atomic; inspect landed tree identity and disposition changed integration inputs.
+After green, refresh exact-head review and current integration prerequisites, make the final current-state/vision decision using that evidence, then use normal protected expected-head squash. No native merge queue or protection bypass. Head/base/readback operations are not atomic; inspect landed tree identity and disposition changed integration inputs.
 
 ## Combined-tree check
 
