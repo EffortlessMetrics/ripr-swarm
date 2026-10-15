@@ -1,0 +1,23 @@
+{
+  "verified_payload_commit": "e5c9e384d90a2ffaa995dad933de0aa5093261b0",
+  "evidence_branch": "evidence/8004-performance-a5-20261015",
+  "archive_path": "evidence/8004/performance-a5/raw-measurements.tar.xz",
+  "archive_bytes": 2725700,
+  "archive_sha256": "90d67d198a252dfff9a61840cf1be2f3684a84be7799e47fd69e431d19f09329",
+  "intended_local_git_blob_sha": "a21c2aee3d95db26b24cc1b12fc1838fb29d805b",
+  "connected_github_contents_blob_sha": "a21c2aee3d95db26b24cc1b12fc1838fb29d805b",
+  "connected_contents_read_result": "identity returned; base64 content empty for this large file",
+  "connected_blob_read_result": "UnicodeDecodeError: utf-8 codec cannot decode byte 0xfd in position 0; decoder limitation, not corruption or authorization denial",
+  "binary_readback_method": "fresh filtered no-checkout Git clone of evidence branch, independent object store, git show archive blob; no local object reuse",
+  "remote_git_head": "e5c9e384d90a2ffaa995dad933de0aa5093261b0",
+  "downloaded_git_blob_sha": "a21c2aee3d95db26b24cc1b12fc1838fb29d805b",
+  "downloaded_bytes_equal_intended_local_archive": true,
+  "remote_archive_member_files": 1681,
+  "every_remote_member_hash_and_size_matches_intended_manifest": true,
+  "entire_payload_packet_git_blob_inventory_matches_fresh_remote_tree": true,
+  "payload_packet_tracked_files": 368,
+  "all_sample_raw_streams": 1672,
+  "all_console_status_control_files_in_raw_archive": 9,
+  "candidate_unchanged": true,
+  "issue8005_read_attempted": false
+}

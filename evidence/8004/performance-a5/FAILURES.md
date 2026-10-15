@@ -97,3 +97,7 @@ candidate output, warm observation, median or CI is claimed for that mode.
 lines plus both driver/status logs are retained. A post-stop process check found
 no candidate, base, timeout, or benchmark driver process. Remaining unrun planned
 rounds stay unrun; the already established envelope was not repeated.
+
+## Final archive readback
+
+The 2,725,700-byte XZ archive's connected Contents read returned the expected Git blob SHA and empty base64 content. The supported blob reader then failed with `UnicodeDecodeError: 'utf-8' codec can't decode byte 0xfd in position 0: invalid start byte`. This is an encoding/tool limitation, not corruption or an authorization denial. A fresh filtered no-checkout Git clone and binary `git show` readback downloaded the intended archive bytes into an independent object store. All 1,681 remote archive member hashes and sizes matched; the complete payload packet's 368 Git blob identities matched the fresh remote tree. No credential/security settings or issue read routes were changed. Publication receipt records this success and the failed reader observations separately.
