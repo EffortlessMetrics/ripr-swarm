@@ -1,6 +1,6 @@
 //! Failure-only, bounded read-only evidence. Producer attribution stays unresolved.
 //!
-//! The capture machinery in [`linux`] is reachable only through the
+//! The capture machinery in the `linux` submodule is reachable only through the
 //! Linux-only tail of [`command`]; the submodule carries the same
 //! `cfg(target_os = "linux")` gate, so every other host compiles only the
 //! explicit adapter refusal control instead of a dead copy of the adapter
