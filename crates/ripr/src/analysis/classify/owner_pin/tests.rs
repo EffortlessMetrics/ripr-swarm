@@ -1863,18 +1863,23 @@ fn text_declared_constants_read_macro_items_and_skip_non_declarations() {
             "pub static ref EXP: u32 = quota(2); static mut r#M: u8 = 1; const FOO: u8 = 2;"
         ),
         vec![
-            ("FOO".to_string(), " 2".to_string()),
-            ("EXP".to_string(), " quota(2)".to_string()),
-            ("M".to_string(), " 1".to_string()),
+            ("FOO".to_string(), ": u8 = 2".to_string()),
+            ("EXP".to_string(), ": u32 = quota(2)".to_string()),
+            ("M".to_string(), ": u8 = 1".to_string()),
         ]
     );
     assert_eq!(
         text_declared_constants(
-            "extern { static X: u32; } static A: [u32; 2] = [quota(1); 2]; const Y: u8 = 1;"
+            "extern { static X: u32; } static A: [u32; 2] = [quota(1); 2]; const Y: u8 = 1; \
+             static B: Box<dyn Iterator<Item = u32>> = { let a = 2; quota(a) };"
         ),
         vec![
-            ("Y".to_string(), " 1".to_string()),
-            ("A".to_string(), " [quota(1); 2]".to_string()),
+            ("Y".to_string(), ": u8 = 1".to_string()),
+            ("A".to_string(), ": [u32; 2] = [quota(1); 2]".to_string()),
+            (
+                "B".to_string(),
+                ": Box<dyn Iterator<Item = u32>> = { let a = 2; quota(a) }".to_string()
+            ),
         ]
     );
     for text in [

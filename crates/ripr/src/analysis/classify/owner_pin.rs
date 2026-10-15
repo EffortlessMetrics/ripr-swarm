@@ -8229,7 +8229,7 @@ fn workspace_constant_table(index: &RustIndex) -> BTreeMap<String, Vec<(PathBuf,
 }
 
 /// `const NAME: T = init;` and `static [ref] [mut] NAME: T = init;` read
-/// from masked text, for macro bodies and unparsed files. The type
+/// from masked text as their `: T = init` text, for macro bodies and unparsed files. The type
 /// annotation is required, so `const fn`, `*const u8` and `&'static str`
 /// are not declarations.
 fn text_declared_constants(text: &str) -> Vec<(String, String)> {
@@ -8253,17 +8253,18 @@ fn text_declared_constants(text: &str) -> Vec<(String, String)> {
             if !is_plain_identifier(name) || !body[length..].trim_start().starts_with(':') {
                 continue;
             }
-            let Some(equals) = body[length..].find('=') else {
-                continue;
-            };
-            // `extern { static X: u32; }` has no initializer; an array type
-            // (`[u32; 4]`) holds its `;` inside brackets.
-            if top_level_semicolon(&body[length..]).is_some_and(|semicolon| semicolon < equals) {
+            // The item runs to its first `;` outside brackets, so an array
+            // type (`[u32; 4]`) or a block initializer stays whole. One with
+            // no `=` there (`extern { static X: u32; }`) has no initializer.
+            // The type stays in the text: an `=` inside it (`Item = u32`)
+            // cannot hide the initializer, and its words only withhold.
+            let declaration = &body[length..];
+            let end = top_level_semicolon(declaration).unwrap_or(declaration.len());
+            let item = &declaration[..end];
+            if !item.contains('=') {
                 continue;
             }
-            let initializer = &body[length + equals + 1..];
-            let end = top_level_semicolon(initializer).unwrap_or(initializer.len());
-            found.push((name.to_string(), initializer[..end].to_string()));
+            found.push((name.to_string(), item.to_string()));
         }
     }
     found
