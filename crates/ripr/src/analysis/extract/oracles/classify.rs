@@ -79,10 +79,12 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
             };
         }
         Some(BoolOperandReading::Rest(rest)) => {
-            let whole = classify_non_negated_assertion(line, scalar_integer_relation);
-            let rest = classify_assertion(&rest);
             // The pinning conjuncts decide the kind, but the reading never
-            // rises above the whole assertion's.
+            // rises above what the rules below give the whole assertion: a
+            // dropped compared or negated pattern still caps it
+            // (`a == b && matches!(..) == false`).
+            let whole = classify_after_bool_reading(line, scalar_integer_relation);
+            let rest = classify_assertion(&rest);
             return if rest.strength.rank() <= whole.strength.rank() {
                 rest
             } else {
@@ -91,6 +93,12 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
         }
         None => {}
     }
+    classify_after_bool_reading(line, scalar_integer_relation)
+}
+
+/// The reading of an assertion that no bool-literal comparison rule
+/// decided: the pattern, negation and whole-condition rules.
+fn classify_after_bool_reading(line: &str, scalar_integer_relation: bool) -> OracleClassification {
     // A negated pattern takes rule 1 before any pattern-reading step, so
     // `!matches!(r, Err(E::X))` never reads as the variant it excludes.
     if is_negated_pattern_assertion(line) {

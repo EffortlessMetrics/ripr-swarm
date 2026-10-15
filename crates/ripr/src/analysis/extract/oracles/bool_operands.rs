@@ -122,8 +122,8 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
             // The rest keeps the equality-macro form, so `a == b` reads as
             // `assert_eq!(a == b, true)` does.
             return Some(BoolOperandReading::Rest(format!(
-                "assert_eq!({}, true);",
-                rest.join(" && ")
+                "assert_eq!({}\n, true\n);",
+                rest.join("\n && ")
             )));
         }
         // With no pinning `==` conjunct, a negated, `!=`, relational or

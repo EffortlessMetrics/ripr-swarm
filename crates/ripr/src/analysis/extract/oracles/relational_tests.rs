@@ -853,6 +853,23 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             &exact,
         ),
         ("assert_eq!(r == Err(E::Bad) && score(2) != 0, true);", &err),
+        // A dropped compared pattern still caps the whole (review of #7947).
+        (
+            "assert_eq!(a == b && matches!(r, Err(E::Bad)) == false, true);",
+            &weak,
+        ),
+        (
+            "assert_eq!(a == b && matches!(r, Err(E::Bad)) != true, true);",
+            &weak,
+        ),
+        (
+            "assert_eq!((a == b && !matches!(r, Err(E::Bad))) == true, true);",
+            &weak,
+        ),
+        (
+            "assert_eq!(a == b // note\n && r != Err(E::Bad), true);",
+            &exact,
+        ),
         // An `eq`/`ne` chain against literals that keeps a pattern's
         // polarity asserts the pattern (review of #7992).
         ("assert!(matches!(r, Err(E::Bad)).eq(&true));", &err),
