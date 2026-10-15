@@ -3941,6 +3941,11 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         format!(
             "macro_rules! case {{ ($($m:ident)*; $n:ident) => {{ $($m)* ! ($n); }} }}\ncase!(define; assert_eq);\n"
         ),
+        // A `tt` fragment can lift the `!` off a trusted call and put it
+        // after an untrusted name: this expands to `define!(assert_eq);`.
+        format!(
+            "macro_rules! case {{ ($m:ident $n:ident $bang:tt $a:tt) => {{ $m $bang ($n); }} }}\ncase!(define assert_eq!(x));\n"
+        ),
         format!("{definition}case!(two, |v| {{ generate!(); }});\n{call}"),
     ] {
         assert!(

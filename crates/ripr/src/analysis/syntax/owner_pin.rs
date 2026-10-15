@@ -903,8 +903,8 @@ const INERT_ATTRIBUTES: &[&str] = &[
 /// textual scope before the call, whose expansion cannot bind a macro name
 /// (#6648). The definition and the call arguments hold no binding word
 /// ([`BINDING_WORDS`]) and no attribute outside [`INERT_ATTRIBUTES`]; the
-/// definition invokes no bang macro, and the arguments invoke only trusted
-/// names by their bare name. No macro call between the definition and this
+/// definition invokes no bang macro and captures no `tt` fragment, and the
+/// arguments invoke only trusted names by their bare name. No macro call between the definition and this
 /// call may shadow it: each one is a bare trusted name or another inert
 /// call of the same wrapper. A wrapper reached by path (`a::wrap!`), named
 /// by a `use` in this file, defined twice, under an attribute other than a
@@ -974,6 +974,17 @@ fn binding_free_local_wrapper(
     };
     let body_tokens = non_trivia_tokens(body.syntax());
     if !inert_tokens(&body_tokens, trusted, true) {
+        return false;
+    }
+    // Only a `tt` fragment can capture a lone `!` (or `#`) from the
+    // arguments and splice it after another name: `$m $bang ($n)` turns
+    // `case!(define assert_eq!(x))` into `define!(assert_eq)`. Every other
+    // fragment keeps a macro call or attribute whole.
+    let token_tree_fragment = body_tokens.windows(2).any(|pair| {
+        pair[0].kind() == ra_ap_syntax::SyntaxKind::COLON
+            && pair[1].text().trim_start_matches("r#") == "tt"
+    });
+    if token_tree_fragment {
         return false;
     }
     // A module between the definition and the call (`#[macro_use] mod

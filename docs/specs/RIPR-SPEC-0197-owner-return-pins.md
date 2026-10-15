@@ -1604,7 +1604,9 @@ reaches the ordinary token rule and reads `weakly_exposed`, still a gap.
   nor the call's arguments hold a binding word (`macro_rules`, `macro`,
   `use`, `extern`, `mod`, `include`, `macro_use`, `macro_export`,
   `no_implicit_prelude`) or an attribute other than a built-in test or lint
-  attribute. The definition holds no `!` at all, and the arguments hold a
+  attribute. The definition holds no `!` at all and captures no `tt`
+  fragment (the only fragment that can lift a lone `!` or `#` out of the
+  arguments and splice it after another name), and the arguments hold a
   `!` only as a bare trusted `name!` (a unary `!` fails closed, since a
   `tt` fragment or a repetition can splice it after a name). No module
   item sits between the definition and the call, and every macro call
