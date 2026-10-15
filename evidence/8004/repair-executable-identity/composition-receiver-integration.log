@@ -1,0 +1,17 @@
+   Compiling ripr v0.11.0 (/workspace/repair8004-composition8b/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 1m 14s
+     Running tests/private_inherent_receiver.rs (/workspace/repair8004-target/debug/deps/private_inherent_receiver-c1a76b19eeb89de7)
+
+running 9 tests
+test expired_foreign_shadow_cannot_hide_actual_outer_receiver ... ok
+test expired_inner_binding_cannot_type_outer_inherent_receiver ... ok
+test public_inherent_method_keeps_cross_target_receiver_attribution ... ok
+test module_assertion_shadow_and_standard_positive_have_consistent_diff_relations ... ok
+test raw_call_line_comment_cannot_supply_inherent_receiver ... ok
+test unique_private_inherent_receiver_keeps_real_calls_and_refuses_serde_decoys ... ok
+test while_let_pattern_cannot_borrow_outer_inherent_receiver_type ... ok
+test executable_owner_identity_boundaries_agree_in_diff ... ok
+test scope_items_and_assertion_operand_items_cannot_borrow_outer_receiver_type ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.72s
+

@@ -1,0 +1,25 @@
+{
+  "existing_expected_changes": [],
+  "retained_rows": {
+    "bytesize-as-kib-div": {
+      "blob": "890edd690ce9f7af077579ae0b0cc44ab90a243f",
+      "unchanged": true
+    },
+    "bytesize-as-mb-div": {
+      "blob": "7b0d606a6f7d5f99fddcd587a7436d23065b7f77",
+      "unchanged": true
+    },
+    "lib-rstest-fixture-injected-receiver": {
+      "blob": "de88d20bf4ace4f1830ea04d370774cc0f0541be",
+      "unchanged": true
+    },
+    "serde-derive-rename-field-upper": {
+      "blob": "71223ac3e1774498763722e1958ca45664e57baa",
+      "unchanged": true
+    },
+    "serde-derive-rename-variant-lower": {
+      "blob": "9c474ecf0405515fce2ef4cda1cfca91465320da",
+      "unchanged": true
+    }
+  }
+}

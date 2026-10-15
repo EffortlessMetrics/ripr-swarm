@@ -1,0 +1,578 @@
+[
+  {
+    "case": "dormant-nested",
+    "kind": "original",
+    "sha256": "c49baf47107ebc6049a4cf952fc861badf170b6e795a0e3ce8efb81f665a1387",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/dormant-nested/original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/dormant-nested-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "dormant-nested",
+    "kind": "mutant",
+    "sha256": "14e7a03e038ab468673ac25baa163913c9e951e48d2f4077b310e64d7bf9f4f9",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/dormant-nested/mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/dormant-nested-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "foreign-entry",
+    "kind": "original",
+    "sha256": "e5bde6ba840d67e782788b72c12f442e247ae61fe63ef20867f413763edb3b67",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/foreign-entry/original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/foreign-entry-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "foreign-entry",
+    "kind": "mutant",
+    "sha256": "5a8dab5224867a2f5c39c13959817e32bbb3c8891935c103591e9354edba6c41",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/foreign-entry/mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/foreign-entry-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "foreign-last-hop",
+    "kind": "original",
+    "sha256": "4cabe7a5e23a6c198182424c6ddb99ffdf76de4c9d63dd1b6b3b74ef5b5812d3",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/foreign-last-hop/original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/foreign-last-hop-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "foreign-last-hop",
+    "kind": "mutant",
+    "sha256": "cc50bba030a337b29ce6adfc88e9b3e96ae13d5fa6c7c040ae5b163591ccb3f8",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/foreign-last-hop/mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/foreign-last-hop-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "foreign_helper",
+    "kind": "original",
+    "sha256": "3624fa91072c595d16150b6ee0ffad48731ecb88dc493c1f1573bede5ee70648",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/foreign_helper/original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/foreign_helper-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "foreign_helper",
+    "kind": "mutant",
+    "sha256": "5229ece83b7253025c68dbca833032889e62ce88fb52b11603cf7ab2c6456ed2",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/foreign_helper/mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/foreign_helper-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "local-helper",
+    "kind": "original",
+    "sha256": "2a136aadf8205fe117ff39d7549d67b17fba541ad77caecc8682ff3fc439e6c0",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/local-helper/original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/local-helper-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "local-helper",
+    "kind": "mutant",
+    "sha256": "11ebf70ea8a20b7a4bec417020212bb0aa929be5ec8d4df0340c497cb4d55f87",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/local-helper/mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/local-helper-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 101
+  },
+  {
+    "case": "local_wrapper",
+    "kind": "original",
+    "sha256": "a58ee04c413dc8672102e9937c1bf16deafb107c9d2ef6da50e765a20a0be56a",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/local_wrapper/original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/local_wrapper-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "local_wrapper",
+    "kind": "mutant",
+    "sha256": "c1e70505d65114946a56cd16f389dab1501d34f3d6d780d12cdca56085ba6a5c",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/local_wrapper/mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/local_wrapper-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 101
+  },
+  {
+    "case": "macro_discard",
+    "kind": "original",
+    "sha256": "126643acb3205eadba43dfa535e8214cade4ae5145dae5ebbae5ac75fc64b7a2",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/macro_discard/original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/macro_discard-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "macro_discard",
+    "kind": "mutant",
+    "sha256": "8f7178c755ec719e9b0eb414baf7e1fdb7ba5d280e1300e751d7edc04025d344",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/macro_discard/mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/macro_discard-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "module-direct-shadow",
+    "kind": "original",
+    "sha256": "4725a8daaba7875eb6a9e9cf99f0a28df0d90576de98b7803a1e13cb094fd2d2",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/module-direct-shadow/original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/module-direct-shadow-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "module-direct-shadow",
+    "kind": "mutant",
+    "sha256": "524de32d392e3274e952fc5befce65c961cce438d6c4941097a7c2fc4ca4de57",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/module-direct-shadow/mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/module-direct-shadow-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "module-owner-positive",
+    "kind": "original",
+    "sha256": "d990e2004c79aa07de4c7505c5f0c757b583f351c86ce6f5dac6712d14bf4e9b",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/module-owner-positive/original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/module-owner-positive-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "module-owner-positive",
+    "kind": "mutant",
+    "sha256": "3b7e0e9e4ab97cf2310f340663f66349d781338f5d6db67009e99a453def81f0",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/module-owner-positive/mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/module-owner-positive-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 101
+  },
+  {
+    "case": "nested-invoked",
+    "kind": "original",
+    "sha256": "e4835759d348f90133365d6b6b9d2c73999949279e9f1e007caf6e1f2b46eabe",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/nested-invoked/original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/nested-invoked-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "nested-invoked",
+    "kind": "mutant",
+    "sha256": "576372b8fcb218338ac87d73e9524800e2a35e6399c61c5f5fe5f500a23a2dca",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/nested-invoked/mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/nested-invoked-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 101
+  },
+  {
+    "case": "qualified-live",
+    "kind": "original",
+    "sha256": "ce59fffa5e557f9eabd4db8a1b3649b3fde9a1a21d60cd42fe22110add924714",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/qualified-live/original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/qualified-live-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "qualified-live",
+    "kind": "mutant",
+    "sha256": "dc0d23dcd21a26f2633565d16ce8025aedab78a129f8aa7b700128a6d97dcbd5",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/qualified-live/mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/qualified-live-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 101
+  },
+  {
+    "case": "shadowed-owner-type",
+    "kind": "original",
+    "sha256": "4d900f8eb47e35878bfb4012db5cb1997c57603778d9460b6d1a5d522f6697c0",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/shadowed-owner-type/original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/shadowed-owner-type-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "shadowed-owner-type",
+    "kind": "mutant",
+    "sha256": "a415e74069c30211ff48baec9ad94ce437de25613b8cb2c68400e8bdea0d7561",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/shadowed-owner-type/mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/shadowed-owner-type-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "sibling-helper",
+    "kind": "original",
+    "sha256": "8419436399c191ba79e6c33baa2d79d7271a607049dc0246a8828551db516e02",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/sibling-helper/original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/sibling-helper-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "sibling-helper",
+    "kind": "mutant",
+    "sha256": "5353dba3ce638f478223863a1dd92c4834a41ee5844fd038976cba22ba5f22ec",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/sibling-helper/mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/sibling-helper-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "sibling-helper-positive",
+    "kind": "original",
+    "sha256": "6c18ded8c63445db5b04c10534378df9117d7a9c4db3cc3e690710cfb2cab84c",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/sibling-helper-positive/original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/sibling-helper-positive-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "sibling-helper-positive",
+    "kind": "mutant",
+    "sha256": "8a4b95fa510dbe4cb92bb049314d08717b74a7e9cd34517d30a7674001777ef6",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/sibling-helper-positive/mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/sibling-helper-positive-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 101
+  },
+  {
+    "case": "sibling-shadow",
+    "kind": "original",
+    "sha256": "e407fc9fbb206f9d7ddf5054b0c19eaa102342f620cd5af479eb65f8085a1c4e",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/sibling-shadow/original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/sibling-shadow-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "sibling-shadow",
+    "kind": "mutant",
+    "sha256": "d9d71b49ad4391ad23bdd04b2c247d95e34245cb7d45731a6158c9d60a3a8fb0",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/sibling-shadow/mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/sibling-shadow-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 101
+  },
+  {
+    "case": "standard",
+    "kind": "original",
+    "sha256": "3aa6574059ba370efdf48903d0e32c8246b3c368975ed2b692edd6c981ce25b5",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/standard/original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/standard-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "standard",
+    "kind": "mutant",
+    "sha256": "6b66ede35c5a5516db28071c02f32e52a3282cf962b270f131c7f003acd5e3ed",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/evidence/8004/independent-review53/native/standard/mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/native-replay/standard-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 101
+  }
+]

@@ -1,0 +1,32 @@
+   Compiling ripr v0.11.0 (/workspace/repair8004/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 58.96s
+     Running tests/private_inherent_receiver.rs (/workspace/repair8004-target/debug/deps/private_inherent_receiver-c1a76b19eeb89de7)
+
+running 9 tests
+test executable_owner_identity_boundaries_agree_in_diff ... FAILED
+test public_inherent_method_keeps_cross_target_receiver_attribution ... ok
+test module_assertion_shadow_and_standard_positive_have_consistent_diff_relations ... ok
+test expired_inner_binding_cannot_type_outer_inherent_receiver ... ok
+test raw_call_line_comment_cannot_supply_inherent_receiver ... ok
+test expired_foreign_shadow_cannot_hide_actual_outer_receiver ... ok
+test unique_private_inherent_receiver_keeps_real_calls_and_refuses_serde_decoys ... ok
+test while_let_pattern_cannot_borrow_outer_inherent_receiver_type ... ok
+test scope_items_and_assertion_operand_items_cannot_borrow_outer_receiver_type ... ok
+
+failures:
+
+---- executable_owner_identity_boundaries_agree_in_diff stdout ----
+
+thread 'executable_owner_identity_boundaries_agree_in_diff' (12019) panicked at crates/ripr/tests/private_inherent_receiver.rs:517:13:
+assertion `left == right` failed: inherent_receiver_dormant_body/input/src/lib.rs: one subject per finding
+  left: 2
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    executable_owner_identity_boundaries_agree_in_diff
+
+test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.43s
+
+error: test failed, to rerun pass `-p ripr --test private_inherent_receiver`

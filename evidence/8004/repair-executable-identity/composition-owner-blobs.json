@@ -1,0 +1,27 @@
+[
+  {
+    "path": "crates/ripr/src/analysis/classify/call_identity.rs",
+    "blob": "7ac626e04668c24d613911093d82940125e10079",
+    "composition_equal": true
+  },
+  {
+    "path": "crates/ripr/src/analysis/classify/related_tests.rs",
+    "blob": "7809a0d106898f12caa5590e5326ad056c4f7166",
+    "composition_equal": true
+  },
+  {
+    "path": "crates/ripr/src/analysis/syntax/name_scope.rs",
+    "blob": "cf206c0e84c774bb80405e4ac776dfbebc39dac5",
+    "composition_equal": true
+  },
+  {
+    "path": "crates/ripr/src/analysis/test_grip_evidence/related_tests.rs",
+    "blob": "2fb32cc522820f16b6346ac98ef321e7a76ac499",
+    "composition_equal": true
+  },
+  {
+    "path": "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
+    "blob": "0a084108864a1b58314f660d87ed84f296cae437",
+    "composition_equal": true
+  }
+]

@@ -1,0 +1,24 @@
+   Compiling ripr v0.11.0 (/workspace/repair8004/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 2m 15s
+     Running unittests src/lib.rs (/workspace/repair8004-target/debug/deps/ripr-67c20de708634f70)
+
+running 1 test
+test analysis::test_grip_evidence::tests::inherent_executable_owner_identity_boundary_matrix ... FAILED
+
+failures:
+
+---- analysis::test_grip_evidence::tests::inherent_executable_owner_identity_boundary_matrix stdout ----
+
+thread 'analysis::test_grip_evidence::tests::inherent_executable_owner_identity_boundary_matrix' (10647) panicked at crates/ripr/src/analysis/test_grip_evidence/tests.rs:19732:17:
+assertion `left == right` failed: inherent_receiver_free_helper_identity/controls/intermediate-root.rs
+  left: SameTestFile
+ right: HelperOwnerCall
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    analysis::test_grip_evidence::tests::inherent_executable_owner_identity_boundary_matrix
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10932 filtered out; finished in 0.42s
+
+error: test failed, to rerun pass `-p ripr --lib`

@@ -1,0 +1,40 @@
+    Finished `test` profile [unoptimized] target(s) in 0.12s
+     Running unittests src/lib.rs (/workspace/repair8004-target/debug/deps/ripr-67c20de708634f70)
+
+running 33 tests
+test analysis::classify::call_identity::tests::a_bin_directory_main_is_its_crate_root ... ok
+test analysis::classify::call_identity::tests::a_binary_only_package_composes_its_modules_into_the_binary ... ok
+test analysis::classify::call_identity::tests::a_bare_call_binds_its_own_files_definition_through_use_super_glob ... ok
+test analysis::classify::call_identity::tests::a_body_macro_in_main_keeps_the_split_and_tests_never_name_the_binary ... ok
+test analysis::classify::call_identity::tests::a_mixed_path_form_index_has_no_identity ... ok
+test analysis::classify::call_identity::tests::a_mixed_test_settles_coarsely_on_the_owner_but_its_bare_call_on_the_rival ... ok
+test analysis::classify::call_identity::tests::a_module_matching_no_placed_definition_is_unsettled ... ok
+test analysis::classify::call_identity::tests::a_block_local_binding_leaves_the_test_unsettled ... ok
+test analysis::classify::call_identity::tests::a_name_inside_a_longer_non_ascii_identifier_is_not_a_call_of_it ... ok
+test analysis::classify::call_identity::tests::a_non_ascii_qualifier_is_read_whole_without_slicing_inside_a_char ... ok
+test analysis::classify::call_identity::tests::a_nested_fn_import_leaves_the_test_unsettled ... ok
+test analysis::classify::call_identity::tests::a_foreign_crate_namesake_path_is_unsettled ... ok
+test analysis::classify::call_identity::tests::a_unique_or_method_owner_has_no_identity ... ok
+test analysis::classify::call_identity::tests::a_module_both_roots_declare_switches_the_rule_off ... ok
+test analysis::classify::call_identity::tests::a_path_remapped_package_has_no_identity ... ok
+test analysis::classify::call_identity::tests::an_ambiguous_module_leaves_a_bin_owner_alone ... ok
+test analysis::classify::call_identity::tests::absolute_packages_outside_a_crates_layout_stay_apart ... ok
+test analysis::classify::call_identity::tests::a_use_import_settles_a_bare_call ... ok
+test analysis::classify::call_identity::tests::call_qualifiers_read_bare_qualified_method_and_definition_spellings ... ok
+test analysis::classify::call_identity::tests::binary_owned_modules_compose_into_the_binary ... ok
+test analysis::classify::call_identity::tests::decomposed_and_raw_identifiers_never_read_as_a_bare_call ... ok
+test analysis::classify::call_identity::tests::file_module_segments_follow_the_crate_layout ... ok
+test analysis::classify::call_identity::tests::a_qualified_call_resolves_through_a_module_alias ... ok
+test analysis::classify::call_identity::tests::an_own_crate_name_path_settles_and_a_foreign_one_does_not ... ok
+test analysis::classify::call_identity::tests::identity_shapes_are_one_scan_per_index_shared_across_packages ... ok
+test analysis::classify::call_identity::tests::integration_test_paths_through_the_crate_name_settle ... ok
+test analysis::classify::call_identity::tests::crate_paths_in_another_package_are_unsettled ... ok
+test analysis::classify::call_identity::tests::shared_identity_distinguishes_same_line_same_name_owners ... ok
+test analysis::classify::call_identity::tests::qualified_calls_settle_on_the_module_they_spell ... ok
+test analysis::classify::call_identity::tests::value_mentions_skip_calls_uses_fields_and_definitions ... ok
+test analysis::classify::call_identity::tests::resolve_call_settles_one_spelled_call ... ok
+test analysis::classify::call_identity::tests::reaching_the_owner_without_a_spelled_call_is_unsettled ... ok
+test analysis::classify::call_identity::tests::shared_identity_is_one_instance_per_owner_per_index ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 10903 filtered out; finished in 0.12s
+

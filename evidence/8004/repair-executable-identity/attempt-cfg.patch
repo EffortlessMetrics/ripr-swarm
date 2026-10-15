@@ -1,0 +1,848 @@
+diff --git a/.ripr/traceability.toml b/.ripr/traceability.toml
+index 8eeb98f6f..68ee767dd 100644
+--- a/.ripr/traceability.toml
++++ b/.ripr/traceability.toml
+@@ -414,6 +414,8 @@ tests = [
+   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::unique_inherent_receiver_refuses_decoys_in_full_and_compact_repo_evidence",
+   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::public_inherent_receiver_keeps_cross_target_full_and_compact_repo_evidence",
+   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::inherent_receiver_review_last_hop_and_wrapper_controls",
++  "crates/ripr/src/analysis/test_grip_evidence.rs::tests::inherent_executable_owner_identity_boundary_matrix",
++  "crates/ripr/tests/private_inherent_receiver.rs::executable_owner_identity_boundaries_agree_in_diff",
+   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::inherent_helper_declarations_are_not_executable_self_edges",
+   "crates/ripr/src/analysis/seam_inventory.rs::tests::effective_oracle_policy_invalidates_classified_cache",
+   "crates/ripr/src/analysis/seam_inventory.rs::tests::effective_snapshot_policy_invalidates_full_and_compact_caches",
+@@ -747,6 +749,9 @@ fixtures = [
+   "fixtures/inherent_receiver_macro_discard",
+   "fixtures/inherent_receiver_foreign_helper",
+   "fixtures/inherent_receiver_local_wrapper",
++  "fixtures/inherent_receiver_module_type_shadow",
++  "fixtures/inherent_receiver_dormant_body",
++  "fixtures/inherent_receiver_free_helper_identity",
+   "fixtures/benches_harness_evidence",
+   "fixtures/boundary_gap",
+   "fixtures/rust_constructor_field_observation",
+@@ -8060,6 +8065,9 @@ fixtures = [
+   "fixtures/inherent_receiver_macro_discard",
+   "fixtures/inherent_receiver_foreign_helper",
+   "fixtures/inherent_receiver_local_wrapper",
++  "fixtures/inherent_receiver_module_type_shadow",
++  "fixtures/inherent_receiver_dormant_body",
++  "fixtures/inherent_receiver_free_helper_identity",
+   "fixtures/rust_trait_default_import",
+   "fixtures/rust_trait_default_shadow",
+   "fixtures/rust_trait_impl_import",
+diff --git a/changelog.d/7415-inherent-receiver-admission.md b/changelog.d/7415-inherent-receiver-admission.md
+index 3f9661ac1..7fd9113b7 100644
+--- a/changelog.d/7415-inherent-receiver-admission.md
++++ b/changelog.d/7415-inherent-receiver-admission.md
+@@ -6,6 +6,10 @@
+   outer receivers after an inner foreign shadow expires. Corpus snapshots
+   retain the false actionable cost of unsupported factory/parameter/import flow
+   (#7415, #8004).
+-- Same-name local wrapper delegation retains helper reach, while module-shadowed
+-  assertion operands and foreign helper receivers withhold high attribution
+-  consistently across diff and repository consumers (#7415, #8004).
++- Same-name local wrapper delegation retains repository helper reach; diff
++  evidence remains conservative. Module-shadowed assertion operands and foreign
++  inherent helper receivers withhold high attribution (#7415, #8004).
++- Repository direct calls share the complete owner/module refusal with diff
++  calls. Dormant nested functions, closures and async bodies do not supply
++  executed receiver calls; free-helper entries and intermediate hops bind to
++  their actual module/function identity instead of a shared name (#7415, #8004).
+diff --git a/crates/ripr/src/analysis/classify/mod.rs b/crates/ripr/src/analysis/classify/mod.rs
+index 1addc54a6..888c8d136 100644
+--- a/crates/ripr/src/analysis/classify/mod.rs
++++ b/crates/ripr/src/analysis/classify/mod.rs
+@@ -85,10 +85,11 @@ pub(in crate::analysis) use reach::{
+ };
+ pub(in crate::analysis) use related_tests::{
+     DependencyEdgeContext, RelatedTestCandidateIndex, body_contains_owner_call,
+-    call_text_may_call_free_function, find_related_tests_with_candidate_index, impl_self_type_name,
+-    inherent_owner_call_resolves, inherent_receiver_call_resolves, manifests_with_unindexed_files,
+-    method_call_resolves_to_impl, module_stem, owner_call_text, owner_dispatch_trait,
+-    package_prefix, requires_inherent_receiver_identity, test_calls_free_function,
++    call_text_may_call_free_function, find_related_tests_with_candidate_index,
++    free_helper_call_resolves, impl_self_type_name, inherent_owner_call_resolves,
++    manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem, owner_call_text,
++    owner_dispatch_trait, package_prefix, requires_inherent_receiver_identity,
++    test_calls_free_function,
+ };
+ pub(in crate::analysis) use reveal::reveal_outcome;
+ pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
+diff --git a/crates/ripr/src/analysis/classify/owner_pin.rs b/crates/ripr/src/analysis/classify/owner_pin.rs
+index e1a28ab7c..920faf7fe 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin.rs
+@@ -2827,7 +2827,8 @@ impl FreeOwnerBinding<'_> {
+         if let Some(known) = syntax.path_memo.borrow().verdicts.get(&key) {
+             return *known;
+         }
+-        let verdict = self.path_reaches_owner_uncached(prefix, test, test_source, index, syntax);
++        let verdict =
++            self.path_reaches_owner_uncached(prefix, test, test_source, index, syntax, false);
+         syntax.path_memo.borrow_mut().verdicts.insert(key, verdict);
+         verdict
+     }
+@@ -2839,6 +2840,7 @@ impl FreeOwnerBinding<'_> {
+         test_source: &str,
+         index: &RustIndex,
+         syntax: &OwnerPinSyntax,
++        same_file_helper: bool,
+     ) -> bool {
+         let segments: Vec<&str> = prefix.split("::").collect();
+         let Some((root, rest)) = segments.split_first() else {
+@@ -2901,8 +2903,8 @@ impl FreeOwnerBinding<'_> {
+         }
+         syntax
+             .item_nesting(index, self.owner_file, self.name, self.owner_start_line)
+-            .is_some_and(|owner| !owner.cfg_gated && owner.modules == module)
+-            && !syntax.file_cfg_gated(index, self.owner_file)
++            .is_some_and(|owner| (same_file_helper || !owner.cfg_gated) && owner.modules == module)
++            && (same_file_helper || !syntax.file_cfg_gated(index, self.owner_file))
+             && !syntax.crate_may_hide_name(index, &owner_root, self.name, roots)
+     }
+ 
+@@ -6253,9 +6255,43 @@ pub(in crate::analysis) fn targeted_free_call_reaches_owner(
+     index: &RustIndex,
+     syntax: &OwnerPinSyntax,
+ ) -> bool {
++    free_call_reaches_owner(test, owner, prefix, index, syntax, false)
++}
++
++/// Same-file helper entry needs lexical module/function identity, not the
++/// production owner pin's Cargo/cfg provenance. A helper in `#[cfg(test)]`
++/// is still the helper the test executes. Unknown/twin bindings still refuse.
++pub(in crate::analysis) fn same_file_free_helper_call_reaches_owner(
++    caller: &TestSummary,
++    helper: &FunctionSummary,
++    prefix: Option<&str>,
++    index: &RustIndex,
++    syntax: &OwnerPinSyntax,
++) -> bool {
++    caller.file == helper.file
++        && free_call_reaches_owner(caller, helper, prefix, index, syntax, true)
++}
++
++fn free_call_reaches_owner(
++    test: &TestSummary,
++    owner: &FunctionSummary,
++    prefix: Option<&str>,
++    index: &RustIndex,
++    syntax: &OwnerPinSyntax,
++    same_file_helper: bool,
++) -> bool {
++    // A same-named placed module function is settled per observed call,
++    // just as for owner-return pins. Unplaced competitors still refuse.
++    let identity = super::call_identity::shared_owner_call_identity(index, owner);
++    if identity.as_ref().is_some_and(|identity| {
++        let qualifier = prefix.map(path_prefix_segments).unwrap_or_default();
++        identity.resolve_call(test, index, &qualifier) != CallTarget::Owner
++    }) {
++        return false;
++    }
+     if !owner.item.has_body
+         || !matches!(pin_call(owner, index), Some(PinCall::Bare))
+-        || other_definition_competes(owner, index, CallKind::Bare, None)
++        || other_definition_competes(owner, index, CallKind::Bare, identity.as_deref())
+         || index
+             .files()
+             .get(&owner.file)
+@@ -6276,13 +6312,18 @@ pub(in crate::analysis) fn targeted_free_call_reaches_owner(
+         owner_start_line: owner.start_line,
+     };
+     if let Some(prefix) = prefix {
+-        return binding.path_reaches_owner(prefix, test, &facts.source, index, syntax);
++        return if same_file_helper {
++            binding.path_reaches_owner_uncached(prefix, test, &facts.source, index, syntax, true)
++        } else {
++            binding.path_reaches_owner(prefix, test, &facts.source, index, syntax)
++        };
+     }
+     let masked_body = mask_comments_and_strings(&test.body);
+-    !syntax
+-        .item_nesting(index, &owner.file, &owner.name, owner.start_line)
+-        .is_none_or(|owner| owner.cfg_gated)
+-        && !syntax.file_cfg_gated(index, &owner.file)
++    (same_file_helper
++        || (!syntax
++            .item_nesting(index, &owner.file, &owner.name, owner.start_line)
++            .is_none_or(|owner| owner.cfg_gated)
++            && !syntax.file_cfg_gated(index, &owner.file)))
+         && !test_body_shadows_owner(test, &owner.name)
+         && !binds_outside_let(&masked_body, &owner.name)
+         && !bound_by_macro(&masked_body, &owner.name)
+diff --git a/crates/ripr/src/analysis/classify/related_tests.rs b/crates/ripr/src/analysis/classify/related_tests.rs
+index 86ada2e16..bc41a6f4c 100644
+--- a/crates/ripr/src/analysis/classify/related_tests.rs
++++ b/crates/ripr/src/analysis/classify/related_tests.rs
+@@ -3053,26 +3053,103 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
+     if method.is_empty() || impl_type.is_empty() {
+         return false;
+     }
+-    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&test.body) else {
+-        return false;
+-    };
+-    let syntax = parse.tree().syntax().clone();
+     let pin_syntax = super::OwnerPinSyntax::default();
+     let unit_struct = |name: &str| {
+         index.is_some_and(|index| {
+             super::owner_pin::unit_struct_value(name, &test.file, index, &pin_syntax)
+         })
+     };
++    executable_call_resolves(test, index, &pin_syntax, &|node, scope| {
++        inherent_call_node_resolves(node, scope, method, impl_type, &unit_struct)
++    })
++}
++
++/// A helper-name graph supplies candidates, never executable function identity.
++/// Resolve each observed free call in its caller's real source/module scope.
++/// Nested local functions and unsupported paths fail closed.
++pub(in crate::analysis) fn free_helper_call_resolves(
++    caller: &TestSummary,
++    helper: &FunctionSummary,
++    index: &RustIndex,
++) -> bool {
++    if helper.item.container != FunctionContainer::Free {
++        return false;
++    }
++    let syntax = super::OwnerPinSyntax::default();
++    executable_call_resolves(caller, Some(index), &syntax, &|node, _| {
++        let Some(call) = ast::CallExpr::cast(node) else {
++            return false;
++        };
++        let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
++            return false;
++        };
++        let Some(path) = callee.path() else {
++            return false;
++        };
++        let Some(segment) = path.segment() else {
++            return false;
++        };
++        if segment
++            .name_ref()
++            .is_none_or(|name| name.text() != helper.name)
++        {
++            return false;
++        }
++        let prefix = path.qualifier().map(|path| {
++            path.syntax()
++                .text()
++                .to_string()
++                .split_whitespace()
++                .collect::<String>()
++        });
++        super::owner_pin::same_file_free_helper_call_reaches_owner(
++            caller,
++            helper,
++            prefix.as_deref(),
++            index,
++            &syntax,
++        )
++    })
++}
++
++/// Walk only syntax executed by the outer function. Item declarations,
++/// closures and async blocks do not execute their bodies by being declared.
++/// Even an invoked nested function stays unresolved here; its body cannot
++/// borrow the outer function's receiver bindings. Standard assertion operands
++/// share the source-aware macro refusal and the same call-site predicate.
++fn executable_call_resolves(
++    test: &TestSummary,
++    index: Option<&RustIndex>,
++    pin_syntax: &super::OwnerPinSyntax,
++    resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
++) -> bool {
++    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&test.body) else {
++        return false;
++    };
++    let syntax = parse.tree().syntax().clone();
++    let Some(function) = syntax.children().find_map(ast::Fn::cast) else {
++        return false;
++    };
++    let executable = |node: &SyntaxNode| {
++        node.ancestors()
++            .skip(1)
++            .take_while(|scope| scope != function.syntax())
++            .all(|scope| {
++                !ast::Item::can_cast(scope.kind())
++                    && !ast::ClosureExpr::can_cast(scope.kind())
++                    && !ast::BlockExpr::cast(scope)
++                        .is_some_and(|block| block.async_token().is_some())
++            })
++    };
+     syntax
+         .descendants()
+-        .any(|node| inherent_call_node_resolves(node, None, method, impl_type, &unit_struct))
++        .filter(executable)
++        .any(|node| resolves(node, None))
+         || syntax
+             .descendants()
++            .filter(executable)
+             .filter_map(ast::MacroCall::cast)
+             .any(|call| {
+-                // A function-only parse cannot see enclosing module imports or
+-                // macro definitions. Borrow the existing source/module binding
+-                // authority before interpreting assertion operands (#8004).
+                 let binding_admitted = index.is_none_or(|index| {
+                     let offset = u32::from(call.syntax().text_range().start()) as usize;
+                     let line = test.start_line
+@@ -3089,8 +3166,7 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
+                         )
+                     })
+                 });
+-                binding_admitted
+-                    && inherent_assertion_arguments_resolve(&call, method, impl_type, &unit_struct)
++                binding_admitted && assertion_arguments_resolve(&call, resolves)
+             })
+ }
+ 
+@@ -3138,11 +3214,9 @@ fn inherent_call_node_resolves(
+ /// Assertion token trees are not expression descendants of the source AST.
+ /// Parse only their evaluated operands, preserving the original invocation as
+ /// the lexical scope anchor. Diagnostics and unsupported macros add no proof.
+-fn inherent_assertion_arguments_resolve(
++fn assertion_arguments_resolve(
+     call: &ast::MacroCall,
+-    method: &str,
+-    impl_type: &str,
+-    unit_struct: &dyn Fn(&str) -> bool,
++    resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
+ ) -> bool {
+     let Some(path) = call.path() else {
+         return false;
+@@ -3199,9 +3273,9 @@ fn inherent_assertion_arguments_resolve(
+         }) {
+             return false;
+         }
+-        syntax.descendants().any(|node| {
+-            inherent_call_node_resolves(node, Some(call.syntax()), method, impl_type, unit_struct)
+-        })
++        syntax
++            .descendants()
++            .any(|node| resolves(node, Some(call.syntax())))
+     })
+ }
+ 
+diff --git a/crates/ripr/src/analysis/test_grip_evidence/related_tests.rs b/crates/ripr/src/analysis/test_grip_evidence/related_tests.rs
+index c34b0e63c..2fb32cc52 100644
+--- a/crates/ripr/src/analysis/test_grip_evidence/related_tests.rs
++++ b/crates/ripr/src/analysis/test_grip_evidence/related_tests.rs
+@@ -1,9 +1,8 @@
+ use super::*;
+ use crate::analysis::classify::{
+-    CallTarget, call_text_may_call_free_function, impl_self_type_name,
+-    inherent_owner_call_resolves, inherent_receiver_call_resolves, method_call_resolves_to_impl,
+-    module_stem, owner_dispatch_trait, requires_inherent_receiver_identity,
+-    test_calls_free_function,
++    CallTarget, call_text_may_call_free_function, free_helper_call_resolves, impl_self_type_name,
++    inherent_owner_call_resolves, method_call_resolves_to_impl, module_stem, owner_dispatch_trait,
++    requires_inherent_receiver_identity, test_calls_free_function,
+ };
+ use crate::analysis::facts::FunctionImplContext;
+ use std::sync::Arc;
+@@ -65,7 +64,7 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
+ /// Cached facts about a seam's owning function that every relationship
+ /// strategy reads from. Resolved once per seam to avoid re-walking the
+ /// index and re-deriving file stems / module paths per strategy.
+-pub(super) struct OwnerContext {
++pub(super) struct OwnerContext<'index> {
+     name: String,
+     name_lower: String,
+     file_stem: String,
+@@ -80,14 +79,14 @@ pub(super) struct OwnerContext {
+     /// receiver or type-path call of its name reaches something else.
+     free_function: bool,
+     inherent_receiver: bool,
+-    inherent_owner_id: Option<String>,
++    inherent_owner: Option<&'index FunctionSummary>,
+     impl_trait: Option<String>,
+     same_name_count: usize,
+     identity: Option<std::sync::Arc<crate::analysis::classify::OwnerCallIdentity>>,
+ }
+ 
+-impl OwnerContext {
+-    fn resolve(seam: &RepoSeam, context: &CompactGripContext<'_>) -> Self {
++impl<'index> OwnerContext<'index> {
++    fn resolve(seam: &RepoSeam, context: &CompactGripContext<'index>) -> Self {
+         let owner_fn = context.owner_function(seam.file(), seam.display_line());
+         let name = owner_fn.map(|f| f.name.as_str()).unwrap_or("").to_string();
+         let name_lower = name.to_ascii_lowercase();
+@@ -128,9 +127,7 @@ impl OwnerContext {
+             impl_type,
+             free_function,
+             inherent_receiver,
+-            inherent_owner_id: owner_fn
+-                .filter(|owner| requires_inherent_receiver_identity(owner))
+-                .map(|owner| owner.id.0.clone()),
++            inherent_owner: owner_fn.filter(|owner| requires_inherent_receiver_identity(owner)),
+             impl_trait,
+             same_name_count,
+             identity,
+@@ -251,7 +248,7 @@ pub(super) fn match_direct_owner_call(
+     candidates: &mut BTreeMap<usize, RelationReason>,
+     context: &CompactGripContext<'_>,
+     prefix: Option<&str>,
+-    owner: &OwnerContext,
++    owner: &OwnerContext<'_>,
+ ) {
+     if owner.name.is_empty() {
+         return;
+@@ -259,38 +256,28 @@ pub(super) fn match_direct_owner_call(
+     let Some(indices) = context.tests_by_call_name.get(&owner.name) else {
+         return;
+     };
+-    let require_impl_identity =
+-        (owner.same_name_count > 1 || owner.inherent_receiver) && owner.impl_type.is_some();
+     for test_index in indices {
+-        if require_impl_identity {
+-            let Some(indexed) = context.tests.get(*test_index) else {
+-                continue;
+-            };
+-            let Some(impl_type) = owner.impl_type.as_deref() else {
+-                continue;
+-            };
+-            if owner.inherent_receiver
+-                && !inherent_receiver_call_resolves(
+-                    indexed.test,
+-                    &owner.name,
+-                    impl_type,
+-                    Some(context.index),
+-                )
+-            {
+-                continue;
+-            }
+-            // Inherent methods already passed the scope-aware authority.
+-            // The legacy matcher can borrow an expired sibling declaration.
+-            if !owner.inherent_receiver
+-                && !method_call_resolves_to_impl(
+-                    indexed.test,
+-                    &owner.name,
+-                    impl_type,
+-                    owner.impl_trait.as_deref(),
+-                )
+-            {
++        let Some(indexed) = context.tests.get(*test_index) else {
++            continue;
++        };
++        if owner.inherent_receiver {
++            // Every inherent entry borrows the complete shared owner refusal,
++            // independently of the legacy impl-name ambiguity shortcut.
++            if !owner.inherent_owner.is_some_and(|function| {
++                inherent_owner_call_resolves(indexed.test, function, context.index)
++            }) {
+                 continue;
+             }
++        } else if owner.same_name_count > 1
++            && let Some(impl_type) = owner.impl_type.as_deref()
++            && !method_call_resolves_to_impl(
++                indexed.test,
++                &owner.name,
++                impl_type,
++                owner.impl_trait.as_deref(),
++            )
++        {
++            continue;
+         }
+         // `ByteSize::kb(1)` or `size.kb()` never calls a free `kb` (#6713).
+         if owner.free_function
+@@ -315,7 +302,7 @@ pub(super) fn match_helper_owner_call(
+     candidates: &mut BTreeMap<usize, RelationReason>,
+     context: &CompactGripContext<'_>,
+     prefix: Option<&str>,
+-    owner: &OwnerContext,
++    owner: &OwnerContext<'_>,
+ ) {
+     if owner.name.is_empty() {
+         return;
+@@ -335,10 +322,9 @@ pub(super) fn match_helper_owner_call(
+     };
+     for test_index in indices {
+         if owner.inherent_receiver
+-            && !owner
+-                .inherent_owner_id
+-                .as_deref()
+-                .is_some_and(|id| context.inherent_helper_reaches_owner(*test_index, id))
++            && !owner.inherent_owner.is_some_and(|function| {
++                context.inherent_helper_reaches_owner(*test_index, &function.id.0)
++            })
+         {
+             continue;
+         }
+@@ -357,7 +343,7 @@ pub(super) fn match_target_affinity_owner_call(
+     seam: &RepoSeam,
+     context: &CompactGripContext<'_>,
+     prefix: Option<&str>,
+-    owner: &OwnerContext,
++    owner: &OwnerContext<'_>,
+     target_tokens: &BTreeSet<String>,
+ ) {
+     if requires_concrete_activation_values(seam)
+@@ -383,10 +369,9 @@ pub(super) fn match_target_affinity_owner_call(
+         };
+         if !test_assertion_mentions_any_target_token(test, target_tokens)
+             || (owner.inherent_receiver
+-                && !owner
+-                    .inherent_owner_id
+-                    .as_deref()
+-                    .is_some_and(|id| context.inherent_helper_reaches_owner(*test_index, id)))
++                && !owner.inherent_owner.is_some_and(|function| {
++                    context.inherent_helper_reaches_owner(*test_index, &function.id.0)
++                }))
+         {
+             continue;
+         }
+@@ -476,7 +461,7 @@ pub(super) fn match_same_test_file(
+     candidates: &mut BTreeMap<usize, RelationReason>,
+     context: &CompactGripContext<'_>,
+     prefix: Option<&str>,
+-    owner: &OwnerContext,
++    owner: &OwnerContext<'_>,
+ ) {
+     if owner.file_stem.is_empty() {
+         let indices = owner
+@@ -518,7 +503,7 @@ pub(super) fn match_same_module(
+     candidates: &mut BTreeMap<usize, RelationReason>,
+     context: &CompactGripContext<'_>,
+     prefix: Option<&str>,
+-    owner: &OwnerContext,
++    owner: &OwnerContext<'_>,
+ ) {
+     let Some(module_path) = owner.module_path.as_deref() else {
+         return;
+@@ -538,7 +523,7 @@ pub(super) fn match_owner_named_test(
+     candidates: &mut BTreeMap<usize, RelationReason>,
+     context: &CompactGripContext<'_>,
+     prefix: Option<&str>,
+-    owner: &OwnerContext,
++    owner: &OwnerContext<'_>,
+ ) {
+     for test_index in context.owner_named_indices(&owner.name_lower) {
+         insert_related_candidate(
+@@ -555,7 +540,7 @@ pub(super) fn match_import_path_affinity(
+     candidates: &mut BTreeMap<usize, RelationReason>,
+     context: &CompactGripContext<'_>,
+     prefix: Option<&str>,
+-    owner: &OwnerContext,
++    owner: &OwnerContext<'_>,
+ ) {
+     if owner.name.is_empty() {
+         return;
+@@ -585,7 +570,7 @@ pub(super) fn match_fixture_owner_affinity(
+     candidates: &mut BTreeMap<usize, RelationReason>,
+     context: &CompactGripContext<'_>,
+     prefix: Option<&str>,
+-    owner: &OwnerContext,
++    owner: &OwnerContext<'_>,
+ ) {
+     for fixture_name in owner.fixture_names.iter() {
+         if let Some(indices) = context.tests_by_call_name.get(fixture_name) {
+diff --git a/crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs b/crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs
+index aa55c1013..0a0841088 100644
+--- a/crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs
++++ b/crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs
+@@ -4017,8 +4017,7 @@ fn inherent_helper_path_reaches_owner(
+         let entry_resolves = if requires_inherent_receiver_identity(helper) {
+             inherent_owner_call_resolves(caller, helper, index)
+         } else {
+-            helper.impl_context == FunctionImplContext::Free
+-                && test_calls_free_function(caller, &helper.name)
++            free_helper_call_resolves(caller, helper, index)
+         };
+         if !entry_resolves {
+             continue;
+diff --git a/crates/ripr/src/analysis/test_grip_evidence/tests.rs b/crates/ripr/src/analysis/test_grip_evidence/tests.rs
+index 7e6d4a66a..3b6439318 100644
+--- a/crates/ripr/src/analysis/test_grip_evidence/tests.rs
++++ b/crates/ripr/src/analysis/test_grip_evidence/tests.rs
+@@ -19675,6 +19675,78 @@ fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), S
+     Ok(())
+ }
+ 
++/// The native truth and static admission are separate axes. In particular an
++/// invoked nested function kills the native mutant but remains unsupported by
++/// this bounded static walk; its declaration must never supply direct credit.
++#[test]
++fn inherent_executable_owner_identity_boundary_matrix() -> Result<(), String> {
++    #[derive(serde::Deserialize)]
++    struct Case {
++        path: String,
++        name: String,
++        relation: Option<RelationReason>,
++    }
++    let cases: Vec<Case> = serde_json::from_str(include_str!(
++        "../../../../../fixtures/inherent_receiver_free_helper_identity/cases.json"
++    ))
++    .map_err(|error| error.to_string())?;
++    assert_eq!(cases.len(), 19, "complete hypothesis-led matrix");
++    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
++    for case in cases {
++        let source = std::fs::read_to_string(fixtures.join(&case.path))
++            .map_err(|error| error.to_string())?;
++        let path = PathBuf::from("src/lib.rs");
++        let index = index_from_files(&[(path.clone(), &source)])?;
++        assert_eq!(index.tests().len(), 1, "{}: one real subject", case.path);
++        let seams: Vec<_> = inventory_seams_from_index(&[path], &index)
++            .into_iter()
++            .filter(|seam| seam.owner() == "src/lib.rs::impl JsonValue::as_object")
++            .collect();
++        assert_eq!(seams.len(), 4, "{}: retain all owner seams", case.path);
++        let context = CompactGripContext::new(&index);
++        for seam in &seams {
++            let full = evidence_for_seam(seam, &index);
++            let compact = find_related_tests_with_context(seam, &context);
++            let full_rows: Vec<_> = full
++                .related_tests
++                .iter()
++                .map(|test| (test.test_name.as_str(), test.relation_reason))
++                .collect();
++            let compact_rows: Vec<_> = compact
++                .iter()
++                .map(|(test, relation)| (test.test.name.as_str(), *relation))
++                .collect();
++            assert_eq!(
++                full_rows, compact_rows,
++                "{}: complete row parity",
++                case.path
++            );
++            assert_eq!(
++                full_rows.len(),
++                1,
++                "{}: retain exactly one subject per seam",
++                case.path
++            );
++            assert_eq!(full_rows[0].0, case.name, "{}", case.path);
++            if let Some(expected) = case.relation {
++                assert_eq!(full_rows[0].1, expected, "{}", case.path);
++                assert_eq!(full.reach.state, StageState::Yes, "{}", case.path);
++            } else {
++                assert!(
++                    !matches!(
++                        full_rows[0].1,
++                        RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall
++                    ),
++                    "{}: wrong execution or identity: {full_rows:?}",
++                    case.path
++                );
++                assert_ne!(full.reach.state, StageState::Yes, "{}", case.path);
++            }
++        }
++    }
++    Ok(())
++}
++
+ /// Independent review #8004: each source is also a real native mutation control.
+ #[test]
+ fn inherent_receiver_review_last_hop_and_wrapper_controls() -> Result<(), String> {
+@@ -19764,6 +19836,22 @@ fn inherent_receiver_review_last_hop_and_wrapper_controls() -> Result<(), String
+                 .map(|(t, r)| (t.test.name.as_str(), *r))
+                 .collect();
+             assert_eq!(full_rows, compact_rows);
++            assert_eq!(
++                full.related_tests
++                    .iter()
++                    .filter(|test| test.test_name == name)
++                    .count(),
++                1,
++                "exactly one retained subject per owner seam: {name}"
++            );
++            assert_eq!(
++                compact
++                    .iter()
++                    .filter(|(test, _)| test.test.name == name)
++                    .count(),
++                1,
++                "exactly one compact subject per owner seam: {name}"
++            );
+             assert!(
+                 full_rows.contains_key(name),
+                 "retain the subject: {name}: {full_rows:?}"
+diff --git a/crates/ripr/tests/private_inherent_receiver.rs b/crates/ripr/tests/private_inherent_receiver.rs
+index 627a4b086..9b2c653ff 100644
+--- a/crates/ripr/tests/private_inherent_receiver.rs
++++ b/crates/ripr/tests/private_inherent_receiver.rs
+@@ -136,6 +136,10 @@ struct Fixture(PathBuf);
+ 
+ impl Fixture {
+     fn create() -> Result<Self, String> {
++        Self::with_files(FILES)
++    }
++
++    fn with_files(files: &[(&str, &str)]) -> Result<Self, String> {
+         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+         let fixture = Self(std::env::temp_dir().join(format!(
+             "ripr-private-inherent-receiver-{}-{}",
+@@ -143,7 +147,7 @@ impl Fixture {
+             SEQUENCE.fetch_add(1, Ordering::Relaxed)
+         )));
+         std::fs::create_dir(&fixture.0).map_err(|error| error.to_string())?;
+-        for (relative, text) in FILES {
++        for (relative, text) in files {
+             let path = fixture.0.join(relative);
+             if let Some(parent) = path.parent() {
+                 std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+@@ -457,3 +461,97 @@ fn module_assertion_shadow_and_standard_positive_have_consistent_diff_relations(
+     }
+     Ok(())
+ }
++
++/// Exercise the actual diff producer on the same native subjects as the
++/// full/compact repository matrix. Helper-only reach remains repository-specific.
++#[test]
++fn executable_owner_identity_boundaries_agree_in_diff() -> Result<(), String> {
++    #[derive(serde::Deserialize)]
++    struct Case {
++        path: String,
++        name: String,
++        relation: Option<RelationReason>,
++    }
++    let cases: Vec<Case> = serde_json::from_str(include_str!(
++        "../../../fixtures/inherent_receiver_free_helper_identity/cases.json"
++    ))
++    .map_err(|error| error.to_string())?;
++    assert_eq!(cases.len(), 19);
++    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
++    for case in cases {
++        let source = std::fs::read_to_string(fixtures.join(&case.path))
++            .map_err(|error| error.to_string())?;
++        let fixture = Fixture::with_files(&[
++            (
++                "Cargo.toml",
++                include_str!(
++                    "../../../fixtures/inherent_receiver_free_helper_identity/input/Cargo.toml"
++                ),
++            ),
++            ("src/lib.rs", &source),
++            (
++                "diff.patch",
++                include_str!("../../../fixtures/inherent_receiver_free_helper_identity/diff.patch"),
++            ),
++        ])?;
++        let output = check_workspace(CheckInput {
++            root: fixture.0.clone(),
++            diff_file: Some(fixture.0.join("diff.patch")),
++            mode: Mode::Ready,
++            format: OutputFormat::Json,
++            include_unchanged_tests: true,
++            ..CheckInput::default()
++        })?;
++        assert_eq!(
++            output.findings.len(),
++            2,
++            "{}: retain both changed-owner probes",
++            case.path
++        );
++        for finding in &output.findings {
++            let rows: Vec<_> = finding
++                .related_tests
++                .iter()
++                .filter(|test| test.name == case.name)
++                .collect();
++            // Diff reports retain oracle rows: one test may have both an
++            // inner assertion and an outer assertion. Check every row rather
++            // than silently collapsing them by test name.
++            assert!(!rows.is_empty(), "{}: retain the named subject", case.path);
++            assert_eq!(
++                rows.len(),
++                finding.related_tests.len(),
++                "{}: no substitute subjects",
++                case.path
++            );
++            for row in rows {
++                if case.relation == Some(RelationReason::DirectOwnerCall) {
++                    assert_eq!(
++                        row.relation_reason,
++                        Some(RelationReason::DirectOwnerCall),
++                        "{}",
++                        case.path
++                    );
++                    assert_eq!(
++                        row.relation_confidence,
++                        Some(RelationConfidence::High),
++                        "{}",
++                        case.path
++                    );
++                } else {
++                    assert!(
++                        !matches!(
++                            row.relation_reason,
++                            Some(RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall)
++                        ),
++                        "{}: {:?}",
++                        case.path,
++                        row
++                    );
++                    assert_ne!(finding.class, ExposureClass::Exposed, "{}", case.path);
++                }
++            }
++        }
++    }
++    Ok(())
++}
+diff --git a/docs/LEARNINGS.md b/docs/LEARNINGS.md
+index e6a01a1eb..8b92f82c3 100644
+--- a/docs/LEARNINGS.md
++++ b/docs/LEARNINGS.md
+@@ -3195,3 +3195,30 @@ real object/null calls and the genuine-helper relation. The
+ `inherent_receiver_operand_item_shadow` honesty fixture pins a retained weak
+ relation independently of its golden output. This establishes a refusal boundary,
+ not general Rust type or value-flow resolution.
++
++
++### Owner evidence requires execution and declaration identity (#8004)
++
++A scope-aware nominal receiver check is only one part of owner admission.
++Repository direct calls must reuse the complete refusal used by diff and helper
++last hops; otherwise a module-local type with the right terminal name can regain
++high credit. Audit every consumer when extending a shared admission boundary.
++
++Descendant syntax is not execution: an uncalled nested function, closure or
++async body can contain a perfect assertion without running the owner. Keep the
++outer executable walk separate from declared/deferred bodies and use that same
++walk for helper entry. A helper-name graph supplies candidates, not identities:
++`foreign::read_as_object()` cannot borrow the root helper's real owner call.
++Resolve the specific free call in each hop's own module/import scope, retaining
++conservative refusal for unknown declarations. Paired native controls distinguish
++runtime discrimination from static support; invoking a nested function can kill
++the mutant while its static route remains unresolved.
++
++Boundary tests must exercise the candidate route as well as the final gate.
++The initial one-line qualified `bridge` control was already absent from the
++pre-repair candidate graph. The retained multiline bare-call pair uses the
++existing route, then changes the intermediate function's actual import binding.
++Its negative must refuse owner reach and its positive must retain it. Keep such
++setup failures and raw original inputs rather than counting a vacuous negative
++as identity proof. Repeated parsing and discarded per-call syntax caches remain
++performance work under #8005, independently of semantic test results.
+diff --git a/docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md b/docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md
+index 7fa0f316d..5ade850cd 100644
+--- a/docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md
++++ b/docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md
+@@ -269,6 +269,27 @@ return-type conventions, aliases and general factory/value flow remain bounded
+ limitations tracked by #7415. Trait dispatch and associated functions without
+ `self` retain their existing rules.
+ 
++Repository direct inherent calls use the same complete owner refusal as diff
++calls and helper last hops, including module-local type shadows. A nominal
++receiver alone cannot override that refusal. Calls inside a nested item,
++closure or async body are not calls executed by the enclosing test merely
++because its syntax contains them. Invoked nested functions remain conservatively
++unresolved by this bounded walk; their native mutation controls can discriminate
++without receiving direct static credit.
++
++For the existing bounded same-file helper chain, every admitted entry and
++intermediate free-function hop must contain an executable call bound to the
++candidate's actual module/function declaration. The existing helper-name graph
++only supplies candidates. Explicit foreign paths, wrong imports, dormant local
++helpers and unplaced bindings cannot borrow a same-named root helper's owner
++credit. Genuine root/imported helpers and same-name inherent wrapper delegation
++retain repository reach. Diff helper evidence remains conservative; repository
++helper reach is not a new diff-helper claim. The three executable-identity
++fixtures and their paired native/full/compact/diff matrix pin this boundary.
++Repeated parsing and per-call `OwnerPinSyntax` cache loss remain substantive,
++unbenchmarked performance concerns tracked by #8005; correctness controls do
++not refute them.
++
+ The verdict corpus keeps the accuracy cost of this boundary visible: arbitrary
+ `ByteSize::gb`/`ByteSize::kib` factories, rstest parameter receivers and bare
+ imported enum variants in table loops do not acquire identity from a unique

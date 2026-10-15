@@ -1,0 +1,10 @@
+{
+  "source": "8bbc8dd4dead78cdccdb10861fe4848103aac6dd",
+  "composition": "ecb5173f6cef7c2eaedfde84a17330c27a7cafbb",
+  "compared_reports": 66,
+  "same_decision_projection": true,
+  "excluded": [
+    "invocation argv/input root",
+    "unprojected version/artifact/cache envelope"
+  ]
+}

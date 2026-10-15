@@ -1,0 +1,11 @@
+fde37b31ad6f9dccd406c2c12f5425bd0042601e
+100644 c782488e63578cbfbbc753f9e43896fbfc8a24a1 1	fixtures/evidence-promotion-honesty-corpus/corpus.json
+100644 8dd7929bc083a8eb1186981e4e267081e5746300 2	fixtures/evidence-promotion-honesty-corpus/corpus.json
+100644 399f757209e265c41f4d3e823b565041ae278232 3	fixtures/evidence-promotion-honesty-corpus/corpus.json
+
+Auto-merging .ripr/traceability.toml
+Auto-merging crates/ripr/src/analysis/classify/mod.rs
+Auto-merging crates/ripr/src/analysis/classify/owner_pin.rs
+Auto-merging crates/ripr/src/analysis/test_grip_evidence/tests.rs
+Auto-merging fixtures/evidence-promotion-honesty-corpus/corpus.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/corpus.json

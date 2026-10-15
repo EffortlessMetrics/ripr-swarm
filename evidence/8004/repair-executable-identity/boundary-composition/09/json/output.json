@@ -1,0 +1,174 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "ready",
+  "root": "/workspace/repair8004-evidence/boundary-composition/09/json",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:cbbe0ad76a79a14ca5abf45b4a1e332ac7212e232a8933b4538e183416efbcc1","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:match_arm:f9032269",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:match_arm:f9032269",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 6,
+        "expression": "Self::Object(value) =>"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling as_object; tests share only its file or a name token: actual"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: Self::Object(value) =>"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach weak: No test is seen calling as_object; tests share only its file or a name token: actual", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: Self::Object(value) =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: Self::Object(value) => (line 6)", "related test src/lib.rs:14 actual uses strong exact value oracle: assert_eq!(super::read_as_object(), Some(7));", "source assertion argument value 7 at line 14"],
+      "flow_sinks": [
+        {"kind":"match_arm","text":"Self::Object(value) =>","line":6}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: Self::Object(value) =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No test is seen calling as_object; tests share only its file or a name token: actual", "Reachable tests can plausibly activate this changed behavior", "ripr saw a test reaching public API that may call toward this change through a transitive path it does not fully trace (pub to pub(crate) helper chains, macros, or generics). This is not a coverage assessment -- ripr cannot confirm or deny that the change is observed.", "For example, the test `actual` (src/lib.rs:14) calls `read_as_object`, an entry point that may lead here. Inspect it to judge whether this change is observed.", "limitation_last_established_edge: test `actual` (src/lib.rs:14) -> entry `read_as_object`", "limitation_first_unresolved_edge: entry `read_as_object` -> owner `as_object` through a transitive Rust helper path", "limitation_analyzer_route: analysis/rust-public-api-transitive-reach", "limitation_non_claim: named limitation only; ripr cannot confirm or deny that this path observes the change"],
+      "missing": ["A test may reach this change through an internal helper-call chain ripr cannot fully trace (macros, generics, trait dispatch, or depth greater than 5). This is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "14": "assert_eq!(super::read_as_object(), Some(7));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 14,
+            "value": "7",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 14,
+          "value": "7",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "actual",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(super::read_as_object(), Some(7));",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": ["transitive_reach_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Check whether `actual`, which may reach `as_object` through `read_as_object`, asserts on the changed behavior; ripr does not trace that path, so this limitation does not establish a missing test.",
+      "suggested_next_action": "Check whether `actual`, which may reach `as_object` through `read_as_object`, asserts on the changed behavior; ripr does not trace that path, so this limitation does not establish a missing test.",
+      "language": "rust",
+      "static_limit_kind": "rust_transitive_reach_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/rust-public-api-transitive-reach",
+        "first_unresolved_edge": "entry `read_as_object` -> owner `as_object` through a transitive Rust helper path",
+        "kind": "rust_transitive_reach_unresolved",
+        "last_established_edge": "test `actual` (src/lib.rs:14) -> entry `read_as_object`",
+        "non_claim": "named limitation only; ripr cannot confirm or deny that this path observes the change"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:3068903e",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:3068903e",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 6,
+        "expression": "Some(*value)"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling as_object; tests share only its file or a name token: actual"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for returned value: Self::Object(value) => Some(*value)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach weak: No test is seen calling as_object; tests share only its file or a name token: actual", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: Self::Object(value) => Some(*value)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: Self::Object(value) => Some(*value) (line 6)", "related test src/lib.rs:14 actual uses strong exact value oracle: assert_eq!(super::read_as_object(), Some(7));", "source assertion argument value 7 at line 14"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"Self::Object(value) => Some(*value)","line":6}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for returned value: Self::Object(value) => Some(*value)", "No test is seen calling as_object; tests share only its file or a name token: actual", "Reachable tests can plausibly activate this changed behavior", "ripr saw a test reaching public API that may call toward this change through a transitive path it does not fully trace (pub to pub(crate) helper chains, macros, or generics). This is not a coverage assessment -- ripr cannot confirm or deny that the change is observed.", "For example, the test `actual` (src/lib.rs:14) calls `read_as_object`, an entry point that may lead here. Inspect it to judge whether this change is observed.", "limitation_last_established_edge: test `actual` (src/lib.rs:14) -> entry `read_as_object`", "limitation_first_unresolved_edge: entry `read_as_object` -> owner `as_object` through a transitive Rust helper path", "limitation_analyzer_route: analysis/rust-public-api-transitive-reach", "limitation_non_claim: named limitation only; ripr cannot confirm or deny that this path observes the change"],
+      "missing": ["A test may reach this change through an internal helper-call chain ripr cannot fully trace (macros, generics, trait dispatch, or depth greater than 5). This is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "14": "assert_eq!(super::read_as_object(), Some(7));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 14,
+            "value": "7",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 14,
+          "value": "7",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "actual",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(super::read_as_object(), Some(7));",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": ["transitive_reach_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Check whether `actual`, which may reach `as_object` through `read_as_object`, asserts on the changed behavior; ripr does not trace that path, so this limitation does not establish a missing test.",
+      "suggested_next_action": "Check whether `actual`, which may reach `as_object` through `read_as_object`, asserts on the changed behavior; ripr does not trace that path, so this limitation does not establish a missing test.",
+      "language": "rust",
+      "static_limit_kind": "rust_transitive_reach_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/rust-public-api-transitive-reach",
+        "first_unresolved_edge": "entry `read_as_object` -> owner `as_object` through a transitive Rust helper path",
+        "kind": "rust_transitive_reach_unresolved",
+        "last_established_edge": "test `actual` (src/lib.rs:14) -> entry `read_as_object`",
+        "non_claim": "named limitation only; ripr cannot confirm or deny that this path observes the change"
+      },
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "canonical_next_action": {"schema_version":"canonical_next_action.v1","producer":"check_top_result","subject":{"root":"/workspace/repair8004-evidence/boundary-composition/09/json","diff_source":{"committed":{"base":null,"head":null}},"item":"probe:src_lib.rs:match_arm:f9032269"},"currentness":{"head_expected":null,"head_observed":null,"config_expected":null,"config_observed":null},"action_class":"unsupported_or_limited","stop":{"kind":"check_triage","case":"static_limited","detail_route":"ripr explain --root /workspace/repair8004-evidence/boundary-composition/09/json --diff /workspace/repair8004-evidence/boundary-composition/09/json/diff.patch --mode ready probe:src_lib.rs:match_arm:f9032269"},"alternatives":[{"label":"considered finding probe:src_lib.rs:return_value:3068903e","route":"ripr explain --root /workspace/repair8004-evidence/boundary-composition/09/json --diff /workspace/repair8004-evidence/boundary-composition/09/json/diff.patch --mode ready probe:src_lib.rs:return_value:3068903e"}],"non_claim":"Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."}
+}

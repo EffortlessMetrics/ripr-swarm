@@ -1,0 +1,20 @@
+{
+  "authorized_repositories": [],
+  "cases": 13,
+  "items": 21,
+  "manifest": "metrics/rust-judged-behavior-panel/release-selection.json",
+  "per_direction": {
+    "should_gap": 6,
+    "should_limit": 3,
+    "should_stay_quiet": 12
+  },
+  "quiet_baseline_rows": 3,
+  "repositories": [
+    "EffortlessMetrics/ripr",
+    "EffortlessMetrics/ripr-swarm"
+  ],
+  "schema_version": "0.1",
+  "unmet_floors": [
+    "authorized repositories: 0 < 2 (explicit read-only scope)"
+  ]
+}

@@ -1,0 +1,75 @@
+diff --git a/crates/ripr/src/analysis/classify/mod.rs b/crates/ripr/src/analysis/classify/mod.rs
+index 2126d6861..0db4893f2 100644
+--- a/crates/ripr/src/analysis/classify/mod.rs
++++ b/crates/ripr/src/analysis/classify/mod.rs
+@@ -25,6 +25,7 @@ mod targeted_calls;
+ mod text;
+ mod transitive_reach;
+ mod value_transfer;
++mod variant_field_pattern;
+ 
+ pub(in crate::analysis) use activation::{
+     LocalBoundary, TestValueFacts, activation_and_boundary_input, call_parameter_names,
+diff --git a/crates/ripr/src/analysis/classify/owner_pin.rs b/crates/ripr/src/analysis/classify/owner_pin.rs
+index 5f0c958d2..dd0d41ac5 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin.rs
+@@ -44,7 +44,7 @@
+ pub(super) mod closure_adaptor;
+ mod expected_binding;
+ mod fallible_check;
+-mod short_circuit;
++pub(super) mod short_circuit;
+ pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
+ 
+ use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
+diff --git a/crates/ripr/src/analysis/test_grip_evidence.rs b/crates/ripr/src/analysis/test_grip_evidence.rs
+index 6b7a88663..545462411 100644
+--- a/crates/ripr/src/analysis/test_grip_evidence.rs
++++ b/crates/ripr/src/analysis/test_grip_evidence.rs
+@@ -471,8 +471,9 @@ pub(crate) fn compact_evidence_for_seam(
+ /// exact-value oracle and read `reach: yes` (#5335). When every related
+ /// test is such a relation, the shared diff-mode reach decides: `weak` when
+ /// something could still run the owner unseen (a doctest or caller names
+-/// it, a trait impl, a test macro), otherwise `no`. A bounded transitive,
+-/// macro or trait-dispatch witness from repo reach keeps it `weak` too.
++/// it, a trait impl, a test macro), otherwise `no`. A transitive (bounded
++/// or past five hops), macro or trait-dispatch witness from repo reach keeps
++/// it `weak` too.
+ /// Either way the seam can no longer read `strongly_gripped`; the related
+ /// tests stay listed as suggestions.
+ fn reach_evidence(
+diff --git a/crates/ripr/src/analysis/test_grip_evidence/reach_limit.rs b/crates/ripr/src/analysis/test_grip_evidence/reach_limit.rs
+index ed4a36980..5547b9714 100644
+--- a/crates/ripr/src/analysis/test_grip_evidence/reach_limit.rs
++++ b/crates/ripr/src/analysis/test_grip_evidence/reach_limit.rs
+@@ -6,7 +6,8 @@
+ //! `no_static_path` findings:
+ //!
+ //! - a bounded transitive or macro path from a test toward the owner exists
+-//!   but is unresolved (RIPR-SPEC-0114, RIPR-SPEC-0118);
++//!   but is unresolved (RIPR-SPEC-0114, RIPR-SPEC-0118), or, checked after
++//!   every other witness, a transitive chain past five hops (#8047);
+ //! - the owner is a trait-impl method, which operators, formatting macros
+ //!   and generic calls run without naming it, test-reached code names the
+ //!   impl's self type, and, for a std trait with its own call syntax
+@@ -552,8 +553,18 @@ fn unresolved_reach_summary(
+     }) {
+         return Some(summary);
+     }
+-    cached(context, format!("id:{}", owner_fn.id.0), || {
++    if let Some(summary) = cached(context, format!("id:{}", owner_fn.id.0), || {
+         trait_dispatch_reach_summary(owner_fn, context)
++    }) {
++        return Some(summary);
++    }
++    // Last: a chain past five hops never displaces a shallower or more
++    // specific witness (#8047).
++    cached(context, format!("deep:{owner_name}"), || {
++        let witness = context
++            .transitive_reach
++            .deep_transitive_witness(owner_name)?;
++        Some(transitive_summary(owner_name, &witness))
+     })
+ }
+ 

@@ -1,0 +1,53 @@
+    Checking bitflags v2.13.2
+    Checking tokio v1.53.2
+   Compiling ripr v0.11.0 (/workspace/repair8004/crates/ripr)
+    Checking oxc_syntax v0.130.0
+    Checking oxc_regular_expression v0.130.0
+    Checking ls-types v0.0.6
+    Checking oxc_ast v0.130.0
+    Checking tokio-util v0.7.20
+    Checking rmcp v3.5.1
+    Checking oxc_ecmascript v0.130.0
+    Checking oxc_parser v0.130.0
+    Checking tower-lsp-server v0.23.0
+warning: unused import: `inherent_receiver_call_resolves`
+  --> crates/ripr/src/analysis/classify/mod.rs:90:5
+   |
+90 |     inherent_receiver_call_resolves, manifests_with_unindexed_files, method_call_resolves_to_impl,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error[E0599]: no method named `generic_arg_list` found for struct `ra_ap_syntax::ast::PathSegment` in the current scope
+    --> crates/ripr/src/analysis/classify/related_tests.rs:3095:24
+     |
+3095 |             || segment.generic_arg_list().is_some()
+     |                        ^^^^^^^^^^^^^^^^ method not found in `ra_ap_syntax::ast::PathSegment`
+     |
+    ::: /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ra_ap_syntax-0.0.349/src/ast/traits.rs:57:8
+     |
+  57 |     fn generic_arg_list(&self) -> Option<ast::GenericArgList> {
+     |        ---------------- the method is available for `ra_ap_syntax::ast::PathSegment` here
+     |
+     = help: items from traits can only be used if the trait is in scope
+help: trait `HasGenericArgs` which provides `generic_arg_list` is implemented but not in scope; perhaps you want to import it
+     |
+   1 + use ra_ap_syntax::ast::HasGenericArgs;
+     |
+
+error[E0609]: no field `inherent_owner_id` on type `&OwnerContext<'_>`
+   --> crates/ripr/src/analysis/test_grip_evidence/related_tests.rs:380:22
+    |
+380 |                     .inherent_owner_id
+    |                      ^^^^^^^^^^^^^^^^^ unknown field
+    |
+help: a field with a similar name exists
+    |
+380 -                     .inherent_owner_id
+380 +                     .inherent_owner
+    |
+
+Some errors have detailed explanations: E0599, E0609.
+For more information about an error, try `rustc --explain E0599`.
+warning: `ripr` (lib) generated 1 warning
+error: could not compile `ripr` (lib) due to 2 previous errors; 1 warning emitted

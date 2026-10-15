@@ -1,0 +1,21 @@
+warning: unused macro definition: `assert_eq`
+  --> /workspace/repair8004-evidence/evidence/8004/independent-review53/native/sibling-shadow/original.rs:13:32
+   |
+13 |     mod sibling { macro_rules! assert_eq { ($($tokens:tt)*) => {}; } }
+   |                                ^^^^^^^^^
+   |
+   = note: `#[warn(unused_macros)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `Null` is never constructed
+ --> /workspace/repair8004-evidence/evidence/8004/independent-review53/native/sibling-shadow/original.rs:2:42
+  |
+2 | pub(crate) enum JsonValue { Object(u32), Null }
+  |                 ---------                ^^^^
+  |                 |
+  |                 variant in this enum
+  |
+  = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: 2 warnings emitted
+

@@ -1,0 +1,14 @@
+{
+  "schema_version": "0.1",
+  "status": "pass",
+  "drift_count": 0,
+  "provenance": {
+    "binary": "/workspace/repair8004-target/debug/ripr",
+    "ripr_version": "ripr 0.11.0 (8bbc8dd4dead78cdccdb10861fe4848103aac6dd)",
+    "revision": "8bbc8dd4dead78cdccdb10861fe4848103aac6dd"
+  },
+  "entries": [
+
+  ],
+  "violations": []
+}

@@ -1,0 +1,20 @@
+ M .ripr/traceability.toml
+ M changelog.d/7415-inherent-receiver-admission.md
+ M crates/ripr/src/analysis/classify/call_identity.rs
+ M crates/ripr/src/analysis/classify/mod.rs
+ M crates/ripr/src/analysis/classify/owner_pin.rs
+ M crates/ripr/src/analysis/classify/related_tests.rs
+ M crates/ripr/src/analysis/syntax/name_scope.rs
+ M crates/ripr/src/analysis/test_grip_evidence/related_tests.rs
+ M crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs
+ M crates/ripr/src/analysis/test_grip_evidence/tests.rs
+ M crates/ripr/tests/private_inherent_receiver.rs
+ M docs/LEARNINGS.md
+ M docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md
+ M fixtures/evidence-promotion-honesty-corpus/corpus.json
+?? fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json
+?? fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json
+?? fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json
+?? fixtures/inherent_receiver_dormant_body/
+?? fixtures/inherent_receiver_free_helper_identity/
+?? fixtures/inherent_receiver_module_type_shadow/

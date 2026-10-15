@@ -1,0 +1,82 @@
+[
+  {
+    "name": "inherent_receiver_module_type_shadow",
+    "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/head-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/head-corpus-replay/inherent_receiver_module_type_shadow",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "complete_report_equal_except_artifact": true
+  },
+  {
+    "name": "inherent_receiver_dormant_body",
+    "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/head-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/head-corpus-replay/inherent_receiver_dormant_body",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "complete_report_equal_except_artifact": true
+  },
+  {
+    "name": "inherent_receiver_free_helper_identity",
+    "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/head-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/head-corpus-replay/inherent_receiver_free_helper_identity",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "complete_report_equal_except_artifact": true
+  },
+  {
+    "name": "inherent_receiver_helper_scope_shadow",
+    "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/head-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/head-corpus-replay/inherent_receiver_helper_scope_shadow",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "complete_report_equal_except_artifact": true
+  },
+  {
+    "name": "inherent_receiver_helper_type_parameter",
+    "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/head-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/head-corpus-replay/inherent_receiver_helper_type_parameter",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "complete_report_equal_except_artifact": true
+  }
+]

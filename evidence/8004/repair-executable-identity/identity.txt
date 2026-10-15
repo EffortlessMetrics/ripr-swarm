@@ -1,0 +1,11 @@
+Assigned source parent/base:53e22999d19d07a28a355b740d62c01c25aea541 tree07100736ea448043831337f64d45c7a26b6d1b79.
+Assigned prior parent:43f00b54eeb239c240bb71553c30a7bde3a4e080.
+Verified integration merge-base:67866bc95a72462840c3eedac0f213ed658474b4.
+Fetched/inspected main:6ce175b83 (full identity recorded by Git commands below).
+Reviewer evidence28b14701b8c0d773db61081f2fde3ce963b009cb 182 manifest entries verified;SHA2560da9592695db39d244c8aa0b0365bc9b2aeabf5d3e8fcbe3405aa2901d13e04a.
+Environment Linux x86_64 bash; toolchain Rust/Cargo1.95.0, workspace Cargo/Rustup homes. No disconnect.
+Doctor exit1 behind-only by27commits; root/skill instructions forbid behind-only restack. Retain report; source not restacked.
+53e22999d19d07a28a355b740d62c01c25aea541
+07100736ea448043831337f64d45c7a26b6d1b79
+6ce175b839cc03bc40ba0a21e056e7553c672b11
+b10ec218c9f19a4f1799b4848452754b95f23a07

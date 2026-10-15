@@ -1,0 +1,7 @@
+   Compiling ripr v0.11.0 (/workspace/repair8004/crates/ripr)
+   Compiling xtask v0.1.0 (/workspace/repair8004/xtask)
+    Finished `dev` profile [unoptimized] target(s) in 1m 54s
+     Running `/workspace/repair8004-target/debug/xtask goldens check`
+$ cargo build -p ripr
+   Compiling ripr v0.11.0 (/workspace/repair8004/crates/ripr)
+    Finished `dev` profile [unoptimized] target(s) in 1m 16s

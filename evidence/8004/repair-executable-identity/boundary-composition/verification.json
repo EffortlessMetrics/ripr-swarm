@@ -1,0 +1,268 @@
+[
+  {
+    "case": "inherent_receiver_module_type_shadow/input/src/lib.rs",
+    "repository_relation": "same_test_file",
+    "diff_relations": [
+      "weak_token_substring"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_dormant_body/input/src/lib.rs",
+    "repository_relation": "same_test_file",
+    "diff_relations": [
+      "weak_token_substring"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/input/src/lib.rs",
+    "repository_relation": "same_test_file",
+    "diff_relations": [
+      "same_test_file"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_module_type_shadow/controls/genuine-owner.rs",
+    "repository_relation": "direct_owner_call",
+    "diff_relations": [
+      "direct_owner_call"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_dormant_body/controls/dormant-plain.rs",
+    "repository_relation": "same_test_file",
+    "diff_relations": [
+      "weak_token_substring"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_dormant_body/controls/dormant-closure.rs",
+    "repository_relation": "same_test_file",
+    "diff_relations": [
+      "weak_token_substring"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_dormant_body/controls/dormant-async.rs",
+    "repository_relation": "same_test_file",
+    "diff_relations": [
+      "weak_token_substring"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_dormant_body/controls/outer-call.rs",
+    "repository_relation": "direct_owner_call",
+    "diff_relations": [
+      "direct_owner_call"
+    ],
+    "diff_classes": [
+      "static_unknown",
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_dormant_body/controls/nested-invoked.rs",
+    "repository_relation": "same_test_file",
+    "diff_relations": [
+      "weak_token_substring"
+    ],
+    "diff_classes": [
+      "reachable_unrevealed",
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/genuine-root.rs",
+    "repository_relation": "helper_owner_call",
+    "diff_relations": [
+      "same_test_file"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/unique-foreign-value.rs",
+    "repository_relation": "same_test_file",
+    "diff_relations": [
+      "same_test_file"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/imported-foreign.rs",
+    "repository_relation": "same_test_file",
+    "diff_relations": [
+      "same_test_file"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/imported-root.rs",
+    "repository_relation": "helper_owner_call",
+    "diff_relations": [
+      "same_test_file"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/intermediate-foreign.rs",
+    "repository_relation": "same_test_file",
+    "diff_relations": [
+      "same_test_file"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/intermediate-root.rs",
+    "repository_relation": "helper_owner_call",
+    "diff_relations": [
+      "same_test_file"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/same-line-foreign.rs",
+    "repository_relation": "same_test_file",
+    "diff_relations": [
+      "same_test_file"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/generic-root.rs",
+    "repository_relation": "helper_owner_call",
+    "diff_relations": [
+      "same_test_file"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/test-module-helper.rs",
+    "repository_relation": "helper_owner_call",
+    "diff_relations": [
+      "same_test_file"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/qualified-test-module-helper.rs",
+    "repository_relation": "helper_owner_call",
+    "diff_relations": [
+      "same_test_file"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_helper_scope_shadow/input/src/lib.rs",
+    "repository_relation": "same_test_file",
+    "diff_relations": [
+      "same_test_file"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_helper_scope_shadow/controls/receiver-type-parameter.rs",
+    "repository_relation": "same_test_file",
+    "diff_relations": [
+      "same_test_file"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  },
+  {
+    "case": "inherent_receiver_helper_scope_shadow/controls/genuine-module.rs",
+    "repository_relation": "helper_owner_call",
+    "diff_relations": [
+      "same_test_file"
+    ],
+    "diff_classes": [
+      "weakly_exposed"
+    ],
+    "owner_seams": 4,
+    "full_compact_metric_parity": true
+  }
+]

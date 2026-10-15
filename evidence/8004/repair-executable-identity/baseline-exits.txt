@@ -1,0 +1,3 @@
+check-fast 0
+check 0
+build 0

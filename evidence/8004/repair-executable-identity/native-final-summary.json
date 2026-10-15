@@ -1,0 +1,103 @@
+{
+  "matrix_cases": 22,
+  "matrix_executions": 44,
+  "matrix_original_passes": 22,
+  "matrix_mutant_failures": 10,
+  "matrix_mutant_survivors": 12,
+  "same_line_filtered_executions": 4,
+  "same_line_results": [
+    {
+      "kind": "original",
+      "test": "tests::actual",
+      "source_sha256": "4e205e34a7fb84c4ee1243b11b4c32c6786fb03791af9a5dd18cffdeb83dd2a6",
+      "compile_argv": [
+        "/workspace/run8004.sh",
+        "rustc",
+        "--edition=2024",
+        "--test",
+        "--crate-name",
+        "control",
+        "/workspace/repair8004-evidence/same-line-native/original.rs",
+        "-o",
+        "/workspace/repair8004-evidence/same-line-native/original"
+      ],
+      "compile_exit": 0,
+      "run_argv": [
+        "/workspace/repair8004-evidence/same-line-native/original",
+        "--exact",
+        "tests::actual"
+      ],
+      "run_exit": 0
+    },
+    {
+      "kind": "original",
+      "test": "tests::decoy",
+      "source_sha256": "4e205e34a7fb84c4ee1243b11b4c32c6786fb03791af9a5dd18cffdeb83dd2a6",
+      "compile_argv": [
+        "/workspace/run8004.sh",
+        "rustc",
+        "--edition=2024",
+        "--test",
+        "--crate-name",
+        "control",
+        "/workspace/repair8004-evidence/same-line-native/original.rs",
+        "-o",
+        "/workspace/repair8004-evidence/same-line-native/original"
+      ],
+      "compile_exit": 0,
+      "run_argv": [
+        "/workspace/repair8004-evidence/same-line-native/original",
+        "--exact",
+        "tests::decoy"
+      ],
+      "run_exit": 0
+    },
+    {
+      "kind": "mutant",
+      "test": "tests::actual",
+      "source_sha256": "d875ffa8c91eeb02ca8236fe915399344972aaf0156f5714ad2990137f05311d",
+      "compile_argv": [
+        "/workspace/run8004.sh",
+        "rustc",
+        "--edition=2024",
+        "--test",
+        "--crate-name",
+        "control",
+        "/workspace/repair8004-evidence/same-line-native/mutant.rs",
+        "-o",
+        "/workspace/repair8004-evidence/same-line-native/mutant"
+      ],
+      "compile_exit": 0,
+      "run_argv": [
+        "/workspace/repair8004-evidence/same-line-native/mutant",
+        "--exact",
+        "tests::actual"
+      ],
+      "run_exit": 101
+    },
+    {
+      "kind": "mutant",
+      "test": "tests::decoy",
+      "source_sha256": "d875ffa8c91eeb02ca8236fe915399344972aaf0156f5714ad2990137f05311d",
+      "compile_argv": [
+        "/workspace/run8004.sh",
+        "rustc",
+        "--edition=2024",
+        "--test",
+        "--crate-name",
+        "control",
+        "/workspace/repair8004-evidence/same-line-native/mutant.rs",
+        "-o",
+        "/workspace/repair8004-evidence/same-line-native/mutant"
+      ],
+      "compile_exit": 0,
+      "run_argv": [
+        "/workspace/repair8004-evidence/same-line-native/mutant",
+        "--exact",
+        "tests::decoy"
+      ],
+      "run_exit": 0
+    }
+  ],
+  "prior_reviewer_replay_executions": 32
+}

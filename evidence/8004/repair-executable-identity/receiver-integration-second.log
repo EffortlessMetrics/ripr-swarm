@@ -1,0 +1,23 @@
+   Compiling ripr v0.11.0 (/workspace/repair8004/crates/ripr)
+error[E0382]: borrow of moved value: `rows`
+   --> crates/ripr/tests/private_inherent_receiver.rs:549:25
+    |
+512 |             let rows: Vec<_> = finding
+    |                 ---- move occurs because `rows` has type `Vec<&ripr::domain::RelatedTest>`, which does not implement the `Copy` trait
+...
+527 |             for row in rows {
+    |                        ---- `rows` moved due to this implicit call to `.into_iter()`
+...
+549 |                         rows[0]
+    |                         ^^^^ value borrowed here after move
+    |
+note: `into_iter` takes ownership of the receiver `self`, which moves `rows`
+   --> /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/core/src/iter/traits/collect.rs:312:17
+help: consider iterating over a slice of the `Vec<&ripr::domain::RelatedTest>`'s content to avoid moving into the `for` loop
+    |
+527 |             for row in &rows {
+    |                        +
+
+For more information about this error, try `rustc --explain E0382`.
+error: could not compile `ripr` (test "private_inherent_receiver") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...

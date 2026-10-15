@@ -1,0 +1,70 @@
+[
+  {
+    "case": "generic-module-shadow",
+    "kind": "original",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/scope-native/generic-module-shadow-original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/scope-native/generic-module-shadow-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "generic-module-shadow",
+    "kind": "mutant",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/scope-native/generic-module-shadow-mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/scope-native/generic-module-shadow-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "generic-receiver-shadow",
+    "kind": "original",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/scope-native/generic-receiver-shadow-original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/scope-native/generic-receiver-shadow-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "generic-receiver-shadow",
+    "kind": "mutant",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/scope-native/generic-receiver-shadow-mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/scope-native/generic-receiver-shadow-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  }
+]

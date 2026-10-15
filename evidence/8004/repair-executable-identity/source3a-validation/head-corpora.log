@@ -1,0 +1,23 @@
+    Finished `dev` profile [unoptimized] target(s) in 0.11s
+     Running `/workspace/repair8004-target/debug/xtask verdict-corpus check-all`
+verdict-corpus: checking fixtures/perl-verdict-corpus
+verdict-corpus: fixtures/perl-verdict-corpus has no spec-coverage.toml; scoring rows without the spec-example coverage gate
+$ cargo build -p ripr --features lang-perl
+   Compiling ripr v0.11.0 (/workspace/repair8004/crates/ripr)
+    Finished `dev` profile [unoptimized] target(s) in 1m 13s
+$ cargo build -p ripr
+    Finished `dev` profile [unoptimized] target(s) in 0.11s
+verdict-corpus: 36 cases; false verdicts 0.3333 (12/36), contradictions 0.0000 (0/36); wrote target/ripr/reports/verdict-corpus/perl
+verdict-corpus: checking fixtures/python-verdict-corpus
+$ cargo build -p ripr
+    Finished `dev` profile [unoptimized] target(s) in 0.11s
+verdict-corpus: 69 cases; false verdicts 0.0000 (0/69), contradictions 0.0000 (0/69); wrote target/ripr/reports/verdict-corpus/python
+verdict-corpus: spec examples covered 1.0000 (40/40), floor 40
+verdict-corpus: checking fixtures/rust-verdict-corpus
+verdict-corpus: 485 cases; false verdicts 0.0536 (26/485), contradictions 0.0000 (0/621); wrote target/ripr/reports/verdict-corpus
+verdict-corpus: spec examples covered 1.0000 (131/131), floor 131
+verdict-corpus: oracle accuracy 1.0000 (44/44), overclaim 0.0000 (0/44); underclaim 0, kind_mismatch 0, unobserved 0
+verdict-corpus: checking fixtures/typescript-verdict-corpus
+verdict-corpus: 169 cases; false verdicts 0.0592 (10/169), contradictions 0.0000 (0/169); wrote target/ripr/reports/verdict-corpus/typescript
+verdict-corpus: spec examples covered 0.9333 (112/120), floor 112
+verdict-corpus: 4 corpora checked

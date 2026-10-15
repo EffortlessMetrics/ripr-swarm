@@ -1,0 +1,14 @@
+test-grip 0
+related-tests 0
+call-identity 0
+name-scope 0
+cli-rerun-unit 0
+receiver-integration 0
+native-path 0
+assertion-helper 0
+cli-rerun-integration 0
+goldens 0
+corpora 0
+honesty 0
+dogfood 0
+check-fast 1

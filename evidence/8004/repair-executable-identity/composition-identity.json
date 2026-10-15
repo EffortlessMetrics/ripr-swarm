@@ -1,0 +1,17 @@
+{
+  "base": "67866bc95a72462840c3eedac0f213ed658474b4",
+  "main": "9f7d06bfef1206e98ff27e5c877d1f016595430e",
+  "head": "8bbc8dd4dead78cdccdb10861fe4848103aac6dd",
+  "tree": "1f2daf30baf9c12b4cce760d167945de43c2dec5",
+  "commit": "ecb5173f6cef7c2eaedfde84a17330c27a7cafbb",
+  "conflict_paths": [
+    "fixtures/evidence-promotion-honesty-corpus/corpus.json"
+  ],
+  "case_counts": {
+    "base": 294,
+    "main": 296,
+    "head": 309
+  },
+  "merged_cases": 311,
+  "semantic_conflicts": 0
+}

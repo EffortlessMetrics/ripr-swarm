@@ -1,0 +1,610 @@
+[
+  {
+    "case": "inherent_receiver_module_type_shadow/input/src/lib.rs",
+    "native_reaches": false,
+    "kind": "original",
+    "sha256": "4725a8daaba7875eb6a9e9cf99f0a28df0d90576de98b7803a1e13cb094fd2d2",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_module_type_shadow_input_src_lib-original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_module_type_shadow_input_src_lib-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_module_type_shadow/input/src/lib.rs",
+    "native_reaches": false,
+    "kind": "mutant",
+    "sha256": "524de32d392e3274e952fc5befce65c961cce438d6c4941097a7c2fc4ca4de57",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_module_type_shadow_input_src_lib-mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_module_type_shadow_input_src_lib-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_dormant_body/input/src/lib.rs",
+    "native_reaches": false,
+    "kind": "original",
+    "sha256": "c49baf47107ebc6049a4cf952fc861badf170b6e795a0e3ce8efb81f665a1387",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_input_src_lib-original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_input_src_lib-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_dormant_body/input/src/lib.rs",
+    "native_reaches": false,
+    "kind": "mutant",
+    "sha256": "14e7a03e038ab468673ac25baa163913c9e951e48d2f4077b310e64d7bf9f4f9",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_input_src_lib-mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_input_src_lib-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/input/src/lib.rs",
+    "native_reaches": false,
+    "kind": "original",
+    "sha256": "8419436399c191ba79e6c33baa2d79d7271a607049dc0246a8828551db516e02",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_input_src_lib-original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_input_src_lib-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/input/src/lib.rs",
+    "native_reaches": false,
+    "kind": "mutant",
+    "sha256": "5353dba3ce638f478223863a1dd92c4834a41ee5844fd038976cba22ba5f22ec",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_input_src_lib-mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_input_src_lib-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_module_type_shadow/controls/genuine-owner.rs",
+    "native_reaches": true,
+    "kind": "original",
+    "sha256": "d990e2004c79aa07de4c7505c5f0c757b583f351c86ce6f5dac6712d14bf4e9b",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_module_type_shadow_controls_genuine-owner-original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_module_type_shadow_controls_genuine-owner-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_module_type_shadow/controls/genuine-owner.rs",
+    "native_reaches": true,
+    "kind": "mutant",
+    "sha256": "3b7e0e9e4ab97cf2310f340663f66349d781338f5d6db67009e99a453def81f0",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_module_type_shadow_controls_genuine-owner-mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_module_type_shadow_controls_genuine-owner-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 101
+  },
+  {
+    "case": "inherent_receiver_dormant_body/controls/dormant-plain.rs",
+    "native_reaches": false,
+    "kind": "original",
+    "sha256": "b2acac2b43e8aa9b84e740ea8aeea1eedfb36d60cceab24e0bc1a285a796ab51",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_dormant-plain-original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_dormant-plain-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_dormant_body/controls/dormant-plain.rs",
+    "native_reaches": false,
+    "kind": "mutant",
+    "sha256": "fded3aa8945e8aa9b83331685abeb39dafb2f2c63c31e8bdf4072142bd255693",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_dormant-plain-mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_dormant-plain-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_dormant_body/controls/dormant-closure.rs",
+    "native_reaches": false,
+    "kind": "original",
+    "sha256": "8a2f9c38fc715a603d5a9520705480a4d522ea80c4020270af75e84ac31e33b4",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_dormant-closure-original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_dormant-closure-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_dormant_body/controls/dormant-closure.rs",
+    "native_reaches": false,
+    "kind": "mutant",
+    "sha256": "53947dc58bb2f9c62680552fe2b6d616ef959e7a30b54811896f166ff37aea05",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_dormant-closure-mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_dormant-closure-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_dormant_body/controls/dormant-async.rs",
+    "native_reaches": false,
+    "kind": "original",
+    "sha256": "dd7a2529fc24eefbd19ad3a768f8942d2fade658b64cf93c05e9a9c0096800e5",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_dormant-async-original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_dormant-async-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_dormant_body/controls/dormant-async.rs",
+    "native_reaches": false,
+    "kind": "mutant",
+    "sha256": "3730a9862ab4476834b798785ee85f3fdbdc41ef1978d7b0cc49559c68d57c6a",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_dormant-async-mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_dormant-async-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_dormant_body/controls/outer-call.rs",
+    "native_reaches": true,
+    "kind": "original",
+    "sha256": "6e90fdf991b1b7a26a45b881308ccb5ce69424042f8ac43344a376b756c98047",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_outer-call-original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_outer-call-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_dormant_body/controls/outer-call.rs",
+    "native_reaches": true,
+    "kind": "mutant",
+    "sha256": "ddb3c3d7f61469ccc5f6d5cdd7eab7c6372929446bfdf355c3300d3100b8d9ad",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_outer-call-mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_outer-call-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 101
+  },
+  {
+    "case": "inherent_receiver_dormant_body/controls/nested-invoked.rs",
+    "native_reaches": true,
+    "kind": "original",
+    "sha256": "e4835759d348f90133365d6b6b9d2c73999949279e9f1e007caf6e1f2b46eabe",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_nested-invoked-original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_nested-invoked-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_dormant_body/controls/nested-invoked.rs",
+    "native_reaches": true,
+    "kind": "mutant",
+    "sha256": "576372b8fcb218338ac87d73e9524800e2a35e6399c61c5f5fe5f500a23a2dca",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_nested-invoked-mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_dormant_body_controls_nested-invoked-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 101
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/genuine-root.rs",
+    "native_reaches": true,
+    "kind": "original",
+    "sha256": "d72480ffc12e8cc01cd325ce9c2c058d6738107fa7debab2e6192578c50fa969",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_genuine-root-original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_genuine-root-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/genuine-root.rs",
+    "native_reaches": true,
+    "kind": "mutant",
+    "sha256": "5f8ed581d90b396506840c80256f22d25437ae468058b84245a8c65bd95089c6",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_genuine-root-mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_genuine-root-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 101
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/unique-foreign-value.rs",
+    "native_reaches": false,
+    "kind": "original",
+    "sha256": "ab164a959f8822f159071aef4eb9902f6568325520dbfe9b08e30db114c27bfb",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_unique-foreign-value-original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_unique-foreign-value-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/unique-foreign-value.rs",
+    "native_reaches": false,
+    "kind": "mutant",
+    "sha256": "592a3a79cb03ef04b260038090876509ea6a67c1e12d0785d0403e86e1658ba2",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_unique-foreign-value-mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_unique-foreign-value-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/imported-foreign.rs",
+    "native_reaches": false,
+    "kind": "original",
+    "sha256": "b523baf26bb82dc676b3f9af5fa9f3349c76dfcde2ffd8db3a7092fb66235d6e",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_imported-foreign-original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_imported-foreign-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/imported-foreign.rs",
+    "native_reaches": false,
+    "kind": "mutant",
+    "sha256": "81edc2b8563ae4b7f4859986b0823d283189985a5b1f9ed160dc5dc54ebad4d6",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_imported-foreign-mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_imported-foreign-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/imported-root.rs",
+    "native_reaches": true,
+    "kind": "original",
+    "sha256": "a2dbbd631f6e14c6da3cf5d2549f9c771df02708ebcdb7f6fc0bb11bb77d7cd7",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_imported-root-original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_imported-root-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/imported-root.rs",
+    "native_reaches": true,
+    "kind": "mutant",
+    "sha256": "0ca1a99fc70f58bb6f4da6b28a0571bab170fdcacd8e35b54faa0fa362bd1c48",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_imported-root-mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_imported-root-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 101
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/intermediate-foreign.rs",
+    "native_reaches": false,
+    "kind": "original",
+    "sha256": "8b347a32728f400e9e28864dee489e3fde26903429ee459bd418c72c99c4fe09",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-foreign-original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-foreign-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/intermediate-foreign.rs",
+    "native_reaches": false,
+    "kind": "mutant",
+    "sha256": "6fcb69e901b270ede6a225a10910a08036425f945ab1f2a2c522ceecf8da21bd",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-foreign-mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-foreign-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/intermediate-root.rs",
+    "native_reaches": true,
+    "kind": "original",
+    "sha256": "4764073afbd763d530173fc0ccd65766899ccc7f10e28636af8aec6e0864c274",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-root-original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-root-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/intermediate-root.rs",
+    "native_reaches": true,
+    "kind": "mutant",
+    "sha256": "c6ed54d32a1a1093110dbba2b3b295238216615938574e565291c53d2f2c6ff3",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-root-mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-root-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 101
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/same-line-foreign.rs",
+    "native_reaches": false,
+    "kind": "original",
+    "sha256": "d2de1d4a0447974093d3b6c85097430dd2a8fd2724b4533168a5df09c96a2155",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_same-line-foreign-original.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_same-line-foreign-original"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": "inherent_receiver_free_helper_identity/controls/same-line-foreign.rs",
+    "native_reaches": false,
+    "kind": "mutant",
+    "sha256": "a47e81a18990fcfe4b3f9fd2c20984a17ea65642683b6478b87c80fe48d2b7aa",
+    "argv": [
+      "/workspace/run8004.sh",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_same-line-foreign-mutant.rs",
+      "-o",
+      "/workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_same-line-foreign-mutant"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  }
+]

@@ -1,0 +1,8 @@
+    Finished `test` profile [unoptimized] target(s) in 0.12s
+     Running unittests src/lib.rs (/workspace/repair8004-target/debug/deps/ripr-67c20de708634f70)
+
+running 1 test
+test analysis::test_grip_evidence::tests::inherent_executable_owner_identity_boundary_matrix ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10932 filtered out; finished in 0.60s
+

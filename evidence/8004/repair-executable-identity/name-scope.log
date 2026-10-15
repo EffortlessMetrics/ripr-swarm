@@ -1,0 +1,14 @@
+    Finished `test` profile [unoptimized] target(s) in 0.14s
+     Running unittests src/lib.rs (/workspace/repair8004-target/debug/deps/ripr-67c20de708634f70)
+
+running 7 tests
+test analysis::syntax::name_scope::tests::a_module_item_of_the_name_is_a_definition_of_that_scope ... ok
+test analysis::syntax::name_scope::tests::a_block_local_use_is_block_bound_not_function_wide ... ok
+test analysis::syntax::name_scope::tests::same_named_functions_on_one_line_have_no_unique_scope ... ok
+test analysis::syntax::name_scope::tests::a_nested_fn_item_and_a_block_rename_are_block_bound ... ok
+test analysis::syntax::name_scope::tests::unparseable_or_missing_function_yields_none ... ok
+test analysis::syntax::name_scope::tests::use_paths_are_read_through_the_syntax_tree ... ok
+test analysis::syntax::name_scope::tests::records_scopes_innermost_first_with_imports_globs_and_definitions ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 10928 filtered out; finished in 0.01s
+

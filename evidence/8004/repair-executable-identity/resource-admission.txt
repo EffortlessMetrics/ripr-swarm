@@ -1,0 +1,9 @@
+Task PR8004 repair source53; sole writer. Preserve original /workspace/ripr-swarm at632097e5 and its19G target (unknown ownership, no deletion).
+Owned worktree /workspace/repair8004; Git common dir /workspace/ripr-swarm/.git.
+Owned mutable Cargo target /workspace/repair8004-target, local linker temp /workspace/repair8004/target; evidence /workspace/repair8004-evidence; frozen CLI witnesses in evidence/bin.
+Observed overlay30G free. Reserve8G; conservative additional budget12G build,1G frozen/native,1G evidence/restoration (14G peak). Use debug0/incremental0. Do not delete old outputs. Retain current/baseline CLI and raw red/native reports until durable handoff; no release cleanup authorized.
+Composition admission: /workspace/repair8004-composition will own a detached local
+composition of main9f7d06bfe + source3a0b9379. Shared Cargo target stays serialized;
+no composition Cargo starts before source validation ends. Observed26G free;
+reserve8G and original14G peak budget still fit (current task growth~4G). Extra
+worktree/source and source/composition witnesses remain within that budget.

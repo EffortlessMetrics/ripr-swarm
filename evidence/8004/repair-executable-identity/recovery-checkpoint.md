@@ -1,0 +1,5 @@
+# Recovery checkpoint
+
+Parent reported an environment disconnect at12:08 UTC. Executor availability was established by successful shell/Git/GitHub calls, without starting a replacement composition command. Existing composition session22241 returned terminal exit0; all10 selected commands in composition-exits.txt returned0. Frozen CLI identifies ecb5173f6cef7c2eaedfde84a17330c27a7cafbb. Follow-on boundary session80082 also returned0 and retained66 reports plus three same-line producer reports. All decision projections equal final source8b.
+
+Existing source push session55590 returned0, a normal fast-forward53e22999 ->8bbc8dd4. Read-back remote ref is8bbc8dd4dead78cdccdb10861fe4848103aac6dd; GitHub reports open, drafttrue, mergedfalse. Source treecda6f3f58de043bd5615caaa42984ff06024d7bb; owned worktree clean. No ongoing Cargo command, source rewrite, deletion or duplicated command. Raw evidence remains in /workspace/repair8004-evidence; owned worktrees and target retained. Durable evidence publication and technical handoff are the remaining actions.

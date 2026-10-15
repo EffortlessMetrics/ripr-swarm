@@ -1,0 +1,4 @@
+    Finished `dev` profile [unoptimized] target(s) in 0.11s
+     Running `/workspace/repair8004-target/debug/xtask goldens bless inherent_receiver_dormant_body --reason 'RIPR-SPEC-0005 and RIPR-SPEC-0108: initialize the native dormant-body refusal; declaration syntax cannot supply executed owner credit. Existing goldens and runtime labels are unchanged.'`
+$ cargo build -p ripr
+    Finished `dev` profile [unoptimized] target(s) in 0.12s

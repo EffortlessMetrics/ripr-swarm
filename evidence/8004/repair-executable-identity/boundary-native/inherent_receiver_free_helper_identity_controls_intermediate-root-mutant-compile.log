@@ -1,0 +1,27 @@
+warning: unused variable: `value`
+ --> /workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-root-mutant.rs:6:26
+  |
+6 |             Self::Object(value) => None,
+  |                          ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+  |
+  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `Null` is never constructed
+ --> /workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-root-mutant.rs:2:42
+  |
+2 | pub(crate) enum JsonValue { Object(u32), Null }
+  |                 ---------                ^^^^
+  |                 |
+  |                 variant in this enum
+  |
+  = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `read_as_object` is never used
+  --> /workspace/repair8004-evidence/boundary-native/inherent_receiver_free_helper_identity_controls_intermediate-root-mutant.rs:12:22
+   |
+12 | mod foreign { pub fn read_as_object() -> Option<u32> { Some(7) } }
+   |                      ^^^^^^^^^^^^^^
+
+warning: 3 warnings emitted
+

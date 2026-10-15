@@ -1,0 +1,46 @@
+[
+  {
+    "format": "json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/composition-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/same-line-composition/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/repair8004-evidence/same-line-composition/json/diff.patch"
+    ],
+    "exit": 0
+  },
+  {
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/composition-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/same-line-composition/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0
+  },
+  {
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/composition-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/same-line-composition/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0
+  }
+]

@@ -1,0 +1,50 @@
+    Finished `test` profile [unoptimized] target(s) in 0.13s
+     Running unittests src/lib.rs (/workspace/repair8004-target/debug/deps/ripr-67c20de708634f70)
+
+running 43 tests
+test cli::rerun::tests::add_cache_stats_merges_store_failure_rows_bounded ... ok
+test cli::rerun::tests::canonical_gap_records_preserve_multiple_anchored_scopes ... ok
+test cli::rerun::tests::canonical_gap_conflicting_receipt_commands_remain_explicit ... ok
+test cli::rerun::tests::canonical_gap_duplicate_projection_deduplicates_scope_and_commands ... ok
+test cli::rerun::tests::canonical_gap_selection_retains_explicit_seam_after_gap_identity_closes ... ok
+test cli::rerun::tests::failed_root_canonicalizations_do_not_compare_equal ... ok
+test cli::rerun::tests::human_rerun_report_names_explicit_static_movement ... ok
+test cli::rerun::tests::human_rerun_report_names_current_state_only_boundary ... ok
+test cli::rerun::tests::input_fingerprint_changes_name_owned_workspace_inputs ... ok
+test cli::rerun::tests::input_fingerprint_changes_name_graph_provenance_inputs ... ok
+test cli::rerun::tests::missing_graph_provenance_is_explicitly_unavailable ... ok
+test cli::rerun::tests::parity_detects_unexpected_targeted_seam ... ok
+test cli::rerun::tests::parity_detects_missing_expected_targeted_seam ... ok
+test cli::rerun::tests::parity_names_related_test_and_missing_discriminator_drift ... ok
+test cli::rerun::tests::conflicted_legacy_receipts_drop_the_typed_receipt_spec ... ok
+test cli::rerun::tests::parity_reports_differing_static_class_owner_and_file ... ok
+test cli::rerun::tests::parity_reports_repair_route_readiness_drift ... ok
+test cli::rerun::tests::path_dependency_graph_differences_are_not_named_as_input_changes ... ok
+test cli::rerun::tests::rerun_cache_disclosure_names_reuse_and_fallbacks ... ok
+test cli::rerun::tests::path_dependency_graph_section_is_disclosed_in_the_fingerprint ... ok
+test cli::rerun::tests::rerun_gap_requires_explicit_ledger ... ok
+test cli::rerun::tests::rerun_parses_changed_test_json_output ... ok
+test cli::rerun::tests::rerun_parses_changed_test_node_selector ... ok
+test cli::rerun::tests::rerun_gap_fails_when_named_ledger_is_unreadable_or_unparsable ... ok
+test cli::rerun::tests::rerun_parses_explicit_before_artifact ... ok
+test cli::rerun::tests::rerun_parses_explicit_full_pipeline_parity_check ... ok
+test cli::rerun::tests::rerun_parses_gap_selector_with_explicit_ledger ... ok
+test cli::rerun::tests::rerun_rejects_empty_changed_test_node ... ok
+test cli::rerun::tests::rerun_rejects_multiple_changed_test_selectors ... ok
+test cli::rerun::tests::rerun_requires_one_selector ... ok
+test cli::rerun::tests::resolved_scope_matches_canonical_gap_or_typed_seam_identity ... ok
+test cli::rerun::tests::targeted_rerun_serializes_static_limitation_route_state ... ok
+test cli::rerun::tests::targeted_rerun_seam_preserves_producer_route_readiness ... ok
+test cli::rerun::tests::targeted_rerun_route_carries_typed_specs ... ok
+test cli::rerun::tests::targeted_rerun_specs_dedupe_by_digest_not_command_id ... ok
+test cli::rerun::tests::typed_spec_divergence_from_legacy_strings_is_published_as_is ... ok
+test cli::rerun::tests::canonical_gap_rerun_recomputes_typescript_scope ... ok
+test cli::rerun::tests::typescript_rerun_resolves_shifted_anchor_by_owner_with_disclosure ... ok
+test cli::rerun::tests::typescript_rerun_scope_rejects_root_escaping_anchors ... ok
+test cli::rerun::tests::typescript_rerun_fallback_uses_scope_owner_not_first_record ... ok
+test cli::rerun::tests::typescript_rerun_without_current_seam_fails_closed ... ok
+test cli::rerun::tests::unresolved_changed_test_selectors_are_named_limitations ... ok
+test cli::rerun::tests::typescript_rerun_covers_every_accepted_extension ... ok
+
+test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 10892 filtered out; finished in 0.04s
+

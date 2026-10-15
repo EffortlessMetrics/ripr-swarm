@@ -1,0 +1,605 @@
+[
+  {
+    "case": "module-direct-shadow",
+    "format": "json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/module-direct-shadow/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/repair8004-evidence/parent43-cli/module-direct-shadow/json/diff.patch"
+    ],
+    "exit": 0,
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 2,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  },
+  {
+    "case": "module-direct-shadow",
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/module-direct-shadow/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "summary": null
+  },
+  {
+    "case": "module-direct-shadow",
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/module-direct-shadow/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "summary": null
+  },
+  {
+    "case": "dormant-nested",
+    "format": "json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/dormant-nested/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/repair8004-evidence/parent43-cli/dormant-nested/json/diff.patch"
+    ],
+    "exit": 0,
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 2,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  },
+  {
+    "case": "dormant-nested",
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/dormant-nested/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "summary": null
+  },
+  {
+    "case": "dormant-nested",
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/dormant-nested/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "summary": null
+  },
+  {
+    "case": "sibling-helper",
+    "format": "json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/sibling-helper/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/repair8004-evidence/parent43-cli/sibling-helper/json/diff.patch"
+    ],
+    "exit": 0,
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 2,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  },
+  {
+    "case": "sibling-helper",
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/sibling-helper/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "summary": null
+  },
+  {
+    "case": "sibling-helper",
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/sibling-helper/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "summary": null
+  },
+  {
+    "case": "module-owner-positive",
+    "format": "json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/module-owner-positive/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/repair8004-evidence/parent43-cli/module-owner-positive/json/diff.patch"
+    ],
+    "exit": 0,
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 2,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  },
+  {
+    "case": "module-owner-positive",
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/module-owner-positive/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "summary": null
+  },
+  {
+    "case": "module-owner-positive",
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/module-owner-positive/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "summary": null
+  },
+  {
+    "case": "nested-invoked",
+    "format": "json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/nested-invoked/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/repair8004-evidence/parent43-cli/nested-invoked/json/diff.patch"
+    ],
+    "exit": 0,
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 1,
+      "reachable_unrevealed": 1,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  },
+  {
+    "case": "nested-invoked",
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/nested-invoked/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "summary": null
+  },
+  {
+    "case": "nested-invoked",
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/nested-invoked/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "summary": null
+  },
+  {
+    "case": "sibling-helper-positive",
+    "format": "json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/sibling-helper-positive/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/repair8004-evidence/parent43-cli/sibling-helper-positive/json/diff.patch"
+    ],
+    "exit": 0,
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 2,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  },
+  {
+    "case": "sibling-helper-positive",
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/sibling-helper-positive/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "summary": null
+  },
+  {
+    "case": "sibling-helper-positive",
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/sibling-helper-positive/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "summary": null
+  },
+  {
+    "case": "local_wrapper",
+    "format": "json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/local_wrapper/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/repair8004-evidence/parent43-cli/local_wrapper/json/diff.patch"
+    ],
+    "exit": 0,
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 2,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  },
+  {
+    "case": "local_wrapper",
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/local_wrapper/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "summary": null
+  },
+  {
+    "case": "local_wrapper",
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/local_wrapper/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "summary": null
+  },
+  {
+    "case": "macro_discard",
+    "format": "json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/macro_discard/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/repair8004-evidence/parent43-cli/macro_discard/json/diff.patch"
+    ],
+    "exit": 0,
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 1,
+      "reachable_unrevealed": 1,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  },
+  {
+    "case": "macro_discard",
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/macro_discard/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "summary": null
+  },
+  {
+    "case": "macro_discard",
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/macro_discard/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "summary": null
+  },
+  {
+    "case": "qualified-live",
+    "format": "json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/qualified-live/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/repair8004-evidence/parent43-cli/qualified-live/json/diff.patch"
+    ],
+    "exit": 0,
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 2,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  },
+  {
+    "case": "qualified-live",
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/qualified-live/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "summary": null
+  },
+  {
+    "case": "qualified-live",
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/repair8004-evidence/bin/parent43-ripr",
+      "check",
+      "--root",
+      "/workspace/repair8004-evidence/parent43-cli/qualified-live/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "summary": null
+  }
+]
