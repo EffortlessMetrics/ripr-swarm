@@ -199,19 +199,18 @@ fn strip_negations(text: &str) -> (&str, bool, bool) {
     (core, negated, literal_compared)
 }
 
-/// The one argument of a path call to `Not::not` (`Not::not(x)`,
-/// `std::ops::Not::not(x)`, `<bool as Not>::not(x)`; #8101), which negates
-/// it like `!x` and `x.not()` do.
+/// The one argument of a path call to `not` (`Not::not(x)`,
+/// `std::ops::Not::not(x)`, `<bool as Not>::not(x)`, `bool::not(x)`;
+/// #8101), which negates it like `!x` and `x.not()` do. Any path counts:
+/// a function named `not` most likely inverts, and reading it as a
+/// negation only lowers a reading (review of 1ae0c07).
 fn not_path_call_operand(text: &str) -> Option<&str> {
     let text = text.trim();
     let masked = mask_comments_and_strings(text);
     let open = masked.find('(')?;
     let head = masked.get(..open)?.trim_end().strip_suffix("not")?;
-    let path = head.trim_end().strip_suffix("::")?.trim_end();
-    let trait_name = path.strip_suffix('>').unwrap_or(path);
-    let names_not =
-        trait_name == "Not" || trait_name.ends_with("::Not") || trait_name.ends_with(" Not");
-    if !names_not || !is_path_head(head) {
+    head.trim_end().strip_suffix("::")?;
+    if !is_path_head(head) {
         return None;
     }
     let argument = super::arguments::parenthesized_contents(text.get(open..)?.trim_end())?;

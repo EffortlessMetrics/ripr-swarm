@@ -870,9 +870,7 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         ("assert_eq!(u32::from(c), 97);", &exact),
         ("assert_eq!(is_valid(x) as u8, 1);", &exact),
         ("assert!(matches!(r, Err(E::Bad)).eq(&!false));", &err),
-        // A trait that only ends in `Not` is no negation, and a value
-        // compared inside a literal comparison still pins.
-        ("assert_eq!(Knot::not(r == Err(E::Bad)), true);", &err),
+        // A value compared inside a literal comparison still pins.
         ("assert_eq!((x as u8 == 3), true);", &exact),
         // A relation-only conjunct beside a pinning `==` lends no kind: the
         // pinning conjunct decides it (#7947).
@@ -1091,6 +1089,9 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!(u8::from(r == Err(E::Bad)) == 0, true);",
         "assert_eq!((r == Err(E::Bad)) == flag, true);",
         "assert!(((r == Err(E::Bad)) == flag) == true);",
+        // Any path call named `not` reads as a negation (review of 1ae0c07).
+        "assert_eq!(MyNot::not(r == Err(E::Bad)), true);",
+        "assert_eq!(bool::not(r == Err(E::Bad)), true);",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
