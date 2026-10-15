@@ -1604,10 +1604,12 @@ reaches the ordinary token rule and reads `weakly_exposed`, still a gap.
   nor the call's arguments hold a binding word (`macro_rules`, `macro`,
   `use`, `extern`, `mod`, `include`, `macro_use`, `macro_export`,
   `no_implicit_prelude`) or an attribute other than a built-in test or lint
-  attribute. The definition invokes no bang macro, and the arguments invoke
-  only trusted names by their bare name. Every macro call between the
-  definition and the call is a bare trusted name or another such call of
-  the same wrapper, so nothing can emit a shadowing definition. Attribute
+  attribute. The definition holds no `!` at all, and the arguments hold a
+  `!` only as a bare trusted `name!` (a unary `!` fails closed, since a
+  `tt` fragment or a repetition can splice it after a name). No module
+  item sits between the definition and the call, and every macro call
+  there is a bare trusted name or another such call of the same wrapper,
+  so nothing can bring in a shadowing definition. Attribute
   proc macros elsewhere in the file stay invisible, as for every other
   site.
   `macro_use` or `no_implicit_prelude` anywhere in a non-trusted macro's

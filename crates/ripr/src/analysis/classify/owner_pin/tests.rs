@@ -3874,11 +3874,11 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         refusal(&format!("/// Runs one case.\n{definition}{call}")),
         None
     );
-    // A unary `!`, a trusted macro between the definition and the call, and
-    // a built-in test attribute in the arguments bind nothing either.
+    // A trusted macro between the definition and the call, and a built-in
+    // test attribute in the arguments, bind nothing either.
     assert_eq!(
         refusal(&format!(
-            "{definition}fn build() -> Vec<u32> {{ vec![1] }}\ncase!(one, |v| {{ #[allow(unused)] let w = 1; assert!(!(v == 2)); assert_eq!(v, 1); }});\n"
+            "{definition}fn build() -> Vec<u32> {{ vec![1] }}\ncase!(one, |v| {{ #[allow(unused)] let w = 1; assert_eq!(v, 1); }});\n"
         )),
         None
     );
@@ -3928,6 +3928,19 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         // A macro expanded between the definition and the call may emit a
         // shadowing `macro_rules! case`.
         format!("{definition}generate!();\n{call}"),
+        // A module between them may carry a shadowing definition, even
+        // without an outer attribute (`#![macro_use]` in its own file).
+        format!("{definition}#[macro_use]\nmod shadow;\n{call}"),
+        format!("{definition}mod shadow;\n{call}"),
+        // A `!` that reads as unary can be spliced after a name by a `tt`
+        // fragment or a repetition.
+        format!("{definition}case!(one, |v| {{ assert!(!(v == 2)); assert_eq!(v, 1); }});\n"),
+        format!(
+            "macro_rules! case {{ ($m:ident, $b:tt, $n:ident) => {{ $m $b ($n); }} }}\ncase!(define, !, assert_eq);\n"
+        ),
+        format!(
+            "macro_rules! case {{ ($($m:ident)*; $n:ident) => {{ $($m)* ! ($n); }} }}\ncase!(define; assert_eq);\n"
+        ),
         format!("{definition}case!(two, |v| {{ generate!(); }});\n{call}"),
     ] {
         assert!(

@@ -976,16 +976,27 @@ fn binding_free_local_wrapper(
     if !inert_tokens(&body_tokens, trusted, true) {
         return false;
     }
+    // A module between the definition and the call (`#[macro_use] mod
+    // shadow;`) may carry a second `macro_rules!` of the same name in a
+    // file this scan never shows.
+    let between = |node: &SyntaxNode| {
+        let start = node.text_range().start();
+        start >= definition_end && start < call_start
+    };
+    if root
+        .descendants()
+        .filter(|node| ast::Module::can_cast(node.kind()))
+        .any(|node| between(&node))
+    {
+        return false;
+    }
     // A macro expanded between the definition and the call could emit a
     // second `macro_rules!` of the same name, which this file never shows
     // but which shadows the first at the call. Trusted macros only build
     // expressions, so anything they could expand to stays block-local.
     root.descendants()
         .filter_map(ast::MacroCall::cast)
-        .filter(|other| {
-            let start = other.syntax().text_range().start();
-            start >= definition_end && start < call_start
-        })
+        .filter(|other| between(other.syntax()))
         .all(|other| match bare_macro_name(&other) {
             Some(other_name) if trusted.contains(&other_name.as_str()) => true,
             Some(other_name) if other_name == name => other.token_tree().is_some_and(|tree| {
@@ -1014,9 +1025,10 @@ fn non_trivia_tokens(node: &SyntaxNode) -> Vec<ra_ap_syntax::SyntaxToken> {
 }
 
 /// Whether macro tokens can bind nothing once expanded: no binding word, no
-/// attribute outside [`INERT_ATTRIBUTES`], and no bang macro other than a
-/// bare trusted name (none at all in a definition body, whose `$name!`
-/// could be anything).
+/// attribute outside [`INERT_ATTRIBUTES`], and no `!` other than a bare
+/// trusted `name!` (none at all in a definition body, whose `$name!` could
+/// be anything). A unary `!` fails closed too: a `$b:tt` or a repetition
+/// can splice it after a name.
 fn inert_tokens(tokens: &[ra_ap_syntax::SyntaxToken], trusted: &[&str], definition: bool) -> bool {
     use ra_ap_syntax::SyntaxKind::{BANG, COLON, COLON2, IDENT, L_BRACK, POUND};
     let word =
@@ -1027,11 +1039,12 @@ fn inert_tokens(tokens: &[ra_ap_syntax::SyntaxToken], trusted: &[&str], definiti
         }
         match token.kind() {
             BANG => {
+                // Even a `!` that reads as unary here may follow a name once
+                // a `$b:tt` or a repetition splices it, so only the bare
+                // trusted `name!` shape passes.
                 let previous = index.checked_sub(1).and_then(|before| tokens.get(before));
                 let Some(previous) = previous.filter(|previous| previous.kind() == IDENT) else {
-                    // A unary `!` follows an operator, a keyword or an
-                    // opening delimiter, never a name.
-                    return true;
+                    return false;
                 };
                 let qualified = index
                     .checked_sub(2)
