@@ -267,19 +267,25 @@ Two pattern terms are used below.
    through any literal comparison (`(r != Err(E::Bad)) == true`), caps
    before the chain is read (`assert_eq!(score(2) != 0 && flag, true)`,
    `assert_eq!(flag && !matches!(r, Err(E::Bad)), true)`); a bool value
-   compared with `false` pins it like `!x`. A leading `!`
+   compared with `false` pins it like `!x`. With a pinning `==` conjunct,
+   the relation-only conjuncts lend the chain no kind: it reads as the same
+   equality assertion over its other conjuncts, never higher than the whole
+   (`assert_eq!(a == b && r != Err(E::Bad), true)` reads as
+   `assert_eq!(a == b, true)`; #7947). A leading `!`
    negates only its own operand (`!flag && matches!(..)` is a chain). A comparison
    asserted true (`assert_eq!(r == Err(E::Bad), true)`), a bare value or
    call (`assert_eq!(!is_valid(x), true)` pins a bool result) and a whole
    `matches!` (the polarity rule above) keep their readings. Spellings that
    keep a comparison or a literal read the same way (#7931): a comparison
-   method on a receiver or its `PartialEq`/`PartialOrd` path call
+   method on a receiver or a two-argument path call to it
    (`r.eq(&Err(E::Bad))`, `score(2).ne(&0)`, `PartialEq::eq(&r, &x)`,
+   `Result::eq(&r, &x)`, `<_ as PartialEq>::eq(&r, &x)`; #7993;
    `.lt`, `.le`, `.gt`, `.ge`) reads like its operator, so only `eq`
    asserted true may pin, and an `eq` or `ne` with a literal side is that
    literal comparison (`(r == Err(E::Bad)).eq(&false)` is `== false`); a
    literal behind `&`, a one-expression block, `as bool` or
-   `bool::from(..)` is that literal; and the operand through a
+   `bool::from(..)` is that literal, and a `!` over such a spelling negates
+   it (`!&true` is `false`; #7993); and the operand through a
    one-expression block, `&`, `as bool` or `bool::from(..)` is the operand
    (`assert_eq!({ r == Err(E::Bad) }, false)`,
    `assert_eq!(bool::from(r == Err(E::Bad)), false)`). Grouping
@@ -761,6 +767,11 @@ rejected alternative. Any can be reversed later without touching the rest.
     `relational_check` / weak (all `exact_value` or `exact_error_variant` /
     strong before #7931). `assert_eq!(check(20).eq(&Err(E::Bad)), true)`
     keeps `exact_error_variant`.
+33. `assert_eq!(score(2) == 4 && check(2) != Err(E::Bad), true)` and
+    `assert_eq!(score(2) == 4 && !matches!(check(2), Err(E::Bad)), true)`:
+    `exact_value` / strong from `score(2) == 4` (both read
+    `exact_error_variant` / strong before #7947, a kind the excluded variant
+    never earns).
 
 ## Test Mapping
 
@@ -778,8 +789,9 @@ rejected alternative. Any can be reversed later without touching the rest.
   commented and bool-compared forms of example 7, #7715).
 - Existing: `relational_tests.rs::bool_valued_operands_read_as_what_they_assert`
   and the corpus cases `spec0231-bool-compared-inequality` (example 31,
-  #7598) and `spec0231-bool-method-inequality` (example 32's method
-  spelling, #7931).
+  #7598), `spec0231-bool-method-inequality` (example 32's method
+  spelling, #7931) and `spec0231-pinning-chain-relation-kind` (example 33,
+  #7947).
 - Existing: `pattern_admission.rs::tests::spec_0231_rules_2_and_3_read_the_pattern`
   (the pattern forms of examples 3, 4, 7, 17, 18 and 21 to 26, the pinning
   controls 6, 22 and 23, and decision 7's guards).

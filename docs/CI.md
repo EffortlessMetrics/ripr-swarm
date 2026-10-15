@@ -264,6 +264,7 @@ artifacts are grouped by family:
 | `ripr-evidence` | `target/ripr/reports/index.md`, `target/ripr/reports/repo-exposure.json`, `target/ripr/reports/repo-sarif.json` |
 | `editor-agent-loop` | `target/ripr/reports/operator-cockpit.{json,md}`, `target/ripr/reports/agent-receipt.json`, `target/ripr/workflow/agent-seam-packets.json`, `target/ripr/workflow/workflow.json`, `target/ripr/workflow/commands.md`, `target/ripr/workflow/agent-status.{json,md}`, `target/ripr/workflow/agent-review-summary.{json,md}`, `target/ripr/workflow/agent-packet.json`, `target/ripr/workflow/agent-brief.json`, `target/ripr/workflow/agent-verify.json`, plus compatibility copies under `target/ripr/agent/` |
 | `release-readiness` | package lists, publish dry-run transcript, VSIX package proof, server archive proof |
+| `vscode-test-host-diagnostics` | `target/ripr/vscode-test-host-diagnostics/` (failure-only VS Code test-host logs; 5 MiB collector cap, 5-day artifact retention) |
 
 The report index should be the front door for artifact discovery. CI should not
 require reviewers to inspect raw job logs to find the packet that justifies a
@@ -627,12 +628,13 @@ Do not dispatch on PR branches; #5394 tracks enforcing this.
 
 What this means for authors and agents:
 
-UB and Droid retain early review on `opened`, `synchronize`, and `reopened`,
-including Drafts; Droid also retains `labeled` and `unlabeled`. They do not
-subscribe to `ready_for_review` (#4987). Ready therefore neither cancels an
-active UB review nor queues another Droid review, and does not repeat completed
-advisory work. Their existing trust/title/release guards and concurrency remain
-unchanged. UB explicitly lists all three early passes in
+UB retains early review on `opened`, `synchronize`, and `reopened`, including
+Drafts. It does not subscribe to `ready_for_review` (#4987), so Ready neither
+cancels active UB review nor repeats completed advisory work. Its existing
+same-repository guard and concurrency remain unchanged. Automatic Droid PR
+review is retired under #5086; manual `@droid` commands and scheduled security
+scans retain their separate triggers and safeguards. UB explicitly lists all
+three early passes in
 `.ub-review.toml`'s `gate.post_review_on`: action pin
 `55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8` otherwise permits publication only on
 opened and Ready. Removing Ready admission alone would leave repaired-head
@@ -907,7 +909,7 @@ npm run package
 xvfb-run -a npm run test:e2e
 ```
 
-The `test:e2e` step launches a headless VS Code instance via `@vscode/test-electron`, activates the extension in a fixture Rust workspace, and runs the smoke test suite. `xvfb-run` provides the virtual display required on Linux CI runners.
+The `test:e2e` step launches a headless VS Code instance via `@vscode/test-electron`, activates the extension in a fixture Rust workspace, and runs the smoke test suite. `xvfb-run` provides the virtual display required on Linux CI runners. The runner pins host user-data at `target/ripr/vscode-test-user-data` (logs under `logs/`). If the host fails — including before Mocha starts — it copies a size-capped, redacted log subset into `target/ripr/vscode-test-host-diagnostics/`. The vscode job uploads that directory only on `failure()`, with 5-day retention. Diagnostic collection cannot change the original test exit status and is not a root-cause fix.
 
 The VS Code extension build and extension publish workflows use Node 24. This
 is separate from the VS Code extension-host compatibility declared in
@@ -1035,7 +1037,7 @@ EM self-hosted runners.
 | `security.yml` `cargo-deny` | `em-ci-tiny` | `rust-tiny` |
 | `source-of-truth.yml`, `badge-endpoints.yml` | `em-ci-tiny` | `rust-tiny` |
 | `security.yml` `dependency-review` | `em-ci-nano` | `policy-nano` |
-| `droid-review`, `droid`, `droid-security-scan` | `em-ci-review` | `droid-review` |
+| `droid`, `droid-security-scan` | `em-ci-review` | `droid-review` |
 
 All self-hosted lanes carry the `trusted-pr` label and keep their existing
 fork/untrusted-PR `if:` guards, so fork code cannot reach trusted self-hosted

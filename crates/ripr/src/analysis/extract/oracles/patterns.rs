@@ -4,10 +4,10 @@ use super::arguments::{
     equality_assertion_arguments, is_complete_macro_invocation,
 };
 use super::pattern_admission::{is_unpinned_pattern, some_matches_pins_a_value};
-use super::scan::balanced_group_end;
 use crate::analysis::classify::{error_constructor_call_paths, rust_string_literals};
 use crate::analysis::extract::{
-    mask_comments_and_strings, mask_with_char_literals, mask_with_string_delimiter_quotes,
+    group_end, mask_comments_and_strings, mask_with_char_literals,
+    mask_with_string_delimiter_quotes,
 };
 
 /// Structural assertion-text shapes that supplement the parsed
@@ -1227,7 +1227,7 @@ pub(super) fn without_expect_err(line: &str) -> String {
     while let Some(found) = masked[search..].find(CALL) {
         let start = search + found;
         let open = start + CALL.len() - 1;
-        match balanced_group_end(&masked, open) {
+        match group_end(&masked, open) {
             Some(close) if !has_argument_tokens(&line[open + 1..close]) => search = open + 1,
             Some(close) => {
                 out.push_str(&line[copied..start]);

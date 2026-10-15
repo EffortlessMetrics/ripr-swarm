@@ -12,8 +12,8 @@ use super::patterns::{
     is_snapshot_assertion, is_unwrap_err_bound_error_assertion, without_expect_err,
 };
 use crate::analysis::extract::ShadowAuthority;
-use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::extract::text::extract_identifier_tokens;
+use crate::analysis::extract::{delimiters_balance, group_end, mask_comments_and_strings};
 
 pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFact> {
     let bound_error_vars = unwrap_err_bound_variables(body);
@@ -526,6 +526,14 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
             OracleStrength::Strong,
         ));
     }
+    if let Some(pin) = accepted_err_arm_pin(shape) {
+        return Some(guarded_match_fact(
+            shape,
+            line,
+            truncate_chars(&pin, PIN_TEXT_MAX_CHARS),
+            OracleStrength::Strong,
+        ));
+    }
     // Every Err arm must fail loudly on its own text. A guarded accept arm
     // (`Err(e) if <pin> => {}`) is terminal only when it can route: it has
     // a guard, its body is trivial, and every catch-all arm fails loudly.
@@ -771,6 +779,63 @@ fn asserted_err_arm_pin(shape: &GuardedMatchShape) -> Option<String> {
         .collect();
     let alternation_or_guard = pattern.contains('|') || split_pattern_guard(&pattern).1.is_some();
     (is_variant_path(&head) && !alternation_or_guard).then_some(pattern)
+}
+
+/// The exact error pin of the RIPR-SPEC-0175 accepted-Err form:
+///
+/// ```text
+/// match owner(..) {
+///     Ok(<pattern>) => <diverges>,
+///     Err(Type::Variant) => {}
+///     Err(other) => <diverges>,
+/// }
+/// ```
+///
+/// The test passes exactly when the owner returns `Err(Type::Variant)`,
+/// because every other arm fails loudly and the compiler's exhaustiveness
+/// check routes every other result to one of them. Every condition is
+/// required:
+/// - exactly one arm stays quiet: an unguarded `Err(<unit variant path>)`
+///   whose body is trivial (`{}`), so the pin is the arm's selection
+///   itself;
+/// - every other arm (Ok, Err and catch-all alike) fails on every value it
+///   matches ([`arm_fails_unconditionally`]: the [`arm_terminates`] grammar
+///   without the body-predicate `if` form, whose pin-hit path is quiet),
+///   so no second result can end the test quietly;
+/// - at least one Ok or catch-all arm exists, as for every guarded match.
+///
+/// A second quiet arm, a guard on the accept arm, a binding or wildcard
+/// (`Err(e) => {}`, `Err(_) => {}`), a payload pattern
+/// (`Err(Type::Wrap(_))`), or an accept body that does anything returns
+/// `None`, and the shape keeps its existing meaning.
+fn accepted_err_arm_pin(shape: &GuardedMatchShape) -> Option<String> {
+    let mut quiet_err = shape
+        .err_patterns
+        .iter()
+        .zip(shape.err_bodies.iter())
+        .filter(|(_, body)| !arm_fails_unconditionally(body));
+    let (pattern, body) = quiet_err.next()?;
+    if quiet_err.next().is_some() || !arm_body_is_trivial(body) {
+        return None;
+    }
+    let (pattern_proper, guard) = split_pattern_guard(pattern);
+    if guard.is_some() {
+        return None;
+    }
+    let pin = pattern_proper
+        .trim()
+        .strip_prefix("Err(")?
+        .strip_suffix(')')?
+        .trim();
+    if !is_variant_path(pin) {
+        return None;
+    }
+    let others_terminate = shape
+        .ok_bodies
+        .iter()
+        .chain(shape.catch_all_bodies.iter())
+        .all(|body| arm_fails_unconditionally(body));
+    others_terminate.then(|| pin.to_string())
 }
 
 /// The single statement of an arm body: an expression body, or a
@@ -1044,6 +1109,19 @@ fn arm_terminates(body: &str) -> bool {
     first_control_transfer_diverges(body) == Some(true)
 }
 
+/// Whether an arm fails on every value it matches. The accepted-Err form
+/// needs this of every other arm, because only the accept arm's own
+/// pattern may let the test pass. So the arm's whole body is ONE statement
+/// that diverges under [`statement_diverges`] without the body-predicate
+/// `if` form (whose pin-hit path ends the arm quietly). A body with any
+/// other statement is refused, even when a later statement diverges: an
+/// earlier conditional (`if skip { return Ok(()); }`) can end the arm
+/// before the failure runs, and [`first_control_transfer_statement`]
+/// skips such conditionals.
+fn arm_fails_unconditionally(body: &str) -> bool {
+    single_arm_statement(body).is_some_and(|statement| statement_diverges_with(statement, false))
+}
+
 /// The in-order walk behind [`arm_terminates`]: `Some(diverges)` is the
 /// disposition of the body's FIRST control transfer; `None` when control
 /// can reach the arm's end (no transfer at all — non-terminal).
@@ -1135,6 +1213,13 @@ fn top_level_statements(body: &str) -> Vec<&str> {
 /// Whether one (masked) top-level statement is UNCONDITIONALLY diverging
 /// under the bounded grammar documented on [`arm_terminates`].
 fn statement_diverges(statement: &str) -> bool {
+    statement_diverges_with(statement, true)
+}
+
+/// [`statement_diverges`] with the body-predicate `if` form admitted only
+/// when `admit_pinned_if` holds. That form fails only when its pin misses,
+/// so it is loud for the arm its pin describes and quiet otherwise.
+fn statement_diverges_with(statement: &str, admit_pinned_if: bool) -> bool {
     let statement = statement.trim();
     // A segment wrapped in one balanced brace pair — the brace-wrapped arm
     // body block, or a bare nested block statement — diverges exactly when
@@ -1146,9 +1231,17 @@ fn statement_diverges(statement: &str) -> bool {
         && let Some(inner) = balanced_block(statement)
         && statement.len() == inner.len() + 2
     {
+        // The strict reading (no pinned `if`) backs the accepted-Err form,
+        // where every path must fail. A nested block qualifies there only
+        // as one diverging statement, so `{ if skip { return Ok(()); }
+        // panic!() }` cannot borrow the later panic (CodeRabbit on #8036).
+        if !admit_pinned_if {
+            return single_arm_statement(statement)
+                .is_some_and(|nested| statement_diverges_with(nested, false));
+        }
         return top_level_statements(inner)
             .iter()
-            .any(|nested| statement_diverges(nested));
+            .any(|nested| statement_diverges_with(nested, admit_pinned_if));
     }
     let statement = statement.strip_suffix(';').unwrap_or(statement).trim_end();
     if statement.is_empty() {
@@ -1189,7 +1282,7 @@ fn statement_diverges(statement: &str) -> bool {
     }
     // The body-predicate failure form: the if statement IS the
     // discriminator (diverge exactly when the error misses the pin).
-    if_statement_diverges(statement)
+    admit_pinned_if && if_statement_diverges(statement)
 }
 
 /// Whether `statement` is exactly `<name>(<nonzero integer literal>)` —
@@ -2514,7 +2607,7 @@ fn receiver_keeps_call_error(masked: &str) -> bool {
         masked
             .match_indices(".expect_err(")
             .map(|(start, call)| (start, start + call.len() - 1))
-            .find(|&(_, open)| balanced_group_end(masked, open) == Some(masked.len() - 1))
+            .find(|&(_, open)| group_end(masked, open) == Some(masked.len() - 1))
             .map(|(start, _)| &masked[..start])
     });
     receiver.is_some_and(|receiver| keeps_call_result(receiver, 0))
@@ -2528,7 +2621,7 @@ fn keeps_call_result(expr: &str, depth: usize) -> bool {
     const MAX_GROUPING_DEPTH: usize = 8;
     let expr = expr.trim();
     let close = if expr.starts_with('(') {
-        let Some(close) = balanced_group_end(expr, 0) else {
+        let Some(close) = group_end(expr, 0) else {
             return false;
         };
         if depth >= MAX_GROUPING_DEPTH || !keeps_call_result(&expr[1..close], depth + 1) {
@@ -2544,7 +2637,7 @@ fn keeps_call_result(expr: &str, depth: usize) -> bool {
         if !is_call_path(&expr[..open]) {
             return false;
         }
-        let Some(close) = balanced_group_end(expr, open) else {
+        let Some(close) = group_end(expr, open) else {
             return false;
         };
         close
@@ -2584,44 +2677,11 @@ fn adapters_keep_ok(mut rest: &str) -> bool {
         if !KEEPS_OK.contains(&name) || !after.starts_with('(') {
             return false;
         }
-        let Some(close) = balanced_group_end(after, 0) else {
+        let Some(close) = group_end(after, 0) else {
             return false;
         };
         rest = &after[close + 1..];
     }
-}
-
-/// The byte index of the `)` closing the `(` at `open`.
-pub(super) fn balanced_group_end(text: &str, open: usize) -> Option<usize> {
-    let mut depth = 0_i64;
-    for (index, byte) in text.bytes().enumerate().skip(open) {
-        match byte {
-            b'(' | b'[' => depth += 1,
-            b')' | b']' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(index);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn delimiters_balance(masked: &str) -> bool {
-    let mut depth = 0_i64;
-    for byte in masked.bytes() {
-        match byte {
-            b'(' | b'[' => depth += 1,
-            b')' | b']' => depth -= 1,
-            _ => {}
-        }
-        if depth < 0 {
-            return false;
-        }
-    }
-    depth == 0
 }
 
 fn ends_with_unwrap_err(expr: &str) -> bool {
@@ -2643,7 +2703,7 @@ fn ends_with_expect_err(expr: &str) -> bool {
     masked
         .match_indices(".expect_err(")
         .map(|(start, call)| start + call.len() - 1)
-        .find(|&open| balanced_group_end(masked, open) == Some(close))
+        .find(|&open| group_end(masked, open) == Some(close))
         .is_some_and(|open| has_argument_tokens(&expr[open + 1..close]))
 }
 
@@ -4971,6 +5031,99 @@ mod asserted_err_arm_tests {
     }
 }
 
+/// RIPR-SPEC-0175 accepted-Err form: one quiet `Err(Type::Variant) => {}`
+/// arm with every other arm failing loudly.
+#[cfg(test)]
+mod accepted_err_arm_tests {
+    use super::guarded_result_match_scan;
+    use crate::analysis::facts::OracleFact;
+    use crate::domain::{OracleKind, OracleStrength};
+
+    fn scan_one(arms: &str) -> Vec<OracleFact> {
+        let body = format!(
+            "#[test]\nfn overdraws() {{\n    match withdraw(&mut wallet, 20) {{\n{arms}\n    }}\n}}\n"
+        );
+        guarded_result_match_scan(&body, 1).oracles
+    }
+
+    #[test]
+    fn quiet_variant_arm_beside_loud_arms_pins_the_variant() {
+        let oracles = scan_one(
+            "        Ok(_) => panic!(\"overdraw succeeded\"),\n        Err(PayError::Insufficient) => {}\n        Err(other) => panic!(\"wrong error {other:?}\"),",
+        );
+        assert_eq!(oracles.len(), 1, "{oracles:?}");
+        assert_eq!(oracles[0].kind, OracleKind::GuardedResultMatch);
+        assert_eq!(oracles[0].strength, OracleStrength::Strong);
+        assert_eq!(
+            oracles[0].text,
+            "match withdraw(..) { Ok(..) => .., Err(..) => PayError::Insufficient }"
+        );
+        assert_eq!(oracles[0].ok_value_observed, Some(false));
+    }
+
+    #[test]
+    fn arm_order_catch_all_and_braced_bodies_also_pin() {
+        for arms in [
+            // The accept arm first, a loud catch-all in place of `Err(other)`.
+            "        Err(PayError::Insufficient) => {}\n        Ok(left) => { panic!(\"left {left}\"); }\n        _ => unreachable!(),",
+            // No Ok arm: a loud catch-all routes success and other errors.
+            "        Err(PayError::Insufficient) => {}\n        other => panic!(\"{other:?}\"),",
+        ] {
+            let oracles = scan_one(arms);
+            assert_eq!(oracles.len(), 1, "must pin: {arms}");
+            assert!(
+                oracles[0].text.contains("=> PayError::Insufficient"),
+                "{}",
+                oracles[0].text
+            );
+        }
+    }
+
+    #[test]
+    fn a_second_quiet_arm_or_a_loose_accept_arm_never_pins() {
+        for arms in [
+            // A quiet Ok arm lets success pass.
+            "        Ok(_) => {}\n        Err(PayError::Insufficient) => {}\n        Err(other) => panic!(\"{other:?}\"),",
+            // A quiet second error lets the sibling variant pass.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(PayError::Limit) => {}\n        Err(other) => panic!(\"{other:?}\"),",
+            // A quiet catch-all swallows whatever reaches it.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        _ => {}",
+            // A binding or wildcard accept arm names no variant.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(e) => {}",
+            "        Ok(_) => panic!(\"ok\"),\n        Err(_) => {}",
+            // A guarded accept arm belongs to the routing form, not this one.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) if strict => {}\n        Err(other) => panic!(\"{other:?}\"),",
+            // A payload pattern is not a unit-variant pin.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Wrap(_)) => {}\n        Err(other) => panic!(\"{other:?}\"),",
+            // An accept arm that acts is not trivial.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => log(\"fine\"),\n        Err(other) => panic!(\"{other:?}\"),",
+            // A catch-all whose failure is conditional can return quietly.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(other) => { if strict { panic!(\"{other:?}\"); } }",
+            // A pinned-predicate arm is quiet when its own pin hits: a
+            // `Limit` error or an `Ok(Balance::Empty)` would pass the test.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(other) => if !matches!(other, PayError::Limit) { panic!(\"{other:?}\") },",
+            "        Ok(state) => { if state != Balance::Empty { panic!(\"ok\"); } }\n        Err(PayError::Insufficient) => {}\n        Err(other) => panic!(\"{other:?}\"),",
+            "        Err(PayError::Insufficient) => {}\n        other => { if !matches!(other, Err(PayError::Limit)) { panic!(\"{other:?}\"); } }",
+            // An earlier conditional exit ends the arm before its failure.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(other) => { if skip { return Ok(()); } panic!(\"{other:?}\") }",
+            "        Ok(_) => { if skip { return Ok(()); } panic!(\"ok\"); }\n        Err(PayError::Insufficient) => {}\n        Err(other) => panic!(\"{other:?}\"),",
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(_) => { if skip { return Ok(()); }; panic!(\"wrong\") }",
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(_) => { let _ = skip.then(|| ()); panic!(\"wrong\") }",
+            // A nested block hides the same early exit behind one statement.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(_) => { { if skip { return Ok(()); } panic!(\"wrong\") } }",
+            "        Ok(_) => { { if skip { return Ok(()); }; panic!(\"ok\"); } }\n        Err(PayError::Insufficient) => {}\n        Err(other) => panic!(\"{other:?}\"),",
+        ] {
+            assert!(scan_one(arms).is_empty(), "must not pin: {arms}");
+        }
+    }
+
+    #[test]
+    fn nested_block_holding_one_failure_still_pins() {
+        let arms = "        Ok(_) => { { panic!(\"ok\"); } }\n        Err(PayError::Insufficient) => {}\n        Err(other) => { { panic!(\"{other:?}\") } }";
+        assert_eq!(scan_one(arms).len(), 1, "must pin: {arms}");
+    }
+}
+
 #[cfg(test)]
 mod call_path_tests {
     use super::is_call_path;
@@ -5012,5 +5165,20 @@ mod call_path_tests {
         };
         assert!(super::receiver_keeps_call_error(&grouped(8)));
         assert!(!super::receiver_keeps_call_error(&grouped(9)));
+    }
+
+    #[test]
+    fn a_stray_brace_in_the_receiver_refuses_the_uncompared_unwrap_err() {
+        // The shared walker counts braces (#7860), so a `}` the line cannot
+        // pair, as on a line inside a multi-line string, refuses the read
+        // instead of crediting a weak oracle.
+        assert_eq!(
+            super::uncompared_unwrap_err("let _ = f(a }).unwrap_err();", ""),
+            None
+        );
+        assert_eq!(
+            super::uncompared_unwrap_err("let _ = f(a).unwrap_err();", ""),
+            Some("f(a).unwrap_err()".to_string())
+        );
     }
 }

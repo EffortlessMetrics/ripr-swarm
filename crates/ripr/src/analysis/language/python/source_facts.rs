@@ -14,6 +14,7 @@ use rustpython_parser::{
     text_size::{TextRange, TextSize},
 };
 use std::{
+    io::Read,
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
@@ -102,8 +103,9 @@ pub(super) struct PythonSourceLimitation {
     pub(super) missing: String,
 }
 
-/// Detect the Python test framework for a workspace root (#2106), using
-/// the marker set the adapter's code-level detection implies:
+/// Detect Python test frameworks for a workspace root (#2106 / #7664).
+///
+/// Marker set the adapter's code-level detection implies:
 ///
 /// - pytest: `pytest.ini`, `conftest.py`, or a pytest section in
 ///   `pyproject.toml` / `setup.cfg` / `tox.ini` (a bare pyproject.toml is
@@ -115,26 +117,22 @@ pub(super) struct PythonSourceLimitation {
 ///   evidence (`import unittest` in a `test_*.py` file at the root or in
 ///   `tests/` / `test/`), matching what the adapter detects from source.
 ///
-/// Config-file pytest markers stay first so a marker-backed pytest repo
-/// that also contains unittest imports still reports pytest. Pytest import
-/// evidence outranks unittest in the same bounded scan so zero-config
-/// pytest repos agree between `ripr doctor` and `ripr check`. Reporting
-/// both frameworks at once is out of scope (#7664). Fail-closed: `None`
-/// when no marker matches — callers must report "not detected", never
-/// guess.
-pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> {
-    if root.join("pytest.ini").exists()
+/// Config-file pytest markers add pytest; they do not skip the unittest
+/// scan, so a mixed repo reports both frameworks (#7664). Pytest is listed
+/// first when both are present so primary-of-set consumers stay pytest-first.
+/// Fail-closed: empty when no marker matches — callers must report
+/// "not detected", never guess. Django `tests.py` / nested app directories
+/// remain #7706.
+pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
+    let mut saw_pytest = root.join("pytest.ini").exists()
         || root.join("conftest.py").exists()
         // A bare pyproject.toml is PEP 517 packaging, not pytest evidence
         // (#2183 review); only an actual pytest section counts.
         || ini_section_present(&root.join("pyproject.toml"), "[tool.pytest.ini_options]")
         || ini_section_present(&root.join("setup.cfg"), "[tool:pytest]")
-        || ini_section_present(&root.join("tox.ini"), "[pytest]")
-    {
-        return Some("pytest");
-    }
+        || ini_section_present(&root.join("tox.ini"), "[pytest]");
     let mut saw_unittest = false;
-    for dir in [root.to_path_buf(), root.join("tests"), root.join("test")] {
+    'dirs: for dir in [root.to_path_buf(), root.join("tests"), root.join("test")] {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
@@ -147,21 +145,70 @@ pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> 
                 continue;
             }
             // Bounded evidence read: the import line is at the top of the
-            // file, so a small prefix suffices.
-            let Ok(bytes) = std::fs::read(entry.path()) else {
+            // file, so a small prefix suffices. Read at most that prefix so a
+            // large test_*.py cannot exhaust memory when config markers keep
+            // the unittest scan running (#7664 review).
+            let Some(text) = read_framework_evidence_prefix(&entry.path()) else {
                 continue;
             };
-            let prefix = &bytes[..bytes.len().min(4096)];
-            let text = String::from_utf8_lossy(prefix);
-            if text.lines().any(is_pytest_import_line) {
-                return Some("pytest");
+            if !saw_pytest && text.lines().any(is_pytest_import_line) {
+                saw_pytest = true;
             }
-            if !saw_unittest && text.lines().any(is_unittest_import_line) {
+            if !saw_unittest && text_has_unittest_framework_import(&text) {
                 saw_unittest = true;
+            }
+            if saw_pytest && saw_unittest {
+                break 'dirs;
             }
         }
     }
-    saw_unittest.then_some("unittest")
+    let mut frameworks = Vec::new();
+    if saw_pytest {
+        frameworks.push("pytest");
+    }
+    if saw_unittest {
+        frameworks.push("unittest");
+    }
+    frameworks
+}
+
+/// Primary detected Python test framework: the first entry of
+/// [`detect_python_test_frameworks`] (pytest before unittest). Adapter
+/// repo-input still stores a single `Option`; doctor prints the full set.
+pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> {
+    detect_python_test_frameworks(root).into_iter().next()
+}
+
+/// Bytes inspected for framework import evidence. The read consumes at most
+/// one extra byte so a cut final line can be dropped instead of classified.
+const PYTHON_FRAMEWORK_EVIDENCE_PREFIX_BYTES: u64 = 4096;
+
+fn read_framework_evidence_prefix(path: &Path) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut buf = Vec::new();
+    file.take(PYTHON_FRAMEWORK_EVIDENCE_PREFIX_BYTES + 1)
+        .read_to_end(&mut buf)
+        .ok()?;
+    drop_truncated_final_line(&mut buf, PYTHON_FRAMEWORK_EVIDENCE_PREFIX_BYTES as usize);
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// When the file continues past `prefix_bytes`, the last inspected line may
+/// be a cut identifier (`import unittest` vs `import unittest_extra`). Keep
+/// that line only when it is newline-terminated, including the case where
+/// the newline sits in the extra lookahead byte.
+fn drop_truncated_final_line(buf: &mut Vec<u8>, prefix_bytes: usize) {
+    let Some(&extra) = buf.get(prefix_bytes) else {
+        return;
+    };
+    buf.truncate(prefix_bytes);
+    if buf.last() == Some(&b'\n') || extra == b'\n' {
+        return;
+    }
+    match buf.iter().rposition(|&b| b == b'\n') {
+        Some(idx) => buf.truncate(idx + 1),
+        None => buf.clear(),
+    }
 }
 
 /// Whether a line is a real pytest import statement — `import pytest`,
@@ -172,12 +219,120 @@ fn is_pytest_import_line(line: &str) -> bool {
     is_top_level_module_import_line(line, "pytest")
 }
 
+/// Whether prefix text contains unittest-framework import evidence.
+/// Parenthesized `from unittest import (...)` and explicit-backslash
+/// continuations are accumulated across lines before mock-only
+/// classification (#7664 review).
+fn text_has_unittest_framework_import(text: &str) -> bool {
+    let mut pending = String::new();
+    let mut pending_backslash = false;
+    for line in text.lines() {
+        let trimmed = strip_python_line_comment(line);
+        if trimmed.is_empty() {
+            continue;
+        }
+        if pending.is_empty() {
+            if unittest_from_import_is_open_paren(trimmed) {
+                pending.push_str(trimmed);
+                continue;
+            }
+            if unittest_from_import_is_backslash_continuation(trimmed) {
+                pending.push_str(without_trailing_backslash(trimmed));
+                pending_backslash = true;
+                continue;
+            }
+            if is_unittest_import_line(trimmed) {
+                return true;
+            }
+        } else {
+            pending.push(' ');
+            let continues = trimmed.ends_with('\\');
+            pending.push_str(without_trailing_backslash(trimmed));
+            let finished = if pending_backslash {
+                !continues
+            } else {
+                pending.contains(')')
+            };
+            if finished {
+                pending_backslash = false;
+                let complete = std::mem::take(&mut pending);
+                if is_unittest_import_line(&complete) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn strip_python_line_comment(line: &str) -> &str {
+    match line.split_once('#') {
+        Some((code, _)) => code.trim(),
+        None => line.trim(),
+    }
+}
+
+fn unittest_from_import_is_open_paren(trimmed: &str) -> bool {
+    let Some(imported) = unittest_from_import_names(trimmed) else {
+        return false;
+    };
+    imported.contains('(') && !imported.contains(')')
+}
+
+fn unittest_from_import_is_backslash_continuation(trimmed: &str) -> bool {
+    unittest_from_import_names(trimmed).is_some() && trimmed.ends_with('\\')
+}
+
+fn without_trailing_backslash(trimmed: &str) -> &str {
+    match trimmed.strip_suffix('\\') {
+        Some(rest) => rest.trim_end(),
+        None => trimmed,
+    }
+}
+
 /// Whether a line is a real unittest import statement — `import unittest`,
 /// `import unittest as ...`, or `from unittest import ...` — at a token
 /// boundary. Comment lines and lookalike identifiers (`import unittesting`)
-/// do not count (#2106 review).
+/// do not count (#2106 review). `from unittest import mock` is the mock
+/// library, not unittest-framework evidence (#7664 review).
 fn is_unittest_import_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.starts_with('#') {
+        return false;
+    }
+    if let Some(imported) = unittest_from_import_names(trimmed) {
+        return !unittest_from_import_is_mock_only(imported);
+    }
     is_top_level_module_import_line(line, "unittest")
+}
+
+fn unittest_from_import_names(trimmed: &str) -> Option<&str> {
+    let rest = trimmed.strip_prefix("from ")?;
+    let after_module = rest.strip_prefix("unittest")?;
+    after_module.strip_prefix(" import")
+}
+
+/// `from unittest import mock` / `from unittest import mock as umock` is not
+/// a test runner. A mixed pytest repo that only mocks through unittest must
+/// not grow a `python: unittest` doctor surface. Parentheses are stripped so
+/// `from unittest import (mock)` stays mock-only.
+fn unittest_from_import_is_mock_only(imported: &str) -> bool {
+    let imported = imported.replace(['(', ')'], " ");
+    let mut saw_name = false;
+    for name in imported
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        saw_name = true;
+        let Some(ident) = name.split_whitespace().next() else {
+            return false;
+        };
+        if ident != "mock" {
+            return false;
+        }
+    }
+    saw_name
 }
 
 /// Token-boundary `import <module>` / `from <module> import ...` matcher.

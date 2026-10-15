@@ -27,6 +27,14 @@ pub(super) enum BoolOperandReading {
     /// `==` conjunct asserted true, which reads like the same chain in
     /// `assert!` (rule 3): this assertion text.
     Chain(String),
+    /// The operand is an `&&` chain with a pinning `==` conjunct and at
+    /// least one conjunct that states only a relation
+    /// (`a == b && !matches!(r, Err(E::Bad))`, `a == b && r != Err(E::Bad)`):
+    /// the same equality assertion over the other conjuncts. The relation
+    /// conjunct pins nothing, so it lends the reading no kind (rule 1;
+    /// #7947). Only the equality-macro form produces it; condition macros
+    /// (`assert!`, `ensure!`) read `None` here.
+    Rest(String),
 }
 
 /// The reading of an equality macro with one boolean-literal operand
@@ -105,7 +113,20 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
         if conjuncts.iter().any(|conjunct| {
             has_top_level_exact_equality(conjunct) && !conjunct_states_relation(conjunct)
         }) {
-            return None;
+            let rest: Vec<&str> = conjuncts
+                .iter()
+                .filter(|conjunct| !conjunct_states_relation(conjunct))
+                .map(|conjunct| conjunct.trim())
+                .collect();
+            if rest.len() == conjuncts.len() {
+                return None;
+            }
+            // The rest keeps the equality-macro form, so `a == b` reads as
+            // `assert_eq!(a == b, true)` does.
+            return Some(BoolOperandReading::Rest(format!(
+                "assert_eq!({}\n, true\n);",
+                rest.join("\n && ")
+            )));
         }
         // With no pinning `==` conjunct, a negated, `!=`, relational or
         // false-compared conjunct states only a relation
@@ -197,13 +218,20 @@ fn literal_compared_operand(text: &str) -> Option<(&str, bool)> {
 /// The value of a boolean literal through the spellings that keep it: a
 /// reference, a one-expression block, a `bool` cast or `bool::from`, each
 /// through grouping parentheses (`&false`, `{ false }`, `(false as bool)`,
-/// `bool::from(false)`; #7931). `side` is masked.
+/// `bool::from(false)`; #7931), and through a `!` that negates it
+/// (`!&true`; #7993). `side` is masked.
 fn literal_spelling_value(side: &str) -> Option<bool> {
     let mut text = side.trim();
+    let mut negated = false;
     loop {
         text = unwrap_parentheses(text);
         if let Some(value) = boolean_literal_value(text) {
-            return Some(value);
+            return Some(value != negated);
+        }
+        if let Some(rest) = text.strip_prefix('!') {
+            negated = !negated;
+            text = rest.trim();
+            continue;
         }
         let cast = text.strip_suffix("bool").and_then(|rest| {
             rest.trim_end()
@@ -250,10 +278,10 @@ fn method_comparison(text: &str) -> Option<&'static str> {
 
 /// A comparison spelled as one call: its method name and its two sides,
 /// either a receiver and an argument (`score(2).ne(&0)`) or the two
-/// arguments of a `PartialEq` or `PartialOrd` path call
-/// (`PartialEq::eq(&r, &x)`). A method call binds tighter than any operator,
-/// so the receiver must be one operand (`flag && r.eq(&x)` calls `eq` on
-/// `r` only) and the path call must start the text.
+/// arguments of a path call (`PartialEq::eq(&r, &x)`,
+/// `<_ as PartialEq>::eq(&r, &x)`). A method call binds tighter than any
+/// operator, so the receiver must be one operand (`flag && r.eq(&x)` calls
+/// `eq` on `r` only) and the path call must be the whole text.
 fn comparison_call(text: &str) -> Option<(&'static str, &str, &str)> {
     let text = text.trim();
     let masked = mask_comments_and_strings(text);
@@ -294,19 +322,66 @@ fn comparison_call(text: &str) -> Option<(&'static str, &str, &str)> {
                 return Some((name, receiver, arguments.trim()));
             }
         }
-        let path = if matches!(name, "eq" | "ne") {
-            "PartialEq::"
-        } else {
-            "PartialOrd::"
-        };
-        let starts_path = rest
-            .strip_suffix(path)
-            .is_some_and(|before| before.is_empty() || before.ends_with("::"));
-        if starts_path {
+        if is_path_head(rest) {
             return split_two_arguments(arguments).map(|(left, right)| (name, left, right));
         }
     }
     None
+}
+
+/// Whether masked `head` is the whole path before an associated function
+/// name: segments joined by `::`, through a qualified-self head or
+/// generics (`PartialEq::`, `Result::`, `<_ as PartialEq>::`,
+/// `<Result<u8, E> as PartialEq>::`; #7993). Any path's two-argument
+/// `eq` reads like `PartialEq::eq`: a cap only lowers a reading, and `eq`
+/// asserted true still pins. An operator or space outside the angles
+/// (`flag && PartialEq::`, `a < b`) ends the path, so the call is not the
+/// whole text.
+fn is_path_head(head: &str) -> bool {
+    let head = head.trim_end();
+    if !head.ends_with("::") {
+        return false;
+    }
+    let bytes = head.as_bytes();
+    // Unformatted code may space a separator (`Result :: eq`); a space
+    // anywhere else outside the angles ends the path.
+    let beside_separator = |index: usize| {
+        let before = bytes
+            .get(..index)
+            .and_then(|head| head.iter().rev().find(|byte| !byte.is_ascii_whitespace()));
+        let after = bytes
+            .get(index..)
+            .and_then(|tail| tail.iter().find(|byte| !byte.is_ascii_whitespace()));
+        before == Some(&b':') || after == Some(&b':')
+    };
+    let mut generics = 0usize;
+    // A const-generic block inside the angles (`C::<{ A > B }>::ne`) is one
+    // argument: its `<`, `>` and spaces are not the path's.
+    let mut blocks = 0usize;
+    for (index, &byte) in bytes.iter().enumerate() {
+        match byte {
+            b';' => return false,
+            b'{' if generics > 0 => blocks += 1,
+            b'}' if blocks > 0 => blocks -= 1,
+            _ if blocks > 0 => {}
+            b'<' if generics > 0
+                || index == 0
+                || (index >= 2 && bytes.get(index - 2..index) == Some(&b"::"[..])) =>
+            {
+                generics += 1;
+            }
+            b'>' if generics > 0 && (index == 0 || bytes.get(index - 1) != Some(&b'-')) => {
+                generics -= 1;
+            }
+            b'{' | b'}' => return false,
+            _ if generics > 0 => {}
+            b':' | b'_' => {}
+            _ if byte.is_ascii_alphanumeric() => {}
+            _ if byte.is_ascii_whitespace() && beside_separator(index) => {}
+            _ => return false,
+        }
+    }
+    generics == 0 && blocks == 0
 }
 
 /// The two arguments of a call's argument list when it holds exactly two,
@@ -638,16 +713,31 @@ fn is_whole_pattern(text: &str) -> bool {
 }
 
 /// Whether masked `text` spells a comparison as a call anywhere
-/// (`r.eq(&Err(E::Bad)) ^ true`, `PartialOrd::lt(&a, &b) | flag`; #7931).
+/// (`r.eq(&Err(E::Bad)) ^ true`, `PartialOrd::lt(&a, &b) | flag`; #7931),
+/// including through any path (`Result::ne(&r, &x) ^ flag`,
+/// `<_ as PartialEq>::ne(..)`; #7993).
 fn holds_comparison_call(text: &str) -> bool {
     text.contains("PartialEq::")
         || text.contains("PartialOrd::")
         || ["eq", "ne", "lt", "le", "gt", "ge"].iter().any(|name| {
+            // A method call or its turbofish follows the name; after a path
+            // `::name` only a call does, since `helpers::eq::value()` names
+            // a module.
+            let called = |rest: &str, turbofish: bool| {
+                let rest = rest.trim_start();
+                rest.starts_with('(') || (turbofish && rest.starts_with(':'))
+            };
             text.match_indices(&format!(".{name}"))
                 .any(|(at, matched)| {
                     text.get(at + matched.len()..)
-                        .is_some_and(|rest| rest.trim_start().starts_with(['(', ':']))
+                        .is_some_and(|rest| called(rest, true))
                 })
+                || text
+                    .match_indices(&format!("::{name}"))
+                    .any(|(at, matched)| {
+                        text.get(at + matched.len()..)
+                            .is_some_and(|rest| called(rest, false))
+                    })
         })
 }
 

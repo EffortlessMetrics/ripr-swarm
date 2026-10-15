@@ -134,6 +134,22 @@ pub(crate) fn attribute_requires_test(attr_text: &str) -> bool {
     classify_attribute(attr_text) == RequiresTest
 }
 
+/// The plain outer test gate, without conditional attribute introductions or
+/// additional predicates. Consumers needing this closed spelling use the cfg
+/// owner rather than deriving a source role from attribute text themselves.
+pub(crate) fn attribute_is_plain_test_gate(attr_text: &str) -> bool {
+    let Some(positioned) = positioned_tokens(attr_text) else {
+        return false;
+    };
+    let tokens: Vec<_> = positioned.into_iter().map(|token| token.token).collect();
+    matches!(
+        tokens.as_slice(),
+        [Token::Punct('#'), Token::Punct('['), Token::Word(cfg),
+         Token::Punct('('), Token::Word(test), Token::Punct(')'), Token::Punct(']')]
+            if cfg == "cfg" && test == "test"
+    )
+}
+
 /// Conjunctively composes every attribute on one item. Rust applies multiple
 /// `cfg` gates conjunctively, so a definitely test-required gate stays
 /// test-required next to independent gates, and an unknown gate cannot

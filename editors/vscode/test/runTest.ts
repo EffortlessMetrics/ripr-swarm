@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { execFileSync, spawn } from 'child_process';
 import { downloadAndUnzipVSCode, runTests } from '@vscode/test-electron';
 import { stageGenuineActionableQueue } from './actionableQueueFixture';
+import { finalizeHostRun, resetHostLogDir, resolveUserDataDir } from './hostDiagnostics';
 
 function runGit(workspacePath: string, args: string[]): string {
   return execFileSync('git', args, {
@@ -150,7 +151,14 @@ async function runUntrustedTests(
 }
 
 async function main() {
+  const artifactRoot = path.resolve(
+    process.env.RIPR_TEST_ARTIFACT_ROOT ??
+      path.resolve(__dirname, '../../../../target/ripr')
+  );
+  const userDataPath = resolveUserDataDir(artifactRoot);
+  let error: unknown;
   try {
+    resetHostLogDir(userDataPath);
     const extensionDevelopmentPath = path.resolve(
       process.env.RIPR_TEST_EXTENSION_PATH ?? path.resolve(__dirname, '../../')
     );
@@ -159,14 +167,9 @@ async function main() {
       process.env.RIPR_TEST_WORKSPACE_PATH ??
         path.resolve(__dirname, '../../test-fixtures/workspace')
     );
-    const artifactRoot = path.resolve(
-      process.env.RIPR_TEST_ARTIFACT_ROOT ??
-        path.resolve(__dirname, '../../../../target/ripr')
-    );
     const cachePath = path.join(artifactRoot, 'vscode-test-cache');
     const runId = String(process.pid);
     const extensionsPath = path.join(artifactRoot, 'vscode-test-extensions', runId);
-    const userDataPath = path.join(artifactRoot, 'vscode-test-user-data', runId);
     const workspacePath = path.join(artifactRoot, 'workspace');
     const baseRef = stageIntegrationWorkspace(templatePath, workspacePath);
     const workspaceTrustMode = parseWorkspaceTrustMode(process.env.RIPR_TEST_WORKSPACE_TRUST);
@@ -223,9 +226,16 @@ async function main() {
         launchArgs,
       });
     }
-  } catch (err) {
-    console.error('Failed to run tests:', err);
-    process.exit(1);
+  } catch (caught) {
+    error = caught;
+  }
+  const { exitCode } = finalizeHostRun({
+    artifactRoot,
+    userDataDir: userDataPath,
+    error,
+  });
+  if (exitCode !== 0) {
+    process.exit(exitCode);
   }
 }
 

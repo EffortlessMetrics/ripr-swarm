@@ -2067,7 +2067,8 @@ pub(crate) fn is_safe_javascript_identifier(text: &str) -> bool {
 }
 
 /// Returns `true` if the `Argument` is a concrete resolvable literal
-/// (string, number, boolean, null, or a safe all-literal object).
+/// (string, number, boolean, null, a sign applied directly to a numeric
+/// literal, or a safe all-literal object).
 /// Returns `false` for variables, function calls, computed expressions,
 /// template literals, arrays, etc.
 pub(crate) fn is_literal_argument(arg: &Argument<'_>) -> bool {
@@ -2077,9 +2078,21 @@ pub(crate) fn is_literal_argument(arg: &Argument<'_>) -> bool {
         | Argument::BooleanLiteral(_)
         | Argument::NullLiteral(_) => true,
         Argument::ObjectExpression(object) => safe_mock_expected_object(object),
+        // oxc represents `-1` / `+1` as unary operators over a NumericLiteral,
+        // not as a negative NumericLiteral node. Accept only that shape:
+        // `-x`, `-f()`, `!true`, and parenthesized or nested unaries stay
+        // dynamic (#7647).
+        Argument::UnaryExpression(unary)
+            if matches!(
+                unary.operator,
+                oxc_ast::ast::UnaryOperator::UnaryNegation | oxc_ast::ast::UnaryOperator::UnaryPlus
+            ) && matches!(unary.argument, Expression::NumericLiteral(_)) =>
+        {
+            true
+        }
         // Template literals, identifiers, call expressions, member expressions,
-        // unary/binary expressions, array expressions, spread elements, etc.
-        // are all treated as dynamic / non-resolvable.
+        // remaining unary/binary expressions, array expressions, spread
+        // elements, etc. are all treated as dynamic / non-resolvable.
         _ => false,
     }
 }
