@@ -1412,11 +1412,15 @@ pub(in crate::analysis) fn owner_may_exit_before_line(
     // expression still lets the owner skip it. The mask blanks string and
     // comment bytes in place (one space per byte), so the expression is
     // located in the owner body itself and its offset reads the same in
-    // `masked`; an expression that does not appear on the line keeps the
-    // line-start scan.
-    let at = owner_body[line_at..line_end]
-        .find(expression)
-        .map_or(line_at, |at| line_at + at);
+    // `masked`; a candidate whose first byte the mask blanked sits inside
+    // a string or comment and is skipped, and no executable occurrence on
+    // the line keeps the line-start scan.
+    let owner_line = &owner_body[line_at..line_end];
+    let masked_line = &masked[line_at..line_end];
+    let at = owner_line
+        .match_indices(expression)
+        .find(|(at, _)| owner_line.as_bytes()[*at] == masked_line.as_bytes()[*at])
+        .map_or(line_at, |(at, _)| line_at + at);
     masked
         .find('{')
         .filter(|open| *open < at)
@@ -3372,6 +3376,15 @@ mod tests {
             10,
             11,
             "self.log.push(\"x\")"
+        ));
+        // An earlier string containing the expression is skipped: only the
+        // executable occurrence after the guard positions the scan.
+        let decoy = "fn beat(&mut self) { let s = \"self.log.push(1)\"; if self.locked { return; } self.log.push(1); }";
+        assert!(owner_may_exit_before_line(
+            decoy,
+            10,
+            10,
+            "self.log.push(1)"
         ));
     }
 
