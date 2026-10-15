@@ -254,14 +254,15 @@ changes `self.count += 2` to `self.count += 1`.
     assert_eq!(s.count("NUT"), 0)`: not `exposed`. A read of another key is
     not a read of the inserted entry.
 18. Same write in `place`, which returns `Err` before the insert when
-    `qty == 0`, test `s.place("BOLT", 0).unwrap_err();
-    assert_eq!(s.count("BOLT"), 0)`: not `exposed`. A refused owner call
+    `qty == 0`, test `s.restock("BOLT", 2 + 3); s.place("BOLT", 0).unwrap_err();
+    assert_eq!(s.count("BOLT"), 5)`: not `exposed`. A refused owner call
     never reaches the insert. Only an owner call whose result `.unwrap()`,
-    `.expect(..)` or `?` consumes (then optionally bound to one name), or a
-    bare call to an owner that returns nothing, runs the insert for certain;
-    `.is_err()`, `.is_ok()`, `let _ = ..`, an unconsumed `let r = ..` and a
-    bare `s.place("BOLT", 0);` do not count. The expected `0` is also the
-    getter's `unwrap_or(0)` default, so it cannot show the insert ran.
+    `.expect(..)` or `?` consumes (then optionally bound to one name), or a bare call to an owner that returns nothing,
+    runs the insert for certain; `.is_err()`, `.is_ok()`, `let _ = ..`, an
+    unconsumed `let r = ..` and a bare `s.place("BOLT", 0);` do not count.
+    The earlier `restock` also stores the expected value through a computed
+    argument, which fails closed on its own, so the refused-call rule is
+    isolated only by unit tests.
 19. `self.stock.insert(sku.to_string(), qty)` in `receive`, test
     `l.receive("BOLT", 5); assert_eq!(l.held("BOLT"), 0)` with
     `fn held(&self, sku: &str) -> u32 { self.held.get(sku).copied().unwrap_or(0) }`:
@@ -353,22 +354,34 @@ changes `self.count += 2` to `self.count += 1`.
   leaving it to `..Self::default()`, or a delegation such as
   `Self::default()` to a constructor that does; `default` resolves to an
   inherent `default`, a manual `impl Default`, or a derived `Default` over
-  a std map or set field. A struct literal in the test, a seeding
+  a std map or set field (`BTreeMap`, `HashMap`, `BTreeSet`, `HashSet`).
+  A struct literal in the test, a seeding
   constructor (`Shelf::with("K", 5)`) or any other initializer fails
-  closed. An accepted owner call before the read must pass the same key in the insert
+  closed, and so does a type name declared by more than one `struct` in
+  the workspace, since methods resolve by bare type name. The binding must
+  be declared once, at the test's top level (no shadowing `let`, none in a
+  nested block). Methods resolve to the one inherent definition outside
+  tests; a test-only twin (`#[cfg(test)] impl Shelf { fn count .. }`)
+  fails closed. An accepted owner call before the read must pass the same key in the insert
   key's argument position: a literal, or an identifier the test does not
   name again between the call and the read. The call must run to
   completion: a bare statement when the owner returns nothing, otherwise
   ending in `.unwrap()`, `.expect(..)` or `?`, then optionally bound to one
-  name. Rule 3 holds for keyed reads: between that call and the read the
+  name the test uses again before the read only as a whole first or last
+  operand of an assertion (`assert_eq!(receipt, ..)`): any other use of a
+  returned `&mut Self` could rewrite the entry. No `return` may come between the call and the
+  read (a platform skip passes without reading). Rule 3 holds for keyed reads: between that call and the read the
   test may name the binding only as `binding.getter(..)` through the
   verified getter. Between the declaration and the owner call, every
   statement that names the binding must be a plain call
   `binding.m(<literals>)`, optionally ending in `.unwrap()`, `.expect(..)`
   or `?`, none of whose literal arguments equals the expected value under
-  any spelling (`7`, `7u32`, `7_u32`): `s.set("K", 5)`, `s.set("K", v)` or
-  `seed(&mut s)` before `s.put("K", 5)` may already have stored the
-  expected value. The insert must be a top-level statement of the owner
+  any spelling (`7`, `7u32`, `7_u32`), to an inherent method whose body,
+  and every `self.m(..)` helper it calls, spells no literal equal to the
+  expected value and hands neither `self` nor `&mut self.f` to other code
+  (`method_cannot_store` in `builder_override.rs`): `s.set("K", 5)`,
+  `s.set("K", v)`, `seed(&mut s)` or `s.load_defaults()` storing `("K", 5)`
+  before `s.put("K", 5)` may already have stored the expected value. The insert must be a top-level statement of the owner
   (`self.<path>.insert(..)` outside any branch, loop, block or closure),
   and elsewhere the owner may touch `self.<path>` only through
   `.get(..)`, `.contains_key(..)`, `.len()` or `.is_empty()`, directly or
@@ -376,9 +389,10 @@ changes `self.count += 2` to `self.count += 1`.
   in `builder_override.rs`); a second insert, an `entry(..)` update, a
   bare `self` or an unresolved helper fails closed. The key parameter must
   not be rebound in the owner body, and a `#[should_panic]` test never
-  confirms. Not detected: an earlier call with literal arguments that
-  stores a value computed from them (`s.add("K", 3, 4)` storing 7, or two
-  `+=` receipts summing to it) equal to the expected value (#7988).
+  confirms. Not detected: an earlier call that stores a value computed
+  from other literals (`s.add("K", 3, 4)` storing 7, or two `+=` receipts
+  summing to it) equal to the expected value, and a field whose declared
+  type is a local type named like a std collection (#7988).
 - Not yet implemented for argument-free field reads: rule 3 (no
   intervening write between the owner call and the read). This one does not
   fail closed: a later write through the binding can still read `exposed`

@@ -42,7 +42,7 @@
       "limited"
     ]
   },
-  "reasoning": "place_refuses_an_empty_delivery restocks \"BOLT\" to 5, calls place(\"BOLT\", 0), which returns Err before the insert, then asserts count(\"BOLT\") == 5, so a changed or deleted place insert passes. The expected 5 is not the getter fallback and no earlier statement spells it, so only the refused call keeps credit away. Spec cell: RIPR-SPEC-0228 example 18, a refused owner call never reaches the insert.",
+  "reasoning": "place_refuses_an_empty_delivery restocks \"BOLT\" to 5, calls place(\"BOLT\", 0), which returns Err before the insert, then asserts count(\"BOLT\") == 5, so a changed or deleted place insert passes. The expected 5 is not the getter fallback. Two rules withhold credit: the refused call (unwrap_err) never runs the insert, and the earlier restock passes the computed argument 2 + 3, which the earlier-call rule fails closed on. A seed equal to the expected value always trips that rule, so no case isolates the refused-call rule alone; owner_call_passes_key_matches_the_key_argument_position covers it in unit tests. Spec cell: RIPR-SPEC-0228 example 18, a refused owner call never reaches the insert.",
   "labeling_observation": {
     "ripr_commit": "cec8c3a28",
     "full_checkout_verdict": "gap",

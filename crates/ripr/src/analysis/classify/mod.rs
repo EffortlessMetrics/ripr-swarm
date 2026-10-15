@@ -36,7 +36,7 @@ pub(in crate::analysis) use boundary_pairing::{
 };
 pub(in crate::analysis) use builder_override::{
     constructor_starts_empty, function_returns_value, getter_plainly_reads,
-    getter_plainly_reads_key, owner_touches_field_only_at, parameter_rebound,
+    getter_plainly_reads_key, method_cannot_store, owner_touches_field_only_at, parameter_rebound,
     setter_plainly_writes,
 };
 pub(in crate::analysis) use call_identity::{CallTarget, OwnerCallIdentity};

@@ -42,7 +42,7 @@
       "limited"
     ]
   },
-  "reasoning": "deliver_leaves_other_skus_alone delivers \"BOLT\" and asserts only count(\"NUT\") == 0, so a changed or deleted insert passes. Spec cell: RIPR-SPEC-0228 example 17, a keyed read of another key is not a read of the inserted entry.",
+  "reasoning": "deliver_leaves_other_skus_alone delivers \"BOLT\" and asserts only count(\"NUT\") == 0, so a changed or deleted insert passes. The expected 0 is also the getter's unwrap_or(0) fallback, which withholds credit before the key is compared, so the other-key rule is isolated only by unit tests. Spec cell: RIPR-SPEC-0228 example 17, a keyed read of another key is not a read of the inserted entry.",
   "labeling_observation": {
     "ripr_commit": "cec8c3a28",
     "full_checkout_verdict": "gap",

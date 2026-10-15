@@ -8,7 +8,7 @@ use crate::analysis::classify::{
     fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
     helper_pins_owner_call, infection_evidence_with_boundary_input, local_flow_sinks,
-    operand_only_pin, oracle_crediting_relations, owner_may_be_reached_unseen,
+    method_cannot_store, operand_only_pin, oracle_crediting_relations, owner_may_be_reached_unseen,
     owner_touches_field_only_at, package_prefix, parameter_rebound,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
@@ -456,10 +456,14 @@ impl ClassifiedProbeEvidence {
             .map(owner_parameter_names)
             .unwrap_or_default();
         // RIPR-SPEC-0228 keyed reads: only a map insert reads these names,
-        // and only one at the owner's top level, which runs on every call,
-        // in an owner that touches that map nowhere else but to read it. A
+        // and only one at the owner's top level (not under a branch, loop or
+        // closure), in an owner that touches that map nowhere else but to
+        // read it. An earlier `return` can still skip it; the reveal side's
+        // consumed-result and empty-start rules cover that. A
         // parameter the owner rebinds in its body (`let sku = "LAST"`) may
         // not be what a later use of its name holds, so it keys nothing.
+        let constructor_memo: RefCell<BTreeMap<(String, String, String), bool>> =
+            RefCell::new(BTreeMap::new());
         let owner_argument_names: Vec<String> = context
             .owner_fn
             .filter(|function| {
@@ -605,7 +609,18 @@ impl ClassifiedProbeEvidence {
                     .owner_fn
                     .is_none_or(|function| function_returns_value(function.body.as_str())),
                 constructor_starts_empty: &|impl_type, ctor, field| {
-                    constructor_starts_empty(context.index, impl_type, ctor, field)
+                    // Memoized per probe: the derived-`Default` check parses
+                    // the files declaring the type, once per question.
+                    let key = (impl_type.to_string(), ctor.to_string(), field.to_string());
+                    if let Some(known) = constructor_memo.borrow().get(&key) {
+                        return *known;
+                    }
+                    let empty = constructor_starts_empty(context.index, impl_type, ctor, field);
+                    constructor_memo.borrow_mut().insert(key, empty);
+                    empty
+                },
+                call_cannot_store: &|impl_type, method, expected| {
+                    method_cannot_store(context.index, impl_type, method, expected)
                 },
             },
             arm_selector.as_ref(),

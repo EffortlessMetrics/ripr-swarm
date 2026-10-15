@@ -598,19 +598,26 @@ pub(in crate::analysis) fn setter_plainly_writes(
 /// exclusions keep the body the one the call site runs: functions in an
 /// evidence role (tests, fixtures) are skipped, and so are trait impls
 /// (`impl Trait for Type`), since a trait method may dispatch to another
-/// impl's body. `None` when no candidate remains, or several do.
+/// impl's body. `None` when no candidate remains, or several do, or a test
+/// or fixture also defines an inherent `name` on a type of that name (a
+/// `#[cfg(test)] impl` the test build may run instead).
 pub(in crate::analysis) fn inherent_method_body<'a>(
     index: &'a RustIndex,
     impl_type: &str,
     name: &str,
 ) -> Option<&'a str> {
-    let mut candidates = index.functions().iter().filter(|function| {
-        function.name == name
-            && !function.source_role.is_evidence_role()
-            && !function.id.0.contains(" for ")
-            && OwnerCall::from_symbol(&function.id.0)
-                .is_some_and(|candidate| candidate.impl_type == Some(impl_type))
-    });
+    let named = || {
+        index.functions().iter().filter(|function| {
+            function.name == name
+                && !function.id.0.contains(" for ")
+                && OwnerCall::from_symbol(&function.id.0)
+                    .is_some_and(|candidate| candidate.impl_type == Some(impl_type))
+        })
+    };
+    if named().any(|function| function.source_role.is_evidence_role()) {
+        return None;
+    }
+    let mut candidates = named();
     let (Some(function), None) = (candidates.next(), candidates.next()) else {
         return None;
     };
@@ -671,24 +678,6 @@ pub(in crate::analysis) fn getter_plainly_reads(
         format!("{read}.as_slice()"),
     ]
     .contains(&text)
-}
-
-/// RIPR-SPEC-0228 keyed getter credit: whether `impl_type`'s method
-/// `getter` takes `&self` and one parameter `k` and its body is one tail
-/// expression that looks `k` up in the field path `field`:
-/// `self.f.get(k)` or `self.f.get(&k)`, optionally followed by `.copied()`
-/// or `.cloned()`, then optionally by `.unwrap_or_default()` or
-/// `.unwrap_or(<literal>)`. The method resolves as in
-/// [`getter_plainly_reads`]; anything else (another field, another key,
-/// arithmetic on the entry, a statement first) gives `None`. `Some` carries
-/// what the getter returns for a key the map does not hold.
-pub(in crate::analysis) fn getter_plainly_reads_key(
-    index: &RustIndex,
-    impl_type: &str,
-    getter: &str,
-    field: &str,
-) -> Option<KeyedFallback> {
-    keyed_getter_fallback(index, impl_type, getter, field)
 }
 
 /// What a keyed getter returns for a missing key: an assertion whose
@@ -829,7 +818,35 @@ pub(in crate::analysis) fn constructor_starts_empty(
     ctor: &str,
     field: &str,
 ) -> bool {
-    !field.contains('.') && starts_empty_within(index, impl_type, ctor, field, MAX_KEYED_HOPS)
+    !field.contains('.')
+        && type_declared_once(index, impl_type)
+        && starts_empty_within(index, impl_type, ctor, field, MAX_KEYED_HOPS)
+}
+
+/// Whether exactly one `struct impl_type` is declared across the index.
+/// Methods resolve by bare type name, so two modules declaring the same
+/// name may lend one type's getter or constructor to the other's test.
+fn type_declared_once(index: &RustIndex, impl_type: &str) -> bool {
+    declared_structs(index, impl_type).len() == 1
+}
+
+fn declared_structs(index: &RustIndex, impl_type: &str) -> Vec<ast::Struct> {
+    let declaration = format!("struct {impl_type}");
+    index
+        .files()
+        .values()
+        .filter(|file| file.source.contains(&declaration))
+        .filter_map(|file| parse_clean_source_file(&file.source))
+        .flat_map(|parse| {
+            parse
+                .tree()
+                .syntax()
+                .descendants()
+                .filter_map(ast::Struct::cast)
+                .filter(|item| item.name().is_some_and(|name| name.text() == impl_type))
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 fn starts_empty_within(
@@ -941,22 +958,7 @@ fn body_starts_empty(
 /// Whether `impl_type`, declared once in the index, derives `Default` and
 /// declares `field` as a std map or set, whose derived default is empty.
 fn derived_default_starts_empty(index: &RustIndex, impl_type: &str, field: &str) -> bool {
-    let declaration = format!("struct {impl_type}");
-    let mut found = index
-        .files()
-        .values()
-        .filter(|file| file.source.contains(&declaration))
-        .filter_map(|file| parse_clean_source_file(&file.source))
-        .flat_map(|parse| {
-            parse
-                .tree()
-                .syntax()
-                .descendants()
-                .filter_map(ast::Struct::cast)
-                .filter(|item| item.name().is_some_and(|name| name.text() == impl_type))
-                .collect::<Vec<_>>()
-        });
-    let (Some(item), None) = (found.next(), found.next()) else {
+    let Ok([item]) = <[ast::Struct; 1]>::try_from(declared_structs(index, impl_type)) else {
         return false;
     };
     let derives_default = item.attrs().any(|attr| {
@@ -988,9 +990,9 @@ fn derived_default_starts_empty(index: &RustIndex, impl_type: &str, field: &str)
         })
 }
 
-const EMPTY_COLLECTIONS: [&str; 6] = [
-    "BTreeMap", "HashMap", "IndexMap", "BTreeSet", "HashSet", "IndexSet",
-];
+/// Std maps and sets, whose `new()` and `default()` are empty. Matched by
+/// last path segment, so third-party look-alikes are left out.
+const EMPTY_COLLECTIONS: [&str; 4] = ["BTreeMap", "HashMap", "BTreeSet", "HashSet"];
 
 /// `BTreeMap::new()`, `std::collections::HashMap::<K, V>::default()` or
 /// `Default::default()`, whitespace removed.
@@ -1048,7 +1050,15 @@ pub(in crate::analysis) fn owner_touches_field_only_at(
     else {
         return false;
     };
-    method_touches_field_read_only(index, impl_type, &masked, field, MAX_KEYED_HOPS)
+    let mut verified = Vec::new();
+    method_touches_field_read_only(
+        index,
+        impl_type,
+        &masked,
+        field,
+        &mut verified,
+        MAX_KEYED_HOPS,
+    )
 }
 
 fn method_touches_field_read_only(
@@ -1056,6 +1066,7 @@ fn method_touches_field_read_only(
     impl_type: &str,
     masked: &str,
     field: &str,
+    verified: &mut Vec<String>,
     hops: usize,
 ) -> bool {
     let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
@@ -1085,6 +1096,10 @@ fn method_touches_field_read_only(
         if !after.starts_with('(') {
             return true;
         }
+        // A helper already found read-only need not be walked again.
+        if verified.iter().any(|seen| seen == name) {
+            return true;
+        }
         let Some(next) = hops.checked_sub(1) else {
             return false;
         };
@@ -1092,7 +1107,90 @@ fn method_touches_field_read_only(
             return false;
         };
         let callee = crate::analysis::extract::mask_comments_and_strings(callee);
-        method_touches_field_read_only(index, impl_type, &callee, field, next)
+        let read_only =
+            method_touches_field_read_only(index, impl_type, &callee, field, verified, next);
+        if read_only {
+            verified.push(name.to_string());
+        }
+        read_only
+    })
+}
+
+/// RIPR-SPEC-0228 keyed reads: whether `impl_type`'s inherent method
+/// `method`, called by a test on its binding before the owner call, can
+/// never store the literal `expected` anywhere. Its body (and every
+/// `self.m(..)` helper it calls) must spell no literal equal to `expected`
+/// (`load_defaults` inserting `("K", 5)` before `put("K", 5)` and
+/// `assert_eq!(.., 5)`), and must not hand `self` or `&mut self.f` to other
+/// code. An unresolved or ambiguous method fails closed. A value computed
+/// from other literals (`3 + 4`) is not detected (#7988).
+pub(in crate::analysis) fn method_cannot_store(
+    index: &RustIndex,
+    impl_type: &str,
+    method: &str,
+    expected: &str,
+) -> bool {
+    cannot_store_within(index, impl_type, method, expected, MAX_KEYED_HOPS)
+}
+
+fn cannot_store_within(
+    index: &RustIndex,
+    impl_type: &str,
+    method: &str,
+    expected: &str,
+    hops: usize,
+) -> bool {
+    let Some(hops) = hops.checked_sub(1) else {
+        return false;
+    };
+    let Some(block) = inherent_method_body(index, impl_type, method)
+        .and_then(parse_clean_source_file)
+        .and_then(|parse| parse.tree().syntax().descendants().find_map(ast::Fn::cast))
+        .and_then(|function| function.body())
+    else {
+        return false;
+    };
+    // `-5` lexes as `-` and `5`; compare magnitudes so the sign never hides
+    // a match.
+    let magnitude = expected.trim().trim_start_matches('-');
+    let spells_expected = block
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .any(|token| {
+            matches!(
+                token.kind(),
+                SyntaxKind::INT_NUMBER
+                    | SyntaxKind::FLOAT_NUMBER
+                    | SyntaxKind::STRING
+                    | SyntaxKind::CHAR
+                    | SyntaxKind::TRUE_KW
+                    | SyntaxKind::FALSE_KW
+            ) && literals_equal(token.text(), magnitude) != Some(false)
+        });
+    if spells_expected {
+        return false;
+    }
+    let masked =
+        crate::analysis::extract::mask_comments_and_strings(&block.syntax().text().to_string());
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked.match_indices("self").all(|(at, word)| {
+        if masked[..at].chars().next_back().is_some_and(ident) {
+            return true;
+        }
+        let rest = &masked[at + word.len()..];
+        if rest.starts_with(ident) {
+            return true;
+        }
+        if masked[..at].trim_end().ends_with("&mut") {
+            return false;
+        }
+        let Some(member) = rest.strip_prefix('.') else {
+            return false;
+        };
+        let name_len = member.find(|ch: char| !ident(ch)).unwrap_or(member.len());
+        let (name, after) = member.split_at(name_len);
+        !after.starts_with('(') || cannot_store_within(index, impl_type, name, expected, hops)
     })
 }
 
@@ -1103,7 +1201,16 @@ pub(in crate::analysis) fn literals_equal(left: &str, right: &str) -> Option<boo
     Some(literal_value(left)? == literal_value(right)?)
 }
 
-fn keyed_getter_fallback(
+/// RIPR-SPEC-0228 keyed getter credit: whether `impl_type`'s method
+/// `getter` takes `&self` and one parameter `k` and its body is one tail
+/// expression that looks `k` up in the field path `field`:
+/// `self.f.get(k)` or `self.f.get(&k)`, optionally followed by `.copied()`
+/// or `.cloned()`, then optionally by `.unwrap_or_default()` or
+/// `.unwrap_or(<literal>)`. The method resolves as in
+/// [`getter_plainly_reads`]; anything else (another field, another key,
+/// arithmetic on the entry, a statement first) gives `None`. `Some` carries
+/// what the getter returns for a key the map does not hold.
+pub(in crate::analysis) fn getter_plainly_reads_key(
     index: &RustIndex,
     impl_type: &str,
     getter: &str,
@@ -1691,6 +1798,85 @@ mod tests {
             "default",
             "stock.inner"
         ));
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: an earlier call on the test binding
+    /// counts only when its method, and the helpers it calls, spell no
+    /// literal equal to the expected value and hand `self` to nothing else.
+    #[test]
+    fn method_cannot_store_refuses_methods_spelling_the_expected_value() {
+        let cannot_store = |methods: &str, expected: &str| {
+            let index = source_index(&format!(
+                "pub struct Shelf {{ stock: BTreeMap<String, u32>, log: Vec<u32> }}\n\
+                 impl Shelf {{\n{methods}\n}}\n"
+            ));
+            method_cannot_store(&index, "Shelf", "prime", expected)
+        };
+        for methods in [
+            "pub fn prime(&mut self, sku: &str, qty: u32) { *self.stock.entry(sku.to_string()).or_insert(0) += qty; self.log.push(qty); }",
+            "pub fn prime(&mut self) { self.stock.insert(\"K\".into(), 3); self.note(); }\nfn note(&mut self) { self.log.push(1); }",
+        ] {
+            assert!(cannot_store(methods, "7"), "{methods}");
+        }
+        for (methods, expected) in [
+            (
+                "pub fn prime(&mut self) { self.stock.insert(\"K\".into(), 7); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self) { self.stock.insert(\"K\".into(), 7u32); }",
+                "7",
+            ),
+            (
+                "pub fn prime(&mut self) { self.stock.insert(\"K\".into(), 7); }",
+                "-7",
+            ),
+            (
+                "pub fn prime(&mut self) { self.stock.insert(\"K\".into(), \"x\\n\".len() as u32); }",
+                "\"x\\n\"",
+            ),
+            (
+                "pub fn prime(&mut self) { self.load(); }\nfn load(&mut self) { self.stock.insert(\"K\".into(), 7); }",
+                "7",
+            ),
+            ("pub fn prime(&mut self) { self.missing(); }", "7"),
+            ("pub fn prime(&mut self) { seed(self); }", "7"),
+            ("pub fn prime(&mut self) { seed(&mut self.stock); }", "7"),
+            ("pub fn prime(&mut self) { self.prime(); }", "7"),
+            ("", "7"),
+        ] {
+            assert!(!cannot_store(methods, expected), "{methods} / {expected}");
+        }
+    }
+
+    /// A `#[cfg(test)]` impl defining the same method may be the body the
+    /// test build runs, so no body resolves.
+    #[test]
+    fn inherent_method_body_refuses_a_test_only_twin() {
+        let production = "pub struct Shelf { stock: BTreeMap<String, u32> }\n\
+                          impl Shelf { pub fn count(&self, k: &str) -> u32 { self.stock.get(k).copied().unwrap_or(0) } }\n";
+        assert!(inherent_method_body(&source_index(production), "Shelf", "count").is_some());
+        let twinned = format!(
+            "{production}#[cfg(test)]\nmod tests {{ use super::*; impl Shelf {{ pub fn count(&self, _k: &str) -> u32 {{ 5 }} }} }}\n"
+        );
+        assert!(inherent_method_body(&source_index(&twinned), "Shelf", "count").is_none());
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: two modules declaring the same type name
+    /// make bare-name method resolution unsafe.
+    #[test]
+    fn constructor_starts_empty_refuses_a_type_name_declared_twice() {
+        let index = source_index(
+            "use std::collections::BTreeMap;\n\
+             pub mod a { #[derive(Default)] pub struct S { stock: BTreeMap<String, u32> } }\n\
+             pub mod b { pub struct S { stock: BTreeMap<String, u32> } }\n",
+        );
+        assert!(!constructor_starts_empty(&index, "S", "default", "stock"));
+        let index = source_index(
+            "use std::collections::BTreeMap;\n\
+             pub mod a { #[derive(Default)] pub struct S { stock: BTreeMap<String, u32> } }\n",
+        );
+        assert!(constructor_starts_empty(&index, "S", "default", "stock"));
     }
 
     /// RIPR-SPEC-0228 keyed reads: the owner may touch the inserted map
