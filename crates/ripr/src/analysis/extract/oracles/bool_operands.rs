@@ -501,6 +501,9 @@ fn bool_preserving_operand(text: &str) -> Option<&str> {
     }) {
         return Some(unwrap_parentheses(inner.trim()));
     }
+    if let Some(inner) = conversion_call_argument(text) {
+        return Some(unwrap_parentheses(inner.trim()));
+    }
     let masked = mask_comments_and_strings(text);
     let head = BOOL_CARRYING_TYPES.iter().find_map(|ty| {
         let head = masked.strip_suffix(ty)?.trim_end().strip_suffix("as")?;
@@ -508,6 +511,36 @@ fn bool_preserving_operand(text: &str) -> Option<&str> {
     })?;
     let operand = text.get(..head.len())?;
     single(operand).then(|| unwrap_parentheses(operand.trim()))
+}
+
+/// The one argument of a conversion spelled through the `From` or `Into`
+/// trait (`From::from(x)`, `<u8 as From<bool>>::from(x)`,
+/// `Into::<u8>::into(x)`, `std::primitive::u8::from(x)`; #8101). A
+/// conversion of a `bool` keeps whether it is a test.
+fn conversion_call_argument(text: &str) -> Option<&str> {
+    let masked = mask_comments_and_strings(text);
+    // The call's own argument list closes the text; an earlier parenthesis
+    // may sit inside the path (`<u8 as From<(bool)>>::from(x)`).
+    let open = final_group_open(masked.trim_end())?;
+    let callee = masked.get(..open)?.trim_end();
+    let head = callee
+        .strip_suffix("from")
+        .or_else(|| callee.strip_suffix("into"))?;
+    let path = head.trim_end().strip_suffix("::")?;
+    let names_conversion = path.contains("From")
+        || path.contains("Into")
+        || BOOL_CARRYING_TYPES.iter().any(|ty| {
+            let path = path.trim_end();
+            path == *ty
+                || path
+                    .strip_suffix(ty)
+                    .is_some_and(|rest| rest.ends_with("::"))
+        });
+    if !names_conversion || !is_path_head(head) {
+        return None;
+    }
+    let argument = super::arguments::parenthesized_contents(text.get(open..)?.trim_end())?;
+    (super::arguments::split_top_level_commas(argument).len() == 1).then_some(argument)
 }
 
 /// The types a `bool` converts to without losing it, through `as` or
@@ -609,7 +642,9 @@ fn whole_comparison_sides(condition: &str) -> Option<(&str, &str)> {
 /// a value).
 fn is_bool_test(side: &str) -> bool {
     let (core, _, _) = strip_negations(side);
-    let masked = mask_comments_and_strings(core);
+    // A comparison inside a call's arguments is the callee's input, not an
+    // operand of the bitwise operator (`flags | compute(|v| v == 1)`; #8101).
+    let masked = blank_call_arguments(&mask_comments_and_strings(core));
     let holds_test = masked.contains("matches!")
         || masked.contains("==")
         || masked.contains("!=")
@@ -623,6 +658,61 @@ fn is_bool_test(side: &str) -> bool {
         || (holds_test
             && (has_top_level_bitwise_operator(core)
                 || split_top_level_conjuncts(&conjoin_single_ampersands(core)).len() > 1))
+}
+
+/// Masked `text` with the inside of every call's argument list blanked: a
+/// parenthesis after a callee (see `strip_grouping_opens`) opens arguments,
+/// and the callee and its parentheses stay (`r.eq(  )`). Grouping
+/// parentheses, macro arguments (`matches!(..)`) and the argument of a
+/// call that carries a test through (`bool::from(..)`, `From::from(..)`,
+/// `Not::not(..)`) keep their contents.
+fn blank_call_arguments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut call_depth = 0usize;
+    let mut depth = 0usize;
+    for (index, ch) in text.char_indices() {
+        if call_depth > 0 {
+            match ch {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth < call_depth {
+                        call_depth = 0;
+                        out.push(ch);
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+            out.push(' ');
+            continue;
+        }
+        match ch {
+            '(' => {
+                depth += 1;
+                let head = text.get(..index).unwrap_or_default();
+                if opens_call_after(head) && !carries_test_through(head) {
+                    call_depth = depth;
+                }
+            }
+            '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// Whether `head` ends with a path callee that passes its argument's test
+/// through: a conversion (`bool::from`, `From::from`, `Into::<u8>::into`)
+/// or a negation (`Not::not`). Reading such a call as opaque would hide the
+/// test from the bitwise operator around it (review of #8101).
+fn carries_test_through(head: &str) -> bool {
+    let head = head.trim_end();
+    let path = head.trim_end_matches(|ch: char| ch.is_alphanumeric() || ch == '_');
+    let name = head.get(path.len()..).unwrap_or_default();
+    matches!(name, "from" | "into" | "not") && path.trim_end().ends_with("::")
 }
 
 /// The non-literal operand of a comparison with a boolean literal, whether
@@ -807,9 +897,9 @@ pub(super) fn contains_unread_pattern_operand(line: &str) -> bool {
     spans.into_iter().any(|(start, end)| {
         let before = masked.get(..start).unwrap_or_default().trim_end();
         // Grouping parentheses and one-expression blocks pass the pattern
-        // through (`flag ^ { matches!(..) }`; #8006).
-        let unopened =
-            before.trim_end_matches(|ch: char| ch.is_whitespace() || ch == '(' || ch == '{');
+        // through (`flag ^ { matches!(..) }`; #8006); a call's parenthesis
+        // does not (`foo::<T>(matches!(..))`; #8101).
+        let unopened = strip_grouping_opens(before);
         let after = masked
             .get(end..)
             .unwrap_or_default()
@@ -1107,6 +1197,80 @@ fn binary_bar_before(before: &str) -> bool {
         index += 1;
     }
     binary
+}
+
+/// `before` (masked) without the grouping parentheses and block braces that
+/// open right before an operand. A parenthesis after a callee (a name, a
+/// call or index result, or a turbofish such as `foo::<T>`) opens a call's
+/// arguments, so it stays.
+fn strip_grouping_opens(before: &str) -> &str {
+    let mut text = before.trim_end();
+    loop {
+        if let Some(rest) = text.strip_suffix('{') {
+            text = rest.trim_end();
+        } else if let Some(rest) = text.strip_suffix('(') {
+            let head = rest.trim_end();
+            if opens_call_after(head) {
+                return text;
+            }
+            text = head;
+        } else {
+            return text;
+        }
+    }
+}
+
+/// Whether a parenthesis right after `head` (masked) opens a call's
+/// arguments: `head` ends with a callee (a name, a call or index result, or
+/// a turbofish such as `foo::<T>`) and not with a keyword.
+fn opens_call_after(head: &str) -> bool {
+    let head = head.trim_end();
+    (head.ends_with(|ch: char| ch.is_alphanumeric() || matches!(ch, '_' | ')' | ']' | '?'))
+        && !ends_with_keyword(head))
+        || closes_turbofish(head)
+}
+
+/// Whether `text` ends with a keyword after which a parenthesis groups an
+/// expression rather than opening call arguments (`if (..)`, `match (..)`).
+fn ends_with_keyword(text: &str) -> bool {
+    let head = text.trim_end_matches(|ch: char| ch.is_alphanumeric() || ch == '_');
+    let word = text.get(head.len()..).unwrap_or_default();
+    !head.ends_with("r#")
+        && matches!(
+            word,
+            "if" | "while" | "match" | "return" | "in" | "else" | "break" | "yield" | "mut"
+        )
+}
+
+/// Whether `text` ends with the `>` of a turbofish (`foo::<T>`,
+/// `Vec::<Vec<u8>>`): its matching `<` follows `::`.
+fn closes_turbofish(text: &str) -> bool {
+    if !text.ends_with('>') {
+        return false;
+    }
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    // A const-generic block (`foo::<{ N > 1 }>`) is one argument, and the
+    // `>` of a `->` closes no angle (as in `is_path_head`).
+    let mut blocks = 0usize;
+    for (index, &byte) in bytes.iter().enumerate().rev() {
+        match byte {
+            b'}' => blocks += 1,
+            b'{' => blocks = blocks.saturating_sub(1),
+            _ if blocks > 0 => {}
+            b'>' if index == 0 || bytes.get(index - 1) != Some(&b'-') => depth += 1,
+            b'<' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return text
+                        .get(..index)
+                        .is_some_and(|head| head.trim_end().ends_with("::"));
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn unread_operator_before(before: &str) -> bool {

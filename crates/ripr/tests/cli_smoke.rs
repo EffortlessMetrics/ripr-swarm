@@ -85,6 +85,9 @@ mod shell_words;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/source_unicode.rs"]
 mod source_unicode;
+#[cfg(any(feature = "lang-rust", feature = "lang-typescript"))]
+#[path = "cli_smoke/structural_workspace_markers.rs"]
+mod structural_workspace_markers;
 #[path = "cli_smoke/suppression_notice.rs"]
 mod suppression_notice;
 #[cfg(feature = "lang-typescript")]
@@ -11592,6 +11595,49 @@ fn check_rejects_missing_and_file_roots_without_leaking_the_git_invocation() -> 
 }
 
 #[test]
+fn config_validate_does_not_consume_root_flag_as_a_path() -> Result<(), String> {
+    let workspace = unique_temp_workspace("config-missing-root-value");
+    // A real directory makes the old parser falsely report success instead of
+    // merely producing a misleading filesystem error for the missing value.
+    std::fs::create_dir_all(workspace.join("--root")).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(workspace.join("--workspace")).map_err(|error| error.to_string())?;
+    let result = (|| {
+        for args in [
+            vec!["config", "validate", "--root"],
+            vec!["config", "validate", "--root", "--root"],
+            vec!["config", "validate", "--root", "--root", "."],
+        ] {
+            let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&workspace), &args)
+                .map_err(|error| error.to_string())?;
+            assert_eq!(output.status.code(), Some(2), "args: {args:?}");
+            assert!(output.stdout.is_empty(), "args: {args:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stderr).trim(),
+                "ripr: missing value for --root",
+                "args: {args:?}"
+            );
+        }
+
+        // Explicit paths to flag-named directories and other dash-prefixed paths
+        // remain usable; refusing every value starting with '-' is too broad.
+        for path in ["./--root", "--workspace"] {
+            let output = run_command(
+                env!("CARGO_BIN_EXE_ripr"),
+                Some(&workspace),
+                &["config", "validate", "--root", path],
+            )
+            .map_err(|error| error.to_string())?;
+            assert!(output.status.success(), "stderr: {:?}", output.stderr);
+            assert!(String::from_utf8_lossy(&output.stdout).contains("built-in defaults apply"));
+            assert!(output.stderr.is_empty());
+        }
+        Ok(())
+    })();
+    ignore_remove_dir_all(&workspace);
+    result
+}
+
+#[test]
 fn config_validate_rejects_missing_and_file_roots() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
     let missing = workspace.join("missing-root");
@@ -20440,6 +20486,143 @@ expires = "2025-01-01"
     assert!(stdout.contains(r#""warnings": []"#));
 
     ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn check_configured_suppression_diagnostics_preserve_locations_and_escaping() -> Result<(), String>
+{
+    let valid = "schema_version = 1\n[[suppressions]]\nkind = \"exposure_gap\"\nfinding_id = \"probe:one\"\nowner = \"alice\"\nreason = \"accepted debt\"\n";
+    let duplicate = format!("{valid}owner = \"bob\"\n");
+    // Preserve the default filename inside the offending value while escaping
+    // its terminal control byte. Only the diagnostic's location is renamed.
+    let malformed = valid.replace("exposure_gap", ".ripr/suppressions.toml\u{1b}[31m");
+    let unquoted = valid.replace("owner = \"alice\"", "owner = alice");
+    for relative_policy in [
+        ".ripr/suppressions.toml",
+        "policies/accepted $debt & 50%.toml",
+    ] {
+        let workspace =
+            make_temp_workspace_with_suppressions(None, Some("invalid default policy\n"))?;
+        std::fs::create_dir_all(workspace.join("policies")).map_err(|e| e.to_string())?;
+        if relative_policy != ".ripr/suppressions.toml" {
+            std::fs::write(
+                workspace.join("ripr.toml"),
+                format!("[suppressions]\npath = \"{relative_policy}\"\n"),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        let policy = workspace.join(relative_policy);
+        let root = workspace.display().to_string();
+        let diff = sample_diff().display().to_string();
+        for (manifest, diagnostics) in [
+            (
+                duplicate.as_str(),
+                [":7 duplicate `[[suppressions]]` field `owner` (first declared at line 5)"]
+                    .as_slice(),
+            ),
+            (
+                malformed.as_str(),
+                [":3 unsupported kind `.ripr/suppressions.toml\\u{1b}[31m`"].as_slice(),
+            ),
+            (
+                unquoted.as_str(),
+                [
+                    ":5 expected quoted string, got `alice`",
+                    ":2 `[[suppressions]]` entry is missing required `owner`",
+                ]
+                .as_slice(),
+            ),
+        ] {
+            std::fs::write(&policy, manifest).map_err(|e| e.to_string())?;
+            for format in ["badge-json", "badge-shields", "sarif"] {
+                let output = run_ripr(&[
+                    "check", "--root", &root, "--diff", &diff, "--format", format,
+                ]);
+                assert!(
+                    !output.status.success(),
+                    "{format}: invalid policy accepted"
+                );
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert!(
+                    stderr.contains(&format!("{relative_policy} validation failed:\n"))
+                        && diagnostics
+                            .iter()
+                            .all(|diagnostic| stderr
+                                .contains(&format!("{relative_policy}{diagnostic}"))),
+                    "{format}: wrong policy location or diagnostic: {stderr}"
+                );
+                assert!(
+                    !stderr.contains('\u{1b}'),
+                    "raw terminal control: {stderr:?}"
+                );
+            }
+
+            // Explicit loading already names the supplied path (#7921).
+            // Keep it fail-closed without changing that production path.
+            let output = run_ripr(&[
+                "check",
+                "--root",
+                &root,
+                "--diff",
+                &diff,
+                "--suppression-policy",
+                relative_policy,
+            ]);
+            assert!(!output.status.success(), "explicit invalid policy accepted");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                diagnostics
+                    .iter()
+                    .all(|diagnostic| stderr.contains(&format!("{relative_policy}{diagnostic}"))),
+                "{stderr}"
+            );
+            assert!(
+                !stderr.contains('\u{1b}'),
+                "raw terminal control: {stderr:?}"
+            );
+        }
+
+        // Valid and missing optional policies still work. A malformed default
+        // file remains present for custom paths, defeating fallback to it.
+        std::fs::write(&policy, valid).map_err(|e| e.to_string())?;
+        for missing in [false, true] {
+            if missing {
+                std::fs::remove_file(&policy).map_err(|e| e.to_string())?;
+            }
+            let output = run_ripr(&[
+                "check",
+                "--root",
+                &root,
+                "--diff",
+                &diff,
+                "--format",
+                "badge-json",
+            ]);
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let output = run_ripr(&[
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--suppression-policy",
+            relative_policy,
+        ]);
+        assert!(!output.status.success(), "explicit missing policy accepted");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("failed to read suppression policy")
+                && stderr.contains(relative_policy),
+            "{stderr}"
+        );
+        ignore_remove_dir_all(&workspace);
+    }
     Ok(())
 }
 
