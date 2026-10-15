@@ -117,6 +117,8 @@ Repository configuration evidence should cover:
 - empty or malformed first values and third declarations retaining the original
   declaration identity, with valid field-name reuse across separate entries;
 - unsafe relative-path shapes being rejected where paths are configurable;
+- escaped NUL characters in relative paths being rejected before filesystem
+  use, while Unicode, spaces, and existing path normalization remain supported;
 - `ripr doctor` reporting loaded config path, missing-config defaults, and
   malformed config errors without printing config source text;
 - `ripr doctor` separating installed-binary analysis readiness (the default
@@ -366,6 +368,9 @@ Current tests:
 - `crates/ripr/src/config.rs::tests::config_mode_applies_when_cli_mode_is_not_explicit`
 - `crates/ripr/src/config.rs::tests::malformed_or_unknown_config_is_actionable`
 - `crates/ripr/src/config.rs::tests::config_rejects_unsafe_suppression_paths`
+- `crates/ripr/src/config.rs::tests::relative_config_paths_reject_nul_before_filesystem_use`
+- `crates/ripr/src/config.rs::tests::relative_config_paths_preserve_normalization_spaces_and_unicode`
+- `crates/ripr/src/cli/commands/config.rs::tests::validate_rejects_a_nul_path_in_valid_toml`
 - `crates/ripr/src/config.rs::tests::oracle_policy_rewrites_configurable_oracle_strengths`
 - `crates/ripr/src/lsp/config.rs::tests::repo_config_sets_defaults_when_initialization_options_are_missing`
 - `crates/ripr/src/lsp/config.rs::tests::initialization_options_override_repo_config_defaults`
