@@ -160,6 +160,55 @@ Then discrimination is confirmed and the finding may read `exposed`. When
 the input is unresolved or the side flip cannot be established, rule 2
 applies.
 
+Implemented shape (2026-10-15). Conditions 2 and 3 are
+established without evaluating the owner, and condition 2 is read as the
+edge itself rather than one input on it:
+
+- The guard is the owner's first statement, `if <p> <op> <n> { return
+  Err(<payload>); }` with no `else`, where `<op>` is `<`, `<=`, `>` or `>=`
+  (either operand order), `<p>` is a parameter of a built-in integer type
+  and `<n>` a decimal integer literal (optionally negated, with `_`
+  separators or an integer-type suffix; hex, octal, binary and float
+  literals are not read). The guard statement holds no attribute, macro,
+  closure, `?` or nested item. The owner is a free, attribute-free
+  function returning `Result<..>` whose remaining statements and `Ok(..)`
+  tail hold no `return`, `?`, `Err`, closure, macro, nested item, labeled
+  or `async` block. Every call reaches the guard, and the untaken guard can
+  only return `Ok`.
+- One plain `#[test]` (rule 3b decision 4's test gates, and no attribute
+  anywhere in its body) holds, as top-level statements or the tail, an `Err`-side oracle on a call whose literal argument for
+  `<p>` the guard takes and an `Ok`-side oracle on a call whose argument is
+  the adjacent integer the guard does not take. `Ok`-side oracles are
+  `is_ok()`, `!is_err()`, `matches!(.., Ok(_))` and an uncompared
+  `unwrap()` or `expect(..)`. Every recognized side oracle in that test
+  must agree with the guard as written, and must pass the owner a literal
+  for `<p>` with as many arguments as the owner takes; one that disagrees,
+  or whose input ripr cannot read, refuses the test. Statements that are
+  not recognized side oracles (`let`, an exact `assert_eq!`) are skipped.
+  An assertion whose tokens hold `return`, `break`, `continue`, `loop`,
+  `?`, a closure, `async` or a nested block refuses the test: a message
+  argument runs only when the condition fails and could leave the test
+  before it panics.
+- Both sides are required. An `Err` oracle on the edge alone cannot tell
+  the guard from one that also takes the input below it (example 2: the
+  verdict corpus shows `len >= 255` surviving `check(256).is_err()`).
+  The two inputs pin the edge against moving either way, which covers
+  the boundary mutants (`>=` to `>`, a shifted literal) and the inverted
+  operators; a replacement that keeps both inputs' sides, such as `>=` to
+  `==`, is not told apart.
+- The `error_path` probe on the guard's own line is confirmed with the
+  predicate only when the edit kept the returned payload (rule 1): the old
+  guard returns the same `Err(..)`, or the edit was confined to the
+  condition.
+- An old condition written with `==` or `!=` confirms nothing: it can agree
+  with the new ordering guard on the edge pair and differ only away from it
+  (`len == 256` to `len >= 256` changes `257..`), where no oracle reads.
+
+Any other shape keeps rule 2's reading. Residuals shared with rule 3b:
+a top-level call that ends the process before the assertions
+(`std::process::exit(0)`), and a crate-local `Result`, `Ok`, `Err` or
+`is_err` that shadows std's by name.
+
 ### Rule 3b: `?` side flips
 
 Decision 3 extends rule 3 to an added or removed `?`. A result-side oracle
@@ -336,7 +385,11 @@ Source: `check` as in Problem.
 1. Guard changed to `len >= 256` (from `len > 256`), test
    `assert!(check(256).is_err()); assert!(check(255).is_ok());`: predicate
    `exposed` (rule 3).
-2. Same change, test `assert!(check(256).is_err())` alone: predicate `exposed`.
+2. Same change, test `assert!(check(256).is_err())` alone: `weakly_exposed`.
+   The test pins only the `Err` side, so `len >= 255` survives it (verdict
+   corpus `spec0227-check-guard-edge-is-err-only`, the respelled variant of
+   this guard, runtime truth); rule 3 needs both sides. This example read `exposed` before 2026-10-15, which
+   judged only the changed-from mutant.
 3. Same change, test `assert!(check(300).is_err())` only: `weakly_exposed`.
 4. Same change, tests `let _ = check(256);` and `assert!(check(300).is_err())`
    in different tests: at most `weakly_exposed`.
@@ -402,6 +455,17 @@ Source: `check` as in Problem.
   including mockall's zero-argument `expect_err()`, still does) (#7604).
   A multi-line statement reads only on the parser path (#7955).
 - Planned: oracle-scan unit tests for `should_panic`.
+- Rule 3: `classifier/evidence/side_flip/guard.rs::tests` (the guard shapes
+  read and refused, both-sides observation and its one-side, far-input,
+  disagreeing and unexecuted controls, the kept-payload check) and
+  `crates/ripr/tests/guard_side_flip.rs` (end to end: a respelled and a
+  moved edge, a literal-first guard and `unwrap_err()`/`unwrap()` sides read
+  `exposed` on both the predicate and the guard's `error_path` probe;
+  examples 2-4, a non-literal input, a disagreeing assertion, a changed
+  error with or without a moved edge and a later `Err` path do not). The
+  positive case also fails without the evidence stage's #4828 pairing
+  bypass. Corpus: `spec0227-check-guard-same-test-flip`
+  (example 1) reads `credited`; examples 2-4 keep their gap.
 
 ## Implementation Mapping
 
@@ -418,6 +482,11 @@ Source: `check` as in Problem.
   for rules 3 and 3b.
 - `crates/ripr/src/analysis/classify/reveal.rs`: rule 1 and rules 3 and 3b
   gates.
+- `crates/ripr/src/analysis/classifier/evidence/side_flip/guard.rs`: rule 3
+  for a first-statement integer guard, a producer that refines a weak
+  `predicate` or same-line `error_path` discriminator; the evidence stage
+  skips the #4828 same-test pairing demotion for it, since it pairs both
+  sides in one test itself.
 - `crates/ripr/src/analysis/classifier/evidence/side_flip.rs`: rule 3b by
   decision 4, a producer that refines a weak `error_path` discriminator on a
   sole-source `?` line (corpus cases `spec0227-total-question-mark-is-err`

@@ -36,6 +36,8 @@ use ra_ap_syntax::ast::{
 };
 use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, ast};
 
+pub(super) mod guard;
+
 pub(super) const QUESTION_MARK_SIDE_FLIP: &str = "Result-side oracle observes the `?` side flip: this `?` is the owner's only source of `Err`, and a test asserts the owner call returns `Err` (RIPR-SPEC-0227 rule 3b)";
 
 /// Error-shaping adapters choose which error the `?` returns. A side oracle
