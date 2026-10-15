@@ -1,0 +1,21 @@
+{
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "original_path": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+  "cargo": "/workspace/.cargo/bin/cargo",
+  "rustc": "/workspace/.cargo/bin/rustc",
+  "rustup_home": "/workspace/.rustup",
+  "cargo_home": "/workspace/.cargo",
+  "target_dir": "/workspace/receiver-build",
+  "rust": "1.95.0 (59807616e 2026-04-14)",
+  "build_jobs": 1,
+  "incremental": false,
+  "dev_debug": 0,
+  "test_debug": 0,
+  "default_features": true,
+  "source_head": "43f00b54eeb239c240bb71553c30a7bde3a4e080",
+  "tree": "b520b108591cf046c3498e6558604c9f6101eac7",
+  "integration_basis": "67866bc95a72462840c3eedac0f213ed658474b4",
+  "later_main": "42b064feae6f1faf3ee3370882f2f6c9ea891d1f",
+  "later_main_textual_tree": "3ee0987fe590695c7b646d58a19f2ef8f684926c",
+  "later_main_executed": false
+}

@@ -1,0 +1,179 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "draft",
+  "root": "/workspace/receiver-8004/target/ripr/verdict-corpus/rust/lib-rstest-fixture-injected-receiver",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:1e99863e41d068ae0ec16e1eb9c0adf60c82ab4cd0d229e4e8cbfc0d3d3ba400","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:return_value:ca89f0e2",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl Account::monthly_fee:return_value:return_value:self.balance/4/5",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl Account::monthly_fee:return_value:return_value:self.balance/4/5",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl Account::monthly_fee",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "self.balance/4/5"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:ca89f0e2",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 38,
+        "expression": "self.balance / 4 / 5"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach monthly_fee: fee_from_fixture, adult_cases_skip_boundary, clamp_stays_in_range"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: self.balance / 4 / 5"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach monthly_fee: fee_from_fixture, adult_cases_skip_boundary, clamp_stays_in_range", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: self.balance / 4 / 5", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: self.balance / 4 / 5 (line 38)", "related test src/lib.rs:73 fee_from_fixture uses strong exact value oracle: assert_eq!(account.monthly_fee(), 5);", "related test src/lib.rs:57 adult_cases_skip_boundary uses strong exact value oracle: assert_eq!(is_adult(age), expected);", "related test src/lib.rs:78 clamp_stays_in_range uses weak relational check oracle: assert!(clamp_pct(v) <= 100);", "related test src/lib.rs:50 scale_cases uses strong exact value oracle: assert_eq!(scale(input), expected);", "related test src/lib.rs:67 withdraw_from_fixture uses weak relational check oracle: assert!(account.withdraw(30));", "source assertion argument value 30 at line 68", "source assertion argument value 70 at line 69", "source assertion argument value 5 at line 74", "source assertion argument value 100 at line 79"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"self.balance / 4 / 5","line":38}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: self.balance / 4 / 5", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach monthly_fee: fee_from_fixture, adult_cases_skip_boundary, clamp_stays_in_range", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "68": "assert!(account.withdraw(30));",
+        "69": "assert_eq!(account.balance(), 70);",
+        "74": "assert_eq!(account.monthly_fee(), 5);",
+        "79": "assert!(clamp_pct(v) <= 100);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 68,
+            "value": "30",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 69,
+            "value": "70",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 74,
+            "value": "5",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 79,
+            "value": "100",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 68,
+          "value": "30",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 69,
+          "value": "70",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 74,
+          "value": "5",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 79,
+          "value": "100",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 6,
+      "related_tests": [
+        {
+          "name": "fee_from_fixture",
+          "file": "src/lib.rs",
+          "line": 73,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(account.monthly_fee(), 5);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "adult_cases_skip_boundary",
+          "file": "src/lib.rs",
+          "line": 57,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(is_adult(age), expected);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium"
+        },
+        {
+          "name": "clamp_stays_in_range",
+          "file": "src/lib.rs",
+          "line": 78,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(clamp_pct(v) <= 100);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium"
+        },
+        {
+          "name": "scale_cases",
+          "file": "src/lib.rs",
+          "line": 50,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(scale(input), expected);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium"
+        },
+        {
+          "name": "withdraw_from_fixture",
+          "file": "src/lib.rs",
+          "line": 67,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(account.withdraw(30));",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium"
+        },
+        {
+          "name": "withdraw_from_fixture",
+          "file": "src/lib.rs",
+          "line": 67,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(account.balance(), 70);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium"
+        }
+      ],
+      "stop_reasons": ["fixture_opaque"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "canonical_next_action": {"schema_version":"canonical_next_action.v1","producer":"check_top_result","subject":{"root":"/workspace/receiver-8004/target/ripr/verdict-corpus/rust/lib-rstest-fixture-injected-receiver","diff_source":{"committed":{"base":null,"head":null}},"item":"probe:src_lib.rs:return_value:ca89f0e2"},"currentness":{"head_expected":null,"head_observed":null,"config_expected":null,"config_observed":null},"action_class":"terminal_no_action","stop":{"kind":"check_triage","case":"no_diff_finding","detail_route":"ripr explain --root /workspace/receiver-8004/target/ripr/verdict-corpus/rust/lib-rstest-fixture-injected-receiver --diff /workspace/receiver-8004/fixtures/rust-verdict-corpus/cases/lib-rstest-fixture-injected-receiver.diff probe:src_lib.rs:return_value:ca89f0e2"},"non_claim":"Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."}
+}

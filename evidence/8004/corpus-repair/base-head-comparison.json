@@ -1,0 +1,226 @@
+{
+  "base": "89ac47a603092ba7f9f55cf74999b88649621abf",
+  "head": "15ca898ad1d3571d104ce1ae20b629fe2f55fc86",
+  "same_inputs": "Both retained binaries run on identical head15ca materialized subject roots and diff files",
+  "rows": [
+    {
+      "case_id": "bytesize-as-kib-div",
+      "test": "as_unit_conversions",
+      "base": {
+        "classification": "exposed",
+        "matching_relations": [
+          {
+            "name": "as_unit_conversions",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          }
+        ],
+        "raw_sha256": "8d6fbd7b53f1a6317dc525de3d02007e2cc929f1d3868cfd48260c2ebc151649"
+      },
+      "head15ca": {
+        "classification": "weakly_exposed",
+        "matching_relations": [],
+        "raw_sha256": "ebbad383e3f9eabe19e7f7f52144e6196ac67674b7326e154e4f54a0648477ba"
+      }
+    },
+    {
+      "case_id": "bytesize-as-mb-div",
+      "test": "as_unit_conversions",
+      "base": {
+        "classification": "exposed",
+        "matching_relations": [
+          {
+            "name": "as_unit_conversions",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          }
+        ],
+        "raw_sha256": "9c821650131e95c7d2cd55ac024456e5478dbda5c3ef16ac37502e4e87f4a7c3"
+      },
+      "head15ca": {
+        "classification": "weakly_exposed",
+        "matching_relations": [],
+        "raw_sha256": "5947b39e0c3b41548d5c4713b34c774129520601214a3aa2475d8e1d08c4120c"
+      }
+    },
+    {
+      "case_id": "lib-rstest-fixture-injected-receiver",
+      "test": "fee_from_fixture",
+      "base": {
+        "classification": "exposed",
+        "matching_relations": [
+          {
+            "name": "fee_from_fixture",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          }
+        ],
+        "raw_sha256": "77bdc3e2afdff06c244a3bfda40a1ef1c7d21da5dab31819bd49ac88b9d5bc0e"
+      },
+      "head15ca": {
+        "classification": "weakly_exposed",
+        "matching_relations": [
+          {
+            "name": "fee_from_fixture",
+            "relation_reason": "weak_token_substring",
+            "relation_confidence": "low",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          }
+        ],
+        "raw_sha256": "3224b89e77182aa51f65884e56a7a9c73fa30bcf9e396995d8ba22e79b72aac4"
+      }
+    },
+    {
+      "case_id": "serde-derive-rename-field-upper",
+      "test": "rename_fields",
+      "base": {
+        "classification": "exposed",
+        "matching_relations": [
+          {
+            "name": "rename_fields",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          },
+          {
+            "name": "rename_fields",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          },
+          {
+            "name": "rename_fields",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          },
+          {
+            "name": "rename_fields",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          },
+          {
+            "name": "rename_fields",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          },
+          {
+            "name": "rename_fields",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          },
+          {
+            "name": "rename_fields",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          }
+        ],
+        "raw_sha256": "8d69ae3bbb9f8605aae4167152ab38fea130bb33431ca352aa464d64ecd0a68d"
+      },
+      "head15ca": {
+        "classification": "weakly_exposed",
+        "matching_relations": [
+          {
+            "name": "rename_fields",
+            "relation_reason": "weak_token_substring",
+            "relation_confidence": "low",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          }
+        ],
+        "raw_sha256": "10bd6da8cb294153e138be31052e00caf697eed6edf33b824523607be98cc233"
+      }
+    },
+    {
+      "case_id": "serde-derive-rename-variant-lower",
+      "test": "rename_variants",
+      "base": {
+        "classification": "exposed",
+        "matching_relations": [
+          {
+            "name": "rename_variants",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          },
+          {
+            "name": "rename_variants",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          },
+          {
+            "name": "rename_variants",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          },
+          {
+            "name": "rename_variants",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          },
+          {
+            "name": "rename_variants",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          },
+          {
+            "name": "rename_variants",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          },
+          {
+            "name": "rename_variants",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          }
+        ],
+        "raw_sha256": "394e4768900ac701f8e5964bbf1a4f8061cf5a1fea6aa66e4b0a0dc3d37d7dcb"
+      },
+      "head15ca": {
+        "classification": "weakly_exposed",
+        "matching_relations": [
+          {
+            "name": "rename_variants",
+            "relation_reason": "weak_token_substring",
+            "relation_confidence": "low",
+            "oracle_kind": "exact_value",
+            "oracle_strength": "strong"
+          }
+        ],
+        "raw_sha256": "fa2a544d57664a7d872c002e53b0bf86117b1ca9fc1114b32ec6b3597aa7653e"
+      }
+    }
+  ],
+  "raw_projection_note": "CLI related_tests is bounded: an absent row does not prove no relation. ByteSize head output retains total 26 but serializes 8 rows. Classification and corpus scoring are complete for the single finding per case."
+}

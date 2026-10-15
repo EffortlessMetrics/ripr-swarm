@@ -1,0 +1,10 @@
+2026-10-15T00:33:20.9682128Z HEAD is now at 2fa3df5b4 Merge 15ca898ad1d3571d104ce1ae20b629fe2f55fc86 into 9543a9bd733b0921886306abd2c2609fbe73b62e
+2026-10-15T00:33:20.9793749Z 2fa3df5b4eca7cfb8376a676b2380a59aaf02c35
+2026-10-15T01:14:49.3451896Z [32;1m     Summary[0m [1506.424s] [1m15980[0m tests run: [1m15980[0m [32;1mpassed[0m ([1m26[0m [33;1mslow[0m), [1m2[0m [33;1mskipped[0m
+2026-10-15T01:14:51.8025443Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-10-15T01:14:57.6752117Z test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-10-15T01:17:03.1763029Z - case `bytesize-as-kib-div`: row moved (line 11: expected `  "observed_verdict": "credited",`, got `  "observed_verdict": "gap",`)
+2026-10-15T01:17:03.1763886Z - case `bytesize-as-mb-div`: row moved (line 11: expected `  "observed_verdict": "credited",`, got `  "observed_verdict": "gap",`)
+2026-10-15T01:17:03.1765032Z - case `lib-rstest-fixture-injected-receiver`: row moved (line 11: expected `  "observed_verdict": "credited",`, got `  "observed_verdict": "gap",`)
+2026-10-15T01:17:03.1766237Z - case `serde-derive-rename-field-upper`: row moved (line 11: expected `  "observed_verdict": "credited",`, got `  "observed_verdict": "gap",`)
+2026-10-15T01:17:03.1767194Z - case `serde-derive-rename-variant-lower`: row moved (line 11: expected `  "observed_verdict": "credited",`, got `  "observed_verdict": "gap",`)

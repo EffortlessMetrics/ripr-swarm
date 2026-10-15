@@ -1,0 +1,3 @@
+    Finished `dev` profile [unoptimized] target(s) in 0.07s
+     Running `/workspace/receiver-build/debug/xtask check-doc-artifacts`
+check-doc-artifacts: pass (target/ripr/reports/doc-artifacts.md)

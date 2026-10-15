@@ -1,0 +1,26 @@
+[
+  {
+    "local_retained_name": "ripr-89ac47a6",
+    "source_sha": "89ac47a603092ba7f9f55cf74999b88649621abf",
+    "source_tree": "412e1306aa80229cebe20a6fd8e1857162fcf933",
+    "version": "ripr 0.11.0 (89ac47a603092ba7f9f55cf74999b88649621abf)",
+    "size_bytes": 119417560,
+    "sha256": "4842b5b349fba387af608e74f175395402ed633286090e08efec408a4ff8e6e3"
+  },
+  {
+    "local_retained_name": "ripr-15ca898",
+    "source_sha": "15ca898ad1d3571d104ce1ae20b629fe2f55fc86",
+    "source_tree": "a8c022a078c40285c8e38624c5c0431f9e907531",
+    "version": "ripr 0.11.0 (15ca898ad1d3571d104ce1ae20b629fe2f55fc86)",
+    "size_bytes": 119500856,
+    "sha256": "7cda8c6fdbb27a5b7b42a4c3c61302523722e918a3108ec88834d14b7c7a3cfb"
+  },
+  {
+    "local_retained_name": "ripr-43f00b54",
+    "source_sha": "43f00b54eeb239c240bb71553c30a7bde3a4e080",
+    "source_tree": "b520b108591cf046c3498e6558604c9f6101eac7",
+    "version": "ripr 0.11.0 (43f00b54eeb239c240bb71553c30a7bde3a4e080)",
+    "size_bytes": 121005600,
+    "sha256": "fd33e00778c23c0747185523e9903d26d1e9b5931bca30f92243ad2240220ba2"
+  }
+]

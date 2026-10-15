@@ -1,0 +1,85 @@
+{
+  "schema_version": "0.1",
+  "status": "warn",
+  "drift_count": 3,
+  "provenance": {
+    "binary": "/workspace/receiver-build/debug/ripr",
+    "ripr_version": "ripr 0.11.0 (43f00b54eeb239c240bb71553c30a7bde3a4e080)",
+    "revision": "43f00b54eeb239c240bb71553c30a7bde3a4e080"
+  },
+  "entries": [
+    {
+      "fixture": "owner_return_pin_fallible_literal",
+      "surface": "check.json",
+      "expected": "fixtures/owner_return_pin_fallible_literal/expected/check.json",
+      "actual": "target/ripr/fixtures/owner_return_pin_fallible_literal/check.json",
+      "provenance": {
+        "binary": "/workspace/receiver-build/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (43f00b54eeb239c240bb71553c30a7bde3a4e080)",
+        "revision": "43f00b54eeb239c240bb71553c30a7bde3a4e080"
+      },
+      "changed_line_count": 23,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": ["expected [exposed] -> actual [weakly_exposed]"],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": ["expected [] -> actual [The related test `observes_answer` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.]"],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "owner_return_pin_fallible_literal",
+      "surface": "human.txt",
+      "expected": "fixtures/owner_return_pin_fallible_literal/expected/human.txt",
+      "actual": "target/ripr/fixtures/owner_return_pin_fallible_literal/human.txt",
+      "provenance": {
+        "binary": "/workspace/receiver-build/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (43f00b54eeb239c240bb71553c30a7bde3a4e080)",
+        "revision": "43f00b54eeb239c240bb71553c30a7bde3a4e080"
+      },
+      "changed_line_count": 25,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "owner_return_pin_fallible_literal",
+      "surface": "human-full.txt",
+      "expected": "fixtures/owner_return_pin_fallible_literal/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/owner_return_pin_fallible_literal/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/receiver-build/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (43f00b54eeb239c240bb71553c30a7bde3a4e080)",
+        "revision": "43f00b54eeb239c240bb71553c30a7bde3a4e080"
+      },
+      "changed_line_count": 14,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    }
+  ],
+  "violations": ["check.json drift for fixture `owner_return_pin_fallible_literal`\n  expected: fixtures/owner_return_pin_fallible_literal/expected/check.json\n  actual:   target/ripr/fixtures/owner_return_pin_fallible_literal/check.json\n  diff:    line 6 expected `  \\\"summary\\\": {\\\"changed_rust_files\\\":2,\\\"probes\\\":1,\\\"findings\\\":1,\\\"exposed\\\":1,\\\"weakly_exposed\\\":0,\\\"reachable_unre…` vs actual `  \\\"summary\\\": {\\\"changed_rust_files\\\":2,\\\"probes\\\":1,\\\"findings\\\":1,\\\"exposed\\\":0,\\\"weakly_exposed\\\":1,\\\"reachable_unre…`", "human.txt drift for fixture `owner_return_pin_fallible_literal`\n  expected: fixtures/owner_return_pin_fallible_literal/expected/human.txt\n  actual:   target/ripr/fixtures/owner_return_pin_fallible_literal/human.txt\n  diff:    line 5 expected `Summary: 1 probe(s), 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propa…` vs actual `Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propa…`", "human-full.txt drift for fixture `owner_return_pin_fallible_literal`\n  expected: fixtures/owner_return_pin_fallible_literal/expected/human-full.txt\n  actual:   target/ripr/fixtures/owner_return_pin_fallible_literal/human-full.txt\n  diff:    line 5 expected `Summary: 1 probe(s), 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propa…` vs actual `Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propa…`"]
+}

@@ -1,0 +1,14 @@
+{
+  "fixture": "owner_return_pin_fallible_literal",
+  "inputs_unchanged_since": "89ac47a603092ba7f9f55cf74999b88649621abf",
+  "parsed_complete_json_equal": true,
+  "classifications": [
+    "weakly_exposed"
+  ],
+  "raw_sha256": {
+    "base89ac.json": "59739b735beadc88141d055e71783adb1f6b9811602f1202ff38266483a6aa7e",
+    "head15ca.json": "59739b735beadc88141d055e71783adb1f6b9811602f1202ff38266483a6aa7e",
+    "final43f0.json": "59739b735beadc88141d055e71783adb1f6b9811602f1202ff38266483a6aa7e"
+  },
+  "disposition": "inherited golden drift; no expected output changed"
+}

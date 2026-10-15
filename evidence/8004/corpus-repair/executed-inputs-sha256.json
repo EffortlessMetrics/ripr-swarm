@@ -1,0 +1,43 @@
+{
+  "bytesize-as-kib-div": {
+    "LICENSE": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08",
+    "Cargo.toml": "c4ab1708e40e9af1bacfa3fdc4fc4d6248d664414c219529d2620cc242789993",
+    "src/lib.rs": "4ce6a297da5103ab65f42fdcc757391e2e5034b5e385f1a94a009bcf86d9f2d3"
+  },
+  "bytesize-as-mb-div": {
+    "LICENSE": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08",
+    "Cargo.toml": "c4ab1708e40e9af1bacfa3fdc4fc4d6248d664414c219529d2620cc242789993",
+    "src/lib.rs": "a64b83611b3538b385cc9da8182d68780bd0b2aa04cf28e9c71af5f3cd04eb8a"
+  },
+  "lib-rstest-fixture-injected-receiver": {
+    "Cargo.lock": "04007daca1401d99f181bc3c507037f9069ef0de98d187f31572ace8097abefa",
+    "Cargo.toml": "59fa8d1fc781d90a72b0d6c3762aeea960d2064e156fbb1b6fb00cb5e9f81ce5",
+    "src/lib.rs": "050eef6476ebf7b0fab1752c797f01173701639c80ef8b6586954497d018df3c"
+  },
+  "serde-derive-rename-field-upper": {
+    "LICENSE-APACHE": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
+    "LICENSE-MIT": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+    "serde_derive/Cargo.toml": "94b48c328f3f469d9ab58a295609ceece94f883d993d6b43109e1185965702f4",
+    "serde_core/Cargo.toml": "64b9a69b30f9086f6c9c84613e3d1057b551c446baa71a42a80e925b4525fc29",
+    "serde_core/build.rs": "b472f6036a525f03f157722853cc3780ca3579653ff56814c5a8e13b88078fbe",
+    "serde_derive/src/lib.rs": "7c0b396d01181952c770f3acd135447883ab6bbd72ae84f5d7dfa6176dcbc7cb",
+    "serde_derive/src/internals/case.rs": "027b00764b98940c267b938120b333f5be09f56bed8b883b537001c175f540d0",
+    "serde_derive/src/internals/mod.rs": "c1ece6bbce5a5e8a2bf5d6d9a29e85551258db9c610fab73ac19c6b7d8cf98fd",
+    "serde_core/src/lib.rs": "a7bb93dd49fe140d797159f3d50ba84e8e0d15b85258becb1bd437064e9760aa",
+    "serde_core/src/ser/impls.rs": "5ee7efc439345e8665da0bd79bc06c02a0506e5fd0f3a4cf11af0c7197eaa643",
+    "serde_core/src/ser/mod.rs": "ec097d92c8545356961e977a4c9650361cadd1d3a243d805ae7b0e0e589ae803"
+  },
+  "serde-derive-rename-variant-lower": {
+    "LICENSE-APACHE": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
+    "LICENSE-MIT": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+    "serde_derive/Cargo.toml": "94b48c328f3f469d9ab58a295609ceece94f883d993d6b43109e1185965702f4",
+    "serde_core/Cargo.toml": "64b9a69b30f9086f6c9c84613e3d1057b551c446baa71a42a80e925b4525fc29",
+    "serde_core/build.rs": "b472f6036a525f03f157722853cc3780ca3579653ff56814c5a8e13b88078fbe",
+    "serde_derive/src/lib.rs": "7c0b396d01181952c770f3acd135447883ab6bbd72ae84f5d7dfa6176dcbc7cb",
+    "serde_derive/src/internals/case.rs": "233e3288f09928ade78de228cbd8aaf045be86c8a08a1212ca2b2d8e5e6c54d2",
+    "serde_derive/src/internals/mod.rs": "c1ece6bbce5a5e8a2bf5d6d9a29e85551258db9c610fab73ac19c6b7d8cf98fd",
+    "serde_core/src/lib.rs": "a7bb93dd49fe140d797159f3d50ba84e8e0d15b85258becb1bd437064e9760aa",
+    "serde_core/src/ser/impls.rs": "5ee7efc439345e8665da0bd79bc06c02a0506e5fd0f3a4cf11af0c7197eaa643",
+    "serde_core/src/ser/mod.rs": "ec097d92c8545356961e977a4c9650361cadd1d3a243d805ae7b0e0e589ae803"
+  }
+}

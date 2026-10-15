@@ -1,0 +1,15 @@
+    Finished `dev` profile [unoptimized] target(s) in 0.08s
+     Running `/workspace/receiver-build/debug/xtask verdict-corpus report --cases bytesize-as-kib-div,bytesize-as-mb-div,lib-rstest-fixture-injected-receiver,serde-derive-rename-field-upper,serde-derive-rename-variant-lower --out /workspace/receiver-proof/head15ca-corpus`
+$ cargo build -p ripr
+   Compiling bitflags v2.13.2
+   Compiling oxc_regular_expression v0.130.0
+   Compiling oxc_syntax v0.130.0
+   Compiling oxc_ast v0.130.0
+   Compiling oxc_ecmascript v0.130.0
+   Compiling ls-types v0.0.6
+   Compiling oxc_parser v0.130.0
+   Compiling tower-lsp-server v0.23.0
+   Compiling ripr v0.11.0 (/workspace/receiver-8004/crates/ripr)
+    Finished `dev` profile [unoptimized] target(s) in 1m 11s
+verdict-corpus: 5 cases; false verdicts 1.0000 (5/5), contradictions 0.0000 (0/5); wrote /workspace/receiver-proof/head15ca-corpus
+verdict-corpus: spec examples covered 0.9597 (119/124), floor 119

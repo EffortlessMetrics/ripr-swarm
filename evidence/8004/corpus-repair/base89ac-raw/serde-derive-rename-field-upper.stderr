@@ -1,0 +1,5 @@
+ripr progress: loading_input [diff]
+ripr progress: analyzing [diff]
+ripr: 1 Rust include boundary limitation(s): serde_core/src/lib.rs:266:rust_include_dynamic_expression; affected compilation-unit relations remain fail-closed. This is an analysis-limit note about indexed context, not a finding: no action is needed unless evidence you expected from a listed file is missing.
+ripr progress: building_output [diff]
+ripr progress: completed [diff]

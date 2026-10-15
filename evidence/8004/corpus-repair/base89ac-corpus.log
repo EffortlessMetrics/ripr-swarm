@@ -1,0 +1,10 @@
+   Compiling repo-policy v0.1.0 (/workspace/receiver-base/tools/repo-policy)
+   Compiling ripr v0.11.0 (/workspace/receiver-base/crates/ripr)
+   Compiling xtask v0.1.0 (/workspace/receiver-base/xtask)
+    Finished `dev` profile [unoptimized] target(s) in 1m 40s
+     Running `/workspace/receiver-build/debug/xtask verdict-corpus report --cases bytesize-as-kib-div,bytesize-as-mb-div,lib-rstest-fixture-injected-receiver,serde-derive-rename-field-upper,serde-derive-rename-variant-lower --out /workspace/receiver-proof/base89ac-corpus`
+$ cargo build -p ripr
+   Compiling ripr v0.11.0 (/workspace/receiver-base/crates/ripr)
+    Finished `dev` profile [unoptimized] target(s) in 1m 02s
+verdict-corpus: 5 cases; false verdicts 0.0000 (0/5), contradictions 0.0000 (0/5); wrote /workspace/receiver-proof/base89ac-corpus
+verdict-corpus: spec examples covered 0.9597 (119/124), floor 119

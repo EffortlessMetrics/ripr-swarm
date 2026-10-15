@@ -1,0 +1,421 @@
+{
+  "schema_version": "ripr_verdict_corpus_report.v1",
+  "spec": "RIPR-SPEC-0219",
+  "cases_total": 5,
+  "by_truth": {
+    "discriminated": 5
+  },
+  "by_outcome": {
+    "ideal": 5
+  },
+  "by_observed_verdict": {
+    "credited": 5
+  },
+  "false_verdict_rate": {
+    "numerator": 0,
+    "denominator": 5,
+    "rate": "0.0000"
+  },
+  "false_actionable_rate": {
+    "numerator": 0,
+    "denominator": 5,
+    "rate": "0.0000"
+  },
+  "false_exposed_rate": {
+    "numerator": 0,
+    "denominator": 0,
+    "rate": "n/a"
+  },
+  "false_silent_rate": {
+    "numerator": 0,
+    "denominator": 0,
+    "rate": "n/a"
+  },
+  "ideal_rate": {
+    "numerator": 5,
+    "denominator": 5,
+    "rate": "1.0000"
+  },
+  "abstention_rate": {
+    "numerator": 0,
+    "denominator": 5,
+    "rate": "0.0000"
+  },
+  "contradiction_rate": {
+    "numerator": 0,
+    "denominator": 5,
+    "rate": "0.0000"
+  },
+  "contradictions_by_code": {},
+  "by_origin": {
+    "authored": {
+      "cases_total": 1,
+      "by_observed_verdict": {
+        "credited": 1
+      },
+      "false_verdict_rate": {
+        "numerator": 0,
+        "denominator": 1,
+        "rate": "0.0000"
+      },
+      "false_actionable_rate": {
+        "numerator": 0,
+        "denominator": 1,
+        "rate": "0.0000"
+      },
+      "false_exposed_rate": {
+        "numerator": 0,
+        "denominator": 0,
+        "rate": "n/a"
+      },
+      "false_silent_rate": {
+        "numerator": 0,
+        "denominator": 0,
+        "rate": "n/a"
+      },
+      "ideal_rate": {
+        "numerator": 1,
+        "denominator": 1,
+        "rate": "1.0000"
+      },
+      "abstention_rate": {
+        "numerator": 0,
+        "denominator": 1,
+        "rate": "0.0000"
+      }
+    },
+    "upstream": {
+      "cases_total": 4,
+      "by_observed_verdict": {
+        "credited": 4
+      },
+      "false_verdict_rate": {
+        "numerator": 0,
+        "denominator": 4,
+        "rate": "0.0000"
+      },
+      "false_actionable_rate": {
+        "numerator": 0,
+        "denominator": 4,
+        "rate": "0.0000"
+      },
+      "false_exposed_rate": {
+        "numerator": 0,
+        "denominator": 0,
+        "rate": "n/a"
+      },
+      "false_silent_rate": {
+        "numerator": 0,
+        "denominator": 0,
+        "rate": "n/a"
+      },
+      "ideal_rate": {
+        "numerator": 4,
+        "denominator": 4,
+        "rate": "1.0000"
+      },
+      "abstention_rate": {
+        "numerator": 0,
+        "denominator": 4,
+        "rate": "0.0000"
+      }
+    }
+  },
+  "spec_example_coverage": {
+    "ledger": "fixtures/rust-verdict-corpus/spec-coverage.toml",
+    "floor": 119,
+    "coverage": {
+      "numerator": 119,
+      "denominator": 124,
+      "rate": "0.9597"
+    },
+    "accounted": {
+      "numerator": 134,
+      "denominator": 139,
+      "rate": "0.9640"
+    },
+    "in_scope_examples": 139,
+    "covered_examples": 119,
+    "waived_examples": 15,
+    "in_scope_specs": 17,
+    "out_of_scope_specs": 68,
+    "unmeasured_specs": [
+      "RIPR-SPEC-0001",
+      "RIPR-SPEC-0002",
+      "RIPR-SPEC-0004",
+      "RIPR-SPEC-0005",
+      "RIPR-SPEC-0035",
+      "RIPR-SPEC-0040",
+      "RIPR-SPEC-0048",
+      "RIPR-SPEC-0093",
+      "RIPR-SPEC-0094",
+      "RIPR-SPEC-0096",
+      "RIPR-SPEC-0106",
+      "RIPR-SPEC-0107",
+      "RIPR-SPEC-0108",
+      "RIPR-SPEC-0150",
+      "RIPR-SPEC-0153",
+      "RIPR-SPEC-0154",
+      "RIPR-SPEC-0157",
+      "RIPR-SPEC-0158",
+      "RIPR-SPEC-0159",
+      "RIPR-SPEC-0163",
+      "RIPR-SPEC-0164",
+      "RIPR-SPEC-0165",
+      "RIPR-SPEC-0168",
+      "RIPR-SPEC-0169",
+      "RIPR-SPEC-0171",
+      "RIPR-SPEC-0172",
+      "RIPR-SPEC-0175",
+      "RIPR-SPEC-0186",
+      "RIPR-SPEC-0197",
+      "RIPR-SPEC-0219"
+    ],
+    "by_spec": [
+      {
+        "spec": "RIPR-SPEC-0114",
+        "in_scope_examples": 6,
+        "covered": 5,
+        "waived": 1,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0115",
+        "in_scope_examples": 7,
+        "covered": 3,
+        "waived": 4,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0117",
+        "in_scope_examples": 7,
+        "covered": 7,
+        "waived": 0,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0118",
+        "in_scope_examples": 4,
+        "covered": 4,
+        "waived": 0,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0119",
+        "in_scope_examples": 2,
+        "covered": 2,
+        "waived": 0,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0120",
+        "in_scope_examples": 3,
+        "covered": 3,
+        "waived": 0,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0125",
+        "in_scope_examples": 3,
+        "covered": 1,
+        "waived": 2,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0224",
+        "in_scope_examples": 2,
+        "covered": 1,
+        "waived": 1,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0225",
+        "in_scope_examples": 16,
+        "covered": 16,
+        "waived": 0,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0226",
+        "in_scope_examples": 4,
+        "covered": 4,
+        "waived": 0,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0227",
+        "in_scope_examples": 13,
+        "covered": 13,
+        "waived": 0,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0228",
+        "in_scope_examples": 15,
+        "covered": 13,
+        "waived": 2,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0229",
+        "in_scope_examples": 10,
+        "covered": 9,
+        "waived": 1,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0231",
+        "in_scope_examples": 31,
+        "covered": 31,
+        "waived": 0,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0233",
+        "in_scope_examples": 4,
+        "covered": 0,
+        "waived": 4,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0263",
+        "in_scope_examples": 6,
+        "covered": 1,
+        "waived": 0,
+        "uncovered": [
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      {
+        "spec": "RIPR-SPEC-0265",
+        "in_scope_examples": 6,
+        "covered": 6,
+        "waived": 0,
+        "uncovered": []
+      }
+    ]
+  },
+  "rows": [
+    {
+      "case_id": "bytesize-as-kib-div",
+      "subject_id": "bytesize-66a3715",
+      "origin": "upstream",
+      "anchor": "src/lib.rs:264",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "unit_test_assert_eq",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": true,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "bytesize-as-mb-div",
+      "subject_id": "bytesize-66a3715",
+      "origin": "upstream",
+      "anchor": "src/lib.rs:270",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "unit_test_assert_eq",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": true,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "lib-rstest-fixture-injected-receiver",
+      "subject_id": "authored-lib-rstest",
+      "origin": "authored",
+      "anchor": "src/lib.rs:38",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "rstest_fixture_injection",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": true,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "serde-derive-rename-field-upper",
+      "subject_id": "serde",
+      "origin": "upstream",
+      "anchor": "serde_derive/src/internals/case.rs:85",
+      "behavior_family": "match_arm",
+      "test_shape": "loop_assert_eq_table",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": true,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "serde-derive-rename-variant-lower",
+      "subject_id": "serde",
+      "origin": "upstream",
+      "anchor": "serde_derive/src/internals/case.rs:60",
+      "behavior_family": "match_arm",
+      "test_shape": "loop_assert_eq_table",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": true,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    }
+  ],
+  "non_claims": [
+    "Rates describe this corpus only; they are not a population estimate for Rust code or for ripr in general.",
+    "Authored cases were written to fill verdict, probe-family, test-shape and test-library oracle cells the upstream cases leave empty; their rates are reported separately under by_origin and are not real-world rates.",
+    "Truth comes from the listed mutants, not from exhaustive mutation; a discriminated label means every listed mutant made the test command fail.",
+    "The harness runs ripr on retained upstream excerpts and on whole authored crates; excerpt findings matched the full pinned checkout at labeling time and must be re-checked when a verdict changes.",
+    "The harness does not run mutation testing, cargo test, or any network access."
+  ]
+}

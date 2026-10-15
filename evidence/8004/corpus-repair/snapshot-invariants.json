@@ -1,0 +1,37 @@
+[
+  {
+    "case_id": "bytesize-as-kib-div",
+    "truth_and_acceptable_labels_unchanged": true,
+    "final_observed_verdict": "gap",
+    "final_outcome": "false_actionable",
+    "one_raw_finding": true
+  },
+  {
+    "case_id": "bytesize-as-mb-div",
+    "truth_and_acceptable_labels_unchanged": true,
+    "final_observed_verdict": "gap",
+    "final_outcome": "false_actionable",
+    "one_raw_finding": true
+  },
+  {
+    "case_id": "lib-rstest-fixture-injected-receiver",
+    "truth_and_acceptable_labels_unchanged": true,
+    "final_observed_verdict": "gap",
+    "final_outcome": "false_actionable",
+    "one_raw_finding": true
+  },
+  {
+    "case_id": "serde-derive-rename-field-upper",
+    "truth_and_acceptable_labels_unchanged": true,
+    "final_observed_verdict": "gap",
+    "final_outcome": "false_actionable",
+    "one_raw_finding": true
+  },
+  {
+    "case_id": "serde-derive-rename-variant-lower",
+    "truth_and_acceptable_labels_unchanged": true,
+    "final_observed_verdict": "gap",
+    "final_outcome": "false_actionable",
+    "one_raw_finding": true
+  }
+]

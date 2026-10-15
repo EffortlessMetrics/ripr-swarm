@@ -1,0 +1,9 @@
+{
+  "subject": "43f00b54eeb239c240bb71553c30a7bde3a4e080",
+  "file": "crates/ripr/src/analysis/test_grip_evidence/tests.rs",
+  "rule": "byte-identical common prefix followed by complete repair append and complete upstream append",
+  "common_prefix_sha256": "eaf45647f7c1e42bd3c55abf72ad711695b54a4283eccdb36c918f420c69edce",
+  "repair_append_sha256": "3b852ebacf93958e8b242543d4218dde9990f3b54e92e6575e2c30ab3156a6d6",
+  "upstream_append_sha256": "9df934cddafdac980122b7d4feae76a0fcd96f627114a0d0fcae29b02ac0460f",
+  "resolved_file_sha256": "33909221ca9fa3ac8f910ca900035da96d69b8039f20fbf8243e7252ac58bbfa"
+}

@@ -1,0 +1,101 @@
+diff --git a/crates/ripr/src/analysis/classify/related_tests.rs b/crates/ripr/src/analysis/classify/related_tests.rs
+index 7cd9cd449..f92f3cc4e 100644
+--- a/crates/ripr/src/analysis/classify/related_tests.rs
++++ b/crates/ripr/src/analysis/classify/related_tests.rs
+@@ -9780,6 +9780,31 @@ let r = try_parse_summary(\"x\");",
+         }
+     }
+ 
++    /// #7415: keep the conservative corpus boundary separate from runtime
++    /// truth. Arbitrary factories, parameters and imported bare variants do
++    /// not gain receiver proof merely because the method name is unique.
++    #[test]
++    fn inherent_receiver_corpus_boundary_and_live_scope() {
++        for (body, method, ty, expected) in [
++            ("fn t() { assert_eq!(ByteSize::gb(43).as_kib(), 1.0); }", "as_kib", "ByteSize", false),
++            ("fn t() { assert_eq!(ByteSize::kib(9).as_mb(), 1.0); }", "as_mb", "ByteSize", false),
++            ("fn t() { assert_eq!(ByteSize::new(43).as_kib(), 1.0); }", "as_kib", "ByteSize", true),
++            ("fn t() { let size: ByteSize = make(); assert_eq!(size.as_kib(), 1.0); }", "as_kib", "ByteSize", true),
++            ("fn t() { assert_eq!(Other::new(43).as_kib(), 1.0); }", "as_kib", "ByteSize", false),
++            ("fn t(account: Account) { assert_eq!(account.monthly_fee(), 5); }", "monthly_fee", "Account", false),
++            ("fn t() { let account: Account = make(); assert_eq!(account.monthly_fee(), 5); }", "monthly_fee", "Account", true),
++            ("fn t() { let account: Other = make(); assert_eq!(account.monthly_fee(), 5); }", "monthly_fee", "Account", false),
++            ("fn t() { for original in [\"x\"] { assert_eq!(UpperCase.apply_to_field(original), \"X\"); } }", "apply_to_field", "RenameRule", false),
++            ("fn t() { assert_eq!(LowerCase.apply_to_variant(\"X\"), \"x\"); }", "apply_to_variant", "RenameRule", false),
++            ("fn t() { assert_eq!(RenameRule::UpperCase.apply_to_field(\"x\"), \"X\"); }", "apply_to_field", "RenameRule", true),
++            ("fn t() { let value = JsonValue::Null; { let value = Foreign::new(); let _ = value; } assert_eq!(value.as_object(), None); }", "as_object", "JsonValue", true),
++            ("fn t() { let value = Foreign::new(); { let value = JsonValue::Null; let _ = value; } assert_eq!(value.as_object(), None); }", "as_object", "JsonValue", false),
++        ] {
++            let summary = test("src/lib.rs", "t", body);
++            assert_eq!(inherent_receiver_call_resolves(&summary, method, ty), expected, "{body}");
++        }
++    }
++
+     // (#6732) A suffixed numeric literal names its primitive type, so
+     // `(-0.0f64).render()` resolves to `impl Render for f64` exactly as
+     // `let z: f64 = -0.0; z.render()` does. Unsuffixed literals, hex digits
+diff --git a/crates/ripr/src/analysis/test_grip_evidence/tests.rs b/crates/ripr/src/analysis/test_grip_evidence/tests.rs
+index efb9a2c33..0238a1fad 100644
+--- a/crates/ripr/src/analysis/test_grip_evidence/tests.rs
++++ b/crates/ripr/src/analysis/test_grip_evidence/tests.rs
+@@ -19460,6 +19460,11 @@ impl<T> ForeignView for T {}
+         let value = JsonValue::Null;
+         assert_eq!(value.as_object(), None);
+     }
++    #[test] fn actual_null_after_expired_shadow() {
++        let value = JsonValue::Null;
++        { let value = serde_json::Value::Null; let _ = value; }
++        assert_eq!(value.as_object(), None);
++    }
+     #[test] fn wrong_json_type() {
+         let value = serde_json::json!({"key": 1});
+         DECOY
+@@ -19528,7 +19533,7 @@ impl<T> ForeignView for T {}
+                 .map(|(test, reason)| (test.test.name.as_str(), *reason))
+                 .collect();
+             assert_eq!(full_rows, compact_rows, "full/compact relationship parity");
+-            for actual in ["actual_object", "actual_null"] {
++            for actual in ["actual_object", "actual_null", "actual_null_after_expired_shadow"] {
+                 assert_eq!(
+                     full_rows.get(actual),
+                     Some(&RelationReason::DirectOwnerCall),
+diff --git a/crates/ripr/tests/private_inherent_receiver.rs b/crates/ripr/tests/private_inherent_receiver.rs
+index 0f578359e..fa970acbd 100644
+--- a/crates/ripr/tests/private_inherent_receiver.rs
++++ b/crates/ripr/tests/private_inherent_receiver.rs
+@@ -335,6 +335,35 @@ fn expired_inner_binding_cannot_type_outer_inherent_receiver() -> Result<(), Str
+     ))
+ }
+ 
++#[test]
++fn expired_foreign_shadow_cannot_hide_actual_outer_receiver() -> Result<(), String> {
++    let fixture = Fixture::create()?;
++    let source = FILES
++        .iter()
++        .find(|(path, _)| *path == "src/reader.rs")
++        .ok_or("missing reader fixture")?
++        .1;
++    let source = source.replace(
++        "let value = JsonValue::Null;",
++        "let value = JsonValue::Null;\n        { let value = serde_json::Value::Null; let _ = value; }",
++    );
++    std::fs::write(fixture.0.join("src/reader.rs"), source)
++        .map_err(|error| error.to_string())?;
++    let findings = fixture.findings()?;
++    let reader: Vec<_> = findings.iter()
++        .filter(|finding| finding.probe.location.file.ends_with("src/reader.rs"))
++        .collect();
++    assert_eq!(reader.len(), 2, "both private-owner subjects retained");
++    for finding in reader {
++        let actual = finding.related_tests.iter()
++            .find(|test| test.name == "same_target_actual_null")
++            .ok_or("missing actual outer receiver test")?;
++        assert_eq!(actual.relation_reason, Some(RelationReason::DirectOwnerCall));
++        assert_eq!(actual.relation_confidence, Some(RelationConfidence::High));
++    }
++    Ok(())
++}
++
+ #[test]
+ fn while_let_pattern_cannot_borrow_outer_inherent_receiver_type() -> Result<(), String> {
+     let source = FILES

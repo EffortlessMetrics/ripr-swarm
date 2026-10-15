@@ -1,0 +1,6 @@
+Owner: PR8004 delegated sole repair writer.
+Preserve shared root /workspace/ripr-swarm (work 5a14b9775), its Git common store and pre-existing target; no cleanup authorized from observed inactivity.
+Lane worktrees: /workspace/receiver-8004 (candidate); /workspace/receiver-base (exact baseline).
+Lane mutable build: /workspace/receiver-build, serialized one job, debug=0 incremental=0. Logs/reports: /workspace/receiver-proof. Target temp dirs under each worktree.
+Observed available overlay space: 30 GiB. Admit peak additional 10 GiB (builds, copied witnesses, reports), reserve at least 10 GiB. Retain source/report/executable witnesses until reviewer handoff; no duplication of unchanged executable. Remove only lane-generated disposable scratch after consumers finish; keep base for exact repeat until handback.
+Toolchain: /workspace/.cargo/bin/{cargo,rustc}, RUSTUP_HOME=/workspace/.rustup, CARGO_HOME=/workspace/.cargo; Rust 1.95.0 (59807616e 2026-04-14). Original PATH does not include toolchain proxy directory.

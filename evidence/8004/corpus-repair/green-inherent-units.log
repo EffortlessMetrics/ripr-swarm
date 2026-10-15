@@ -1,0 +1,11 @@
+   Compiling ripr v0.11.0 (/workspace/receiver-8004/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 2m 24s
+     Running unittests src/lib.rs (/workspace/receiver-build/debug/deps/ripr-67c20de708634f70)
+
+running 3 tests
+test analysis::classify::related_tests::tests::inherent_receiver_corpus_boundary_and_live_scope ... ok
+test analysis::test_grip_evidence::tests::public_inherent_receiver_keeps_cross_target_full_and_compact_repo_evidence ... ok
+test analysis::test_grip_evidence::tests::unique_inherent_receiver_refuses_decoys_in_full_and_compact_repo_evidence ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 10927 filtered out; finished in 0.75s
+

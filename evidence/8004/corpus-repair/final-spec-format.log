@@ -1,0 +1,3 @@
+    Finished `dev` profile [unoptimized] target(s) in 0.07s
+     Running `/workspace/receiver-build/debug/xtask check-spec-format`
+check-spec-format: pass (target/ripr/reports/spec-format.md)

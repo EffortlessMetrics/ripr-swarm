@@ -1,0 +1,8 @@
+    Finished `test` profile [unoptimized] target(s) in 0.09s
+     Running unittests src/lib.rs (/workspace/receiver-build/debug/deps/ripr-67c20de708634f70)
+
+running 1 test
+test analysis::test_grip_evidence::tests::field_projected_collection_repo_seam_retains_indexed_target ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10929 filtered out; finished in 0.74s
+
