@@ -54,6 +54,14 @@ pub(crate) fn render_findings_sarif(
 ) -> String {
     let today = current_iso_date();
     let rules = finding_rules();
+    // #5091: count what the candidate-actionable filter drops so an
+    // all-omitted complete run is not indistinguishable from a clean run.
+    // This is the SARIF sibling of the GitHub annotation denominator (#4393).
+    let omitted_not_current = output
+        .findings
+        .iter()
+        .filter(|finding| !finding.is_candidate_actionable())
+        .count();
     let results = output
         .findings
         .iter()
@@ -70,6 +78,7 @@ pub(crate) fn render_findings_sarif(
         results,
         output.analysis_outcome.as_ref(),
         output.analyzed_revisions.as_ref(),
+        omitted_not_current,
     )
 }
 
@@ -143,6 +152,7 @@ fn sarif_document(
     results: Vec<Value>,
     analysis_outcome: Option<&AnalysisOutcome>,
     revisions: Option<&crate::analysis::AnalyzedRevisions>,
+    omitted_not_current: usize,
 ) -> String {
     let mut properties = Map::new();
     properties.insert("tool".to_string(), json!("ripr"));
@@ -190,6 +200,15 @@ fn sarif_document(
             serde_json::to_value(outcome).unwrap_or_else(
                 |error| json!({"serialization_error": escape_message(&error.to_string())}),
             ),
+        );
+    }
+    // Additive and absent when nothing was omitted, so ordinary clean runs
+    // do not grow a zero-valued property. The omitted findings stay out of
+    // `results`; this count only discloses the filter (#5091).
+    if omitted_not_current > 0 {
+        properties.insert(
+            "omitted_not_current".to_string(),
+            json!(omitted_not_current),
         );
     }
     let document = json!({
@@ -2365,6 +2384,36 @@ weakly_gripped = "note"
         )
     }
 
+    fn complete_with_findings_outcome(finding_count: u64) -> Result<AnalysisOutcome, String> {
+        AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteWithFindings,
+            Default::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                candidate_line_count: 1,
+                probe_count: 1,
+                finding_count,
+            },
+            Vec::new(),
+        )
+    }
+
+    fn complete_no_findings_outcome() -> Result<AnalysisOutcome, String> {
+        AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteNoFindings,
+            Default::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                candidate_line_count: 1,
+                probe_count: 1,
+                finding_count: 0,
+            },
+            Vec::new(),
+        )
+    }
+
     fn sample_finding() -> Finding {
         Finding {
             id: "finding:discount".to_string(),
@@ -2600,6 +2649,10 @@ weakly_gripped = "note"
             Some(0),
             "base-deleted finding must not become a SARIF result"
         );
+        assert_eq!(
+            parsed["runs"][0]["properties"]["omitted_not_current"], 1,
+            "the omitted finding must still be counted (#5091): {parsed}"
+        );
 
         let mut current = sample_finding();
         current.source_currentness = crate::domain::SourceCurrentness::CandidateCurrent;
@@ -2615,5 +2668,97 @@ weakly_gripped = "note"
             Some(1),
             "candidate-current twin keeps its SARIF result"
         );
+        assert!(
+            parsed["runs"][0]["properties"]
+                .get("omitted_not_current")
+                .is_none(),
+            "a fully current run must not grow omitted_not_current: {parsed}"
+        );
+    }
+
+    /// #5091: an all-not-current complete run still looks finished, but the
+    /// run properties must say how many findings the filter withheld.
+    #[test]
+    fn sarif_run_with_only_not_current_findings_records_omitted_property() -> Result<(), String> {
+        let kinds = [
+            crate::domain::SourceCurrentness::BaseDeleted,
+            crate::domain::SourceCurrentness::MovedOrRenamed,
+            crate::domain::SourceCurrentness::UnresolvedSubject,
+        ];
+        let mut findings = Vec::new();
+        for (index, currentness) in kinds.into_iter().enumerate() {
+            let mut finding = sample_finding();
+            finding.id = format!("finding:not-current-{index}");
+            finding.source_currentness = currentness;
+            findings.push(finding);
+        }
+        let mut output = sample_output();
+        output.findings = findings;
+        output.analysis_outcome = Some(complete_with_findings_outcome(3)?);
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        let props = &sarif["runs"][0]["properties"];
+        assert_eq!(
+            sarif["runs"][0]["results"].as_array().map(Vec::len),
+            Some(0),
+            "not-current findings stay out of results: {sarif}"
+        );
+        assert_eq!(props["run_status"], "complete");
+        assert_eq!(
+            props["omitted_not_current"], 3,
+            "every not-current kind must count: {props}"
+        );
+        Ok(())
+    }
+
+    /// Empty analysis is not "N omitted". A zero-finding complete run must
+    /// not grow the property, or code-scanning consumers cannot tell a
+    /// clean run from an all-dropped run.
+    #[test]
+    fn sarif_empty_findings_run_omits_omitted_not_current_property() -> Result<(), String> {
+        let mut output = sample_output();
+        output.findings.clear();
+        output.analysis_outcome = Some(complete_no_findings_outcome()?);
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        let props = &sarif["runs"][0]["properties"];
+        assert_eq!(
+            sarif["runs"][0]["results"].as_array().map(Vec::len),
+            Some(0)
+        );
+        assert_eq!(props["run_status"], "complete");
+        assert!(
+            props.get("omitted_not_current").is_none(),
+            "empty findings must not emit omitted_not_current: {props}"
+        );
+        Ok(())
+    }
+
+    /// A mixed run must keep current results *and* count the omitted ones.
+    /// Emitting the property only when `results` is empty would hide the
+    /// same filter on ordinary PRs.
+    #[test]
+    fn sarif_mixed_current_and_not_current_records_omitted_count_beside_results()
+    -> Result<(), String> {
+        let mut current = sample_finding();
+        current.id = "finding:current".to_string();
+        current.source_currentness = crate::domain::SourceCurrentness::CandidateCurrent;
+        let mut omitted = sample_finding();
+        omitted.id = "finding:base-deleted".to_string();
+        omitted.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let mut output = sample_output();
+        output.findings = vec![current, omitted];
+        output.analysis_outcome = Some(complete_with_findings_outcome(2)?);
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        let props = &sarif["runs"][0]["properties"];
+        assert_eq!(
+            sarif["runs"][0]["results"].as_array().map(Vec::len),
+            Some(1),
+            "the current finding remains a result: {sarif}"
+        );
+        assert_eq!(props["run_status"], "complete");
+        assert_eq!(
+            props["omitted_not_current"], 1,
+            "the not-current sibling still counts: {props}"
+        );
+        Ok(())
     }
 }

@@ -830,6 +830,29 @@ mod tests {
         assert!(markdown.contains("Categories"));
         assert!(markdown.contains("activation_static_unknown"));
         assert!(markdown.contains("Runtime rows without static seam"));
+
+        // Pin the fixture's risk rows independently of the report's risk vector:
+        // four unknown stages, two uncalibrated records, one opaque relation,
+        // and one missing discriminator. Zero duplicate groups stay omitted.
+        let risks = markdown
+            .split_once("## Top Evidence Quality Risks\n\n")
+            .ok_or("missing risk section")?
+            .1
+            .split_once("## Calibration Availability\n\n")
+            .ok_or("missing calibration section")?
+            .0;
+        assert_eq!(
+            risks,
+            concat!(
+                "| Risk | Count | Summary |\n",
+                "| --- | ---: | --- |\n",
+                "| static_limitations | 4 | Evidence records still contain static limitations. |\n",
+                "| uncalibrated_records | 2 | Evidence records do not have imported runtime calibration data. |\n",
+                "| low_or_opaque_related_tests | 1 | Related-test evidence includes low-confidence or opaque rankings. |\n",
+                "| missing_discriminators | 1 | Headline evidence still lacks concrete discriminator coverage. |\n",
+                "\n",
+            )
+        );
         Ok(())
     }
 

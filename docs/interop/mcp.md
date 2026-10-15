@@ -216,7 +216,10 @@ identity and the caller filters, so a refresh between pages fails closed with `s
 instead of silently mixing snapshots; walking `next_offset` covers the
 selection exactly once. Pages are sized so the complete structured result
 (`structuredContent`, per the tool's advertised `outputSchema`) measures
-under the 128-KiB response bound. Only a listing that cannot fit even one
+under the 128-KiB response bound, including empty pages whose echoed filters
+can overflow the structured envelope while the raw document still fits.
+Those pages return the existing typed `result_too_large` refusal with the
+current snapshot identity. Only a listing that cannot fit even one
 page — an omission disclosure alone over the ceiling — fails closed with
 `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the identity
 route. Other tool responses carry the document once at full fidelity:

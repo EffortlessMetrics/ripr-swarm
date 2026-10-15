@@ -76,19 +76,49 @@ pub(super) fn is_new_path_marker(raw: &str) -> bool {
 /// snapshot lookup can reference the escaping path. Byte-native raw forms
 /// confine through the platform's own path components, so traversal
 /// detection is unchanged (#3609).
+///
+/// The confined path keeps the spelling git itself gave the diff, not the
+/// analyzing platform's separator (#7937): git names diff paths with `/` on
+/// every host, and re-synthesizing the accepted components with the native
+/// separator re-spelled every `ChangedFile.path` (and every probe identity
+/// cloned from it) as `src\a.rs` on Windows while fixtures, goldens, sibling
+/// producers and POSIX hosts all spell `src/a.rs`. `root.join` and `Path`
+/// equality compare components, so the portable spelling reads and matches
+/// identically on both hosts.
 fn confine_to_relative_path(path: &DecodedPath) -> Option<PathBuf> {
-    let mut confined = PathBuf::new();
+    let mut parts: Vec<&std::ffi::OsStr> = Vec::new();
     for component in path.as_path().components() {
         match component {
-            Component::Normal(part) => confined.push(part),
+            Component::Normal(part) => parts.push(part),
             Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
         }
     }
-    if confined.as_os_str().is_empty() {
-        None
-    } else {
+    if parts.is_empty() {
+        return None;
+    }
+    // Unix native separators are `/`, so the platform join already
+    // reproduces the diff spelling byte for byte, including the invalid-byte
+    // raw form whose identity must stay injective (#3609) — lossy text there
+    // would not. Windows re-joins the accepted text segments with the diff's
+    // own `/` instead of the native `\`.
+    #[cfg(unix)]
+    {
+        let mut confined = PathBuf::new();
+        for part in parts {
+            confined.push(part);
+        }
         Some(confined)
+    }
+    #[cfg(windows)]
+    {
+        Some(PathBuf::from(
+            parts
+                .iter()
+                .map(|part| part.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/"),
+        ))
     }
 }
 

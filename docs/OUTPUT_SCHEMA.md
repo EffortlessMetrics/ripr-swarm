@@ -10331,7 +10331,10 @@ Field contract:
 - `delta.invalid_baseline_entry` - malformed baseline records or records
   missing required identity fields.
 - `delta.missing_current_input` - records whose movement cannot be classified
-  because required current artifacts are missing or unreadable.
+  because required current artifacts are missing, unreadable, or contain a
+  decision without a usable stable or legacy fallback identity. Such input
+  must not be interpreted as resolved baseline debt, even when other decisions
+  have valid identities.
 - `items[].bucket` - one primary bucket from the `delta` object.
 - `items[].identity` - stable identity fields. Matching order is
   `canonical_gap_id`, `seam_id`, `source_id`, `id`, `dedupe_key`, then
@@ -17822,7 +17825,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.74",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.76",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -18522,7 +18525,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.38",
+    "schema_version": "1.39",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -18533,7 +18536,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.74",
+      "schema_version": "1.76",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

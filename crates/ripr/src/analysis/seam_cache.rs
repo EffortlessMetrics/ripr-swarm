@@ -447,9 +447,14 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `field_construction` probe (#6578). Old entries keep the spurious probe.
 /// `1.73`: parser-owned match-head coverage lines (#5604), composing with
 /// the already-landed string-colon boundary at `1.72`.
-/// `1.74`: a whole same-line comparison tail reaches its owner's return
+/// `1.74`: the guarded-match scan reads the RIPR-SPEC-0175 accepted-Err
+/// form (one quiet `Err(Type::Variant) => {}` arm, every other arm loud).
+/// Old entries keep those error-path seams unconfirmed.
+/// `1.75`: a literal variant-field pattern on the owner's result pins the
+/// changed field (#6578). Old entries keep the unconfirmed discriminator.
+/// `1.76`: a whole same-line comparison tail reaches its owner's return
 /// (#8042). Old entries can keep a predicate's propagation unknown.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.74";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.76";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -567,8 +572,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.74";
 /// `0.77`: same unchanged-closure tail evidence as full `1.71`.
 /// `0.78`: same string-colon probe boundary as full `1.72`.
 /// `0.79`: same composed match-head coverage as full `1.73` (#5604).
-/// `0.80`: same returned-comparison transition as full `1.74` (#8042).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.80";
+/// `0.80`: same accepted-Err guarded-match pins as full `1.74`.
+/// `0.81`: same variant-field pattern evidence as full `1.75`.
+/// `0.82`: same returned-comparison transition as full `1.76` (#8042).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.82";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -688,8 +695,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.80";
 /// `0.77`: same unchanged-closure tail evidence as full `1.71`.
 /// `0.78`: same string-colon probe boundary as full `1.72`.
 /// `0.79`: same composed match-head coverage as full `1.73` (#5604).
-/// `0.80`: same returned-comparison transition as full `1.74` (#8042).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.80";
+/// `0.80`: same accepted-Err guarded-match pins as full `1.74`.
+/// `0.81`: same variant-field pattern evidence as full `1.75`.
+/// `0.82`: same returned-comparison transition as full `1.76` (#8042).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.82";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -861,7 +870,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// (#6578). `1.34` facts lack both; `1.35` is #7828's allocation.
 /// `1.37`: compose JSON binding candidates with expect-test parser facts.
 /// `1.38`: retain separate parser-owned match-head coverage (#5604).
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.38";
+/// `1.39`: the guarded-match scan emits the RIPR-SPEC-0175 accepted-Err
+/// form; `1.38` facts lack it.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.39";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1535,6 +1546,54 @@ pub(crate) fn corpus_fingerprint(root: &Path, files: &[PathBuf]) -> Option<Strin
     }
 }
 
+/// One Unix stat observation. Keeping extraction and encoding separate lets
+/// recorded tuples exercise replacement identity without racing live ctimes.
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+struct StatWitness {
+    modified: std::time::Duration,
+    len: u64,
+    ctime: i64,
+    ctime_nsec: i64,
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(unix)]
+impl StatWitness {
+    fn from_metadata(metadata: &std::fs::Metadata) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
+        Some(Self {
+            modified: metadata
+                .modified()
+                .ok()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?,
+            len: metadata.len(),
+            ctime: metadata.ctime(),
+            ctime_nsec: metadata.ctime_nsec(),
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+
+    fn entry(self, path: &Path) -> String {
+        // Preserve the schema 0.4 tuple bytes. ctime witnesses writes to one
+        // inode; device and inode also bind replacement-file identity.
+        format!(
+            "{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
+            path.to_string_lossy().replace('\\', "/"),
+            self.modified.as_secs(),
+            self.modified.subsec_nanos(),
+            self.len,
+            self.ctime,
+            self.ctime_nsec,
+            self.device,
+            self.inode
+        )
+    }
+}
+
 /// The stat-only signature itself. Compiled only where the ctime witness
 /// that makes it sound exists (issue #3848).
 #[cfg(unix)]
@@ -1542,44 +1601,20 @@ fn stat_signature(root: &Path, files: &[PathBuf]) -> Option<String> {
     let mut entries: Vec<String> = Vec::with_capacity(files.len());
     for path in files {
         let metadata = std::fs::metadata(root.join(path)).ok()?;
-        let modified = metadata.modified().ok()?;
-        let since_epoch = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
-        let entry = format!(
-            "{}\0{}\0{}\0{}",
-            path.to_string_lossy().replace('\\', "/"),
-            since_epoch.as_secs(),
-            since_epoch.subsec_nanos(),
-            metadata.len()
-        );
-        // Unix hardening: ctime (inode change time) cannot be preserved by
-        // mtime-restoring tools, so mixing it in closes the
-        // preserved-mtime rewrite residual (see the doc comment). This is
-        // the witness the whole signature rests on, not an extra field.
-        let entry = {
-            use std::os::unix::fs::MetadataExt;
-            let mut entry = entry;
-            entry.push('\0');
-            entry.push_str(&metadata.ctime().to_string());
-            entry.push('\0');
-            entry.push_str(&metadata.ctime_nsec().to_string());
-            // A replacement directory can bring a different file with the
-            // same timestamps and size. ctime describes changes to one inode,
-            // so bind its filesystem identity too; inode numbers are device-local.
-            entry.push('\0');
-            entry.push_str(&metadata.dev().to_string());
-            entry.push('\0');
-            entry.push_str(&metadata.ino().to_string());
-            entry
-        };
-        entries.push(entry);
+        entries.push(StatWitness::from_metadata(&metadata)?.entry(path));
     }
+    Some(hash_stat_entries(entries))
+}
+
+#[cfg(unix)]
+fn hash_stat_entries(mut entries: Vec<String>) -> String {
     entries.sort();
     let mut buf = String::new();
     for entry in &entries {
         buf.push_str(entry);
         buf.push('\n');
     }
-    Some(hash_str(&buf))
+    hash_str(&buf)
 }
 
 /// On-disk shape for the corpus fingerprint mapping. One file per
@@ -4324,7 +4359,8 @@ mod tests {
         // 1.34 -> 1.36: inline expect-test oracles and trusted `expect`
         // (#6578); 1.35 is allocated to #7828.
         // 1.36 -> 1.37: combine expect-test facts and JSON binding candidates.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.38");
+        // 1.38 -> 1.39: accepted-Err guarded-match form (RIPR-SPEC-0175).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.39");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -4422,8 +4458,10 @@ mod tests {
         // 1.70 -> 1.71: unchanged closures in returned tails (#6578).
         // 1.71 -> 1.72: string colons mint no field probe (#6578).
         // 1.72 -> 1.73: retain match-head coverage after the colon repair.
-        // 1.73 -> 1.74: same-line returned comparisons gain a real sink (#8042).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.74");
+        // 1.73 -> 1.74: accepted-Err guarded-match pins (RIPR-SPEC-0175).
+        // 1.74 -> 1.75: literal variant-field patterns pin the field (#6578).
+        // 1.75 -> 1.76: same-line returned comparisons gain a real sink (#8042).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.76");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4489,9 +4527,11 @@ mod tests {
         // 0.76 -> 0.77: same evidence as full 1.71.
         // 0.77 -> 0.78: same evidence as full 1.72.
         // 0.78 -> 0.79: same composed evidence as full 1.73.
-        // 0.79 -> 0.80: same returned-comparison evidence as full 1.74.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.80");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.80");
+        // 0.79 -> 0.80: same evidence as full 1.74.
+        // 0.80 -> 0.81: same evidence as full 1.75.
+        // 0.81 -> 0.82: same returned-comparison evidence as full 1.76.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.82");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.82");
     }
 
     #[test]
@@ -8166,6 +8206,146 @@ mod tests {
         }
         std::fs::write(&path, content).map_err(|err| format!("write {relative}: {err}"))?;
         Ok(PathBuf::from(relative))
+    }
+
+    #[cfg(unix)]
+    fn recorded_stat_witness() -> StatWitness {
+        StatWitness {
+            modified: std::time::Duration::new(1_700_000_000, 123),
+            len: 38,
+            ctime: 1_700_000_001,
+            ctime_nsec: 456,
+            device: 7,
+            inode: 11,
+        }
+    }
+
+    #[cfg(unix)]
+    fn assert_recorded_stat_identity_misses_cache(
+        label: &str,
+        replacement: StatWitness,
+    ) -> Result<(), String> {
+        let before = recorded_stat_witness();
+        let path = Path::new("src/lib.rs");
+        assert_eq!(
+            before.entry(path),
+            concat!(
+                "src/lib.rs\0",
+                "1700000000\0",
+                "123\0",
+                "38\0",
+                "1700000001\0",
+                "456\0",
+                "7\0",
+                "11"
+            ),
+            "the schema 0.4 tuple encoding must remain byte-identical"
+        );
+        assert_eq!(
+            (before.modified, before.len, before.ctime, before.ctime_nsec),
+            (
+                replacement.modified,
+                replacement.len,
+                replacement.ctime,
+                replacement.ctime_nsec
+            ),
+            "recorded replacement must preserve every legacy stat field"
+        );
+        let original = hash_stat_entries(vec![before.entry(path)]);
+        let replaced = hash_stat_entries(vec![replacement.entry(path)]);
+        let dir = isolated_dir(label);
+        ignore_remove_dir_all(&dir);
+        let cache = RepoCorpusFingerprintCache::at_dir(dir.join("cache"));
+        cache.store(&dir, &original, "original-content-hash")?;
+        assert_eq!(
+            cache.lookup(&dir, &original).as_deref(),
+            Some("original-content-hash"),
+            "the real cache producer must first admit the original mapping"
+        );
+        assert_eq!(
+            cache.lookup(&dir, &replaced),
+            None,
+            "replacement identity must not select the prior content hash"
+        );
+        assert_ne!(original, replaced);
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_identity_recorded_device_change_misses_prior_cache() -> Result<(), String> {
+        assert_recorded_stat_identity_misses_cache(
+            "fingerprint-recorded-device",
+            StatWitness {
+                device: 8,
+                ..recorded_stat_witness()
+            },
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_identity_recorded_inode_change_misses_prior_cache() -> Result<(), String> {
+        assert_recorded_stat_identity_misses_cache(
+            "fingerprint-recorded-inode",
+            StatWitness {
+                inode: 12,
+                ..recorded_stat_witness()
+            },
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_identity_live_extraction_and_corpus_route_match_raw_metadata() -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = isolated_dir("fingerprint-raw-stat-route");
+        ignore_remove_dir_all(&dir);
+        let files = [
+            write_corpus_file(&dir, "src/b.rs", "pub fn b() {}\n")?,
+            write_corpus_file(&dir, "src/a.rs", "pub fn a() {}\n")?,
+        ];
+        let mut raw_entries = Vec::new();
+        let mut identities = Vec::new();
+        for path in &files {
+            let metadata = std::fs::metadata(dir.join(path)).map_err(|err| err.to_string())?;
+            let extracted = StatWitness::from_metadata(&metadata).ok_or("extract stat witness")?;
+            let identity = (metadata.dev(), metadata.ino());
+            assert_eq!((extracted.device, extracted.inode), identity);
+            identities.push(identity);
+            // Independent expectation: do not use StatWitness extraction,
+            // entry encoding or hash_stat_entries to construct these bytes.
+            let modified = metadata
+                .modified()
+                .map_err(|err| err.to_string())?
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|err| err.to_string())?;
+            raw_entries.push(format!(
+                "{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\n",
+                path.to_string_lossy().replace('\\', "/"),
+                modified.as_secs(),
+                modified.subsec_nanos(),
+                metadata.len(),
+                metadata.ctime(),
+                metadata.ctime_nsec(),
+                metadata.dev(),
+                metadata.ino()
+            ));
+        }
+        assert_ne!(
+            identities[0], identities[1],
+            "two real files must have distinct identities"
+        );
+        raw_entries.sort();
+        assert_eq!(
+            corpus_fingerprint(&dir, &files),
+            Some(hash_str(&raw_entries.concat())),
+            "the production corpus route must consume the raw stat tuple"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
     }
 
     /// Rewrite `path` with identical content until the inode change time

@@ -124,6 +124,32 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_a_nul_path_in_valid_toml() -> Result<(), String> {
+        let root = temp_dir("nul-path");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        fs::write(
+            root.join(CONFIG_FILE_NAME),
+            r#"[suppressions]
+path = ".ripr/suppressions\u0000.toml"
+"#,
+        )
+        .map_err(|error| error.to_string())?;
+
+        let result = validate_config(&root);
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        let error = result
+            .err()
+            .ok_or_else(|| "an unusable path must not validate".to_string())?;
+        assert!(error.contains("ripr.toml"), "{error}");
+        assert!(
+            error.contains("suppressions.path must not contain NUL characters"),
+            "{error}"
+        );
+        assert!(!error.contains('\0'));
+        Ok(())
+    }
+
+    #[test]
     fn validate_returns_the_loader_error_for_invalid_toml() -> Result<(), String> {
         let root = temp_dir("invalid");
         fs::create_dir_all(&root).map_err(|error| error.to_string())?;

@@ -306,14 +306,24 @@ pub(in crate::analysis) fn constant_tail_witness(
     // owner's whole body is, like a constant tail, the value the owner
     // returns; whether the pinned input runs its closure is the owner pin's
     // question (rule 2), not this edge's.
+    // RIPR-SPEC-0197 short-circuit tails (#8037): an admitted `&&`/`||`
+    // chain that is the owner's whole body is likewise the value the owner
+    // returns; whether a pinned run evaluates every operand is the owner
+    // pin's run check, not this edge's.
     let (tail_line, limitation) = match constant_owner_tail_line(owner, &identity) {
         Some(line) => (line, "constant_owner_tail"),
-        None => (
-            super::owner_pin::closure_adaptor::owner_adaptor_tail(owner)
-                .filter(|tail| tail.tail_is(&probe.expression))
-                .map(|tail| owner.start_line + tail.tail_line_offset)?,
-            "iterator_adaptor_owner_tail",
-        ),
+        None => match super::owner_pin::closure_adaptor::owner_adaptor_tail(owner)
+            .filter(|tail| tail.tail_is(&probe.expression))
+        {
+            Some(tail) => (
+                owner.start_line + tail.tail_line_offset,
+                "iterator_adaptor_owner_tail",
+            ),
+            None => (
+                short_circuit_owner_tail_line(owner, &probe.expression, &identity)?,
+                "short_circuit_owner_tail",
+            ),
+        },
     };
     if tail_line != probe.location.line {
         return None;
@@ -356,6 +366,32 @@ pub(in crate::analysis) fn constant_tail_witness(
     };
     witness.semantic_digest = witness.compute_semantic_digest();
     Some(witness)
+}
+
+/// The line of the owner's tail when the owner's whole body is one
+/// admitted short-circuit chain (`ShortCircuitTail`) whose normalized text
+/// is `identity`. Its operands are comparisons of parameters with literals
+/// and make no calls, so the chain's value is the owner's return.
+fn short_circuit_owner_tail_line(
+    owner: &crate::analysis::facts::FunctionSummary,
+    changed: &str,
+    identity: &str,
+) -> Option<usize> {
+    use ra_ap_syntax::{AstNode, ast};
+    super::owner_pin::short_circuit::ShortCircuitTail::parse(&owner.body, changed)?;
+    let parse = crate::analysis::syntax::parse_clean_source_file(&owner.body)?;
+    let function = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let list = function.body()?.stmt_list()?;
+    if list.statements().next().is_some() {
+        return None;
+    }
+    let tail = list.tail_expr()?;
+    if normalize_semantic_text(&tail.syntax().text().to_string()) != identity {
+        return None;
+    }
+    let offset = usize::from(tail.syntax().text_range().start());
+    let before = owner.body.get(..offset)?;
+    Some(owner.start_line + before.matches('\n').count())
 }
 
 /// The line of the owner's body when that body is exactly one constant
@@ -913,6 +949,25 @@ pub(in crate::analysis) fn assertion_field_collection_reads(
     path: &str,
     count_reads: bool,
 ) -> Vec<FieldCollectionRead> {
+    let subjects = compared_sides(assertion_text);
+    subjects
+        .iter()
+        .enumerate()
+        .filter(|(_, subject)| count_reads || !reads_only_count(subject))
+        .filter_map(|(index, subject)| {
+            let read = subject_field_collection_read(subject, path)?;
+            let other = subjects
+                .get(1 - index.min(1))
+                .filter(|_| subjects.len() == 2);
+            (!other.is_some_and(|other| names_ident(other, &read.binding))).then_some(read)
+        })
+        .collect()
+}
+
+/// The compared sides of `assertion_text`: its primary subject
+/// (`assert_eq!(subject, ..)`, `assert!(subject)`) and, for `assert_eq!`,
+/// the second operand too, since either side may hold the actual value.
+fn compared_sides(assertion_text: &str) -> Vec<String> {
     let mut subjects: Vec<String> = assertion_primary_subject(assertion_text)
         .into_iter()
         .collect();
@@ -928,17 +983,102 @@ pub(in crate::analysis) fn assertion_field_collection_reads(
         }
     }
     subjects
+}
+
+/// A compared side that reads one entry of a field collection through a
+/// one-argument method of a local binding: `inv.on_hand("BOLT-M8")` gives
+/// binding `inv`, getter `on_hand` and key `"BOLT-M8"`. Whether `on_hand`
+/// really looks that key up in the written field is for the caller to
+/// verify (`builder_override::getter_plainly_reads_key`).
+#[derive(Debug, PartialEq, Eq)]
+pub(in crate::analysis) struct KeyedFieldRead {
+    pub(in crate::analysis) binding: String,
+    pub(in crate::analysis) getter: String,
+    pub(in crate::analysis) key: String,
+    /// The other `assert_eq!` operand: the value the read is expected to
+    /// equal.
+    pub(in crate::analysis) expected: String,
+}
+
+/// RIPR-SPEC-0228 keyed reads: the `assert_eq!` sides of `assertion_text`
+/// that are exactly `binding.getter(key)`, with one argument, compared with
+/// an operand that does not name the same binding. A projection of the
+/// result (`inv.on_hand("A") + 1`, `inv.on_hand("A").max(1)`) reads
+/// nothing, and neither does `assert!` or `assert_ne!`: only an equality
+/// says which value the entry must hold.
+pub(in crate::analysis) fn assertion_keyed_getter_reads(
+    assertion_text: &str,
+) -> Vec<KeyedFieldRead> {
+    let subjects = compared_sides(assertion_text);
+    // Only `assert_eq!` has a second side; without one `get` gives `None`.
+    subjects
         .iter()
         .enumerate()
-        .filter(|(_, subject)| count_reads || !reads_only_count(subject))
         .filter_map(|(index, subject)| {
-            let read = subject_field_collection_read(subject, path)?;
-            let other = subjects
-                .get(1 - index.min(1))
-                .filter(|_| subjects.len() == 2);
-            (!other.is_some_and(|other| names_ident(other, &read.binding))).then_some(read)
+            let (binding, getter, key) = subject_keyed_getter_read(subject)?;
+            let other = subjects.get(1 - index.min(1))?;
+            (!names_ident(other, &binding)).then(|| KeyedFieldRead {
+                binding,
+                getter,
+                key,
+                expected: other.trim().to_string(),
+            })
         })
         .collect()
+}
+
+fn subject_keyed_getter_read(subject: &str) -> Option<(String, String, String)> {
+    let bare = subject.trim();
+    let (binding, after) = bare.split_once('.')?;
+    let (getter, arguments) = after.split_once('(')?;
+    if !is_bare_ident(binding) || !is_bare_ident(getter) {
+        return None;
+    }
+    let inner = balanced_inner(arguments)?;
+    // The call must be the whole side: nothing may follow its `)`.
+    if arguments
+        .get(inner.len() + 1..)
+        .is_none_or(|tail| !tail.trim().is_empty())
+    {
+        return None;
+    }
+    let key = first_call_argument(inner)?;
+    (key == inner.trim() && !names_ident(&key, binding))
+        .then(|| (binding.to_string(), getter.to_string(), key))
+}
+
+/// RIPR-SPEC-0228 keyed reads: the owner parameter that keys a field-path
+/// map insert, `self.<path>.insert(KEY, value)`, when `KEY` is that
+/// parameter itself or an owned copy of it (`sku`, `sku.to_string()`,
+/// `sku.to_owned()`, `sku.clone()`, `sku.into()`, `String::from(sku)`).
+/// Any other key gives `None`.
+pub(in crate::analysis) fn field_collection_insert_key(expression: &str) -> Option<String> {
+    let trimmed = expression.trim().trim_end_matches([';', ',']).trim();
+    let rest = trimmed.strip_prefix("self.")?;
+    let (target, arguments) = rest.split_once('(')?;
+    let (path, method) = target.rsplit_once('.')?;
+    if method.trim() != "insert" || !path.split('.').all(|segment| is_bare_ident(segment.trim())) {
+        return None;
+    }
+    let inner = balanced_inner(arguments)?;
+    if arguments
+        .get(inner.len() + 1..)
+        .is_none_or(|tail| !tail.trim().is_empty())
+    {
+        return None;
+    }
+    let key = first_call_argument(inner)?;
+    let parameter = key
+        .strip_prefix("String::from(")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .or_else(|| {
+            [".to_string()", ".to_owned()", ".clone()", ".into()"]
+                .iter()
+                .find_map(|suffix| key.strip_suffix(suffix))
+        })
+        .unwrap_or(&key)
+        .trim();
+    is_bare_ident(parameter).then(|| parameter.to_string())
 }
 
 /// Whether `subject` ends in a count of a collection (`.len()`,
@@ -2042,6 +2182,64 @@ mod tests {
         assert!(constant_tail_witness(&other, &owner, &sinks).is_none());
     }
 
+    /// #8037: an admitted short-circuit chain that is the owner's whole body
+    /// completes a DirectReturn witness; anything `ShortCircuitTail` refuses
+    /// does not.
+    #[test]
+    fn short_circuit_owner_tail_completes_only_an_admitted_chain() {
+        let body = "fn is_weekend(day: u8) -> bool {\n    day % 7 == 6 || day % 7 == 0\n}";
+        let owner = constant_owner(body);
+        let probe = probe_at(ProbeFamily::ReturnValue, "day % 7 == 6 || day % 7 == 0", 2);
+        let sinks = super::super::local_flow_sinks(&probe, Some(&owner));
+        let witness = constant_tail_witness(&probe, &owner, &sinks);
+        assert!(
+            complete_direct_witness(&probe, witness.as_ref()),
+            "{witness:?} {sinks:?}"
+        );
+        assert!(witness.as_ref().is_some_and(|w| {
+            w.limitations
+                .iter()
+                .any(|l| l == "short_circuit_owner_tail")
+        }));
+        for (body, expression) in [
+            // A closure operand, mixed operators, a call, an earlier statement.
+            (
+                "fn f(x: u8, y: u8) -> bool {\n    g(|| x) || y == 1\n}",
+                "g(|| x) || y == 1",
+            ),
+            (
+                "fn f(a: bool, b: bool, c: bool) -> bool {\n    a && b || c\n}",
+                "a && b || c",
+            ),
+            (
+                "fn f(s: &str, y: u8) -> bool {\n    s.len() == 0 || y == 1\n}",
+                "s.len() == 0 || y == 1",
+            ),
+            (
+                "fn f(x: u8, y: u8) -> bool {\n    let x = x + 1;\n    x == 0 || y == 1\n}",
+                "x == 0 || y == 1",
+            ),
+            // The changed expression is one operand, not the whole tail.
+            (
+                "fn f(x: u8, y: u8) -> bool {\n    x == 0 || y == 1\n}",
+                "y == 1",
+            ),
+        ] {
+            let owner = constant_owner(body);
+            let line = if body.contains("let x") { 3 } else { 2 };
+            let probe = probe_at(ProbeFamily::ReturnValue, expression, line);
+            let sinks = super::super::local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                constant_tail_witness(&probe, &owner, &sinks).is_none(),
+                "{body}"
+            );
+        }
+        // A predicate-family probe on the admitted chain gets nothing.
+        let predicate = probe_at(ProbeFamily::Predicate, "day % 7 == 6 || day % 7 == 0", 2);
+        let sinks = super::super::local_flow_sinks(&predicate, Some(&owner));
+        assert!(constant_tail_witness(&predicate, &owner, &sinks).is_none());
+    }
+
     /// #6578: a `format!` tail writes every argument into the `String` the
     /// owner returns; only the bare standard macro with plain arguments.
     #[test]
@@ -2840,6 +3038,80 @@ mod tests {
             "assert_eq!(inv.stock, vec![]);",
         ] {
             assert!(whole(other).is_empty(), "{other}");
+        }
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: a compared side that is exactly
+    /// `binding.getter(key)` names its binding, getter and key.
+    #[test]
+    fn assertion_keyed_getter_reads_take_one_argument_calls_only() {
+        let read = |binding: &str, getter: &str, key: &str, expected: &str| {
+            vec![KeyedFieldRead {
+                binding: binding.to_string(),
+                getter: getter.to_string(),
+                key: key.to_string(),
+                expected: expected.to_string(),
+            }]
+        };
+        assert_eq!(
+            assertion_keyed_getter_reads("assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);"),
+            read("inv", "on_hand", "\"BOLT-M8\"", "7")
+        );
+        assert_eq!(
+            assertion_keyed_getter_reads("assert_eq!(7, inv.on_hand(sku));"),
+            read("inv", "on_hand", "sku", "7")
+        );
+        assert_eq!(
+            assertion_keyed_getter_reads("assert_eq!(inv.on_hand(&key(\"a,b\")), Some(&7));"),
+            read("inv", "on_hand", "&key(\"a,b\")", "Some(&7)")
+        );
+        for other in [
+            // A projection of the entry, two arguments or none, a chained
+            // receiver, a key naming the binding, a comparison with the
+            // same binding.
+            "assert_eq!(inv.on_hand(\"A\") + 1, 8);",
+            "assert_eq!(inv.on_hand(\"A\").max(1), 7);",
+            "assert_eq!(inv.at(\"A\", 1), 7);",
+            "assert_eq!(inv.total(), 7);",
+            "assert_eq!(make().on_hand(\"A\"), 7);",
+            "assert_eq!(inv.on_hand(inv.first()), 7);",
+            "assert_eq!(inv.on_hand(\"A\"), inv.on_hand(\"B\"));",
+            // No equality: nothing says which value the entry holds.
+            "assert!(inv.on_hand(\"A\"));",
+            "assert_ne!(inv.on_hand(\"A\"), 0);",
+        ] {
+            assert!(assertion_keyed_getter_reads(other).is_empty(), "{other}");
+        }
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: a field-map insert names the owner
+    /// parameter its key comes from.
+    #[test]
+    fn field_collection_insert_key_names_the_key_parameter() {
+        for (expression, key) in [
+            ("self.stock.insert(sku.to_string(), remaining)", "sku"),
+            ("self.stock.insert(sku.to_owned(), remaining);", "sku"),
+            ("self.stock.insert(sku, n)", "sku"),
+            ("self.a.b.insert(id.clone(), n)", "id"),
+            ("self.stock.insert(id.into(), n)", "id"),
+            ("self.stock.insert(String::from(name), n)", "name"),
+        ] {
+            assert_eq!(
+                field_collection_insert_key(expression).as_deref(),
+                Some(key),
+                "{expression}"
+            );
+        }
+        for other in [
+            "self.stock.push(sku)",
+            "stock.insert(sku, n)",
+            "self.stock.insert(format!(\"{sku}\"), n)",
+            "self.stock.insert(sku.trim().to_string(), n)",
+            "self.stock.insert(\"fixed\", n)",
+            "self.stock.insert(sku, n).unwrap()",
+            "self.stock.entry(sku).or_insert(n)",
+        ] {
+            assert_eq!(field_collection_insert_key(other), None, "{other}");
         }
     }
 

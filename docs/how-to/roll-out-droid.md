@@ -5,6 +5,10 @@ The goal is rollout discipline, not new bot behavior: keep the working MiniMax
 BYOK bridge, preserve the trust boundaries, add repo-specific review context,
 and pilot the setup before broad enablement.
 
+Automatic PR review was retired in `ripr-swarm` under #5086. This guide
+covers the retained manual and scheduled workflows only; it does not authorize
+re-enabling the retired automatic lane.
+
 ## Rollout Posture
 
 `ripr` is the source template for this setup. Carry forward these defaults for
@@ -13,15 +17,14 @@ the first rollout wave:
 - MiniMax M3 runs directly through Factory Droid BYOK.
 - Keep the previous MiniMax M2.7 workflow revision as the rollback path if the
   M3 provider bridge has a live Droid compatibility issue.
-- Automatic PR review, trusted manual `@droid`, and scheduled security scan are
-  separate workflows.
+- Trusted manual `@droid` and scheduled security scan are separate workflows.
 - Droid workflows use SHA-pinned third-party actions.
 - `show_full_output: false` is explicit in every Droid action step.
 - `upload_debug_artifacts: false` is explicit in every Droid action step.
 - The approved safe action ref disables raw `$HOME/.factory/**` and
   `droid-prompts/**` artifact upload for normal secrets-backed runs.
-- Automatic review is restricted to same-repo PRs so secrets do not run on fork
-  code.
+- Manual PR mentions are restricted to same-repo PRs so secrets do not run on
+  fork code.
 - Manual `@droid` commands require a trusted actor: `OWNER`, `MEMBER`, or
   `COLLABORATOR`.
 - Droid review comments are repair queues for follow-up agents, not empty
@@ -31,11 +34,11 @@ Do not roll out `review_depth: deep`, `pull_request_target`, self-hosted
 runners, fork-secret execution, wrapper-comment post-processing, or global
 permission reductions until they have been tested in `ripr`.
 
-Keep the current `ripr` permission shape during baseline rollout. Auto-review,
-manual `@droid`, and scheduled security scan all use the same job permissions:
+Keep the current `ripr` permission shape during baseline rollout. Manual
+`@droid` and scheduled security scan all use the same job permissions:
 
 ```yaml
-# droid-review.yml, droid.yml, and droid-security-scan.yml
+# droid.yml and droid-security-scan.yml
 contents: read
 pull-requests: write
 issues: write
@@ -80,7 +83,6 @@ MiniMax key should be the Token Plan key used by the working `ripr` BYOK setup.
 Most repositories should receive these workflow lanes:
 
 ```text
-.github/workflows/droid-review.yml
 .github/workflows/droid.yml
 .github/workflows/droid-security-scan.yml
 ```
@@ -173,28 +175,6 @@ show_full_output: false
 upload_debug_artifacts: false
 ```
 
-For automatic PR review, keep:
-
-```yaml
-on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
-
-concurrency:
-  group: droid-review-${{ github.repository }}-${{ github.event.pull_request.number }}
-  cancel-in-progress: false
-```
-
-The automatic review job must keep this same-repo guard:
-
-```yaml
-github.event.pull_request.head.repo.full_name == github.repository
-```
-
-Keep `[skip-review]` as the PR title escape hatch. Draft PRs are intentionally
-reviewed, every commit is reviewed, active reviews are not canceled, stale
-queued reviews are deduped per PR, and separate PRs can run concurrently.
-
 For manual `@droid`, keep trusted actor guards for `OWNER`, `MEMBER`, and
 `COLLABORATOR`. Do not simplify this away; it prevents untrusted comments from
 starting secrets-backed jobs.
@@ -250,9 +230,7 @@ Both must be available to this repository before merge.
 
 Also state:
 
-- fork PRs are intentionally skipped for secrets-backed Droid review;
-- draft PRs are intentionally reviewed;
-- `[skip-review]` opts out of automatic review;
+- fork PR mentions are intentionally skipped for secrets-backed Droid commands;
 - `@droid review` and `@droid security` require a trusted actor;
 - `show_full_output: false` controls logs only;
 - `upload_debug_artifacts: false` prevents raw Droid debug artifact upload.
@@ -266,13 +244,12 @@ and are not release-critical that week.
 After merging each pilot rollout:
 
 1. Open or reuse one same-repo PR.
-2. Confirm Droid Auto Review starts.
+2. Comment `@droid review` as a trusted actor and confirm it runs.
 3. Confirm Droid initializes with `custom:MiniMax-M3-0`.
 4. Confirm review output follows the inspection and repair-queue format.
 5. Confirm Droid-generated body text does not add extra mentions.
-6. Comment `@droid review` as a trusted actor and confirm it runs.
-7. Comment `@droid security` as a trusted actor and confirm it runs.
-8. Run Droid Security Scan manually once before relying on the schedule.
+6. Comment `@droid security` as a trusted actor and confirm it runs.
+7. Run Droid Security Scan manually once before relying on the schedule.
 
 Before broad rollout, inspect one successful Droid run's artifact list from
 `ripr` or a pilot repository and confirm:
