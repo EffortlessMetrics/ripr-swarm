@@ -1,4 +1,4 @@
-use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::extract::{mask_comments_and_strings, mask_with_string_delimiter_quotes};
 use crate::domain::ProbeFamily;
 
 pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
@@ -591,7 +591,18 @@ fn has_field_shape(text: &str) -> bool {
     if let Some(initializer) = let_binding_initializer(text) {
         return initializer.is_some_and(|scan| scan.contains(':') && !scan.contains("::"));
     }
-    text.contains(':') && !text.contains("::") && !is_function_signature(text)
+    // #6578: a colon inside a string or comment is data, not a field
+    // (`out += &format!("{:<8}{:>6}\n", ..)` constructs nothing). A line
+    // with an odd number of string delimiters may start inside a string
+    // (`tail", count: 3 }`), where masking would hide a real field, so it
+    // keeps the raw reading (#8013).
+    let (masked, quotes) = mask_with_string_delimiter_quotes(text);
+    let scan = if quotes % 2 == 0 {
+        masked.as_str()
+    } else {
+        text
+    };
+    scan.contains(':') && !scan.contains("::") && !is_function_signature(text)
 }
 
 /// For a `let` statement line, the comment/string-masked initializer after
@@ -799,6 +810,40 @@ mod tests {
             "let window: Window = Window { start: lo, end: hi };",
             "let mut w = Window { start: lo };",
             "let\tw = Window { start: lo };",
+        ] {
+            let families = classify_changed_line(text);
+            assert!(
+                families.contains(&ProbeFamily::FieldConstruction),
+                "{text} constructs a field: {families:?}"
+            );
+        }
+    }
+
+    /// #6578: a colon that only appears inside a string or comment never
+    /// mints field_construction; a struct-literal field beside one still
+    /// does.
+    #[test]
+    fn colons_in_strings_and_comments_are_not_field_construction() {
+        for text in [
+            "out += &format!(\"{:<8}{:>6}\\n\", l.label, l.cents);",
+            "println!(\"total: {}\", total);",
+            "write!(f, \"{}: {}\", key, value)?;",
+            "render(&line) // note: aligned",
+            "emit(r#\"a: b\"#)",
+        ] {
+            let families = classify_changed_line(text);
+            assert!(
+                !families.contains(&ProbeFamily::FieldConstruction),
+                "{text} constructs no field: {families:?}"
+            );
+        }
+        for text in [
+            "Line { label: \"tea: green\".into(), cents }",
+            "total: format!(\"{:>6}\", cents),",
+            // A fragment that starts inside a multi-line string (#8013).
+            "tail\", count: 3 }",
+            // A `::` inside a string no longer hides a real field.
+            "Route { path: \"a::b\" }",
         ] {
             let families = classify_changed_line(text);
             assert!(

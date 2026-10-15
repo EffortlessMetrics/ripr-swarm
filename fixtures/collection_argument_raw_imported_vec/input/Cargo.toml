@@ -1,0 +1,6 @@
+[package]
+name = "collection_argument_raw_imported_vec"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
