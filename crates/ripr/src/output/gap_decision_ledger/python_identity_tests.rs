@@ -291,6 +291,31 @@ fn python_selected_first_keeps_its_line_with_same_name_in_other_file() -> Result
 }
 
 #[test]
+fn python_space_prefixed_identity_keeps_selected_line() -> Result<(), String> {
+    let mut payload = check_output(Layout::TwoFile {
+        first: "tests/test_checkout.v2.py",
+    })?;
+    let finding = &mut payload["findings"][0];
+    let file = " tests/test_plain.py";
+    finding["python_repair_card"]["suggested_location"]["test_file"] = json!(file);
+    finding["related_tests"][1]["file"] = json!(file);
+    if let Some(evidence) = finding["evidence"].as_array_mut() {
+        for entry in evidence.iter_mut() {
+            if entry.as_str() == Some("suggested_test_file: tests/test_plain.py") {
+                *entry = json!(format!("suggested_test_file: {file}"));
+            }
+        }
+    }
+    let record = projected_record(&payload)?;
+    if record != expected_record(file, Some("test_same"), Some(60), SECOND_COMMAND)? {
+        return Err(format!(
+            "space-prefixed identity must keep selected line 60, got {record}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn python_truncated_inventory_does_not_bind_visible_namesake() -> Result<(), String> {
     let payload = check_output(Layout::CappedMixed)?;
     let finding = &payload["findings"][0];
@@ -378,6 +403,7 @@ fn python_selected_identity_missing_unmatched_or_ambiguous_withholds_line() -> R
         "missing-line",
         "zero-line",
         "blank-name",
+        "whitespace-file",
         "truncated-without-evidence",
     ] {
         let mut payload = original.clone();
@@ -427,6 +453,10 @@ fn python_selected_identity_missing_unmatched_or_ambiguous_withholds_line() -> R
                 name = Some("");
                 finding["python_repair_card"]["suggested_location"]["test_name"] = json!("");
                 finding["related_tests"][1]["name"] = json!("");
+            }
+            "whitespace-file" => {
+                file = "   ";
+                finding["python_repair_card"]["suggested_location"]["test_file"] = json!(file);
             }
             "truncated-without-evidence" => {
                 finding["related_tests_total"] = json!(9);

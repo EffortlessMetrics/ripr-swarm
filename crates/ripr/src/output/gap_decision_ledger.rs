@@ -2561,8 +2561,11 @@ fn typescript_route_kind<'a>(repair_kind: &'a str, behavior_kind: &str) -> &'a s
 // evidence. Truncated check-JSON inventories cannot prove uniqueness, so a
 // visible namesake is not enough without that selected evidence line.
 fn python_selected_related_test_line(finding: &Value, card: &Value) -> Option<u64> {
-    let file = non_empty(string_at(card, &["suggested_location", "test_file"])?)?;
-    let name = non_empty(string_at(card, &["suggested_location", "test_name"])?)?;
+    let file = string_at(card, &["suggested_location", "test_file"])?;
+    let name = string_at(card, &["suggested_location", "test_name"])?;
+    if file.trim().is_empty() || name.trim().is_empty() {
+        return None;
+    }
     let evidence_line = python_evidence_selected_line(finding, file, name);
     let row_line = python_unique_complete_related_line(finding, file, name);
     match (evidence_line, row_line) {
