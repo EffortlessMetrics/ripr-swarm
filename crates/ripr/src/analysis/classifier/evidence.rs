@@ -678,6 +678,11 @@ impl ClassifiedProbeEvidence {
         // an `.any(..)` membership no other element can satisfy. The same
         // name defeats as reveal's owner pins apply to the owner call.
         let element_field_pinned = matches!(context.probe.family, ProbeFamily::FieldConstruction)
+            && activation.missing_discriminators.iter().any(|fact| {
+                fact.flow_sink
+                    .as_ref()
+                    .is_some_and(|sink| sink.kind == FlowSinkKind::StructField)
+            })
             && context.owner_fn.is_some_and(|owner| {
                 // The pin matches the owner call by name. A second indexed
                 // function of that name (a nested module's `super::rows`, a

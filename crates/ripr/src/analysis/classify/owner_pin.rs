@@ -207,6 +207,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// computed once per run over the once-built module-name set.
     /// The index is immutable, so the memo never goes stale.
     unit_struct_facts: OnceCell<UnitStructFacts>,
+    /// RIPR-SPEC-0225 decision 8: whether the workspace is closed for
+    /// iteration, a whole-index scan computed once per run.
+    iteration_closed: OnceCell<bool>,
     withheld: WithheldMacroBindings,
 }
 
@@ -325,6 +328,11 @@ fn withheld_crate_root(path: &Path) -> Option<PathBuf> {
 }
 
 impl OwnerPinSyntax {
+    /// The run's memo of a whole-index verdict that `compute` reads once.
+    pub(in crate::analysis) fn iteration_closed(&self, compute: impl FnOnce() -> bool) -> bool {
+        *self.iteration_closed.get_or_init(compute)
+    }
+
     /// Bounded targeted-selection identity for a non-generic inherent call.
     /// Cross-file imports, nested type paths and receiver inference stay
     /// unresolved; this is not a general Rust name resolver.
@@ -4949,11 +4957,6 @@ fn initialized_field_name(expression: &str) -> Option<&str> {
 /// How deep [`type_compares_by_value`] follows workspace field types.
 const EQUALITY_DEPTH_LIMIT: usize = 4;
 
-/// #6692 (RIPR-SPEC-0225 rules 3-4): whether `==` on `type_name` compares
-/// its field `field` by value through the derived comparison. `type_name`
-/// must have derived equality ([`derived_equality`]); `field` must carry no
-/// attribute and its type must compare by value. Anything ripr cannot read
-/// fails closed.
 /// RIPR-SPEC-0225 decision 8: the primitive integer type `field` of
 /// `type_name` is declared with, when `type_name` is the struct a record
 /// literal in the owner's body names, so comparing the field to an integer
@@ -5048,6 +5051,11 @@ const BUILTIN_INTEGERS: &[&str] = &[
     "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
 ];
 
+/// #6692 (RIPR-SPEC-0225 rules 3-4): whether `==` on `type_name` compares
+/// its field `field` by value through the derived comparison. `type_name`
+/// must have derived equality ([`derived_equality`]); `field` must carry no
+/// attribute and its type must compare by value. Anything ripr cannot read
+/// fails closed.
 fn field_compares_with_derived_equality(type_name: &str, field: &str, index: &RustIndex) -> bool {
     derived_equality(type_name, index).is_some_and(|(facts, declaring)| {
         let mut named = facts

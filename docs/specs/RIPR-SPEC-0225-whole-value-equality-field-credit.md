@@ -315,10 +315,12 @@ rejected alternative. Any can be reversed later without touching the rest.
      every literal in range for `f`'s type (an out-of-range literal under
      `overflowing_literals` wraps onto another value), and the workspace is
      closed for iteration: every indexed file parses, nothing sits outside
-     the index (no non-UTF-8 source, include limitation, `include!` or
-     `#[path]` module), every `use`, macro path and attribute path is rooted
-     in `std`, `core`, `alloc`, `crate`, `self`, `super` or a workspace
-     package, there is no `extern crate`, no `fn $name` in a macro, and
+     the index (no non-UTF-8 source, include limitation, `include!` macro
+     however qualified, or attribute naming `path`, `cfg_attr` included),
+     every `use`, macro path and attribute path is rooted in `std`, `core`,
+     `alloc`, `crate`, `self`, `super` or a workspace package, there is no
+     `extern crate`, no macro body or argument holding `use`, `extern` or
+     `include`, no `fn $name` in a macro, and
      every `fn iter`, `fn into_iter` or `fn any` (comments skipped) is an
      indexed free, local or inherent function. An outside crate's trait or a
      generated method could otherwise make the membership iterate something
@@ -337,7 +339,9 @@ rejected alternative. Any can be reversed later without touching the rest.
    `std::process::exit`), a locally defined `assert_eq!`, a method owner, a
    `const rows: fn(..)` in the test module, a trait `iter` on the array
    (written plainly, behind a comment, or by a macro), an outside crate's
-   trait, a `#[path]` module, a wrapping sibling literal, a `#[cfg]` element,
+   trait, a `#[path]` module (also behind `cfg_attr`), a macro body that
+   imports, a qualified `std::include!`, a wrapping sibling literal, a
+   `#[cfg]` element,
    a field type with its own `PartialEq` and a decoy declaration of the
    struct all keep the `FieldValue` missing discriminator. Owner calls get the same
    same-name import and cross-package defeats as reveal's owner pins. A

@@ -109,7 +109,9 @@ impl PinAuthority for SharedAuthority<'_> {
     }
 
     fn may_redefine_iteration(&self) -> bool {
-        !iteration_is_closed(self.index)
+        !self
+            .syntax
+            .iteration_closed(|| iteration_is_closed(self.index))
     }
 }
 
@@ -210,10 +212,21 @@ fn iteration_is_closed(index: &RustIndex) -> bool {
             }
             if let Some(call) = ast::MacroCall::cast(node.clone()) {
                 return call.path().is_some_and(|path| {
-                    path_root(&path).is_some_and(|(root, qualified)| {
-                        (root != "include" || qualified) && (!qualified || allowed(&root))
-                    })
+                    path.segment()
+                        .is_some_and(|last| last.syntax().text() != "include")
+                        && path_root(&path)
+                            .is_some_and(|(root, qualified)| !qualified || allowed(&root))
                 });
+            }
+            // A macro's tokens are not items until they expand: a `use`,
+            // `extern crate` or `include!` there may bring in what the
+            // scan above cannot see.
+            if let Some(tokens) = ast::TokenTree::cast(node.clone()) {
+                return tokens
+                    .syntax()
+                    .descendants_with_tokens()
+                    .filter_map(|element| element.into_token())
+                    .all(|token| !matches!(token.text(), "use" | "extern" | "include"));
             }
             if let Some(attribute) = ast::Attr::cast(node) {
                 return attribute_is_closed(&attribute, &allowed);
@@ -259,6 +272,14 @@ fn use_roots_are(tree: &ast::UseTree, allowed: &dyn Fn(&str) -> bool) -> bool {
 /// too.
 fn attribute_is_closed(attribute: &ast::Attr, allowed: &dyn Fn(&str) -> bool) -> bool {
     let text = attribute.syntax().text().to_string();
+    // `path` anywhere, `#[cfg_attr(.., path = "..")]` included, may name a
+    // module file the index does not read.
+    if text
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .any(|word| word == "path")
+    {
+        return false;
+    }
     let inner = text
         .trim_start_matches('#')
         .trim_start()
@@ -266,13 +287,6 @@ fn attribute_is_closed(attribute: &ast::Attr, allowed: &dyn Fn(&str) -> bool) ->
         .trim_start()
         .trim_start_matches('[')
         .trim_start();
-    let head: String = inner
-        .chars()
-        .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
-        .collect();
-    if head == "path" && !inner[head.len()..].trim_start().starts_with("::") {
-        return false;
-    }
     inner.match_indices("::").all(|(offset, _)| {
         let before = inner[..offset].trim_end();
         let root_start = before
@@ -298,15 +312,15 @@ fn observes_with(
     let Some(array) = ReturnedArray::read(probe, owner) else {
         return false;
     };
-    // An integer field compares by value; a workspace `PartialEq` may not.
-    let Some(integer) = authority.field_integer(&array.type_name, &array.field) else {
-        return false;
-    };
     // Exactly `#[test]`: the lexical fallback and harness-registered tests
     // carry no attributes, so an empty list cannot vouch for the test.
     if !matches!(test.attrs.as_slice(), [only] if only.trim() == "#[test]") {
         return false;
     }
+    // An integer field compares by value; a workspace `PartialEq` may not.
+    let Some(integer) = authority.field_integer(&array.type_name, &array.field) else {
+        return false;
+    };
     let source = test.body.as_str();
     let Some(parse) = parse_clean_source_file(source) else {
         return false;

@@ -387,6 +387,21 @@ fn a_membership_outside_a_closed_world_keeps_the_gap() -> Result<(), String> {
             "    #[path = \"../target/h.rs\"]\n    mod h;\n    use self::h::Hijack;\n",
             "a module the index does not read",
         ),
+        (
+            "0",
+            "    #[cfg_attr(all(), path = \"../target/h.rs\")]\n    mod h;\n    use self::h::Hijack;\n",
+            "a conditional attribute names the module path",
+        ),
+        (
+            "0",
+            "    macro_rules! bring {\n        () => {\n            use hackdep::AnyHack;\n        };\n    }\n    bring!();\n",
+            "a macro body imports an outside trait",
+        ),
+        (
+            "0",
+            "    std::include!(\"../target/h.rs\");\n",
+            "a qualified include the index does not read",
+        ),
         ("4294967329", "", "a sibling literal that wraps onto 33"),
     ] {
         assert_eq!(
