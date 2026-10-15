@@ -1595,8 +1595,10 @@ fn plain_parameter_names(helper: &ast::Fn) -> Vec<String> {
     if rebound { Vec::new() } else { names }
 }
 
-/// A helper whose body runs to its end on every call: see
-/// [`local_helper_assertions`].
+/// A synchronous helper with no early exit: see [`local_helper_assertions`].
+/// Its return type does not swallow a panic from the borrowed `assert_eq!`,
+/// even if the caller discards a returned `Result`. Fallible macros and `?`
+/// remain refused; their errors could otherwise skip the assertion unnoticed.
 fn plain_check_helper(
     helper: &ast::Fn,
     trusted: &[&str],
@@ -1613,7 +1615,6 @@ fn plain_check_helper(
         && helper.async_token().is_none()
         && helper.const_token().is_none()
         && helper.unsafe_token().is_none()
-        && helper.ret_type().is_none()
         && helper
             .param_list()
             .is_some_and(|params| params.self_param().is_none())

@@ -192,9 +192,9 @@ fn only_a_plain_helper_that_runs_to_its_end_lends_its_assertion() -> Result<(), 
         format!(
             "    fn check_tip(b: u64, t: u64, want: u64) {{ if b == 40 {{ return; }} {assertion} }}\n"
         ),
-        // A return type, so a `?` or value may stand in for the assertion.
+        // A real early exit in a returned helper, rather than its return type.
         format!(
-            "    fn check_tip(b: u64, t: u64, want: u64) -> Option<()> {{ {assertion} Some(()) }}\n"
+            "    fn check_tip(b: u64, t: u64, want: u64) -> Option<()> {{ None?; {assertion} Some(()) }}\n"
         ),
         // An early exit from one match arm.
         format!(
@@ -273,6 +273,46 @@ fn the_indexed_helper_assertion_is_the_admitted_one() -> Result<(), Box<dyn Erro
     let syntax = OwnerPinSyntax::default();
     assert!(syntax.admits_equality_assertion(&probe, test, assertion, &index));
     assert!(pin.admits(test, assertion, &index, &|_, _| false, &syntax));
+    Ok(())
+}
+
+#[test]
+fn returned_helpers_lend_the_indexed_panic_assertion_and_exact_loan() -> Result<(), String> {
+    for (return_type, tail) in [
+        ("Result<(), ()>", "Ok(())"),
+        ("Result<(), ()>", "Err(())"),
+        ("Option<()>", "Some(())"),
+        ("u64", "46"),
+    ] {
+        let helper = format!(
+            "    fn check_tip(b: u64, t: u64, want: u64) -> {return_type} {{\n        assert_eq!(with_tip(b, t), want);\n        {tail}\n    }}\n"
+        );
+        let index = indexed(&module(&helper, "let _ = check_tip(40, 6, 46);"))?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "tip_is_added")
+            .ok_or("premise: caller indexed")?;
+        let assertion = test
+            .assertions
+            .iter()
+            .find(|assertion| assertion.text == "assert_eq!(with_tip(b, t), want);")
+            .ok_or("premise: producer copied exact helper assertion")?;
+        assert!(!(test.start_line..=test.end_line).contains(&assertion.line));
+        let syntax = OwnerPinSyntax::default();
+        let loan = syntax
+            .helper_loan(test, assertion, &index)
+            .ok_or("returned helper loan refused")?;
+        assert_eq!(loan.name, "check_tip");
+        assert_eq!(loan.parameters, ["b", "t", "want"]);
+        assert_eq!(loan.call_lines, [test.start_line + 1]);
+        assert!(loan.helper.contains(&format!("-> {return_type}")));
+        let owner = owner(&index, "with_tip");
+        let probe = return_probe(owner, "tip + bill");
+        let pin = OwnerReturnPin::establish(&probe, owner, &index).ok_or("premise: owner pin")?;
+        assert!(syntax.admits_equality_assertion(&probe, test, assertion, &index));
+        assert!(pin.admits(test, assertion, &index, &|_, _| false, &syntax));
+    }
     Ok(())
 }
 
