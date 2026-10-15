@@ -88,7 +88,10 @@ these hold:
 - it observes the whole result of one owner call: `owner(...)`,
   `ns.owner(...)`, optionally awaited, or a local bound once to that call
   (not `f(owner(...))` or `owner(...).field`), and the test does not
-  shadow the owner;
+  shadow the owner or, for `ns.owner(...)`, the namespace import `ns`
+  (`const ns = fake()` in the body reaches the shadow, and a body
+  `ns = await import(...)` counts only as one `const` the body uses
+  solely as `ns.x`; amended 2026-10-15);
 - the owner body has one `return` and no arrow or nested `function`;
 - the changed line is `key: value` with `value` on that line (no `{`, `}`,
   `[` or `]` outside literals), found once in the owner;
@@ -105,6 +108,17 @@ these hold:
   with ASCII source text only (an object holding a non-ASCII string keeps
   the weak reading; an ASCII escape such as `"\u00e9"` is read; see Known
   limits).
+
+Amended 2026-10-15 (#6654, identity helper): a pin on
+`f(owner(...))` also observes the whole result of the owner call when `f`
+is a test-local identity helper under the conditions RIPR-SPEC-0249
+rule 1 lists in its 2026-10-15 amendment: a top-level, unexported
+`function f(p) { return p; }` or `const f = (p) => p;` in the same test
+file, with one plain identifier parameter, a body of exactly `return p;`,
+a name used nowhere else in the file but as a direct call `f(`, and a call
+whose one argument is the owner call itself. A helper that rebuilds or
+transforms its argument (`return { ...p, adult: true }`) is not an
+identity and keeps the weak reading.
 
 ### Decisions
 
@@ -178,7 +192,12 @@ documented decisions and proceed"). Recorded on #6654.
 3. As example 1 asserting `toMatchObject({ name: "bo" })` only: not
    `exposed`.
 4. As example 1 with `expect(normalize(buildProfile(...)))` or
-   `expect(buildProfile(...).meta)`: not `exposed`.
+   `expect(buildProfile(...).meta)`: not `exposed`. Amended 2026-10-15:
+   `expect(normalize(buildProfile(...)))` is `exposed` when `normalize`
+   is a test-local identity helper
+   (`function normalize<T>(value: T): T { return value; }`); a helper that
+   rebuilds its argument, or a `let` binding of it, stays not
+   `exposed`.
 5. As example 1 with a non-literal argument (`toMatchObject(expected)`) or
    `.rejects.toMatchObject(...)`: not `exposed`.
 6. As example 1 with a second `return`, the field in a nested literal, a
@@ -192,9 +211,12 @@ documented decisions and proceed"). Recorded on #6654.
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs`
-  pins examples 1 to 6 and the owner-side conditions.
+  pins examples 1 to 6 and the owner-side conditions;
+  `match_object_pin_looks_through_a_test_local_identity_helper` pins the
+  amended example 4.
 - `fixtures/typescript-verdict-corpus` pins example 1:
-  `jest-mined-tomatchobject-field` reads `credited`.
+  `jest-mined-tomatchobject-field` reads `credited`; the amended example
+  4: `jest-spec0250-ex04-normalized-result` reads `credited`.
 
 ## Implementation Mapping
 
@@ -207,6 +229,12 @@ documented decisions and proceed"). Recorded on #6654.
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`:
   `strongest_family_matching_oracle`, `project_credited_pin_rows`,
   `ts_changed_value_is_observed`.
+- Amended 2026-10-15 (identity helper):
+  `crates/ripr/src/analysis/language/typescript/classifier.rs`:
+  `ts_observes_whole_owner_result_through_identity`, called by
+  `ts_match_object_facts`; the helper list comes from
+  `crates/ripr/src/analysis/language/typescript/tests_extract.rs`:
+  `identity_helpers`.
 
 ## Metrics
 

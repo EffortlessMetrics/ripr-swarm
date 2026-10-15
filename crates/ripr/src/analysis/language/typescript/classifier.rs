@@ -3214,6 +3214,75 @@ pub(crate) fn owner_namespace_receivers(
     receivers
 }
 
+/// [`owner_namespace_receivers`] without a static namespace import the test
+/// body rebinds (`const ns = { owner: () => ... }`): a call through that
+/// local reaches the shadow, not the owner module. A dynamic-import binding
+/// of the owner module is a body declaration by construction, so it stays
+/// only as a [`sole_const_namespace_binding`]. A body holding a `\u`
+/// escape can declare `ns` without spelling it (`const \u006es = ...`), so
+/// it keeps no namespace receiver.
+pub(crate) fn unshadowed_owner_namespace_receivers(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<String> {
+    if test.body_text.contains("\\u") {
+        return Vec::new();
+    }
+    let dynamic: Vec<String> = dynamic_import_namespace_bindings(&test.body_text)
+        .into_iter()
+        .filter(|name| {
+            let import = TypeScriptImport {
+                source: name.source.clone(),
+                imported: None,
+                local: name.binding.clone(),
+                namespace: true,
+            };
+            import_source_matches_owner(&import, &test.file, owner, alias_map, workspace_root)
+        })
+        .map(|name| name.binding)
+        .filter(|name| sole_const_namespace_binding(&test.body_text, name))
+        .collect();
+    owner_namespace_receivers(test, owner, alias_map, workspace_root)
+        .into_iter()
+        .filter(|receiver| {
+            dynamic.contains(receiver)
+                || !local_identifier_declared_in_test_body(&test.body_text, receiver)
+        })
+        .collect()
+}
+
+/// `true` when the body binds `name` once, as `const name`, and uses it
+/// otherwise only as a member receiver (`name.x`, `name?.x`). A `let` the
+/// body reassigns, a second declaration, a parameter, a destructuring or
+/// any bare use of the name leaves some occurrence not followed by `.`.
+fn sole_const_namespace_binding(body_text: &str, name: &str) -> bool {
+    let masked = ts_mask_literals_and_comments(body_text);
+    if masked.len() != body_text.len() || name.is_empty() {
+        return false;
+    }
+    let part =
+        |ch: Option<char>| ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric());
+    let mut declarations = 0usize;
+    for (at, _) in masked.match_indices(name) {
+        let before = &masked[..at];
+        let after = &masked[at + name.len()..];
+        if part(before.chars().next_back()) || part(after.chars().next()) {
+            continue;
+        }
+        let declares = before.trim_end().strip_suffix("const").is_some_and(|rest| {
+            before.len() > before.trim_end().len() && !part(rest.chars().next_back())
+        });
+        if declares {
+            declarations += 1;
+        } else if !(after.starts_with('.') || after.starts_with("?.")) {
+            return false;
+        }
+    }
+    declarations == 1
+}
+
 /// A test-body dynamic import binding: the local name and the imported
 /// module's literal source.
 struct DynamicImportBinding {
@@ -3340,6 +3409,23 @@ fn dynamic_import_namespace_bindings(body_text: &str) -> Vec<DynamicImportBindin
                 cursor += 1;
             }
             if !closed {
+                continue;
+            }
+            // The import must be the whole initializer: `)` then the end of
+            // the statement. `import("m").then(() => fake())` binds the
+            // callback's value, not the module namespace.
+            cursor = skip_spaces(&masked_chars, cursor + 1);
+            if masked_chars.get(cursor) != Some(&')') {
+                continue;
+            }
+            let mut tail = cursor + 1;
+            while tail < masked_chars.len()
+                && masked_chars[tail].is_whitespace()
+                && masked_chars[tail] != '\n'
+            {
+                tail += 1;
+            }
+            if !matches!(masked_chars.get(tail), None | Some(';' | '\n' | '\r' | '}')) {
                 continue;
             }
             bindings.push(DynamicImportBinding {
@@ -4408,16 +4494,60 @@ pub(crate) fn ts_observes_whole_owner_result(
     let observed = observed
         .strip_prefix("await ")
         .map_or(observed, str::trim_start);
-    let bare = std::iter::once(String::new())
+    ts_is_bare_owner_call(observed, owner, receivers)
+        || ts_observed_local_owner_call_arguments(test, assertion, &owner.name, receivers).is_some()
+}
+
+/// `true` when `observed` is exactly one call `owner(...)` or
+/// `ns.owner(...)` for a receiver `ns`.
+fn ts_is_bare_owner_call(observed: &str, owner: &TypeScriptOwner, receivers: &[String]) -> bool {
+    std::iter::once(String::new())
         .chain(receivers.iter().map(|receiver| format!("{receiver}.")))
         .any(|prefix| {
             observed
                 .strip_prefix(prefix.as_str())
                 .and_then(|rest| rest.strip_prefix(owner.name.as_str()))
                 .is_some_and(ts_is_one_argument_list)
-        });
-    bare || ts_observed_local_owner_call_arguments(test, assertion, &owner.name, receivers)
-        .is_some()
+        })
+}
+
+/// RIPR-SPEC-0249 rule 1 / RIPR-SPEC-0250 rule 1 (amended 2026-10-15):
+/// [`ts_observes_whole_owner_result`], or a pin on `f(owner(...))` where
+/// `f` is a test-local identity helper of the test file
+/// (`TypeScriptTest::identity_helpers_in_file`) and its one argument is the
+/// owner call itself (`owner(...)` or `ns.owner(...)`, not awaited, not a
+/// local, a member or a second argument). `f` returns its argument, so the
+/// pin observes the same value as `expect(owner(...))`.
+pub(crate) fn ts_observes_whole_owner_result_through_identity(
+    test: &TypeScriptTest,
+    assertion: &TypeScriptAssertion,
+    owner: &TypeScriptOwner,
+    receivers: &[String],
+) -> bool {
+    ts_observes_whole_owner_result(test, assertion, owner, receivers)
+        || ts_observes_identity_wrapped_owner_call(test, assertion, owner, receivers)
+}
+
+fn ts_observes_identity_wrapped_owner_call(
+    test: &TypeScriptTest,
+    assertion: &TypeScriptAssertion,
+    owner: &TypeScriptOwner,
+    receivers: &[String],
+) -> bool {
+    let Some(observed) = assertion.observed_expression.as_deref() else {
+        return false;
+    };
+    let observed = observed.trim();
+    let observed = observed
+        .strip_prefix("await ")
+        .map_or(observed, str::trim_start);
+    test.identity_helpers_in_file.iter().any(|helper| {
+        observed
+            .strip_prefix(helper.as_str())
+            .filter(|rest| ts_is_one_argument_list(rest))
+            .and_then(|rest| rest.get(1..rest.len() - 1))
+            .is_some_and(|inner| ts_is_bare_owner_call(inner.trim(), owner, receivers))
+    })
 }
 
 /// Classify a changed TypeScript/JavaScript line and return a finding.

@@ -1260,6 +1260,174 @@ pub(in crate::analysis) fn pushed_literal_collection_path(
         })
 }
 
+/// RIPR-SPEC-0228: the field path a changed field assignment writes
+/// (`count` for `self.count += 1`, `child.count` for `self.child.count = 0`).
+/// Anything that is not `self.<path>` followed by `=` or a compound
+/// assignment operator gives `None`.
+pub(in crate::analysis) fn field_assignment_target(expression: &str) -> Option<&str> {
+    let rest = expression.trim().strip_prefix("self.")?;
+    let path_len = rest
+        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.'))
+        .unwrap_or(rest.len());
+    let (path, after) = rest.split_at(path_len);
+    let after = after.trim_start();
+    let op_len = after.find('=')?;
+    let assigns = matches!(
+        &after[..op_len],
+        "" | "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>"
+    ) && !after[op_len + 1..].starts_with(['=', '>']);
+    (assigns && !path.is_empty() && path.split('.').all(is_bare_ident)).then_some(path)
+}
+
+/// RIPR-SPEC-0228: the field path `self.<path>` that the changed assignment
+/// `expression` on `line` of `body` (the owner body, from its `fn`, starting
+/// at `start_line`) leaves as the owner's last word on that field. `None`
+/// unless the assignment occurs once on its line, starts a top-level
+/// statement of the body (not in a branch, loop, block or closure, which a
+/// test may never run), its right-hand side does not branch, nothing before
+/// it may leave the body early ([`may_exit_early`]), and nothing after that
+/// statement may write the field again ([`may_write_field`]: a use of
+/// `self.<path>` other than a `push` onto it, a parent field, a bare `self`,
+/// or a `self.m(..)` call whose body, from `method_body` and followed
+/// through further `self` calls, may do so; an unresolved method counts as
+/// a write).
+pub(in crate::analysis) fn assigned_field_path(
+    body: &str,
+    start_line: usize,
+    line: usize,
+    expression: &str,
+    method_body: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let path = field_assignment_target(expression)?;
+    if rhs_may_branch(expression) {
+        return None;
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let line_start = masked
+        .split_inclusive('\n')
+        .take(line.checked_sub(start_line)?)
+        .map(str::len)
+        .sum::<usize>();
+    let line_text = body.get(line_start..)?.lines().next()?;
+    let expression = expression.trim();
+    if expression.is_empty() || line_text.matches(expression).count() != 1 {
+        return None;
+    }
+    let at = line_start + line_text.find(expression)?;
+    let statement_start = masked[..at]
+        .rfind([';', '{', '}'])
+        .map_or(0, |index| index + 1);
+    if !masked[statement_start..at].trim().is_empty()
+        || !top_level_statement(&masked, at)
+        || may_exit_early(&masked[masked.find('{')?..at])
+    {
+        return None;
+    }
+    let end = at + masked[at..].find(';')? + 1;
+    let mut visited = Vec::new();
+    (!may_write_field(&masked[end..], path, method_body, &mut visited)).then(|| path.to_string())
+}
+
+/// RIPR-SPEC-0228: whether the right-hand side of a changed field assignment
+/// chooses between values (`if`, `match`, a comparison or a boolean
+/// operator). A test can then read the field without ever taking the changed
+/// arm or crossing the changed boundary, so the read does not confirm the
+/// change.
+fn rhs_may_branch(expression: &str) -> bool {
+    let Some(at) = expression.find('=') else {
+        return true;
+    };
+    // Mask strings and comments so `self.label = "if"` keeps its credit.
+    let masked = crate::analysis::extract::mask_comments_and_strings(&expression[at + 1..]);
+    let rhs = masked.as_str();
+    let words = rhs
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .any(|word| {
+            matches!(
+                word,
+                "if" | "match" | "loop" | "while" | "for" | "return" | "break" | "continue"
+            )
+        });
+    words
+        || ["==", "!=", "<", ">", "&&", "||", "?"]
+            .iter()
+            .any(|op| rhs.contains(op))
+}
+
+/// RIPR-SPEC-0228: whether the owner body before a changed assignment
+/// (masked, from the body's `{`) may leave before reaching it: a `return`,
+/// a `?`, a `let .. else`, a `break` or `continue`, or a panicking macro or
+/// call. A test can then exercise the early exit and still read the field.
+fn may_exit_early(before: &str) -> bool {
+    let words = before
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .any(|word| matches!(word, "return" | "else" | "break" | "continue"));
+    // Any macro call may expand to an early exit (`guard!`, `bail!`,
+    // `ensure!`).
+    let macro_call = before.match_indices('!').any(|(at, _)| {
+        before[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+            && before[at + 1..].trim_start().starts_with(['(', '[', '{'])
+    });
+    words
+        || macro_call
+        || before.contains('?')
+        || [
+            "panic!",
+            "unreachable!",
+            "todo!",
+            "unimplemented!",
+            "assert",
+            ".unwrap(",
+            ".expect(",
+        ]
+        .iter()
+        .any(|exit| before.contains(exit))
+}
+
+/// RIPR-SPEC-0228: whether an `assert_eq!` compares against a value a field
+/// most often holds before any write (`0`, `false`, `None`, `""`, an empty
+/// `String` or `Vec`, a `default()`). Deleting the assignment then leaves
+/// that value in place, so the read cannot tell a deleted write from a
+/// kept one.
+pub(in crate::analysis) fn assertion_expects_default_like(assertion: &str) -> bool {
+    let Some(at) = assertion.find("assert_eq!") else {
+        return false;
+    };
+    let rest = assertion[at + "assert_eq!".len()..].trim_end();
+    super::reveal::macro_arguments(rest.strip_suffix(';').unwrap_or(rest))
+        .iter()
+        .take(2)
+        .any(|operand| is_default_like(operand))
+}
+
+fn is_default_like(operand: &str) -> bool {
+    let operand = operand.trim().trim_start_matches('&').trim();
+    // `0 as u32` reads as its value.
+    let operand = operand
+        .split_once(" as ")
+        .map_or(operand, |(value, _)| value.trim());
+    if operand.ends_with("::MIN") || operand.ends_with("::ZERO") {
+        return true;
+    }
+    if matches!(
+        operand,
+        "false" | "None" | "\"\"" | "String::new()" | "Vec::new()" | "vec![]" | "[]"
+    ) || operand.ends_with("default()")
+    {
+        return true;
+    }
+    // `0`, `0.0`, `0_u32`, `0usize`: the digits before any type suffix.
+    let number = operand
+        .find(|ch: char| ch.is_ascii_alphabetic())
+        .map_or(operand, |suffix| &operand[..suffix]);
+    !number.is_empty()
+        && number.starts_with('0')
+        && number.chars().all(|ch| matches!(ch, '0' | '.' | '_'))
+}
+
 /// Whether the statement at `at` in a body (masked, from its `fn`) sits
 /// directly in the body's block, not in a nested block, branch, loop or
 /// closure.
@@ -3017,6 +3185,169 @@ mod tests {
             "self.log[0].push(x)",
         ] {
             assert_eq!(field_collection_write_path(other), None, "{other}");
+        }
+    }
+
+    #[test]
+    fn field_assignment_target_reads_self_field_assignments_only() {
+        for (expression, path) in [
+            ("self.count += 1", "count"),
+            ("self.count = self.count + 1;", "count"),
+            ("self.child.count <<= 2", "child.count"),
+            ("self.state = State::Done", "state"),
+        ] {
+            assert_eq!(
+                field_assignment_target(expression),
+                Some(path),
+                "{expression}"
+            );
+        }
+        for other in [
+            "sum += w",
+            "*p = v",
+            "self.count == 1",
+            "self.count >= 1",
+            "self.items[0] = 1",
+            "self.f() = 1",
+            "other.count = 1",
+            "self = Self::new()",
+            "count: 1",
+        ] {
+            assert_eq!(field_assignment_target(other), None, "{other}");
+        }
+    }
+
+    #[test]
+    fn assigned_field_path_requires_a_last_top_level_write() {
+        let none = |_: &str| None;
+        let reset = |name: &str| {
+            (name == "reset").then(|| "fn reset(&mut self) { self.count = 0; }".to_string())
+        };
+        let label = |name: &str| {
+            (name == "touch").then(|| "fn touch(&mut self) { self.label = 1; }".to_string())
+        };
+        let body = |statements: &str| format!("fn tick(&mut self) {{\n{statements}\n}}");
+        let at = |code: &str, method: &dyn Fn(&str) -> Option<String>| {
+            assigned_field_path(&body(code), 1, 2, "self.count += 1", method)
+        };
+        assert_eq!(at("self.count += 1;", &none).as_deref(), Some("count"));
+        assert_eq!(
+            at("self.count += 1; let n = self.limit;", &none).as_deref(),
+            Some("count")
+        );
+        assert_eq!(
+            at("self.count += 1; self.touch();", &label).as_deref(),
+            Some("count")
+        );
+        for (code, method) in [
+            (
+                "self.count += 1; self.count = 0;",
+                &none as &dyn Fn(&str) -> Option<String>,
+            ),
+            ("self.count += 1; self.reset();", &reset),
+            ("self.count += 1; self.unknown();", &none),
+            ("self.count += 1; zero(self);", &none),
+            ("if go { self.count += 1; }", &none),
+            ("for _ in 0..2 { self.count += 1; }", &none),
+            ("self.count += 1; self.count += 1;", &none),
+            ("if self.locked { return; } self.count += 1;", &none),
+            (
+                "let Some(_) = self.next else { loop {} }; self.count += 1;",
+                &none,
+            ),
+            ("self.check()?; self.count += 1;", &none),
+            ("assert!(self.ready); self.count += 1;", &none),
+            ("guard!(self.locked); self.count += 1;", &none),
+            ("let n = self.next.unwrap(); self.count += 1;", &none),
+            ("let n = self.next.expect(\"n\"); self.count += 1;", &none),
+            ("loop { break; } self.count += 1;", &none),
+            ("for _ in 0..1 { continue; } self.count += 1;", &none),
+        ] {
+            assert_eq!(at(code, method), None, "{code}");
+        }
+        for changed in [
+            "self.locked = self.count >= 4",
+            "self.count = if self.locked { 2 } else { 5 }",
+            "self.count = match self.locked { true => 1, false => 2 }",
+            "self.ok = self.a && self.b",
+            "self.ok = self.a || self.b",
+            "self.ok = self.a == self.b",
+            "self.ok = self.a != self.b",
+            "self.ok = self.a < self.b",
+            "self.count = { let Some(n) = self.next else { return }; n }",
+        ] {
+            let body = format!("fn tick(&mut self) {{\n{changed};\n}}");
+            assert_eq!(
+                assigned_field_path(&body, 1, 2, changed, &none),
+                None,
+                "{changed}"
+            );
+        }
+    }
+
+    #[test]
+    fn assigned_field_path_reads_branch_words_inside_strings_as_text() {
+        let none = |_: &str| None;
+        // #8061 review: a quoted `if` or `==` is a value, not a branch.
+        for (changed, field) in [
+            ("self.label = \"if\"", "label"),
+            ("self.label = \"a == b\"", "label"),
+        ] {
+            let body = format!("fn tick(&mut self) {{\n{changed};\n}}");
+            assert_eq!(
+                assigned_field_path(&body, 1, 2, changed, &none).as_deref(),
+                Some(field),
+                "{changed}"
+            );
+        }
+    }
+
+    #[test]
+    fn assigned_field_path_requires_the_changed_text_once_on_its_line() {
+        let none = |_: &str| None;
+        // The changed text appears twice on its line, the second time inside
+        // a string, so `may_write_field` (which reads masked text) would not
+        // refuse it.
+        let body = "fn tick(&mut self) {\nself.count += 1; let s = \"self.count += 1\";\n}";
+        assert_eq!(
+            assigned_field_path(body, 1, 2, "self.count += 1", &none),
+            None
+        );
+        // The same line without the repeat is accepted.
+        let body = "fn tick(&mut self) {\nself.count += 1; let s = \"x\";\n}";
+        assert_eq!(
+            assigned_field_path(body, 1, 2, "self.count += 1", &none).as_deref(),
+            Some("count")
+        );
+    }
+
+    #[test]
+    fn default_like_expected_values_do_not_confirm_a_field_assignment() {
+        for assertion in [
+            "assert_eq!(c.count, 0);",
+            "assert_eq!(c.count, 0_u32)",
+            "assert_eq!(0.0, c.ratio);",
+            "assert_eq!(c.locked, false);",
+            "assert_eq!(c.next, None);",
+            "assert_eq!(c.name, \"\");",
+            "assert_eq!(c.items, Vec::new());",
+            "assert_eq!(c.items, vec![]);",
+            "assert_eq!(c.state, State::default());",
+            "assert_eq!(&c.name, &String::new(), \"named\");",
+            "assert_eq!(c.count, 0 as u32);",
+            "assert_eq!(c.count, u32::MIN);",
+        ] {
+            assert!(assertion_expects_default_like(assertion), "{assertion}");
+        }
+        for assertion in [
+            "assert_eq!(c.count, 1);",
+            "assert_eq!(c.count, 10)",
+            "assert_eq!(c.locked, true);",
+            "assert_eq!(c.state, State::Done);",
+            "assert_eq!(c.ratio, 0.5);",
+            "assert!(c.count == 0);",
+        ] {
+            assert!(!assertion_expects_default_like(assertion), "{assertion}");
         }
     }
 

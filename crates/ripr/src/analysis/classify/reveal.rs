@@ -2082,7 +2082,7 @@ fn excludes_only_sibling_variant(
 /// The trimmed top-level comma-separated arguments of a macro call whose
 /// parenthesised arguments are all of `rest` (`(a, f(b, c))`), or nothing
 /// when `rest` is not exactly one balanced group.
-fn macro_arguments(rest: &str) -> Vec<&str> {
+pub(super) fn macro_arguments(rest: &str) -> Vec<&str> {
     let rest = rest.trim();
     if !rest.starts_with('(') || group_end(rest, 0) != Some(rest.len() - 1) {
         return Vec::new();

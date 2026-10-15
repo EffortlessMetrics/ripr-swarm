@@ -1543,10 +1543,52 @@ fn vscode_package() -> Result<(), String> {
     fs::create_dir_all(&dist)
         .map_err(|err| format!("failed to create {}: {err}", dist.display()))?;
     let version = vscode_package_version(&extension_dir.join("package.json"))?;
-    run_cwd_command(&vscode_package_command(&version))?;
-    let summary = verify_packaged_vsix_inventory(&dist.join(format!("ripr-{version}.vsix")))?;
-    println!("{summary}");
+    let notices = load_repository_license_notices(&repo_root()?)?;
+    verify_source_vscode_license(&extension_dir.join("LICENSE"), &notices)?;
+    println!("{}", package_and_verify_vsix(&dist, &version, &notices)?);
     Ok(())
+}
+
+fn vscode_verify_vsix(args: &[String]) -> Result<(), String> {
+    let vsix_path = vscode_verify_vsix_path(args)?;
+    let notices = load_repository_license_notices(&repo_root()?)?;
+    println!("{}", verify_packaged_vsix(&vsix_path, &notices)?);
+    Ok(())
+}
+
+fn vscode_verify_vsix_path(args: &[String]) -> Result<PathBuf, String> {
+    let mut path = None;
+    for arg in args {
+        if arg == "--" {
+            continue;
+        }
+        if path.replace(PathBuf::from(arg)).is_some() {
+            return Err("vscode-verify-vsix accepts exactly one VSIX path".to_string());
+        }
+    }
+    path.filter(|value| !value.as_os_str().is_empty())
+        .ok_or_else(|| "vscode-verify-vsix requires a VSIX path".to_string())
+}
+
+fn package_and_verify_vsix(
+    dist: &Path,
+    version: &str,
+    notices: &RepositoryLicenseNotices,
+) -> Result<String, String> {
+    run_cwd_command(&vscode_package_command(version))?;
+    verify_packaged_vsix(&dist.join(format!("ripr-{version}.vsix")), notices)
+}
+
+/// Reads the built VSIX and applies the production inventory bounds plus
+/// regular-file complete-notice membership. Returns the one-line summary
+/// `vscode-package` prints.
+fn verify_packaged_vsix(
+    vsix_path: &Path,
+    notices: &RepositoryLicenseNotices,
+) -> Result<String, String> {
+    let summary = verify_packaged_vsix_inventory(vsix_path)?;
+    verify_packaged_vsix_license_notices(vsix_path, notices)?;
+    Ok(summary)
 }
 
 /// Reads the built VSIX and applies the production inventory bounds. Returns
@@ -1648,6 +1690,197 @@ fn is_workspace_build_output(name: &str) -> bool {
         return true;
     }
     name.ends_with(".rlib") || name.ends_with(".rmeta")
+}
+
+/// `vsce package` ships `editors/vscode/LICENSE` as this archive member.
+const VSIX_LICENSE_TXT_ENTRY: &str = "extension/LICENSE.txt";
+const ROOT_LICENSE_MIT: &str = "LICENSE-MIT";
+const ROOT_LICENSE_APACHE: &str = "LICENSE-APACHE";
+/// The historic `editors/vscode/LICENSE` pointer is 174 bytes. Complete
+/// repository notices are larger; this bound rejects that pointer class
+/// even when the file is named `LICENSE.txt`.
+const COMPLETE_LICENSE_NOTICE_MIN_BYTES: usize = 256;
+/// POSIX `S_IFMT` / `S_IFREG`. Permission-only Unix modes have type 0 and
+/// stay accepted; any other explicit type (directory, FIFO, symlink) is not
+/// a regular LICENSE.txt member. `zip::ZipFile::is_file` only hides
+/// trailing-slash directories and `S_IFLNK`.
+const UNIX_FILE_TYPE_MASK: u32 = 0o170_000;
+const UNIX_S_IFREG: u32 = 0o100_000;
+/// APPNOTE DOS directory bit in the low 16 bits of central-directory
+/// `external_file_attributes`. Rejected even when the member name has no
+/// trailing slash and Unix type bits look regular.
+const DOS_DIRECTORY_ATTRIBUTE: u32 = 0x10;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RepositoryLicenseNotices {
+    mit: Vec<u8>,
+    apache: Vec<u8>,
+}
+
+fn load_repository_license_notices(root: &Path) -> Result<RepositoryLicenseNotices, String> {
+    let mit = read_complete_license_notice(root.join(ROOT_LICENSE_MIT), ROOT_LICENSE_MIT)?;
+    let apache = read_complete_license_notice(root.join(ROOT_LICENSE_APACHE), ROOT_LICENSE_APACHE)?;
+    if mit == apache {
+        return Err(
+            "LICENSE-MIT and LICENSE-APACHE are identical; repository notices must stay distinct"
+                .to_string(),
+        );
+    }
+    Ok(RepositoryLicenseNotices { mit, apache })
+}
+
+fn read_complete_license_notice(path: PathBuf, label: &str) -> Result<Vec<u8>, String> {
+    let bytes = fs::read(&path).map_err(|err| {
+        format!(
+            "failed to read complete {label} notice {}: {err}",
+            path.display()
+        )
+    })?;
+    if bytes.len() < COMPLETE_LICENSE_NOTICE_MIN_BYTES {
+        return Err(format!(
+            "{label} is {} bytes; complete repository notices must be at least {COMPLETE_LICENSE_NOTICE_MIN_BYTES} bytes",
+            bytes.len()
+        ));
+    }
+    Ok(bytes)
+}
+
+fn verify_source_vscode_license(
+    path: &Path,
+    notices: &RepositoryLicenseNotices,
+) -> Result<(), String> {
+    let actual = fs::read(path).map_err(|err| {
+        format!(
+            "failed to read {}: {err}; editors/vscode/LICENSE must carry the complete repository notices so raw vsce also ships them",
+            path.display()
+        )
+    })?;
+    require_license_bytes_contain_notices(&actual, notices, &path.display().to_string())
+}
+
+fn verify_packaged_vsix_license_notices(
+    vsix_path: &Path,
+    notices: &RepositoryLicenseNotices,
+) -> Result<(), String> {
+    let file = fs::File::open(vsix_path)
+        .map_err(|err| format!("packaged VSIX {} is missing: {err}", vsix_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|err| format!("packaged VSIX {} is not a zip: {err}", vsix_path.display()))?;
+    let actual = read_vsix_license_txt_member(&mut archive, vsix_path)?;
+    require_license_bytes_contain_notices(
+        &actual,
+        notices,
+        &format!(
+            "packaged VSIX {} member {VSIX_LICENSE_TXT_ENTRY}",
+            vsix_path.display()
+        ),
+    )
+}
+
+fn read_vsix_license_txt_member(
+    archive: &mut zip::ZipArchive<fs::File>,
+    vsix_path: &Path,
+) -> Result<Vec<u8>, String> {
+    let mut member = archive.by_name(VSIX_LICENSE_TXT_ENTRY).map_err(|err| {
+        format!(
+            "packaged VSIX {} is missing {VSIX_LICENSE_TXT_ENTRY}: {err}; vsce ships editors/vscode/LICENSE as that member, and it must carry the complete repository LICENSE-MIT and LICENSE-APACHE notices",
+            vsix_path.display()
+        )
+    })?;
+    use zip::HasZipMetadata;
+    require_vsix_license_txt_regular_file(
+        vsix_path,
+        member.is_file(),
+        member.unix_mode(),
+        member.get_metadata().external_attributes,
+    )?;
+    let mut actual = Vec::new();
+    std::io::copy(&mut member, &mut actual).map_err(|err| {
+        format!(
+            "failed to read packaged VSIX {} member {VSIX_LICENSE_TXT_ENTRY}: {err}",
+            vsix_path.display()
+        )
+    })?;
+    Ok(actual)
+}
+
+fn require_vsix_license_txt_regular_file(
+    vsix_path: &Path,
+    is_file: bool,
+    unix_mode: Option<u32>,
+    external_attributes: u32,
+) -> Result<(), String> {
+    if !is_file {
+        return Err(vsix_license_txt_not_regular(vsix_path));
+    }
+    if let Some(mode) = unix_mode {
+        let file_type = mode & UNIX_FILE_TYPE_MASK;
+        if file_type != 0 && file_type != UNIX_S_IFREG {
+            return Err(vsix_license_txt_not_regular(vsix_path));
+        }
+    }
+    if external_attributes & DOS_DIRECTORY_ATTRIBUTE != 0 {
+        return Err(vsix_license_txt_not_regular(vsix_path));
+    }
+    Ok(())
+}
+
+fn vsix_license_txt_not_regular(vsix_path: &Path) -> String {
+    format!(
+        "packaged VSIX {} member {VSIX_LICENSE_TXT_ENTRY} is not a regular file",
+        vsix_path.display()
+    )
+}
+
+fn require_license_bytes_contain_notices(
+    actual: &[u8],
+    notices: &RepositoryLicenseNotices,
+    subject: &str,
+) -> Result<(), String> {
+    if actual.len() < COMPLETE_LICENSE_NOTICE_MIN_BYTES {
+        return Err(format!(
+            "{subject} is {} bytes; complete repository notices must be at least {COMPLETE_LICENSE_NOTICE_MIN_BYTES} bytes, not the historic editors/vscode/LICENSE pointer",
+            actual.len()
+        ));
+    }
+    require_notice_contained(actual, &notices.mit, subject, ROOT_LICENSE_MIT)?;
+    require_notice_contained(actual, &notices.apache, subject, ROOT_LICENSE_APACHE)?;
+    Ok(())
+}
+
+fn require_notice_contained(
+    haystack: &[u8],
+    notice: &[u8],
+    subject: &str,
+    label: &str,
+) -> Result<(), String> {
+    let needle = trim_ascii_bytes(notice);
+    if needle.is_empty() || !bytes_contain(haystack, needle) {
+        return Err(format!(
+            "{subject} does not contain the complete repository {label} notice"
+        ));
+    }
+    Ok(())
+}
+
+fn trim_ascii_bytes(bytes: &[u8]) -> &[u8] {
+    let Some(start) = bytes.iter().position(|byte| !byte.is_ascii_whitespace()) else {
+        return &[];
+    };
+    let end = bytes
+        .iter()
+        .rposition(|byte| !byte.is_ascii_whitespace())
+        .map_or(start, |index| index + 1);
+    bytes.get(start..end).unwrap_or(&[])
+}
+
+fn bytes_contain(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
 }
 
 fn vscode_test() -> Result<(), String> {

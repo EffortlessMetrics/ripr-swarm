@@ -53,6 +53,7 @@ pub(crate) use typescript::{
 };
 
 pub(crate) const CONFIG_FILE_NAME: &str = "ripr.toml";
+
 pub(crate) const DEFAULT_CONTEXT_RELATED_TESTS: usize = 5;
 pub(crate) const DEFAULT_LSP_SEAM_DIAGNOSTICS: bool = true;
 const DEFAULT_SUPPRESSIONS_PATH: &str = ".ripr/suppressions.toml";
@@ -190,6 +191,15 @@ fn discover_config_path(root: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Structural package workspace marker shared by CLI roots and TypeScript
+/// package discovery. Arrays and objects (including Yarn's object form) mark
+/// workspaces; scalars do not. This does not validate members, globs, or schemas.
+pub(crate) fn package_json_declares_workspace(manifest: &serde_json::Value) -> bool {
+    manifest
+        .get("workspaces")
+        .is_some_and(|workspaces| workspaces.is_array() || workspaces.is_object())
 }
 
 fn is_repository_boundary(directory: &Path) -> bool {
