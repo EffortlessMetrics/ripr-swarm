@@ -109,8 +109,11 @@ these hold:
   is a plain `name: value`, shorthand `name` or method `name()`, and
   exactly one names `key`: the only entry on the changed line, which
   opens at the start of that line and ends on it (a quoted or computed key, a spread, an accessor
-  or a second `key` entry fails);
-- `o` lists `key` at its top level, and its string values are spelled
+  or a second `key` entry fails); amended 2026-10-15 (#8133), `key` is
+  not `__proto__`, whose colon form sets the prototype and adds no field;
+- `o` lists `key` at its top level and no `__proto__` key (amended
+  2026-10-15, #8133: `toMatchObject` compares own fields, and
+  `{ __proto__: a }` has none), and its string values are spelled
   with ASCII source text only (an object holding a non-ASCII string keeps
   the weak reading; an ASCII escape such as `"\u00e9"` is read; see Known
   limits).
@@ -221,7 +224,9 @@ documented decisions and proceed"). Recorded on #6654.
    `return { ... }.adult`, a changed `adult : 18 <= age` line that is
    the second arm of a multi-line `status: admin ?` ternary, or a changed
    `adult: age >= 18, senior: 18 <= age,` line where only `senior` changed:
-   rule 1 reads no pin.
+   rule 1 reads no pin. Amended 2026-10-15 (#8133): a changed
+   `__proto__: base,` line, or an expected `{ __proto__: base }`, reads
+   no pin either.
 
 ## Test Mapping
 

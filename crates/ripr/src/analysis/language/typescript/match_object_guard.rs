@@ -50,7 +50,9 @@ fn flat_object_keys(object_text: &str) -> Option<Vec<String>> {
                     .and_then(|key| key.strip_suffix('\''))
             })
             .unwrap_or(raw_key);
-        if key.is_empty() {
+        // `__proto__: x` (bare or quoted) sets the prototype instead of an
+        // own field, so `toMatchObject` compares nothing for it (#8133).
+        if key.is_empty() || key == "__proto__" {
             return None;
         }
         keys.push(key.to_string());
@@ -195,6 +197,11 @@ pub(crate) fn ts_owner_returned_field_key(owner_source: &str, line_text: &str) -
     let target = blank(line_text);
     let target = target.trim();
     let key = leading_identifier(target)?;
+    // A `__proto__:` entry sets the returned object's prototype, not an own
+    // field a match-object pin could list (#8133).
+    if key == "__proto__" {
+        return None;
+    }
     let value = target[key.len()..].trim_start().strip_prefix(':')?;
     // The value stays on this line: no nested literal or block opens here.
     // A string value blanks to spaces, so emptiness reads the quotes.
