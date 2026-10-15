@@ -10,6 +10,7 @@ use crate::output::review_comments::SUMMARY_REASON_NO_SAFE_PLACEMENT;
 use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state, start_here_output_state_is_known,
 };
+use crate::output::value_path::path_value;
 #[cfg(test)]
 use crate::testing::cwd_placeholder::{project_cwd_text, project_renderer_cwd, project_root_text};
 use serde_json::{Map, Value, json};
@@ -2411,14 +2412,6 @@ fn gap_records(value: &Value) -> Vec<&Value> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-fn path_value<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
-    let mut current = value;
-    for segment in path {
-        current = current.get(*segment)?;
-    }
-    Some(current)
 }
 
 fn string_path(value: &Value, path: &[&str]) -> Option<String> {

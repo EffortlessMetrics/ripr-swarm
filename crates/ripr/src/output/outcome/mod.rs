@@ -6,6 +6,7 @@
 //! mutation testing; it only reports whether static evidence moved after a
 //! focused test change.
 
+use crate::output::value_path::path_value;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1033,14 +1034,6 @@ fn usize_at_path(value: &Value, paths: &[&[&str]]) -> Option<usize> {
     paths
         .iter()
         .find_map(|path| path_value(value, path).and_then(json_scalar_as_usize))
-}
-
-fn path_value<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
-    let mut cursor = value;
-    for segment in path {
-        cursor = cursor.get(*segment)?;
-    }
-    Some(cursor)
 }
 
 fn strongest_related_oracle(seam: &Value) -> (String, String) {

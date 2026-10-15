@@ -1,4 +1,5 @@
 use super::gate::GATE_STATUS_CONFIG_ERROR;
+use crate::output::value_path::path_value;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -1037,14 +1038,6 @@ fn bool_path(value: &Value, path: &[&str]) -> bool {
     path_value(value, path)
         .and_then(Value::as_bool)
         .unwrap_or(false)
-}
-
-fn path_value<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
-    let mut current = value;
-    for key in path {
-        current = current.get(*key)?;
-    }
-    Some(current)
 }
 
 fn string_field(value: Option<&Value>) -> Option<String> {

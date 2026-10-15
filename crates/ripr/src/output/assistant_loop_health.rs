@@ -1,4 +1,5 @@
 use crate::agent::loop_commands::shell_arg;
+use crate::output::value_path::path_value;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -1092,14 +1093,6 @@ fn string_path(value: &Value, path: &[&str]) -> Option<String> {
 
 fn u64_path(value: &Value, path: &[&str]) -> Option<u64> {
     path_value(value, path).and_then(Value::as_u64)
-}
-
-fn path_value<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
-    let mut current = value;
-    for key in path {
-        current = current.get(*key)?;
-    }
-    Some(current)
 }
 
 fn value_as_string(value: &Value) -> Option<String> {

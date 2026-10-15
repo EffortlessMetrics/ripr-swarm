@@ -1,3 +1,4 @@
+use crate::output::value_path::path_value;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -579,14 +580,6 @@ fn canonical_gap_id_from_value(value: &Value) -> Option<String> {
         .or_else(|| string_path(value, &["provenance", "canonical_gap_id"]))
         .or_else(|| string_path(value, &["seam", "canonical_gap_id"]))
         .or_else(|| string_path(value, &["guidance", "canonical_gap_id"]))
-}
-
-fn path_value<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
-    let mut cursor = value;
-    for segment in path {
-        cursor = cursor.get(*segment)?;
-    }
-    Some(cursor)
 }
 
 fn array_path<'a>(value: &'a Value, path: &[&str]) -> Vec<&'a Value> {

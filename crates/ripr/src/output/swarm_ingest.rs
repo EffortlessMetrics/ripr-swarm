@@ -1,3 +1,4 @@
+use crate::output::value_path::path_value;
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -758,14 +759,6 @@ fn string_array_at(value: &Value, path: &[&str]) -> Vec<String> {
             })
             .collect(),
     )
-}
-
-fn path_value<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
-    let mut current = value;
-    for key in path {
-        current = current.get(*key)?;
-    }
-    Some(current)
 }
 
 fn dedup(values: Vec<String>) -> Vec<String> {

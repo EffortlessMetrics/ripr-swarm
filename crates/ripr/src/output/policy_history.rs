@@ -1,3 +1,4 @@
+use crate::output::value_path::path_value;
 use serde_json::{Value, json};
 
 const SCHEMA_VERSION: &str = "0.1";
@@ -1043,14 +1044,6 @@ fn usize_path(value: &Value, path: &[&str]) -> usize {
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok())
         .unwrap_or(0)
-}
-
-fn path_value<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
-    let mut current = value;
-    for key in path {
-        current = current.get(*key)?;
-    }
-    Some(current)
 }
 
 #[cfg(test)]

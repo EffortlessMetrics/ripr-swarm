@@ -6,6 +6,7 @@ use super::gate::{
     discloses_limited_findings_bound, discloses_limited_partial_scope,
     incomplete_analysis_outcome_kind,
 };
+use crate::output::value_path::path_value;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -1907,14 +1908,6 @@ fn validated_count(delta_section: &serde_json::Map<String, Value>, key: &str) ->
 
 fn string_path(value: &Value, path: &[&str]) -> Option<String> {
     path_value(value, path).and_then(string_value)
-}
-
-fn path_value<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
-    let mut cursor = value;
-    for segment in path {
-        cursor = cursor.get(*segment)?;
-    }
-    Some(cursor)
 }
 
 fn string_field(value: Option<&Value>) -> Option<String> {

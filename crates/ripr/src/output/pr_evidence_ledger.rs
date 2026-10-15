@@ -1,3 +1,4 @@
+use crate::output::value_path::path_value;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -1564,14 +1565,6 @@ fn history_json(history: &HistorySummary) -> Value {
         "new_policy_eligible_total": history.new_policy_eligible_total,
         "trend": history.trend,
     })
-}
-
-fn path_value<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
-    let mut cursor = value;
-    for segment in path {
-        cursor = cursor.get(*segment)?;
-    }
-    Some(cursor)
 }
 
 fn array_path<'a>(value: &'a Value, path: &[&str]) -> Vec<&'a Value> {

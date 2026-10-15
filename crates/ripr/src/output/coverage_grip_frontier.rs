@@ -1,3 +1,4 @@
+use crate::output::value_path::path_value;
 use serde_json::{Value, json};
 
 const SCHEMA_VERSION: &str = "0.1";
@@ -484,14 +485,6 @@ fn interpretation(coverage: &CoverageAxis, ripr: &RiprAxis) -> String {
     }
     "coverage and RIPR movement are reported separately; coverage is execution evidence, not adequacy"
         .to_string()
-}
-
-fn path_value<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
-    let mut current = value;
-    for key in path {
-        current = current.get(*key)?;
-    }
-    Some(current)
 }
 
 fn string_or_number_path(value: &Value, path: &[&str]) -> Option<String> {
