@@ -4954,46 +4954,94 @@ const EQUALITY_DEPTH_LIMIT: usize = 4;
 /// must have derived equality ([`derived_equality`]); `field` must carry no
 /// attribute and its type must compare by value. Anything ripr cannot read
 /// fails closed.
-/// RIPR-SPEC-0225 decision 8: whether `field` of `type_name` is declared as
-/// a primitive integer, so comparing it to an integer literal is the
-/// built-in `==`. `type_name` is declared once in the workspace, in a
-/// parser-backed file, without generic parameters; the field is named once,
-/// carries no attribute, and its type is a standard integer name that no
-/// workspace type, alias, rename or foreign import rebinds in the declaring
-/// file. Anything else refuses.
-pub(in crate::analysis) fn field_is_builtin_integer(
+/// RIPR-SPEC-0225 decision 8: the primitive integer type `field` of
+/// `type_name` is declared with, when `type_name` is the struct a record
+/// literal in the owner's body names, so comparing the field to an integer
+/// literal is the built-in `==`. The struct is declared exactly once in the
+/// owner's own file, in the owner's own inline module (a local item takes
+/// the name from every import), with no attribute that may compile it out
+/// or change it, no generic parameter, and no attribute on any enclosing
+/// module; no other indexed file declares a type of that name. The field is
+/// named once, carries no attribute, and its type is a standard integer
+/// name that no workspace type, alias, rename or foreign import rebinds in
+/// the owner's file. Anything else refuses.
+pub(in crate::analysis) fn field_builtin_integer(
+    owner: &FunctionSummary,
     type_name: &str,
     field: &str,
     index: &RustIndex,
-) -> bool {
-    let mut declaring = index.files().values().filter(|facts| {
-        facts.source.contains(type_name)
-            && declares_type(&mask_comments_and_strings(&facts.source), type_name)
-    });
-    let Some(declaring_file) = declaring.next() else {
-        return false;
-    };
-    if declaring.next().is_some() || declaring_file.used_lexical_fallback {
-        return false;
+) -> Option<&'static str> {
+    let file = index.files().get(&owner.file)?;
+    if file.used_lexical_fallback
+        || index.files().iter().any(|(path, other)| {
+            *path != owner.file
+                && other.source.contains(type_name)
+                && declares_type(&mask_comments_and_strings(&other.source), type_name)
+        })
+    {
+        return None;
     }
-    let Some(facts) = local_type_equality(&declaring_file.source, type_name) else {
-        return false;
+    let parse = parse_clean_source_file(&file.source)?;
+    let tree = parse.tree();
+    let modules = |node: &SyntaxNode| {
+        node.ancestors()
+            .filter_map(ast::Module::cast)
+            .collect::<Vec<_>>()
     };
-    if facts.generic_params {
-        return false;
+    let mut owners = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .is_some_and(|name| name.text() == owner.name.as_str())
+                && function.syntax().parent().is_some_and(|parent| {
+                    ast::SourceFile::can_cast(parent.kind())
+                        || ast::ItemList::can_cast(parent.kind())
+                })
+        });
+    let (Some(owner_fn), None) = (owners.next(), owners.next()) else {
+        return None;
+    };
+    let owner_modules = modules(owner_fn.syntax());
+    if owner_modules
+        .iter()
+        .any(|module| module.attrs().next().is_some())
+    {
+        return None;
+    }
+    let mut declarations = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Adt::cast)
+        .filter(|adt| adt.name().is_some_and(|name| name.text() == type_name));
+    let (Some(ast::Adt::Struct(declaration)), None) = (declarations.next(), declarations.next())
+    else {
+        return None;
+    };
+    if modules(declaration.syntax()) != owner_modules {
+        return None;
+    }
+    let facts = local_type_equality(&file.source, type_name)?;
+    if facts.generic_params || facts.other_attributes {
+        return None;
     }
     let mut named = facts
         .fields
         .iter()
         .filter(|candidate| candidate.name.as_deref() == Some(field));
     let (Some(found), None) = (named.next(), named.next()) else {
-        return false;
+        return None;
     };
-    let ty = found.ty.trim();
-    !found.has_attributes
-        && BUILTIN_INTEGERS.contains(&ty)
+    let ty = BUILTIN_INTEGERS
+        .iter()
+        .copied()
+        .find(|integer| *integer == found.ty.trim())?;
+    (!found.has_attributes
         && !type_declared_in_workspace(ty, index)
-        && !declaring_file_rebinds(&declaring_file.source, ty, false, index)
+        && !declaring_file_rebinds(&file.source, ty, false, index))
+    .then_some(ty)
 }
 
 const BUILTIN_INTEGERS: &[&str] = &[

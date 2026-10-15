@@ -273,11 +273,16 @@ rejected alternative. Any can be reversed later without touching the rest.
    later index), and the changed field `f` is built in exactly one element
    `k`, a related test pins `f` of element `k` when all of these hold:
 
+   - the struct is declared exactly once in the owner's file, in the
+     owner's own inline module (a local item takes the name from every
+     import, so a macro-generated type or a decoy in another module cannot
+     stand in), with no attribute beyond derives, docs and lint levels, no
+     generic parameter and no attribute on an enclosing module, and no other
+     indexed file declares a type of that name;
    - `f` is declared once, without attributes, as a primitive integer
-     (`u8`..`u128`, `usize`, `i8`..`i128`, `isize`) on the one workspace
-     struct of that name, which has no generic parameters, and no workspace
-     type, alias, rename or foreign import rebinds that integer name, so
-     `==` against an integer literal is the built-in comparison and not a
+     (`u8`..`u128`, `usize`, `i8`..`i128`, `isize`) that no workspace type,
+     alias, rename or foreign import rebinds in the owner's file, so `==`
+     against an integer literal is the built-in comparison and not a
      workspace `PartialEq`;
 
    - the owner's name is the name of no other indexed function, because the
@@ -307,10 +312,19 @@ rejected alternative. Any can be reversed later without touching the rest.
      integer literal; or `assert!(recv.iter().any(|r| r.f == literal))`
      (`into_iter`, literal first, no message), where every other element
      builds `f` from a decimal integer literal different from `literal`,
-     and every `fn iter`, `fn into_iter` or `fn any` written in a workspace
-     file is an indexed free, local or inherent function, so no trait
-     method or macro can make the membership iterate something other than
-     the returned elements.
+     every literal in range for `f`'s type (an out-of-range literal under
+     `overflowing_literals` wraps onto another value), and the workspace is
+     closed for iteration: every indexed file parses, nothing sits outside
+     the index (no non-UTF-8 source, include limitation, `include!` or
+     `#[path]` module), every `use`, macro path and attribute path is rooted
+     in `std`, `core`, `alloc`, `crate`, `self`, `super` or a workspace
+     package, there is no `extern crate`, no `fn $name` in a macro, and
+     every `fn iter`, `fn into_iter` or `fn any` (comments skipped) is an
+     indexed free, local or inherent function. An outside crate's trait or a
+     generated method could otherwise make the membership iterate something
+     other than the returned elements. Most real workspaces import outside
+     crates, so the membership form credits only small closed ones; the
+     indexed form does not depend on it.
 
    The membership needs the last condition because it holds through any
    element: with `[Row { total: 33 }, Row { total: a + b }]`,
@@ -321,9 +335,11 @@ rejected alternative. Any can be reversed later without touching the rest.
    `#[should_panic]` or `#[ignore]` test, an assertion message, a statement
    before the assertion (a macro that may rebind the receiver,
    `std::process::exit`), a locally defined `assert_eq!`, a method owner, a
-   `const rows: fn(..)` in the test module, a trait `iter` on the array, a
-   `#[cfg]` element and a field type with its own `PartialEq` all keep the
-   `FieldValue` missing discriminator. Owner calls get the same
+   `const rows: fn(..)` in the test module, a trait `iter` on the array
+   (written plainly, behind a comment, or by a macro), an outside crate's
+   trait, a `#[path]` module, a wrapping sibling literal, a `#[cfg]` element,
+   a field type with its own `PartialEq` and a decoy declaration of the
+   struct all keep the `FieldValue` missing discriminator. Owner calls get the same
    same-name import and cross-package defeats as reveal's owner pins. A
    `vec![..]` owner, a `let r = &rows[1]` or `let [_, r] = rows` read and a
    collected scalar owner are not covered. Rejected: crediting any
@@ -422,8 +438,8 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
   membership and index pins read `exposed`; the `total: 33` decoy, a
   computed sibling, another element's index, a shadowed receiver, a faked
   or skipped assertion, a nested module's same-name `rows`, a callable
-  `const`, a trait `iter`, a `#[cfg]` element and a custom `PartialEq` keep
-  the gap)
+  `const`, a trait `iter`, a `#[cfg]` element, a custom `PartialEq`, the
+  open-world memberships and a decoy struct declaration keep the gap)
   and the unit tests in
   `crates/ripr/src/analysis/classify/element_field_pin.rs`.
 - Planned: oracle classifier unit tests for braces outside struct-literal

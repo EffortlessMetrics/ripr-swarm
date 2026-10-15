@@ -360,3 +360,103 @@ index 1111111..2222222 100644
     );
     Ok(())
 }
+
+/// The membership needs a closed world: a trait method or macro the index
+/// cannot read in full may supply `iter` or `any`, and a sibling literal out
+/// of the field's range wraps onto the expected value (#8059 review).
+#[test]
+fn a_membership_outside_a_closed_world_keeps_the_gap() -> Result<(), String> {
+    for (first, items, label) in [
+        (
+            "0",
+            "    const DECOY: [Row; 1] = [Row { total: 33 }];\n    trait Hijack {\n        fn/**/iter(&self) -> std::slice::Iter<'_, Row>;\n    }\n    impl Hijack for [Row; 2] {\n        fn/**/iter(&self) -> std::slice::Iter<'_, Row> {\n            DECOY.iter()\n        }\n    }\n",
+            "a comment hides a trait iter",
+        ),
+        (
+            "0",
+            "    macro_rules! hijack {\n        ($m:ident) => {\n            trait Hijack {\n                fn $m(&self) -> std::iter::Once<Row>;\n            }\n            impl Hijack for [Row; 2] {\n                fn $m(&self) -> std::iter::Once<Row> {\n                    std::iter::once(Row { total: 33 })\n                }\n            }\n        };\n    }\n    hijack!(iter);\n",
+            "a macro names the trait method",
+        ),
+        (
+            "0",
+            "    use hackdep::AnyHack;\n",
+            "an outside crate's trait",
+        ),
+        (
+            "0",
+            "    #[path = \"../target/h.rs\"]\n    mod h;\n    use self::h::Hijack;\n",
+            "a module the index does not read",
+        ),
+        ("4294967329", "", "a sibling literal that wraps onto 33"),
+    ] {
+        assert_eq!(
+            field_class_with(first, items, ANY)?,
+            ExposureClass::WeaklyExposed,
+            "{label}"
+        );
+    }
+    Ok(())
+}
+
+/// The struct the owner's literals name is a macro-generated `Row` whose
+/// field compares through an always-true `PartialEq`; a plain decoy `Row`
+/// in another module must not stand in for it (#8059 review).
+#[test]
+fn a_decoy_declaration_of_the_struct_keeps_the_gap() -> Result<(), String> {
+    for decoy in [
+        "mod decoy {\n    pub struct Row {\n        pub total: u32,\n    }\n}",
+        "#[cfg(any())]\npub struct Row {\n    pub total: u32,\n}",
+    ] {
+        let lib = format!(
+            "macro_rules! real {{ ($n:ident) => {{ pub struct $n {{ pub total: W }} }}; }}
+real!(Row);
+pub struct W(pub u32);
+
+pub fn rows(a: u32, b: u32) -> [Row; 2] {{
+    [Row {{ total: W(0) }}, Row {{ total: W(a + b + 0) }}]
+}}
+
+impl PartialEq<u32> for W {{
+    fn eq(&self, _: &u32) -> bool {{
+        true
+    }}
+}}
+
+{decoy}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn rows_carry_the_sum() {{
+        let rows = rows(30, 3);
+        assert_eq!(rows[1].total, 33);
+    }}
+}}
+"
+        );
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,3 +5,3 @@
+ pub fn rows(a: u32, b: u32) -> [Row; 2] {
+-    [Row { total: W(0) }, Row { total: W(a + b) }]
++    [Row { total: W(0) }, Row { total: W(a + b + 0) }]
+ }
+";
+        let findings = TempRepo::create(&lib, diff)?.findings()?;
+        let field = findings
+            .iter()
+            .find(|finding| {
+                finding.probe.location.line == 6
+                    && finding.probe.family == ProbeFamily::FieldConstruction
+            })
+            .ok_or_else(|| {
+                format!("premise: a field_construction finding on line 6, got {findings:?}")
+            })?;
+        assert_ne!(field.class, ExposureClass::Exposed, "{decoy}");
+    }
+    Ok(())
+}

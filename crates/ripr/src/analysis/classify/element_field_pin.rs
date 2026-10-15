@@ -16,9 +16,7 @@
 //! of a plain `#[test]` that cannot leave before it.
 
 use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
-use super::owner_pin::{
-    OwnerPinSyntax, field_is_builtin_integer, targeted_free_call_reaches_owner,
-};
+use super::owner_pin::{OwnerPinSyntax, field_builtin_integer, targeted_free_call_reaches_owner};
 use crate::analysis::facts::FunctionContainer;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::Probe;
@@ -61,11 +59,12 @@ trait PinAuthority {
     /// the test's scope takes it. `receiver` is the test's own binding of
     /// the call's result, when it has one.
     fn call_reaches_owner(&self, prefix: Option<&str>, receiver: Option<&Receiver>) -> bool;
-    /// `field` of the one struct `type_name` is declared as a primitive
-    /// integer, so `==` against an integer literal is the built-in one.
-    fn field_is_builtin_integer(&self, type_name: &str, field: &str) -> bool;
-    /// A trait method or macro in the workspace may supply `iter`,
-    /// `into_iter` or `any` to the array or its iterator, so the membership
+    /// The primitive integer type `field` of the struct `type_name` (the
+    /// one the owner's record literals name) is declared with, so `==`
+    /// against an integer literal is the built-in one.
+    fn field_integer(&self, type_name: &str, field: &str) -> Option<&'static str>;
+    /// Whether the workspace may supply `iter`, `into_iter` or `any` to the
+    /// array or its iterator through a trait or macro, so the membership
     /// test may iterate something other than the returned elements.
     fn may_redefine_iteration(&self) -> bool;
 }
@@ -105,34 +104,12 @@ impl PinAuthority for SharedAuthority<'_> {
         targeted_free_call_reaches_owner(&test, self.owner, prefix, self.index, self.syntax)
     }
 
-    fn field_is_builtin_integer(&self, type_name: &str, field: &str) -> bool {
-        field_is_builtin_integer(type_name, field, self.index)
+    fn field_integer(&self, type_name: &str, field: &str) -> Option<&'static str> {
+        field_builtin_integer(self.owner, type_name, field, self.index)
     }
 
     fn may_redefine_iteration(&self) -> bool {
-        // Every `fn iter` (or `into_iter`, `any`) written in a file must be
-        // an indexed free, local or inherent one, none of which a method
-        // call on an array or a slice iterator can reach.
-        self.index.files().iter().any(|(path, facts)| {
-            ITERATION_METHODS.iter().any(|name| {
-                let harmless = self
-                    .index
-                    .functions()
-                    .iter()
-                    .filter(|function| {
-                        function.file == *path
-                            && function.name == *name
-                            && matches!(
-                                function.item.container,
-                                FunctionContainer::Free
-                                    | FunctionContainer::Local
-                                    | FunctionContainer::Inherent { .. }
-                            )
-                    })
-                    .count();
-                written_fn_count(&facts.source, name) > harmless
-            })
-        })
+        !iteration_is_closed(self.index)
     }
 }
 
@@ -145,24 +122,166 @@ struct Receiver {
 
 const ITERATION_METHODS: &[&str] = &["iter", "into_iter", "any"];
 
-/// How many times `fn name` is written in `source`, comments and macro
-/// bodies included.
-fn written_fn_count(source: &str, name: &str) -> usize {
-    source
-        .match_indices("fn")
-        .filter(|(offset, _)| {
-            let before = source[..*offset].chars().next_back();
-            let rest = &source[offset + 2..];
-            let trimmed = rest.trim_start();
-            before.is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'))
-                && trimmed.len() < rest.len()
-                && trimmed.trim_start_matches("r#").starts_with(name)
-                && trimmed.trim_start_matches("r#")[name.len()..]
-                    .chars()
-                    .next()
-                    .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'))
+/// Whether no trait or macro in reach can supply `iter`, `into_iter` or
+/// `any` to an array or a slice iterator. Every indexed file must parse, and
+/// the index must hold every source: no non-UTF-8 file, include limitation,
+/// `include!` or `#[path]` module. Every `use`, macro path and attribute
+/// path must be rooted in the standard library or the workspace (an outside
+/// crate's trait or macro is invisible), with no `extern crate`. Every `fn`
+/// a macro may name (`fn $m`) refuses, and every `fn iter`, `fn into_iter`
+/// or `fn any` token sequence, comments skipped, must be an indexed free,
+/// local or inherent function, none of which a method call on an array or a
+/// slice iterator can reach.
+fn iteration_is_closed(index: &RustIndex) -> bool {
+    if !index.non_utf8_sources.is_empty() || !index.include_limitations.is_empty() {
+        return false;
+    }
+    let roots: Vec<String> = CLOSED_ROOTS
+        .iter()
+        .map(|root| (*root).to_string())
+        .chain(
+            index
+                .package_names
+                .iter()
+                .map(|name| name.replace('-', "_")),
+        )
+        .collect();
+    let allowed = |root: &str| roots.iter().any(|known| known == root);
+    index.files().iter().all(|(path, facts)| {
+        if facts.used_lexical_fallback {
+            return false;
+        }
+        let Some(parse) = parse_clean_source_file(&facts.source) else {
+            return false;
+        };
+        let tree = parse.tree();
+        let mut written = [0usize; 3];
+        let mut tokens = tree
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| !token.kind().is_trivia());
+        while let Some(token) = tokens.next() {
+            if token.kind() != SyntaxKind::FN_KW {
+                continue;
+            }
+            match tokens.next() {
+                Some(next) if next.kind() == SyntaxKind::DOLLAR => return false,
+                Some(next) => {
+                    let text = next.text().trim_start_matches("r#");
+                    if let Some(slot) = ITERATION_METHODS.iter().position(|name| *name == text) {
+                        written[slot] += 1;
+                    }
+                }
+                None => {}
+            }
+        }
+        let harmless = |name: &str| {
+            index
+                .functions()
+                .iter()
+                .filter(|function| {
+                    function.file == *path
+                        && function.name == name
+                        && matches!(
+                            function.item.container,
+                            FunctionContainer::Free
+                                | FunctionContainer::Local
+                                | FunctionContainer::Inherent { .. }
+                        )
+                })
+                .count()
+        };
+        if ITERATION_METHODS
+            .iter()
+            .zip(written)
+            .any(|(name, count)| count > harmless(name))
+        {
+            return false;
+        }
+        tree.syntax().descendants().all(|node| {
+            if ast::ExternCrate::can_cast(node.kind()) {
+                return false;
+            }
+            if let Some(item) = ast::Use::cast(node.clone()) {
+                return item
+                    .use_tree()
+                    .is_some_and(|tree| use_roots_are(&tree, &allowed));
+            }
+            if let Some(call) = ast::MacroCall::cast(node.clone()) {
+                return call.path().is_some_and(|path| {
+                    path_root(&path).is_some_and(|(root, qualified)| {
+                        (root != "include" || qualified) && (!qualified || allowed(&root))
+                    })
+                });
+            }
+            if let Some(attribute) = ast::Attr::cast(node) {
+                return attribute_is_closed(&attribute, &allowed);
+            }
+            true
         })
-        .count()
+    })
+}
+
+/// Roots a closed workspace may name besides its own packages. Lint tool
+/// roots (`clippy::`, `rustdoc::`) appear only in lint attributes.
+const CLOSED_ROOTS: &[&str] = &[
+    "std", "core", "alloc", "crate", "self", "super", "Self", "clippy", "rustfmt", "rustdoc",
+];
+
+/// The first segment of `path` and whether more segments follow it.
+fn path_root(path: &ast::Path) -> Option<(String, bool)> {
+    let mut first = path.clone();
+    while let Some(qualifier) = first.qualifier() {
+        first = qualifier;
+    }
+    if first.coloncolon_token().is_some() {
+        return None;
+    }
+    let segment = first.segment()?;
+    let text = segment.syntax().text().to_string();
+    Some((text, first.syntax() != path.syntax()))
+}
+
+/// Every root a `use` tree names is allowed; a leading `::` never is.
+fn use_roots_are(tree: &ast::UseTree, allowed: &dyn Fn(&str) -> bool) -> bool {
+    match tree.path() {
+        Some(path) => path_root(&path).is_some_and(|(root, _)| allowed(&root)),
+        None => tree
+            .use_tree_list()
+            .is_some_and(|list| list.use_trees().all(|child| use_roots_are(&child, allowed))),
+    }
+}
+
+/// An attribute is closed when it is not `#[path]` and every `name::` it
+/// writes, its own path and its arguments (`derive(x::Y)`) included, starts
+/// at an allowed root. Read as text: a string argument naming a path refuses
+/// too.
+fn attribute_is_closed(attribute: &ast::Attr, allowed: &dyn Fn(&str) -> bool) -> bool {
+    let text = attribute.syntax().text().to_string();
+    let inner = text
+        .trim_start_matches('#')
+        .trim_start()
+        .trim_start_matches('!')
+        .trim_start()
+        .trim_start_matches('[')
+        .trim_start();
+    let head: String = inner
+        .chars()
+        .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+        .collect();
+    if head == "path" && !inner[head.len()..].trim_start().starts_with("::") {
+        return false;
+    }
+    inner.match_indices("::").all(|(offset, _)| {
+        let before = inner[..offset].trim_end();
+        let root_start = before
+            .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .map_or(0, |found| found + 1);
+        let root = &before[root_start..];
+        let qualified = before[..root_start].trim_end().ends_with("::");
+        qualified || (!root.is_empty() && allowed(root))
+    })
 }
 
 fn observes_with(
@@ -180,9 +299,9 @@ fn observes_with(
         return false;
     };
     // An integer field compares by value; a workspace `PartialEq` may not.
-    if !authority.field_is_builtin_integer(&array.type_name, &array.field) {
+    let Some(integer) = authority.field_integer(&array.type_name, &array.field) else {
         return false;
-    }
+    };
     // Exactly `#[test]`: the lexical fallback and harness-registered tests
     // carry no attributes, so an empty list cannot vouch for the test.
     if !matches!(test.attrs.as_slice(), [only] if only.trim() == "#[test]") {
@@ -271,7 +390,8 @@ fn observes_with(
     else {
         return false;
     };
-    array.pinned_by(&call, receiver.as_ref(), &owner.name, authority) && authority.admits_line(line)
+    array.pinned_by(&call, receiver.as_ref(), &owner.name, integer, authority)
+        && authority.admits_line(line)
 }
 
 /// The owner's whole body is one array of struct literals, and the probe
@@ -392,6 +512,7 @@ impl ReturnedArray {
         call: &ast::MacroCall,
         receiver: Option<&Receiver>,
         owner: &str,
+        integer: &str,
         authority: &dyn PinAuthority,
     ) -> bool {
         // A bare macro name only: a qualified path may name any crate's
@@ -428,7 +549,8 @@ impl ReturnedArray {
                     })
             }
             ("assert", [condition]) => {
-                !authority.may_redefine_iteration() && self.membership(condition, &is_receiver)
+                self.membership(condition, integer, &is_receiver)
+                    && !authority.may_redefine_iteration()
             }
             _ => false,
         }
@@ -459,7 +581,12 @@ impl ReturnedArray {
     /// `recv.iter().any(|r| r.field == literal)`, or `into_iter`, or the
     /// literal first, where every other element builds the field from a
     /// different integer literal.
-    fn membership(&self, condition: &ast::Expr, is_receiver: &dyn Fn(&ast::Expr) -> bool) -> bool {
+    fn membership(
+        &self,
+        condition: &ast::Expr,
+        integer: &str,
+        is_receiver: &dyn Fn(&ast::Expr) -> bool,
+    ) -> bool {
         let ast::Expr::MethodCallExpr(any) = unwrap_parens(condition.clone()) else {
             return false;
         };
@@ -517,11 +644,14 @@ impl ReturnedArray {
         [(&left, &right), (&right, &left)]
             .into_iter()
             .any(|(read, expected)| {
+                // Every literal must fit the field's type: an out-of-range
+                // one under `overflowing_literals` wraps onto another value.
                 reads_field(read)
                     && integer_literal(expected).is_some_and(|expected| {
-                        self.others
-                            .iter()
-                            .all(|other| other.is_some_and(|other| other != expected))
+                        fits(expected, integer)
+                            && self.others.iter().all(|other| {
+                                other.is_some_and(|other| fits(other, integer) && other != expected)
+                            })
                     })
             })
     }
@@ -657,6 +787,25 @@ fn integer_literal(expression: &ast::Expr) -> Option<i128> {
     Some(if negative { -value } else { value })
 }
 
+/// Whether `value` is in range for the primitive integer `ty`. `usize` and
+/// `isize` take their 32-bit ranges, which every target holds.
+fn fits(value: i128, ty: &str) -> bool {
+    let (low, high): (i128, i128) = match ty {
+        "u8" => (0, u8::MAX.into()),
+        "u16" => (0, u16::MAX.into()),
+        "u32" | "usize" => (0, u32::MAX.into()),
+        "u64" => (0, u64::MAX.into()),
+        "u128" => (0, i128::MAX),
+        "i8" => (i8::MIN.into(), i8::MAX.into()),
+        "i16" => (i16::MIN.into(), i16::MAX.into()),
+        "i32" | "isize" => (i32::MIN.into(), i32::MAX.into()),
+        "i64" => (i64::MIN.into(), i64::MAX.into()),
+        "i128" => (i128::MIN, i128::MAX),
+        _ => return false,
+    };
+    (low..=high).contains(&value)
+}
+
 const INTEGER_SUFFIXES: &[&str] = &[
     "i128", "isize", "i16", "i32", "i64", "i8", "u128", "usize", "u16", "u32", "u64", "u8",
 ];
@@ -742,11 +891,11 @@ mod tests {
             self.prefixes.borrow_mut().push(prefix.map(str::to_string));
             self.reaches
         }
-        fn field_is_builtin_integer(&self, type_name: &str, field: &str) -> bool {
+        fn field_integer(&self, type_name: &str, field: &str) -> Option<&'static str> {
             self.fields
                 .borrow_mut()
                 .push((type_name.to_string(), field.to_string()));
-            self.integer
+            self.integer.then_some("i32")
         }
         fn may_redefine_iteration(&self) -> bool {
             self.redefines
@@ -1144,11 +1293,9 @@ mod tests {
     }
 
     #[test]
-    fn written_fn_count_finds_every_definition_of_the_name() {
-        let source = "trait Each { fn iter(&self); }\n\
-                      impl Each for [Row; 2] { fn iter (&self) {} }\n\
-                      fn iterate() {}\nfn r#iter() {}\n// fn iter\nlet unfn iter = 1;";
-        assert_eq!(written_fn_count(source, "iter"), 4);
-        assert_eq!(written_fn_count(source, "any"), 0);
+    fn a_literal_out_of_the_field_range_never_counts() {
+        assert!(fits(255, "u8") && !fits(289, "u8") && !fits(-1, "u32"));
+        assert!(fits(-128, "i8") && !fits(128, "i8") && !fits(1 << 40, "usize"));
+        assert!(!fits(1, "f64"));
     }
 }
