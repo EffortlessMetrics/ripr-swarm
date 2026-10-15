@@ -1092,6 +1092,11 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         // Any path call named `not` reads as a negation (review of 1ae0c07).
         "assert_eq!(MyNot::not(r == Err(E::Bad)), true);",
         "assert_eq!(bool::not(r == Err(E::Bad)), true);",
+        // #8101: `From`/`Into` conversion paths carry the test as an integer.
+        "assert_eq!(From::from(r == Err(E::Bad)), n);",
+        "assert_eq!(<u8 as From<bool>>::from(r == Err(E::Bad)), 0);",
+        "assert_eq!(Into::<u8>::into(r == Err(E::Bad)), n);",
+        "assert_eq!(std::primitive::u8::from(r == Err(E::Bad)), 0);",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
@@ -1109,10 +1114,31 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert!(foo(matches!(x, A)).is_ok());",
         "assert!(foo(|| { matches!(x, A) }).is_ok());",
         "assert!(matches!(r, Err(E::Bad)).eq(&true));",
+        "assert!(foo::<T>(matches!(x, A)).is_ok());",
+        "assert_eq!(flags | compute(|v| v == 1), EXPECTED);",
     ] {
         if is_inequality_assertion(text) {
             return Err(format!("{text}: must not read as an inequality"));
         }
+    }
+    // #8101: a turbofish call and a comparison nested inside a call's
+    // arguments read as their plain spellings do.
+    for (text, plain) in [
+        (
+            "assert!(foo::<T>(matches!(x, A)).is_ok());",
+            "assert!(foo(matches!(x, A)).is_ok());",
+        ),
+        (
+            "assert_eq!(flags | compute(|v| v == 1), EXPECTED);",
+            "assert_eq!(flags | compute(v), EXPECTED);",
+        ),
+        (
+            "assert_eq!(mask & lookup(a == b), X);",
+            "assert_eq!(mask & lookup(c), X);",
+        ),
+    ] {
+        let plain = classify_assertion(plain);
+        require_classification(text, &(plain.kind, plain.strength))?;
     }
     Ok(())
 }
