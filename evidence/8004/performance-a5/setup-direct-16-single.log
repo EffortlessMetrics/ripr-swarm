@@ -1,0 +1,21 @@
+
+running 16 tests
+test unit_10::tests::subject ... ok
+test unit_11::tests::subject ... ok
+test unit_12::tests::subject ... ok
+test unit_0::tests::subject ... ok
+test unit_13::tests::subject ... ok
+test unit_14::tests::subject ... ok
+test unit_15::tests::subject ... ok
+test unit_1::tests::subject ... ok
+test unit_2::tests::subject ... ok
+test unit_3::tests::subject ... ok
+test unit_4::tests::subject ... ok
+test unit_5::tests::subject ... ok
+test unit_6::tests::subject ... ok
+test unit_7::tests::subject ... ok
+test unit_8::tests::subject ... ok
+test unit_9::tests::subject ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

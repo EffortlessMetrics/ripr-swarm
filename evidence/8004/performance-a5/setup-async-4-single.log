@@ -1,0 +1,52 @@
+warning: variant `Null` is never constructed
+ --> /workspace/perf8004/workloads/async-4-single/src/lib.rs:3:42
+  |
+3 | pub(crate) enum JsonValue { Object(u32), Null }
+  |                 ---------                ^^^^
+  |                 |
+  |                 variant in this enum
+  |
+  = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `Null` is never constructed
+  --> /workspace/perf8004/workloads/async-4-single/src/lib.rs:18:42
+   |
+18 | pub(crate) enum JsonValue { Object(u32), Null }
+   |                 ---------                ^^^^
+   |                 |
+   |                 variant in this enum
+   |
+   = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Null` is never constructed
+  --> /workspace/perf8004/workloads/async-4-single/src/lib.rs:33:42
+   |
+33 | pub(crate) enum JsonValue { Object(u32), Null }
+   |                 ---------                ^^^^
+   |                 |
+   |                 variant in this enum
+   |
+   = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Null` is never constructed
+  --> /workspace/perf8004/workloads/async-4-single/src/lib.rs:48:42
+   |
+48 | pub(crate) enum JsonValue { Object(u32), Null }
+   |                 ---------                ^^^^
+   |                 |
+   |                 variant in this enum
+   |
+   = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: 4 warnings emitted
+
+
+running 4 tests
+test unit_2::tests::subject ... ok
+test unit_1::tests::subject ... ok
+test unit_3::tests::subject ... ok
+test unit_0::tests::subject ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

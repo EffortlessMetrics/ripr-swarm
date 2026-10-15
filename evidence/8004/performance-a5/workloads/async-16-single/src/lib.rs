@@ -1,0 +1,240 @@
+mod unit_0 {
+#[derive(Clone, Copy)]
+pub(crate) enum JsonValue { Object(u32), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<u32> {
+        match self { Self::Object(value) => Some(*value), _ => None }
+    }
+}
+async fn load_as_object() -> Option<u32> { JsonValue::Object(7).as_object() }
+async fn read_load_as_object() -> Option<u32> { load_as_object().await }
+async fn read_read_load_as_object() -> Option<u32> { read_load_as_object().await }
+#[cfg(test)] mod tests { use super::*;
+#[test] fn subject() { let _future = read_read_load_as_object(); assert_eq!(7, 7); }
+}
+}
+mod unit_1 {
+#[derive(Clone, Copy)]
+pub(crate) enum JsonValue { Object(u32), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<u32> {
+        match self { Self::Object(value) => Some(*value), _ => None }
+    }
+}
+async fn load_as_object() -> Option<u32> { JsonValue::Object(7).as_object() }
+async fn read_load_as_object() -> Option<u32> { load_as_object().await }
+async fn read_read_load_as_object() -> Option<u32> { read_load_as_object().await }
+#[cfg(test)] mod tests { use super::*;
+#[test] fn subject() { let _future = read_read_load_as_object(); assert_eq!(7, 7); }
+}
+}
+mod unit_2 {
+#[derive(Clone, Copy)]
+pub(crate) enum JsonValue { Object(u32), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<u32> {
+        match self { Self::Object(value) => Some(*value), _ => None }
+    }
+}
+async fn load_as_object() -> Option<u32> { JsonValue::Object(7).as_object() }
+async fn read_load_as_object() -> Option<u32> { load_as_object().await }
+async fn read_read_load_as_object() -> Option<u32> { read_load_as_object().await }
+#[cfg(test)] mod tests { use super::*;
+#[test] fn subject() { let _future = read_read_load_as_object(); assert_eq!(7, 7); }
+}
+}
+mod unit_3 {
+#[derive(Clone, Copy)]
+pub(crate) enum JsonValue { Object(u32), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<u32> {
+        match self { Self::Object(value) => Some(*value), _ => None }
+    }
+}
+async fn load_as_object() -> Option<u32> { JsonValue::Object(7).as_object() }
+async fn read_load_as_object() -> Option<u32> { load_as_object().await }
+async fn read_read_load_as_object() -> Option<u32> { read_load_as_object().await }
+#[cfg(test)] mod tests { use super::*;
+#[test] fn subject() { let _future = read_read_load_as_object(); assert_eq!(7, 7); }
+}
+}
+mod unit_4 {
+#[derive(Clone, Copy)]
+pub(crate) enum JsonValue { Object(u32), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<u32> {
+        match self { Self::Object(value) => Some(*value), _ => None }
+    }
+}
+async fn load_as_object() -> Option<u32> { JsonValue::Object(7).as_object() }
+async fn read_load_as_object() -> Option<u32> { load_as_object().await }
+async fn read_read_load_as_object() -> Option<u32> { read_load_as_object().await }
+#[cfg(test)] mod tests { use super::*;
+#[test] fn subject() { let _future = read_read_load_as_object(); assert_eq!(7, 7); }
+}
+}
+mod unit_5 {
+#[derive(Clone, Copy)]
+pub(crate) enum JsonValue { Object(u32), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<u32> {
+        match self { Self::Object(value) => Some(*value), _ => None }
+    }
+}
+async fn load_as_object() -> Option<u32> { JsonValue::Object(7).as_object() }
+async fn read_load_as_object() -> Option<u32> { load_as_object().await }
+async fn read_read_load_as_object() -> Option<u32> { read_load_as_object().await }
+#[cfg(test)] mod tests { use super::*;
+#[test] fn subject() { let _future = read_read_load_as_object(); assert_eq!(7, 7); }
+}
+}
+mod unit_6 {
+#[derive(Clone, Copy)]
+pub(crate) enum JsonValue { Object(u32), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<u32> {
+        match self { Self::Object(value) => Some(*value), _ => None }
+    }
+}
+async fn load_as_object() -> Option<u32> { JsonValue::Object(7).as_object() }
+async fn read_load_as_object() -> Option<u32> { load_as_object().await }
+async fn read_read_load_as_object() -> Option<u32> { read_load_as_object().await }
+#[cfg(test)] mod tests { use super::*;
+#[test] fn subject() { let _future = read_read_load_as_object(); assert_eq!(7, 7); }
+}
+}
+mod unit_7 {
+#[derive(Clone, Copy)]
+pub(crate) enum JsonValue { Object(u32), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<u32> {
+        match self { Self::Object(value) => Some(*value), _ => None }
+    }
+}
+async fn load_as_object() -> Option<u32> { JsonValue::Object(7).as_object() }
+async fn read_load_as_object() -> Option<u32> { load_as_object().await }
+async fn read_read_load_as_object() -> Option<u32> { read_load_as_object().await }
+#[cfg(test)] mod tests { use super::*;
+#[test] fn subject() { let _future = read_read_load_as_object(); assert_eq!(7, 7); }
+}
+}
+mod unit_8 {
+#[derive(Clone, Copy)]
+pub(crate) enum JsonValue { Object(u32), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<u32> {
+        match self { Self::Object(value) => Some(*value), _ => None }
+    }
+}
+async fn load_as_object() -> Option<u32> { JsonValue::Object(7).as_object() }
+async fn read_load_as_object() -> Option<u32> { load_as_object().await }
+async fn read_read_load_as_object() -> Option<u32> { read_load_as_object().await }
+#[cfg(test)] mod tests { use super::*;
+#[test] fn subject() { let _future = read_read_load_as_object(); assert_eq!(7, 7); }
+}
+}
+mod unit_9 {
+#[derive(Clone, Copy)]
+pub(crate) enum JsonValue { Object(u32), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<u32> {
+        match self { Self::Object(value) => Some(*value), _ => None }
+    }
+}
+async fn load_as_object() -> Option<u32> { JsonValue::Object(7).as_object() }
+async fn read_load_as_object() -> Option<u32> { load_as_object().await }
+async fn read_read_load_as_object() -> Option<u32> { read_load_as_object().await }
+#[cfg(test)] mod tests { use super::*;
+#[test] fn subject() { let _future = read_read_load_as_object(); assert_eq!(7, 7); }
+}
+}
+mod unit_10 {
+#[derive(Clone, Copy)]
+pub(crate) enum JsonValue { Object(u32), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<u32> {
+        match self { Self::Object(value) => Some(*value), _ => None }
+    }
+}
+async fn load_as_object() -> Option<u32> { JsonValue::Object(7).as_object() }
+async fn read_load_as_object() -> Option<u32> { load_as_object().await }
+async fn read_read_load_as_object() -> Option<u32> { read_load_as_object().await }
+#[cfg(test)] mod tests { use super::*;
+#[test] fn subject() { let _future = read_read_load_as_object(); assert_eq!(7, 7); }
+}
+}
+mod unit_11 {
+#[derive(Clone, Copy)]
+pub(crate) enum JsonValue { Object(u32), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<u32> {
+        match self { Self::Object(value) => Some(*value), _ => None }
+    }
+}
+async fn load_as_object() -> Option<u32> { JsonValue::Object(7).as_object() }
+async fn read_load_as_object() -> Option<u32> { load_as_object().await }
+async fn read_read_load_as_object() -> Option<u32> { read_load_as_object().await }
+#[cfg(test)] mod tests { use super::*;
+#[test] fn subject() { let _future = read_read_load_as_object(); assert_eq!(7, 7); }
+}
+}
+mod unit_12 {
+#[derive(Clone, Copy)]
+pub(crate) enum JsonValue { Object(u32), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<u32> {
+        match self { Self::Object(value) => Some(*value), _ => None }
+    }
+}
+async fn load_as_object() -> Option<u32> { JsonValue::Object(7).as_object() }
+async fn read_load_as_object() -> Option<u32> { load_as_object().await }
+async fn read_read_load_as_object() -> Option<u32> { read_load_as_object().await }
+#[cfg(test)] mod tests { use super::*;
+#[test] fn subject() { let _future = read_read_load_as_object(); assert_eq!(7, 7); }
+}
+}
+mod unit_13 {
+#[derive(Clone, Copy)]
+pub(crate) enum JsonValue { Object(u32), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<u32> {
+        match self { Self::Object(value) => Some(*value), _ => None }
+    }
+}
+async fn load_as_object() -> Option<u32> { JsonValue::Object(7).as_object() }
+async fn read_load_as_object() -> Option<u32> { load_as_object().await }
+async fn read_read_load_as_object() -> Option<u32> { read_load_as_object().await }
+#[cfg(test)] mod tests { use super::*;
+#[test] fn subject() { let _future = read_read_load_as_object(); assert_eq!(7, 7); }
+}
+}
+mod unit_14 {
+#[derive(Clone, Copy)]
+pub(crate) enum JsonValue { Object(u32), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<u32> {
+        match self { Self::Object(value) => Some(*value), _ => None }
+    }
+}
+async fn load_as_object() -> Option<u32> { JsonValue::Object(7).as_object() }
+async fn read_load_as_object() -> Option<u32> { load_as_object().await }
+async fn read_read_load_as_object() -> Option<u32> { read_load_as_object().await }
+#[cfg(test)] mod tests { use super::*;
+#[test] fn subject() { let _future = read_read_load_as_object(); assert_eq!(7, 7); }
+}
+}
+mod unit_15 {
+#[derive(Clone, Copy)]
+pub(crate) enum JsonValue { Object(u32), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<u32> {
+        match self { Self::Object(value) => Some(*value), _ => None }
+    }
+}
+async fn load_as_object() -> Option<u32> { JsonValue::Object(7).as_object() }
+async fn read_load_as_object() -> Option<u32> { load_as_object().await }
+async fn read_read_load_as_object() -> Option<u32> { read_load_as_object().await }
+#[cfg(test)] mod tests { use super::*;
+#[test] fn subject() { let _future = read_read_load_as_object(); assert_eq!(7, 7); }
+}
+}

@@ -1,0 +1,184 @@
+warning: variant `Null` is never constructed
+ --> /workspace/perf8004/workloads/async-16-single/src/lib.rs:3:42
+  |
+3 | pub(crate) enum JsonValue { Object(u32), Null }
+  |                 ---------                ^^^^
+  |                 |
+  |                 variant in this enum
+  |
+  = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `Null` is never constructed
+  --> /workspace/perf8004/workloads/async-16-single/src/lib.rs:18:42
+   |
+18 | pub(crate) enum JsonValue { Object(u32), Null }
+   |                 ---------                ^^^^
+   |                 |
+   |                 variant in this enum
+   |
+   = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Null` is never constructed
+  --> /workspace/perf8004/workloads/async-16-single/src/lib.rs:33:42
+   |
+33 | pub(crate) enum JsonValue { Object(u32), Null }
+   |                 ---------                ^^^^
+   |                 |
+   |                 variant in this enum
+   |
+   = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Null` is never constructed
+  --> /workspace/perf8004/workloads/async-16-single/src/lib.rs:48:42
+   |
+48 | pub(crate) enum JsonValue { Object(u32), Null }
+   |                 ---------                ^^^^
+   |                 |
+   |                 variant in this enum
+   |
+   = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Null` is never constructed
+  --> /workspace/perf8004/workloads/async-16-single/src/lib.rs:63:42
+   |
+63 | pub(crate) enum JsonValue { Object(u32), Null }
+   |                 ---------                ^^^^
+   |                 |
+   |                 variant in this enum
+   |
+   = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Null` is never constructed
+  --> /workspace/perf8004/workloads/async-16-single/src/lib.rs:78:42
+   |
+78 | pub(crate) enum JsonValue { Object(u32), Null }
+   |                 ---------                ^^^^
+   |                 |
+   |                 variant in this enum
+   |
+   = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Null` is never constructed
+  --> /workspace/perf8004/workloads/async-16-single/src/lib.rs:93:42
+   |
+93 | pub(crate) enum JsonValue { Object(u32), Null }
+   |                 ---------                ^^^^
+   |                 |
+   |                 variant in this enum
+   |
+   = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Null` is never constructed
+   --> /workspace/perf8004/workloads/async-16-single/src/lib.rs:108:42
+    |
+108 | pub(crate) enum JsonValue { Object(u32), Null }
+    |                 ---------                ^^^^
+    |                 |
+    |                 variant in this enum
+    |
+    = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Null` is never constructed
+   --> /workspace/perf8004/workloads/async-16-single/src/lib.rs:123:42
+    |
+123 | pub(crate) enum JsonValue { Object(u32), Null }
+    |                 ---------                ^^^^
+    |                 |
+    |                 variant in this enum
+    |
+    = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Null` is never constructed
+   --> /workspace/perf8004/workloads/async-16-single/src/lib.rs:138:42
+    |
+138 | pub(crate) enum JsonValue { Object(u32), Null }
+    |                 ---------                ^^^^
+    |                 |
+    |                 variant in this enum
+    |
+    = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Null` is never constructed
+   --> /workspace/perf8004/workloads/async-16-single/src/lib.rs:153:42
+    |
+153 | pub(crate) enum JsonValue { Object(u32), Null }
+    |                 ---------                ^^^^
+    |                 |
+    |                 variant in this enum
+    |
+    = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Null` is never constructed
+   --> /workspace/perf8004/workloads/async-16-single/src/lib.rs:168:42
+    |
+168 | pub(crate) enum JsonValue { Object(u32), Null }
+    |                 ---------                ^^^^
+    |                 |
+    |                 variant in this enum
+    |
+    = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Null` is never constructed
+   --> /workspace/perf8004/workloads/async-16-single/src/lib.rs:183:42
+    |
+183 | pub(crate) enum JsonValue { Object(u32), Null }
+    |                 ---------                ^^^^
+    |                 |
+    |                 variant in this enum
+    |
+    = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Null` is never constructed
+   --> /workspace/perf8004/workloads/async-16-single/src/lib.rs:198:42
+    |
+198 | pub(crate) enum JsonValue { Object(u32), Null }
+    |                 ---------                ^^^^
+    |                 |
+    |                 variant in this enum
+    |
+    = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Null` is never constructed
+   --> /workspace/perf8004/workloads/async-16-single/src/lib.rs:213:42
+    |
+213 | pub(crate) enum JsonValue { Object(u32), Null }
+    |                 ---------                ^^^^
+    |                 |
+    |                 variant in this enum
+    |
+    = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Null` is never constructed
+   --> /workspace/perf8004/workloads/async-16-single/src/lib.rs:228:42
+    |
+228 | pub(crate) enum JsonValue { Object(u32), Null }
+    |                 ---------                ^^^^
+    |                 |
+    |                 variant in this enum
+    |
+    = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: 16 warnings emitted
+
+
+running 16 tests
+test unit_0::tests::subject ... ok
+test unit_10::tests::subject ... ok
+test unit_11::tests::subject ... ok
+test unit_12::tests::subject ... ok
+test unit_13::tests::subject ... ok
+test unit_15::tests::subject ... ok
+test unit_14::tests::subject ... ok
+test unit_1::tests::subject ... ok
+test unit_2::tests::subject ... ok
+test unit_3::tests::subject ... ok
+test unit_4::tests::subject ... ok
+test unit_5::tests::subject ... ok
+test unit_6::tests::subject ... ok
+test unit_7::tests::subject ... ok
+test unit_8::tests::subject ... ok
+test unit_9::tests::subject ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

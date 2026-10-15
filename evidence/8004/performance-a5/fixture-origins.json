@@ -1,0 +1,66 @@
+[
+  {
+    "path": "fixtures/inherent_receiver_async_function/input/src/lib.rs",
+    "sha256": "f1568b3ec4b9331a334bd658ff4d812946553bd46deb1d55b5d7ad0ffb6afa79"
+  },
+  {
+    "path": "fixtures/inherent_receiver_async_function/controls/activated-unsupported.rs",
+    "sha256": "0bd8be8440e009ed24d68aea9ad07f1e04de80be7500508a49bedb2f0118c42f"
+  },
+  {
+    "path": "fixtures/inherent_receiver_async_function/controls/entry.rs",
+    "sha256": "4315f0d21e8802f4585e6b6262395553960da984e471a043981a1eb5a6a735d7"
+  },
+  {
+    "path": "fixtures/inherent_receiver_async_function/controls/intermediate.rs",
+    "sha256": "0633aa6bcf026f0cb4c5fdc2ecb4e344d198ba0265768f2f16439fe61b284dd6"
+  },
+  {
+    "path": "fixtures/inherent_receiver_async_function/controls/last-hop.rs",
+    "sha256": "e7aed08e30dcc2fd23ac28dd99dfa2f782df14c1bbf96b73d427a12bec6bb988"
+  },
+  {
+    "path": "fixtures/inherent_receiver_async_function/controls/method-entry.rs",
+    "sha256": "e9d354836ee6ccbe9e685bdd5912ccac628d7d595bce654abcdc817553d4b533"
+  },
+  {
+    "path": "fixtures/inherent_receiver_async_function/controls/method-last-hop.rs",
+    "sha256": "628886c5736830cb1e57948d9a0efd8c15badfead723908ce810fb4a5315b452"
+  },
+  {
+    "path": "fixtures/inherent_receiver_async_function/controls/method-sync.rs",
+    "sha256": "fdeccc6d92d2643e6bfb97d2bb667e984f204b6fe057ebdcb3f37b56f4ba5561"
+  },
+  {
+    "path": "fixtures/inherent_receiver_async_function/controls/mixed-direct.rs",
+    "sha256": "6670a60e8c04a956ac3982fa4627dce59dbe3c776315c9346dd92aade5229c32"
+  },
+  {
+    "path": "fixtures/inherent_receiver_async_function/controls/mixed-helper.rs",
+    "sha256": "257f74e659349ce47dc9cbbbebc01640ec25fcc7fee1e1877ae0b474c6c9aae1"
+  },
+  {
+    "path": "fixtures/inherent_receiver_async_function/controls/named-intermediate.rs",
+    "sha256": "6016d2b2a64f38edb9eb8f806d21d15b4d9cb1e109c803189891685d144de39a"
+  },
+  {
+    "path": "fixtures/inherent_receiver_async_function/controls/named-method-last-hop.rs",
+    "sha256": "713b029056eff7e416d07e84d1c841f573e021faa11b5f68fee01158f35185ef"
+  },
+  {
+    "path": "fixtures/inherent_receiver_async_function/controls/named-sync-chain.rs",
+    "sha256": "24638f1229a09ec1e165ace764f1796b3b4d137ccf3db73c142b5b51bb2d3e59"
+  },
+  {
+    "path": "fixtures/inherent_receiver_async_function/controls/sync-chain.rs",
+    "sha256": "8404d5425947c7a31e13378f4caed75e725a7671ebafb9c906cd96c8e43cc18e"
+  },
+  {
+    "path": "fixtures/inherent_receiver_async_function/controls/sync-keyword.rs",
+    "sha256": "44211d1148231668f45b0d26dede21d3889e68219ad030e71c17abad7d432f5e"
+  },
+  {
+    "path": "fixtures/inherent_receiver_async_function/controls/sync-with-dormant-block.rs",
+    "sha256": "886c42256f2232067f987c8a4e709700b56efd526b3476f109fad7fec96f7f13"
+  }
+]
