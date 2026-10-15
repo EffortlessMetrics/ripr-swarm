@@ -50,6 +50,12 @@ pub fn scratch_lease_contract_violations_for_repo() -> Result<Vec<String>, Strin
             }
         }
     }
+    scratch_lease_contract_violations_for_workflows(&workflows)
+}
+
+pub(crate) fn scratch_lease_contract_violations_for_workflows(
+    workflows: &[(String, String)],
+) -> Result<Vec<String>, String> {
     let action_path = Path::new(SCRATCH_LEASE_ACTION_PATH);
     let action = if action_path.exists() {
         Some(crate::read_text_lossy(action_path)?)
@@ -57,7 +63,7 @@ pub fn scratch_lease_contract_violations_for_repo() -> Result<Vec<String>, Strin
         None
     };
     Ok(scratch_lease_contract_violations(
-        &workflows,
+        workflows,
         action.as_deref(),
     ))
 }
