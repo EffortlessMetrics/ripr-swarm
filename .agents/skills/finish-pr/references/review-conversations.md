@@ -49,7 +49,7 @@ for ($conversationIndex = 0; $conversationIndex -lt $conversationPages.Count; $c
     $conversationRepo = $conversationPage.data.repository
     $conversationSubject = $conversationRepo.pullRequest
     $conversationConnection = $conversationSubject.reviewThreads
-    if ($conversationPage.errors -or $conversationRepo.nameWithOwner -cne $conversationRepository -or $conversationSubject.number -ne $conversationPr -or $conversationSubject.headRefOid -notmatch '^[0-9a-fA-F]{40}$' -or $null -eq $conversationConnection.nodes) { throw 'Incomplete or wrong-subject conversation page' }
+    if (($conversationPage.PSObject.Properties['errors'] -and $conversationPage.errors) -or $conversationRepo.nameWithOwner -cne $conversationRepository -or $conversationSubject.number -ne $conversationPr -or $conversationSubject.headRefOid -notmatch '^[0-9a-fA-F]{40}$' -or $null -eq $conversationConnection.nodes) { throw 'Incomplete or wrong-subject conversation page' }
     if ($null -eq $conversationHead) { $conversationHead = $conversationSubject.headRefOid }
     if ($conversationSubject.headRefOid -cne $conversationHead) { throw 'PR head changed during pagination; recollect' }
     $conversationMore = $conversationConnection.pageInfo.hasNextPage
@@ -106,6 +106,7 @@ Challenge the same block with each fixture variant:
 
 | Variant | Expected result |
 | --- | --- |
+| Run valid and empty inventories under inherited StrictMode | Same packet and obligations as normal mode |
 | Resolve both open threads | 3 inspected, 0 unresolved; next action still requires review/checks/protections |
 | Keep only page 1 (`hasNextPage=true`) | Error, no success packet |
 | Change page 2 head | Error, no success packet |
