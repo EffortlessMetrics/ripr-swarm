@@ -11592,6 +11592,49 @@ fn check_rejects_missing_and_file_roots_without_leaking_the_git_invocation() -> 
 }
 
 #[test]
+fn config_validate_does_not_consume_root_flag_as_a_path() -> Result<(), String> {
+    let workspace = unique_temp_workspace("config-missing-root-value");
+    // A real directory makes the old parser falsely report success instead of
+    // merely producing a misleading filesystem error for the missing value.
+    std::fs::create_dir_all(workspace.join("--root")).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(workspace.join("--workspace")).map_err(|error| error.to_string())?;
+    let result = (|| {
+        for args in [
+            vec!["config", "validate", "--root"],
+            vec!["config", "validate", "--root", "--root"],
+            vec!["config", "validate", "--root", "--root", "."],
+        ] {
+            let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&workspace), &args)
+                .map_err(|error| error.to_string())?;
+            assert_eq!(output.status.code(), Some(2), "args: {args:?}");
+            assert!(output.stdout.is_empty(), "args: {args:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stderr).trim(),
+                "ripr: missing value for --root",
+                "args: {args:?}"
+            );
+        }
+
+        // Explicit paths to flag-named directories and other dash-prefixed paths
+        // remain usable; refusing every value starting with '-' is too broad.
+        for path in ["./--root", "--workspace"] {
+            let output = run_command(
+                env!("CARGO_BIN_EXE_ripr"),
+                Some(&workspace),
+                &["config", "validate", "--root", path],
+            )
+            .map_err(|error| error.to_string())?;
+            assert!(output.status.success(), "stderr: {:?}", output.stderr);
+            assert!(String::from_utf8_lossy(&output.stdout).contains("built-in defaults apply"));
+            assert!(output.stderr.is_empty());
+        }
+        Ok(())
+    })();
+    ignore_remove_dir_all(&workspace);
+    result
+}
+
+#[test]
 fn config_validate_rejects_missing_and_file_roots() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
     let missing = workspace.join("missing-root");
