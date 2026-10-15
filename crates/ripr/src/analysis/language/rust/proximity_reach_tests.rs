@@ -213,6 +213,74 @@ fn d1(x: i64) -> i64 { inner_rate(x) }
 }
 
 #[test]
+fn a_no_static_path_chain_past_five_hops_does_not_displace_the_macro_witness() -> Result<(), String>
+{
+    // The `no_static_path` consumer (#8047): with no related test at all, a
+    // seven-hop chain is still tried only after the macro witness.
+    let lib = "fn inner_rate(x: i64) -> i64 {
+    3 * x
+}
+macro_rules! call_inner {
+    ($x:expr) => {
+        inner_rate($x)
+    };
+}
+pub fn outer(x: i64) -> i64 {
+    call_inner!(x)
+}
+pub fn d7(x: i64) -> i64 { d6(x) }
+fn d6(x: i64) -> i64 { d5(x) }
+fn d5(x: i64) -> i64 { d4(x) }
+fn d4(x: i64) -> i64 { d3(x) }
+fn d3(x: i64) -> i64 { d2(x) }
+fn d2(x: i64) -> i64 { d1(x) }
+fn d1(x: i64) -> i64 { inner_rate(x) }
+";
+    let tests = "#[test]\nfn macro_path() {\n    assert_eq!(reach::outer(4), 12);\n}\n#[test]\nfn deep_path() {\n    assert_eq!(reach::d7(4), 12);\n}\n";
+    let fixture = Fixture::new("nsp-macro-and-deep", lib)?;
+    fs::create_dir_all(fixture.0.join("tests")).map_err(|e| e.to_string())?;
+    fs::write(fixture.0.join("tests/paths.rs"), tests).map_err(|e| e.to_string())?;
+    let finding = fixture.rate_finding()?;
+    // Fixture construction: no test relates to the owner.
+    assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
+    assert!(
+        finding.related_tests.is_empty(),
+        "{:?}",
+        finding.related_tests
+    );
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustMacroReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+
+    // Discriminating half: without the macro route, the chain past the
+    // bound names the transitive limit and its test.
+    let fixture = Fixture::new("nsp-deep-only", &lib.replace("call_inner!(x)", "x"))?;
+    fs::create_dir_all(fixture.0.join("tests")).map_err(|e| e.to_string())?;
+    fs::write(fixture.0.join("tests/paths.rs"), tests).map_err(|e| e.to_string())?;
+    let finding = fixture.rate_finding()?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
+    assert!(
+        finding
+            .stop_reasons
+            .contains(&StopReason::TransitiveReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("deep_path")),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
 fn a_forwarding_helper_chain_relates_and_establishes_reach_without_credit() -> Result<(), String> {
     // A same-file test that reaches a private helper through its forwarding
     // caller relates by the chain, not file proximity.

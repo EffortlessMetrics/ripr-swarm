@@ -78,8 +78,9 @@ the Rust adapter runs a bounded BFS walk over the lexical call facts in the Rust
    The walk runs only for an owner a test or a test-entered function calls
    at any depth (one forward closure per index), so an owner in code no
    test enters costs nothing. It is the last reach witness every consumer
-   tries: after the bounded walk, and after the macro (RIPR-SPEC-0117),
-   subprocess, property-macro and seam trait-dispatch witnesses. A deeper
+   tries: after the bounded walk and whichever of the macro
+   (RIPR-SPEC-0117), subprocess, property-macro and seam trait-dispatch
+   witnesses that consumer checks. A deeper
    name-only chain therefore never changes the limit or witness a
    shallower or more specific path names.
 
@@ -216,6 +217,8 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
   chain names the transitive limit (#8047)
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::seam_reach_past_five_hops_does_not_displace_a_macro_witness`
   — the walk past the bound is also the last seam reach witness (#8047)
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_no_static_path_chain_past_five_hops_does_not_displace_the_macro_witness`
+  — the same order for a `no_static_path` finding with no related test (#8047)
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_macro_call_in_test_calls_then_macro_is_skipped`
   — macro invocations skipped
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_callee_not_in_crate_then_walk_stops_fail_closed`
