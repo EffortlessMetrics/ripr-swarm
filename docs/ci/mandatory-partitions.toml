@@ -1,0 +1,6 @@
+# Offline prototype input; no workflow reads this file.
+active = false
+report = "ea51413e5f6d78113f9ee55c3bbede441309fc0a"
+profile = "ci"
+candidates = [2, 3, 4]
+wall_budget_seconds = 1200
