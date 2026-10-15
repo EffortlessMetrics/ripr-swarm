@@ -207,7 +207,11 @@ resolves it, against the live working tree when it has uncommitted tracked
 changes, otherwise `<base>...HEAD`), ranks actionable seams on its changed
 lines first, and says in the terminal, Markdown and
 `pilot-summary.json` (`current_change`) whether the top recommendation is part
-of the change. When the change has no ranked seam, pilot says the
+of the change. For match seams, changed-line membership uses the parser-owned
+inclusive match head: the `match` keyword through the scrutinee, or the arm
+pattern and guard through `=>`. Separate arm-body lines do not touch that head.
+Token anchors, seam IDs and calibration spans stay unchanged. The coverage
+survives cached facts and classifications. When the change has no ranked seam, pilot says the
 recommendation is elsewhere in the repo, says why no seam on the change ranks
 (pilot withholds its seams as static limitations, they are already gripped,
 intentional or suppressed, the seam limit left seams unanalyzed, the change is
@@ -511,6 +515,12 @@ when a user runs ripr pilot,
 then that seam ranks ahead of better-classed seams elsewhere and pilot says the
 top recommendation is part of the current change.
 
+Given an edit to a later line of a multiline match scrutinee, pattern or guard,
+when a user runs ripr pilot with cold or warm caches and either seam cap,
+then the corresponding match seam counts as changed, retains its original
+seam ID and ranks as part of the change. An edit confined to a separate arm
+body does not mark that match head as changed.
+
 Given a branch whose change touches no ranked seam,
 when a user runs ripr pilot,
 then pilot says the top recommendation is elsewhere in the repo, not part of
@@ -654,6 +664,10 @@ Current tests and reports that support the contract:
 - `crates/ripr/tests/cli_smoke.rs::pilot_withholds_static_limitations_and_keeps_a_true_gap`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_excludes_solved_governed_classes`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_puts_seams_in_the_current_change_first`
+- `crates/ripr/src/analysis/seam_inventory.rs::multiline_match_heads_follow_changed_lines_without_moving_seam_identity`
+- `crates/ripr/src/analysis/seam_inventory.rs::multiline_match_guard_lines_exclude_the_arm_body`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_match_source_lines_preserve_identity_and_refuse_invalid_ranges`
+- `crates/ripr/tests/cli_smoke.rs::pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_current_change_matches_the_seam_span_and_new_side_lines`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change`
 - `crates/ripr/tests/cli_smoke.rs::pilot_ranks_and_labels_seams_in_the_current_change`

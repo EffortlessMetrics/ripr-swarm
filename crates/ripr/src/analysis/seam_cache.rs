@@ -443,7 +443,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.71`: a changed operand beside an unchanged closure in a returned tail
 /// is neither conditional for the owner-return pin nor opaque for the
 /// propagation witness (#6578). Old entries keep those seams unrevealed.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.71";
+/// `1.72`: parser-owned match-head coverage lines (#5604).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.72";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -559,7 +560,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.71";
 /// (`0.74` is #7828's).
 /// `0.76`: same composed evidence as full `1.70`.
 /// `0.77`: same unchanged-closure tail evidence as full `1.71`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.77";
+/// `0.78`: same match-head coverage as full `1.72` (#5604).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.78";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -677,7 +679,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.77";
 /// (`0.74` is #7828's).
 /// `0.76`: same composed evidence as full `1.70`.
 /// `0.77`: same unchanged-closure tail evidence as full `1.71`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.77";
+/// `0.78`: same match-head coverage as full `1.72` (#5604).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.78";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -848,7 +851,8 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `expect` joins the trusted macro names a binding site may report
 /// (#6578). `1.34` facts lack both; `1.35` is #7828's allocation.
 /// `1.37`: compose JSON binding candidates with expect-test parser facts.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.37";
+/// `1.38`: retain separate parser-owned match-head coverage (#5604).
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.38";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -4311,7 +4315,7 @@ mod tests {
         // 1.34 -> 1.36: inline expect-test oracles and trusted `expect`
         // (#6578); 1.35 is allocated to #7828.
         // 1.36 -> 1.37: combine expect-test facts and JSON binding candidates.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.37");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.38");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -4407,7 +4411,7 @@ mod tests {
         // 1.68 is allocated to #7828.
         // 1.69 -> 1.70: combine JSON and expect-test/format evidence.
         // 1.70 -> 1.71: unchanged closures in returned tails (#6578).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.71");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.72");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4471,8 +4475,8 @@ mod tests {
         // 0.73 -> 0.75: same evidence as full 1.69 (0.74 is #7828's).
         // 0.75 -> 0.76: composed evidence as full 1.70.
         // 0.76 -> 0.77: same evidence as full 1.71.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.77");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.77");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.78");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.78");
     }
 
     #[test]
@@ -4768,6 +4772,7 @@ mod tests {
             ("1.36", "0.42"),
             ("1.37", "0.43"),
             ("1.38", "0.44"),
+            ("1.71", "0.77"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {
@@ -8727,7 +8732,9 @@ mod generation_transition_tests {
         let cache = RepoFileFactCache::at_dir(dir.clone());
         let file = Path::new("src/labels.rs");
         let content = cfg_test_helper_source().as_bytes().to_vec();
-        for predecessor in ["1.21", "1.22", "1.23", "1.24", "1.25", "1.26", "1.27"] {
+        for predecessor in [
+            "1.21", "1.22", "1.23", "1.24", "1.25", "1.26", "1.27", "1.37",
+        ] {
             let previous_key = RepoFileFactCacheKey {
                 schema_version: predecessor.to_string(),
                 analyzer_version: crate::build_identity::cache_identity().to_string(),

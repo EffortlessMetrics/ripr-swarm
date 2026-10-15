@@ -1512,6 +1512,7 @@ mod tests {
                         kind: ProbeShapeKind::Predicate,
                         text: "if amount >= threshold {".into(),
                         value_consumed: false,
+                        source_lines: None,
                     }],
                     ..FileFacts::default()
                 },
@@ -1586,6 +1587,7 @@ mod tests {
                     kind: *kind,
                     text: (*shape_text).into(),
                     value_consumed: false,
+                    source_lines: None,
                 }
             })
             .collect();
@@ -2348,6 +2350,7 @@ mod tests {
                         kind: ProbeShapeKind::Predicate,
                         text: PREDICATE.into(),
                         value_consumed: false,
+                        source_lines: None,
                     }],
                     ..FileFacts::default()
                 },
@@ -2454,6 +2457,7 @@ mod tests {
                         kind: ProbeShapeKind::CallDeletion,
                         text: expression.into(),
                         value_consumed: false,
+                        source_lines: None,
                     }],
                     ..FileFacts::default()
                 },
@@ -2501,6 +2505,7 @@ mod tests {
                         kind: ProbeShapeKind::ReturnValue,
                         text: "HirLet {\n    name,\n    storage,\n}".into(),
                         value_consumed: false,
+                        source_lines: None,
                     }],
                     ..FileFacts::default()
                 },
@@ -2607,6 +2612,7 @@ mod tests {
                         kind: ProbeShapeKind::CallDeletion,
                         text: "compute_fee(amount * 9)".into(),
                         value_consumed: false,
+                        source_lines: None,
                     }],
                     ..FileFacts::default()
                 },

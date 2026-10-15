@@ -2607,6 +2607,26 @@ fn pilot_ranking_puts_seams_in_the_current_change_first() {
 }
 
 #[test]
+fn pilot_match_source_lines_preserve_identity_and_refuse_invalid_ranges() -> Result<(), String> {
+    let base = seam("src/b.rs", 20, "pattern\n    =>");
+    let covered = base.clone().with_source_lines(Some((18, 20)));
+    assert_eq!(covered.id(), base.id());
+    assert_eq!(covered.display_line(), 20);
+    let covered: RepoSeam =
+        serde_json::from_slice(&serde_json::to_vec(&covered).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    assert!(changed("src/b.rs", 18).touches_seam(&covered));
+    assert!(!changed("src/b.rs", 21).touches_seam(&covered));
+    for lines in [None, Some((0, 20)), Some((22, 20))] {
+        let fallback = base.clone().with_source_lines(lines);
+        assert!(!changed("src/b.rs", 18).touches_seam(&fallback));
+        assert!(changed("src/b.rs", 21).touches_seam(&fallback));
+        assert!(!changed("src/b.rs", 22).touches_seam(&fallback));
+    }
+    Ok(())
+}
+
+#[test]
 fn pilot_current_change_matches_the_seam_span_and_new_side_lines() {
     let multi_line = ClassifiedSeam {
         seam: seam("src/b.rs", 20, "amount\n        >= discount_threshold"),

@@ -17861,7 +17861,24 @@ fn pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps() -> Result<
             // Repeat identical bytes to exercise a warm classified cache;
             // moving the changed line then requires a fresh source identity.
             for _ in 0..2 {
-                let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out)?;
+                let (stdout, md, summary, exposure) = run_pilot_language_fixture(&root, &out)?;
+                let match_seams: Vec<_> = exposure["seams"]
+                    .as_array()
+                    .ok_or("missing seam population")?
+                    .iter()
+                    .filter(|seam| seam["kind"] == "match_arm")
+                    .collect();
+                assert_eq!(match_seams.len(), 3, "{exposure}");
+                for seam in match_seams {
+                    let related = seam["related_tests"]
+                        .as_array()
+                        .ok_or("missing related-test population")?;
+                    assert_eq!(related.len(), usize::from(partial), "{seam}");
+                    if partial {
+                        assert_eq!(related[0]["name"], "smoke_only", "{seam}");
+                        assert_eq!(related[0]["file"], "tests/partial.rs", "{seam}");
+                    }
+                }
                 assert_eq!(
                     summary["top_actionable_seams"][0]["line"], expected_line,
                     "{summary}"
@@ -17881,6 +17898,19 @@ fn pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps() -> Result<
                 assert!(stdout.contains("current change: part of it"), "{stdout}");
                 assert!(md.contains("- Current change: part of it"), "{md}");
             }
+            let warm = run_ripr_with_env(
+                &[
+                    "pilot",
+                    "--root",
+                    &root.display().to_string(),
+                    "--out",
+                    &out.display().to_string(),
+                ],
+                &[("RIPR_REPO_EXPOSURE_LATENCY_TRACE", "1")],
+            );
+            assert_success(&warm);
+            let trace = String::from_utf8_lossy(&warm.stderr);
+            assert!(trace.contains("phase=cache_load status=hit"), "{trace}");
             let output = run_ripr_with_env(
                 &[
                     "pilot",
@@ -17895,6 +17925,13 @@ fn pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps() -> Result<
                 ],
             );
             assert_success(&output);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains(
+                    "pilot hit the seam limit; classifying the current change's 1 Rust file(s)"
+                ),
+                "{stderr}"
+            );
             let summary: serde_json::Value = serde_json::from_str(
                 &std::fs::read_to_string(out.join("pilot-summary.json"))
                     .map_err(|e| e.to_string())?,
