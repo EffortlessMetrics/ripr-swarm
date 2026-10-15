@@ -8878,6 +8878,39 @@ fn a_short_circuit_tail_pins_only_on_a_call_that_runs_every_operand() {
 }
 
 #[test]
+fn a_short_circuit_table_column_counts_only_inside_its_loop() {
+    // Outside the loop, `x` and `y` are the module's constants `(1, 0)`,
+    // which stop at `x == 0`; the loop's `(0, 0)` row is not that call.
+    const AND: &str = "x == 0 && 0 == y";
+    for (assertion, admitted) in [
+        (
+            "        assert_eq!(both_zero(x, y), want);\n        }",
+            true,
+        ),
+        (
+            "        }\n        assert_eq!(both_zero(x, y), false);",
+            false,
+        ),
+    ] {
+        let lib = short_circuit_lib(
+            AND,
+            &format!(
+                "    #[allow(non_upper_case_globals)]\n    const x: i32 = 1;\n    #[allow(non_upper_case_globals)]\n    const y: i32 = 0;\n\n    #[test]\n    fn pins() {{\n        for (x, y, want) in [(0, 0, true)] {{\n            let _ = (x, y, want);\n    {assertion}\n    }}"
+            ),
+        );
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, "both_zero", AND);
+        assert!(pin.is_some(), "the chain must establish a pin");
+        let Some(pin) = pin else { return };
+        assert_eq!(
+            !admitted_texts(&index, &pin).is_empty(),
+            admitted,
+            "{assertion}"
+        );
+    }
+}
+
+#[test]
 fn a_short_circuit_tail_refuses_a_body_with_earlier_statements() {
     // `let x = x + 1;` rebinds the parameter the chain reads, so the call's
     // `0` is not the value `x == 0` compares. The same pin without the

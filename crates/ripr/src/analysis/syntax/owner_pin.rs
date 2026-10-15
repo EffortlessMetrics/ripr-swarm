@@ -3087,6 +3087,23 @@ fn bound_constant_rows(
 /// must be a tuple of the pattern's arity. `None` when any part is not
 /// established.
 pub(crate) fn constant_table_column(fn_text: &str, name: &str) -> Option<Vec<String>> {
+    table_column(fn_text, name).map(|(column, _)| column)
+}
+
+/// [`constant_table_column`], but only when the table's loop body holds
+/// byte offset `at` of `fn_text` (#7969): a call outside the loop that
+/// names the column reads some other `name`, such as a module `const`.
+pub(crate) fn constant_table_column_around(
+    fn_text: &str,
+    name: &str,
+    at: usize,
+) -> Option<Vec<String>> {
+    let (column, body) = table_column(fn_text, name)?;
+    body.contains(&at).then_some(column)
+}
+
+/// The column and the byte range of its loop body.
+fn table_column(fn_text: &str, name: &str) -> Option<(Vec<String>, std::ops::Range<usize>)> {
     // Most tests hold no `for` at all; skip the parse for them.
     if !fn_text.contains("for") || !fn_text.contains(name) {
         return None;
@@ -3196,7 +3213,10 @@ pub(crate) fn constant_table_column(fn_text: &str, name: &str) -> Option<Vec<Str
         return None;
     }
     let rows = constant_row_array(&table, &function)?;
-    rows.exprs()
+    let range = body.syntax().text_range();
+    let body_range = usize::from(range.start())..usize::from(range.end());
+    let column = rows
+        .exprs()
         .map(|row| match position {
             None => Some(row.syntax().text().to_string()),
             Some((index, arity)) => {
@@ -3212,7 +3232,8 @@ pub(crate) fn constant_table_column(fn_text: &str, name: &str) -> Option<Vec<Str
                     .map(|cell| cell.syntax().text().to_string())
             }
         })
-        .collect()
+        .collect::<Option<Vec<_>>>()?;
+    Some((column, body_range))
 }
 
 fn constant_rows(rows: &ast::ArrayExpr) -> bool {

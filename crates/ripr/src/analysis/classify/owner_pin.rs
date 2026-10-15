@@ -2474,6 +2474,7 @@ impl OwnerReturnPin {
                             test,
                             loan.as_ref(),
                             text,
+                            assertion.line,
                             &self.name,
                         )
                     })

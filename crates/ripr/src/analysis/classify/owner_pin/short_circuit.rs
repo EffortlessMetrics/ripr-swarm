@@ -23,7 +23,7 @@ use super::closure_adaptor::{call_count, literal_boundary, top_level_arguments};
 use super::whole_word_offsets;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::rust_index::TestSummary;
-use crate::analysis::syntax::{HelperLoan, constant_table_column};
+use crate::analysis::syntax::{HelperLoan, constant_table_column_around};
 
 /// The admitted chain: its operator, the owner's parameters in order, and
 /// its operands.
@@ -112,6 +112,7 @@ impl ShortCircuitTail {
         test: &TestSummary,
         loan: Option<&HelperLoan>,
         call_text: &str,
+        call_line: usize,
         name: &str,
     ) -> bool {
         let Some(arguments) = call_arguments(call_text, name) else {
@@ -120,7 +121,7 @@ impl ShortCircuitTail {
         if arguments.len() != self.parameters.len() {
             return false;
         }
-        let Some(runs) = argument_runs(test, loan, &arguments) else {
+        let Some(runs) = argument_runs(test, loan, &arguments, call_line, name) else {
             return false;
         };
         let continues = self.operator == "&&";
@@ -377,6 +378,8 @@ fn argument_runs(
     test: &TestSummary,
     loan: Option<&HelperLoan>,
     arguments: &[String],
+    call_line: usize,
+    name: &str,
 ) -> Option<Vec<Vec<Option<String>>>> {
     enum Source {
         Literal(String),
@@ -392,7 +395,8 @@ fn argument_runs(
         } else if super::is_plain_identifier(argument) {
             let column = match loan {
                 Some(loan) => helper_column(test, loan, argument),
-                None => constant_table_column(&test.body, argument),
+                None => call_offset(test, call_line, name)
+                    .and_then(|at| constant_table_column_around(&test.body, argument, at)),
             };
             match column {
                 Some(column) => {
@@ -430,6 +434,23 @@ fn argument_runs(
 
 /// The texts `parameter` of the check helper takes at each of the test's
 /// eager calls of it, or `None` when any call is unreadable.
+/// The byte offset in `test.body` of the owner call on absolute line
+/// `call_line`, so a table column counts only for a call inside its loop.
+fn call_offset(test: &TestSummary, call_line: usize, name: &str) -> Option<usize> {
+    let index = call_line.checked_sub(test.start_line)?;
+    let mut offset = 0;
+    for (number, line) in test.body.split_inclusive('\n').enumerate() {
+        if number == index {
+            let column = line
+                .find(&format!("{name}("))
+                .unwrap_or(line.len() - line.trim_start().len());
+            return Some(offset + column);
+        }
+        offset += line.len();
+    }
+    None
+}
+
 fn helper_column(test: &TestSummary, loan: &HelperLoan, parameter: &str) -> Option<Vec<String>> {
     let index = loan.parameters.iter().position(|name| name == parameter)?;
     if loan.call_lines.is_empty() {

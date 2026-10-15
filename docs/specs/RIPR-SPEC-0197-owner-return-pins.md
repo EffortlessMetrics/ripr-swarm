@@ -1422,7 +1422,7 @@ and only per pinned call:
    index, cast, parenthesis, macro, constant, float, `+`/`-`/`*`) refuses.
 2. The pinned call evaluates every operand on some run. ripr reads each
    argument on each run: a plain literal, a column of a constant-row `for`
-   table in the test (RIPR-SPEC-0186), or, for an assertion borrowed from a
+   table in the test (RIPR-SPEC-0186) whose loop body holds the call, or, for an assertion borrowed from a
    check helper (rule 7), the helper's parameter at each of the test's
    eager calls. On at least one run every operand but the last must take
    the value that does not short-circuit (`true` for `&&`, `false` for
@@ -2054,7 +2054,8 @@ assertions. This repair shares the existing callback without that larger migrati
   `evaluates_operands_on_literal_values`; `owner_pin/tests.rs`
   `a_short_circuit_tail_pins_only_on_a_call_that_runs_every_operand`,
   `a_short_circuit_tail_refuses_impure_or_mixed_chains`,
-  `a_short_circuit_tail_refuses_a_body_with_earlier_statements`;
+  `a_short_circuit_tail_refuses_a_body_with_earlier_statements`,
+  `a_short_circuit_table_column_counts_only_inside_its_loop`;
   `owner_pin/tests/helper_pins.rs`
   `a_short_circuit_tail_reads_helper_calls_by_parameter`.
 - Bool-owner unit tests: `a_bare_assert_pins_a_bool_owner_to_true_or_false`,
