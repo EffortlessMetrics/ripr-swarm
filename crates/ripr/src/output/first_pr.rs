@@ -11,6 +11,7 @@ use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state, start_here_output_state_is_known,
 };
 #[cfg(test)]
+#[cfg(not(windows))]
 use crate::testing::cwd_placeholder::{project_cwd_text, project_renderer_cwd, project_root_text};
 use serde_json::{Map, Value, json};
 use std::env;
@@ -7022,6 +7023,7 @@ mod tests {
         serde_json::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))
     }
 
+    #[cfg(not(windows))]
     fn assert_first_successful_pr_case(corpus: &Path, case_id: &str) -> Result<(), String> {
         let case = corpus.join(case_id);
         let options = FirstPrOptions {
