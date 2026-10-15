@@ -1239,6 +1239,16 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             serde_json::from_value(sample["population"].clone()).map_err(|err| err.to_string())?;
         assert_eq!(population.rate, rate);
         assert_eq!(population.totals()?, (n, d));
+        // The stored value and status must match the population, not a stale copy.
+        let value = round(n as f64 / d as f64);
+        assert_eq!(metric["value"].as_f64(), Some(value), "{id} value");
+        let target = metric["target"].as_f64().ok_or("target missing")?;
+        let status = if value <= target {
+            "meets_target"
+        } else {
+            "below_target"
+        };
+        assert_eq!(metric["status"], status, "{id} status");
         let provenance = &sample["population_provenance"];
         assert_eq!(provenance["kind"], "committed_expected_rows");
         assert_eq!(
