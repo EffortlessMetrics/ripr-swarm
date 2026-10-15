@@ -5854,6 +5854,11 @@ id = "RIPR-SPEC-0062"
 name = "Cross-language oracle graph"
 spec = "docs/specs/RIPR-SPEC-0062-cross-language-oracle-graph.md"
 tests = [
+  # FFI attribute literal/trivia/raw-identifier regressions: #8090.
+  "crates/ripr/tests/ffi_attribute_literals.rs::raw_doc_string_cannot_invent_a_binding_attribute",
+  "crates/ripr/tests/ffi_attribute_literals.rs::raw_doc_string_cannot_hide_a_real_binding_attribute",
+  "crates/ripr/tests/ffi_attribute_literals.rs::comment_cannot_invent_a_binding_attribute",
+  "crates/ripr/tests/ffi_attribute_literals.rs::attribute_paths_ignore_trivia_and_normalize_raw_identifiers",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::changed_rust_blob_boundary_projects_ts_discriminated_cross_language_grip",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::changed_rust_blob_boundary_projects_missing_resizable_cross_language_grip",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::changed_rust_blob_boundary_with_unknown_bridge_stays_limitation",
@@ -5880,6 +5885,7 @@ tests = [
   "crates/ripr/src/analysis/syntax/ra.rs::tests::impl_block_attrs_are_kept_apart_from_the_method_attrs",
 ]
 fixtures = [
+  "fixtures/rust_ffi_attribute_literals",
   "fixtures/benches_harness_evidence",
   "fixtures/typescript-bun-ub-calibration",
   "fixtures/cross-language-oracle-graph-corpus",
@@ -5900,6 +5906,8 @@ code = [
   "xtask/src/reports/mod.rs",
 ]
 outputs = [
+  "fixtures/rust_ffi_attribute_literals/expected/check.json",
+  "fixtures/rust_ffi_attribute_literals/expected/human.txt",
   "docs/specs/RIPR-SPEC-0062-cross-language-oracle-graph.md",
   "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md",
   "docs/specs/RIPR-SPEC-0061-lane1-canonical-actionability-contract.md",
