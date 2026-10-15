@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "`priceSnapHint(150)` returns 140; the edit returns 130. The test calls `toMatchSnapshot(\"cap\")`, and the committed entry `priceSnapHint: cap 1` = `140` fails the edit under `jest --ci`. RIPR-SPEC-0258 example 4 keeps a hinted call at snapshot / medium: ripr looks for the unhinted key `priceSnapHint 1`, does not find it, and reads the runtime discriminator as weak, a spec-conservative grade. ripr reports `weakly_exposed`.",
+  "reasoning": "`priceSnapHint(150)` returns 140; the edit returns 130. The test calls `toMatchSnapshot(\"cap\")`, and the committed entry `priceSnapHint: cap 1` = `140` fails the edit under `jest --ci`. RIPR-SPEC-0258 example 4 reads a Jest call with one plain string-literal hint under the key `<title>: <hint> 1`: ripr finds that entry exactly once, with no `priceSnapHint: cap 2` and no other test sharing the counter, and reads the assertion snapshot / strong. ripr reports `exposed`.",
   "labeling_observation": {
     "ripr_commit": "3ea9a19",
     "full_checkout_verdict": "gap",

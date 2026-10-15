@@ -72,7 +72,8 @@ fails.
 ## Behavior
 
 **Rule 1. A committed entry the assertion compares with pins the value.**
-`expect(...).toMatchSnapshot()` with no argument reads `snapshot` /
+`expect(...).toMatchSnapshot()` with no argument, or under Jest with one
+hint argument (rule 2), reads `snapshot` /
 strong, without `typescript_snapshot_discriminator_unresolved`, when the
 runner's entry for it can be named and is committed:
 
@@ -101,18 +102,36 @@ runner's entry for it can be named and is committed:
   advance the same counter),
   so no hook or helper advances the counter;
 - the test body holds exactly one such call, and this assertion is its
-  only argument-free `toMatchSnapshot`;
-- no other test's describe titles and title join to the same key, which
-  would share the counter;
+  only `toMatchSnapshot`, with no argument or with the rule 2 hint;
+- no other test's describe titles and title join to the same key, or to a
+  `<titles>` that the key extends with `: ` under Jest or ` > ` under
+  Vitest, since that test's call may carry a hint that makes the same key
+  and would share the counter;
 - no title holds `` ` ``, `\`, `$`, a line break or nothing, which the file
   escapes or the runner formats;
 - the file holds the entry `<titles> 1` exactly once, at the start of a
   line as the runner writes it, and no `<titles> 2`,
   where `<titles>` joins the describe titles and the test title with a
-  space for Jest and with ` > ` for Vitest. A second entry means the
-  assertion ran more than once when the file was written.
+  space for Jest and with ` > ` for Vitest, followed under rule 2 by
+  `: <hint>`. A second entry means the assertion ran more than once when
+  the file was written.
 
-A matcher with a hint or a property-matcher argument, `.not`, an inline
+**Rule 2. A Jest hint names its entry.** Jest's
+`toMatchSnapshot(hint)` records its entry under `<titles>: <hint>
+<counter>`, with the counter kept per hinted name (jest-snapshot 30.2.0
+builds the name as `` `${currentTestName}: ${hint}` `` when the hint is
+non-empty and counts per that name in `SnapshotState.match`). A call reads under rule
+1 with that key when the file's header is `// Jest Snapshot v1` and its
+one argument is a single- or double-quoted string literal, followed by
+`)` after optional whitespace, that is not empty (Jest drops an empty
+hint) and holds no `` ` ``, `$`, `\` or line break, so its source text is
+its value and the file writes it unescaped. The body must name
+`toMatchSnapshot` once, so the hint read is the credited call's even when a
+string or comment also names the matcher. A template, an identifier, a
+concatenation, a comment before the literal, a second argument, and every
+Vitest hint keep the RIPR-SPEC-0243 reading.
+
+A matcher with a property-matcher argument, any other hint, `.not`, an inline
 snapshot without a literal and every refused shape keep their
 RIPR-SPEC-0243 / RIPR-SPEC-0247 reading. The class still follows the
 RIPR-SPEC-0243 ladder, including the observation guard.
@@ -171,8 +190,16 @@ RIPR-SPEC-0243 ladder, including the observation guard.
 4. A second snapshot call in the body (inline included), a snapshot call
    in an `afterEach` hook, two tests titled `priceEx03`, tests
    `a b` / `c` and `a` / `b c` (both keyed `a b c`), a `test.concurrent`,
-   a hint (`toMatchSnapshot("cap")`), or an empty title or one holding
-   `` ` ``, `$` or `\`: medium.
+   or an empty title or one holding `` ` ``, `$` or `\`: medium. A Jest
+   hint `toMatchSnapshot("cap")` (or `'cap'`) in test `priceSnapHint`
+   with the entry `priceSnapHint: cap 1`: strong. The same call against
+   only `priceSnapHint 1`, `priceSnapHint: cape 1` or
+   `priceSnapHint cap 1`, or with a second entry `priceSnapHint: cap 2`;
+   a template, identifier, concatenated, empty or `$`- or `\`-holding
+   hint; a second test titled `priceSnapHint` or `priceSnapHint: cap`;
+   a string naming `toMatchSnapshot` beside the call; or a Vitest file:
+   medium. Under Vitest, `describe("price")` / `test("cap")` beside a
+   top-level `test("price")` reads medium, as both may key `price > cap`.
 5. A `snapshotResolver` or `updateSnapshot` in `jest.config.js`, a
    `resolveSnapshotPath`, `update: true` or `update : true` in
    `vitest.config.ts`, a `snapshotEnvironment` or `"update": true` there,
@@ -194,7 +221,10 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `committed_jest_snapshot_entry_reads_strong` pins example 1;
   `committed_snapshot_keys_join_describe_titles_per_runner` pins example 2;
   `snapshot_without_its_committed_entry_stays_medium` pins example 3;
-  `snapshot_whose_counter_cannot_be_named_stays_medium` pins example 4;
+  `snapshot_whose_counter_cannot_be_named_stays_medium`,
+  `committed_jest_hint_entry_reads_strong`,
+  `hinted_snapshot_without_its_exact_entry_stays_medium` and
+  `hinted_snapshot_sharing_its_counter_stays_medium` pin example 4;
   `snapshot_location_or_update_override_stays_medium` pins example 5;
   `snapshot_input_differing_from_head_stays_medium` pins example 6.
 - `crates/ripr/src/analysis/committed_source/tests.rs`:
@@ -207,7 +237,7 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `jest-spec0258-ex03-no-snapshot-file` (example 3) and
   `jest-spec0258-ex05-update-script` (example 5) read `gap`, as their
   runs let the edit pass; `jest-spec0258-ex04-hint` (example 4) reads
-  `gap` against a test that fails the edit; and
+  `credited`; and
   `jest-spec0258-ex06-spaced-call` (example 6's spaced call) reads
   `credited`.
 
@@ -215,8 +245,8 @@ RIPR-SPEC-0243 ladder, including the observation guard.
 
 - `crates/ripr/src/analysis/language/typescript/committed_snapshot.rs`:
   `promote_committed_snapshots`, `committed_snapshot_file`,
-  `runner_configs`, `joined_title`, `snapshot_key`, `snapshot_calls` and
-  `mentions_update_key`.
+  `runner_configs`, `joined_title`, `snapshot_key`, `literal_hint`,
+  `snapshot_calls` and `mentions_update_key`.
 - `crates/ripr/src/analysis/committed_source.rs`: the committed-history
   probe records snapshot inputs that differ from `HEAD`;
   `snapshot_inputs_differ_in` answers for one directory.

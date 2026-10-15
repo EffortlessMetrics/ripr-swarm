@@ -309,7 +309,7 @@ impl PilotCurrentChange {
     }
 
     /// Whether a changed new-side line falls inside the seam's source span
-    /// (its display line through the last line of its expression text).
+    /// (parser-owned match-head lines, otherwise the expression-text span).
     pub(crate) fn touches(&self, entry: &ClassifiedSeam) -> bool {
         self.touches_seam(&entry.seam)
     }
@@ -325,8 +325,13 @@ impl PilotCurrentChange {
         let Some(changed) = lines.get(&normalized(relative)) else {
             return false;
         };
-        let start = seam.display_line();
-        let end = start + seam.expression().lines().count().saturating_sub(1);
+        let (start, end) = seam.source_lines().unwrap_or_else(|| {
+            let start = seam.display_line();
+            (
+                start,
+                start + seam.expression().lines().count().saturating_sub(1),
+            )
+        });
         changed.range(start..=end).next().is_some()
     }
 }
