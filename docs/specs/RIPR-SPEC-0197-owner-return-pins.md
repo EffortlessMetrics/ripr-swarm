@@ -1569,17 +1569,27 @@ idx + 1 });` got no pin and read as a gap although
    and any payload is call-free: no call or tuple parentheses, macro,
    closure, `?`, string or nested brace literal. A unit variant
    (`Err(E::V)`) has no payload and qualifies; a tuple payload
-   (`Err(E::V(x))`) reads as a call and stays a candidate.
+   (`Err(E::V(x))`) reads as a call and stays a candidate. The variant's
+   two trailing segments must name, in the owner's file, a declared
+   workspace enum that declares that variant, under a name no import or
+   alias in that file rebinds (rule 2's owner-file condition). An import
+   alias (`use crate::ConfigError as CE;`), a `type` alias, `Self::` or a
+   module path names no declared enum, so its construction keeps the
+   candidate witness, as before #7063.
 7. Payload-only changes. A completed witness must not let a variant-only
    oracle credit a change the variant does not show. For an `error_path` or
    `return_value` probe whose changed error construction carries a payload
    (a `(..)` or `{ .. }` after the variant path) and whose old text builds
-   the same variant, or has no old text (repo mode), observation is
+   the same variant (compared by the two trailing path segments, so
+   `crate::ConfigError::V` and `ConfigError::V` are one variant), or has no
+   old text (repo mode), observation is
    confirmed only by the owner pin of rules 1 to 4: an `assert_eq!` tied to
    the owner call. A written-out equality not tied to the owner call,
    `assert!(matches!(r, Err(E::V { .. })))`, `matches!(e, E::V(_))`, a
-   guarded match on the variant, `assert_ne!` and token overlap do not
-   confirm it. A change that replaces the variant is still confirmed by a
+   guarded match on the variant, a RIPR-SPEC-0231 sibling exclusion
+   (`assert_ne!(owner(..), Err(E::Sibling { .. }))` or
+   `assert!(!matches!(owner(..), Err(E::Sibling { .. })))`), any other
+   `assert_ne!` and token overlap do not confirm it. A change that replaces the variant is still confirmed by a
    variant pin (RIPR-SPEC-0107 Control B). Named residuals, each left below
    `exposed` rather than credited on a reading that can be wrong:
    - a literal-field pattern
@@ -2041,10 +2051,13 @@ assertions. This repair shares the existing callback without that larger migrati
   `an_early_err_variant_return_is_pinned_when_no_other_exit_builds_it`,
   `an_early_err_variant_pin_admits_only_its_variant_through_derived_equality`,
   `an_early_err_variant_pin_refuses_what_can_build_its_variant_unseen`,
-  `an_early_err_variant_pin_reads_only_the_owner_result`; in
+  `an_early_err_variant_pin_reads_only_the_owner_result`,
+  `an_early_err_variant_pin_refuses_a_test_file_that_rebinds_the_enum`,
+  `only_a_declared_enum_variant_completes_the_error_witness`; in
   `propagation_witness.rs`,
   `a_payload_carrying_err_on_its_own_line_completes_the_error_witness`; in
-  `reveal.rs`, `a_payload_change_needs_the_whole_value_owner_pin`);
+  `reveal.rs`, `a_payload_change_needs_the_whole_value_owner_pin`,
+  `a_sibling_exclusion_does_not_confirm_a_payload_only_change`);
   literal `matches!` pins
   (`a_literal_matches_pattern_pins_the_owner_value`); rendered scalar pins
   (`a_scalar_rendering_compared_with_exact_text_pins`,

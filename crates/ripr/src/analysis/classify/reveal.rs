@@ -1338,7 +1338,7 @@ fn analyze_related_assertions(
                 .before
                 .as_deref()
                 .and_then(error_path_variant_path)
-                .is_none_or(|before| before == path)
+                .is_none_or(|before| variant_key(&before) == variant_key(path))
     });
     // The enum segment before the variant (`PayError` in
     // `PayError::Insufficient`): the shared qualifier a sibling-variant pin
@@ -1941,6 +1941,15 @@ fn analyze_related_assertions(
         proximity_confirmation_withheld,
         override_defeated,
     }
+}
+
+/// #7063: the last two segments of an error variant path, as the
+/// `ErrVariant` owner pin reads them: `crate::ConfigError::MissingEquals`
+/// and `ConfigError::MissingEquals` name the same variant.
+fn variant_key(path: &str) -> (&str, &str) {
+    let mut segments = path.rsplit("::").map(str::trim);
+    let variant = segments.next().unwrap_or_default();
+    (segments.next().unwrap_or_default(), variant)
 }
 
 /// Extracts the variant path from a changed expression that constructs an
@@ -3299,7 +3308,9 @@ fn assertion_matches_probe_detail_with_literals(
         && names_only_sibling_variants(&assertion.text, qualifier, variant)
     {
         if sibling_excluded {
-            return (true, true);
+            // #7063 rule 7: excluding a sibling says nothing about the
+            // changed variant's payload.
+            return (true, payload_observed);
         }
         if matches!(family, ProbeFamily::ErrorPath) {
             return (false, false);
@@ -5218,6 +5229,53 @@ mod tests {
         .1
     }
 
+    /// #7063 rule 7: a RIPR-SPEC-0231 sibling exclusion on the owner call
+    /// (`assert_ne!(owner(..), Err(E::Sibling { .. }))`) observes that the
+    /// changed result is not the sibling; it says nothing about the changed
+    /// variant's payload, so it confirms a changed variant but not a change
+    /// that may sit only in the payload.
+    #[test]
+    fn a_sibling_exclusion_does_not_confirm_a_payload_only_change() {
+        let changed = "return Err(ConfigError::MissingEquals { line: idx + 1 });";
+        let with_before = |before: Option<&str>| Probe {
+            before: before.map(str::to_string),
+            after: Some(changed.to_string()),
+            ..owned_probe(ProbeFamily::ErrorPath, changed, "parse_pairs")
+        };
+        for text in [
+            "assert_ne!(parse_pairs(\"port\"), Err(ConfigError::EmptyKey { line: 1 }));",
+            "assert!(!matches!(parse_pairs(\"port\"), Err(ConfigError::EmptyKey { .. })));",
+        ] {
+            let test = test_with_assertions(
+                "port_is_not_an_empty_key",
+                vec![oracle(
+                    text,
+                    OracleKind::RelationalCheck,
+                    OracleStrength::Weak,
+                )],
+            );
+            let variant_changed = with_before(Some(
+                "return Err(ConfigError::DuplicateKey { line: idx + 1 });",
+            ));
+            let seen = discriminate_with_owner_pin(&variant_changed, changed, &test, false);
+            assert!(
+                !seen.summary.contains("observation_unverified"),
+                "{text}: a changed variant is confirmed by the exclusion: {seen:?}"
+            );
+            for before in [
+                Some("return Err(ConfigError::MissingEquals { line: line_no });"),
+                None,
+            ] {
+                let payload_only = with_before(before);
+                let unseen = discriminate_with_owner_pin(&payload_only, changed, &test, false);
+                assert!(
+                    unseen.summary.contains("observation_unverified"),
+                    "{text} {before:?}: a payload-only change was confirmed: {unseen:?}"
+                );
+            }
+        }
+    }
+
     /// #7063: a changed construction whose payload may be all that changed
     /// (`line: line_no` -> `line: idx + 1`) is not observed by a variant-only
     /// oracle: `matches!(r, Err(E::V { .. }))`, a guarded match on the
@@ -5330,6 +5388,26 @@ mod tests {
             if unknown_pinned.state != StageState::Yes {
                 return Err(format!(
                     "{family:?}: pinned unknown old text must confirm: {unknown_pinned:?}"
+                ));
+            }
+        }
+        // The old and new paths name one variant by their two trailing
+        // segments: a re-qualified path (`crate::ConfigError::..`) with a
+        // changed payload is still a payload-only change.
+        for family in [ProbeFamily::ErrorPath, ProbeFamily::ReturnValue] {
+            let requalified_text =
+                "return Err(crate::ConfigError::MissingEquals { line: idx + 1 });";
+            let requalified = Probe {
+                before: Some(
+                    "return Err(ConfigError::MissingEquals { line: line_no });".to_string(),
+                ),
+                after: Some(requalified_text.to_string()),
+                ..owned_probe(family.clone(), requalified_text, "parse_pairs")
+            };
+            let loose = reveal(&requalified, &variant_only, false);
+            if loose.state == StageState::Yes {
+                return Err(format!(
+                    "{family:?}: re-qualified payload change confirmed: {loose:?}"
                 ));
             }
         }

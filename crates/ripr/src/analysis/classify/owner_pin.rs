@@ -5323,7 +5323,20 @@ fn error_enum_admits_variant_pin(
     owner: &FunctionSummary,
     index: &RustIndex,
 ) -> bool {
-    let owner_file_names_enum = index.files().get(&owner.file).is_some_and(|facts| {
+    owner_file_names_enum(qualifier, owner, index)
+        && derived_equality(qualifier, index).is_some_and(|(facts, _)| {
+            std::iter::once(variant)
+                .chain(siblings.iter().map(String::as_str))
+                .all(|name| facts.variants.iter().any(|declared| declared == name))
+        })
+        && error_enum_compares_payload(qualifier, index)
+}
+
+/// #7063: whether the owner's file names the one workspace declaration of
+/// `qualifier` (no import or alias rebinds it) and brings none of its
+/// variants in by `use`.
+fn owner_file_names_enum(qualifier: &str, owner: &FunctionSummary, index: &RustIndex) -> bool {
+    index.files().get(&owner.file).is_some_and(|facts| {
         !declaring_file_rebinds(&facts.source, qualifier, true, index)
             && !file_use_statements(&facts.source).iter().any(|statement| {
                 let masked = mask_comments_and_strings(statement);
@@ -5335,14 +5348,28 @@ fn error_enum_admits_variant_pin(
                             .starts_with("::")
                     })
             })
-    });
-    owner_file_names_enum
-        && derived_equality(qualifier, index).is_some_and(|(facts, _)| {
-            std::iter::once(variant)
-                .chain(siblings.iter().map(String::as_str))
-                .all(|name| facts.variants.iter().any(|declared| declared == name))
-        })
-        && error_enum_compares_payload(qualifier, index)
+    })
+}
+
+/// #7063: whether the error variant path `path` (`ConfigError::MissingEquals`,
+/// read by its two trailing segments) built in `owner` names a variant that a
+/// declared workspace enum declares, under a name the owner's file does not
+/// rebind ([`owner_file_names_enum`]). An alias (`use .. as CE`,
+/// `type CE = ..`), `Self::` or a module path names no declared enum here.
+pub(in crate::analysis) fn owner_builds_declared_error_variant(
+    path: &str,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let mut segments = path.rsplit("::").map(str::trim);
+    let (Some(variant), Some(qualifier)) = (segments.next(), segments.next()) else {
+        return false;
+    };
+    is_plain_identifier(variant)
+        && is_plain_identifier(qualifier)
+        && qualifier != "Self"
+        && owner_file_names_enum(qualifier, owner, index)
+        && workspace_enum_declares_variant(qualifier, variant, index)
 }
 
 /// #7063: whether an indexed file declares an enum `qualifier` with a

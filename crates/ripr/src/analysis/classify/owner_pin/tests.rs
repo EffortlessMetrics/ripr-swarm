@@ -1481,6 +1481,79 @@ fn an_early_err_variant_pin_refuses_what_can_build_its_variant_unseen() {
     assert_eq!(pinned(&only_manual)[..2], [false, false]);
 }
 
+/// #7063: the on-line error witness completes only for a construction whose
+/// qualifier names, in the owner's file, a declared workspace enum that
+/// declares the variant. An alias, a `type` alias, `Self::` or a module path
+/// keeps main's candidate witness.
+#[test]
+fn only_a_declared_enum_variant_completes_the_error_witness() {
+    let declared = |lib: &str, path: &str| {
+        let index = index(&[(LIB, lib)]);
+        owner_builds_declared_error_variant(path, owner(&index, "parse_pairs"), &index)
+    };
+    for path in [
+        "ConfigError::MissingEquals",
+        "crate::ConfigError::MissingEquals",
+    ] {
+        assert!(declared(MISSING_EQUALS_LIB, path), "{path}");
+    }
+    let refused = [
+        // A sibling the enum does not declare.
+        (MISSING_EQUALS_LIB.to_string(), "ConfigError::Unknown"),
+        // An import alias.
+        (
+            format!("use crate::ConfigError as CE;\n{MISSING_EQUALS_LIB}"),
+            "CE::MissingEquals",
+        ),
+        // A `type` alias.
+        (
+            format!("{MISSING_EQUALS_LIB}\npub type CE = ConfigError;\n"),
+            "CE::MissingEquals",
+        ),
+        // `Self::` inside the enum's own impl.
+        (MISSING_EQUALS_LIB.to_string(), "Self::MissingEquals"),
+        // A module path.
+        (
+            format!(
+                "{MISSING_EQUALS_LIB}\npub mod errors {{\n    pub struct MissingEquals {{\n        pub line: usize,\n    }}\n}}\n"
+            ),
+            "errors::MissingEquals",
+        ),
+        // An import that rebinds the enum name itself.
+        (
+            format!("use other::ConfigError;\n{MISSING_EQUALS_LIB}"),
+            "ConfigError::MissingEquals",
+        ),
+    ];
+    for (lib, path) in &refused {
+        assert!(!declared(lib, path), "{path}\n{lib}");
+    }
+}
+
+/// #7063: a test file that rebinds the expected variant's enum name
+/// (`use other::ConfigError;`) may compare another type, so the early
+/// error-variant pin admits none of its equalities.
+#[test]
+fn an_early_err_variant_pin_refuses_a_test_file_that_rebinds_the_enum() {
+    let changed = "return Err(ConfigError::MissingEquals { line: idx + 1 });";
+    let admitted_in = |imports: &str| {
+        let tests = format!(
+            "{imports}\n\n#[test]\nfn reads() {{\n    assert_eq!(parse_pairs(\"port\"), Err(ConfigError::MissingEquals {{ line: 1 }}));\n}}\n"
+        );
+        let (index, pin) =
+            config_pin_with(MISSING_EQUALS_LIB, &tests, ProbeFamily::ErrorPath, changed);
+        assert!(pin.is_some(), "the owner-side pin must establish");
+        pin.map(|pin| admitted_texts(&index, &pin))
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        admitted_in("use demo::{parse_pairs, ConfigError};").len(),
+        1,
+        "the workspace enum's equality is the pin"
+    );
+    assert!(admitted_in("use demo::parse_pairs;\nuse other::ConfigError;").is_empty());
+}
+
 /// #7063: the early error-variant pin admits an equality only when one of
 /// its operands is the owner call or a local bound directly from it
 /// (`let r = owner(..);`, `let e = owner(..).unwrap_err();` or
