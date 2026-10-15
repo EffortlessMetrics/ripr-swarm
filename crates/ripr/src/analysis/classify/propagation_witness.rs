@@ -167,13 +167,19 @@ pub(in crate::analysis) fn current_path_witness(
                     && source_sink_tokens_overlap(&probe.expression, &sink.text)
                     && !opaque_path_text(&probe.expression)
                     && !opaque_path_text(&sink.text)
-                    || unchanged_closure_tail(probe, sink)))
+                    || unchanged_closure_tail(probe, sink)
+                    // #7063: the payload-carrying source and its
+                    // variant-named sink share no path identity.
+                    || constructs_its_error_on_its_line(probe, sink)))
     })?;
 
     let edge_kind = edge_kind_for_sink(&sink.kind)?;
     let source_identity = normalize_semantic_text(&probe.expression);
     let sink_identity = normalize_semantic_text(&sink.text);
-    let edge_status = if is_question_mark_sink(sink) || returns_itself_on_its_line(probe, sink) {
+    let edge_status = if is_question_mark_sink(sink)
+        || returns_itself_on_its_line(probe, sink)
+        || constructs_its_error_on_its_line(probe, sink)
+    {
         EdgeStatus::Established
     } else {
         edge_status_for_kind(&edge_kind, &source_identity, &sink_identity)
@@ -701,6 +707,39 @@ fn returns_itself_on_its_line(probe: &Probe, sink: &FlowSinkFact) -> bool {
         && source.strip_prefix("return ").is_some_and(|payload| {
             let payload = payload.trim();
             call_free_constructor(payload) && payload == normalize_semantic_text(&sink.text)
+        })
+}
+
+/// #7063: `return Err(E::V { line: idx + 1 });` on the changed line is one
+/// expression whose error-variant sink the flow producer names by its variant
+/// alone (`Result::Err(E::V)`), so the payload-carrying source and the sink
+/// never share an identity. The edge is established exactly as for
+/// [`returns_itself_on_its_line`]: the sink is the error variant on the
+/// probe's own line, the source is one `Err(..)` constructor (optionally
+/// after `return`) whose exact variant is the sink's, and its payload is
+/// call-free (no call, macro, closure or `?` that may drop the changed
+/// value). Whether a test observes the payload is reveal's question: a
+/// variant-only oracle does not (`payload_pin_required` in reveal).
+fn constructs_its_error_on_its_line(probe: &Probe, sink: &FlowSinkFact) -> bool {
+    if sink.kind != FlowSinkKind::ErrorVariant || sink.line != probe.location.line {
+        return false;
+    }
+    let source = normalize_semantic_text(&probe.expression);
+    let source = source.trim().trim_end_matches(';').trim_end();
+    let payload = source.strip_prefix("return ").unwrap_or(source).trim();
+    let Some(inner) = payload
+        .strip_prefix("Err(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    else {
+        return false;
+    };
+    let call_free = !inner.trim().is_empty()
+        && !inner.contains(['(', ')', '!', '|', '?', ';', '"', '\''])
+        && inner.matches('{').count() <= 1
+        && inner.matches('{').count() == inner.matches('}').count();
+    call_free
+        && super::text::exact_error_variant(payload).is_some_and(|variant| {
+            normalize_semantic_text(&sink.text) == format!("Result::Err({variant})")
         })
 }
 
@@ -1955,6 +1994,61 @@ mod tests {
             "Result::Err(E::Bad)"
         );
         Ok(())
+    }
+
+    /// #7063: `return Err(E::V { line: n });` on the changed line reaches its
+    /// own error-variant sink, which the flow producer names by the variant
+    /// alone. A sink on another line, a sibling variant, or a payload that
+    /// calls, closes over or `?`s something stays a candidate.
+    #[test]
+    fn a_payload_carrying_err_on_its_own_line_completes_the_error_witness() {
+        let complete = |expression: &str, sink_text: &str, sink_line: usize| {
+            current_path_witness(
+                &probe(ProbeFamily::ErrorPath, expression),
+                &[sink(FlowSinkKind::ErrorVariant, sink_text, sink_line)],
+            )
+            .is_some_and(|witness| {
+                witness.completeness == PathCompleteness::Complete
+                    && complete_direct_witness(
+                        &probe(ProbeFamily::ErrorPath, expression),
+                        Some(&witness),
+                    )
+            })
+        };
+        for expression in [
+            "return Err(ConfigError::MissingEquals { line: idx + 1 });",
+            "return Err(ConfigError::MissingEquals { line: line_no });",
+            "Err(ConfigError::MissingEquals { line: idx + 1 })",
+        ] {
+            assert!(
+                complete(expression, "Result::Err(ConfigError::MissingEquals)", 10),
+                "{expression}"
+            );
+        }
+        let changed = "return Err(ConfigError::MissingEquals { line: idx + 1 });";
+        // The same variant returned on another line is a different exit.
+        assert!(!complete(
+            changed,
+            "Result::Err(ConfigError::MissingEquals)",
+            11
+        ));
+        // A sibling variant's sink is not this construction's.
+        assert!(!complete(changed, "Result::Err(ConfigError::EmptyKey)", 10));
+        for expression in [
+            "return Err(ConfigError::MissingEquals { line: next(idx) });",
+            "return Err(ConfigError::MissingEquals { line: m!(idx) });",
+            "return Err(ConfigError::MissingEquals { line: f()? });",
+            "return Err(ConfigError::MissingEquals { line: (|| idx)() });",
+            "return Err(ConfigError::Bad { inner: Inner { line: idx } });",
+            // A tuple payload's parentheses read as a call: not established.
+            "return Err(ConfigError::MissingEquals(idx + 1));",
+            "return Err(error);",
+        ] {
+            assert!(
+                !complete(expression, "Result::Err(ConfigError::MissingEquals)", 10),
+                "{expression}"
+            );
+        }
     }
 
     /// The owner-checked `ok_or?` bypass keys on the probe line having no

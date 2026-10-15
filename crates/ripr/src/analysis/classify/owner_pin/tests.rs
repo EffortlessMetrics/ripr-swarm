@@ -1181,9 +1181,29 @@ fn an_early_return_is_pinned_when_it_is_the_only_source_of_its_value() {
 
 #[test]
 fn an_early_err_return_needs_to_be_the_only_err_source() {
+    // A second `return Err(..)` is another source of `Err`, so the `Err`
+    // head gate refuses it; #7063's variant gate then admits only a pin
+    // that names the changed variant, which no other exit builds.
+    let sibling = "fn f(x: i32) -> Result<i32, E> {\n    if x < 0 {\n        return Err(E::Negative);\n    }\n    if x == 0 {\n        return Err(E::Zero);\n    }\n    Ok(x)\n}";
+    let at = sibling.find("return Err(E::Negative);").unwrap_or(0);
+    let gate = return_path_gate(
+        sibling,
+        "return Err(E::Negative);",
+        sibling[..at].matches('\n').count(),
+    );
+    assert!(
+        matches!(&gate, Some(ReturnPathGate::ErrVariant { qualifier, variant })
+            if qualifier == "E" && variant == "Negative"),
+        "{}",
+        gate.is_some()
+    );
+    assert!(
+        gate.as_ref()
+            .is_some_and(|gate| !gate.admits("Err(E::Zero)"))
+    );
     for body in [
-        // A second `return Err(..)` is another source of `Err`.
-        "fn f(x: i32) -> Result<i32, E> {\n    if x < 0 {\n        return Err(E::Negative);\n    }\n    if x == 0 {\n        return Err(E::Zero);\n    }\n    Ok(x)\n}",
+        // A second `return` of the same variant is another source of it.
+        "fn f(x: i32) -> Result<i32, E> {\n    if x < 0 {\n        return Err(E::Negative);\n    }\n    if x == 0 {\n        return Err(E::Negative);\n    }\n    Ok(x)\n}",
         // `?` can produce `Err` too.
         "fn f(x: i32) -> Result<i32, E> {\n    if x < 0 {\n        return Err(E::Negative);\n    }\n    Ok(g(x)?)\n}",
     ] {
@@ -1210,6 +1230,186 @@ fn an_early_err_return_needs_to_be_the_only_err_source() {
             return_path_gate(body, changed, body[..at].matches('\n').count()).is_none(),
             "{body}"
         );
+    }
+}
+
+/// #7063: a changed early `return Err(Type::Variant { .. });` beside other
+/// `return Err(..)` exits is pinned when no other exit can build that
+/// variant, and the pin admits only an expected `Err(..)` of that variant.
+#[test]
+fn an_early_err_variant_return_is_pinned_when_no_other_exit_builds_it() {
+    let body = |other: &str, tail: &str| {
+        format!(
+            "fn f(x: i32) -> Result<i32, E> {{\n    if x < 0 {{\n        return Err(E::Negative {{ at: x - 1 }});\n    }}\n    if x == 0 {{\n        {other}\n    }}\n    {tail}\n}}"
+        )
+    };
+    let changed = "return Err(E::Negative { at: x - 1 });";
+    let gate_of = |text: &str| gate(text, changed);
+    let positive = gate_of(&body("return Err(E::Zero { at: x });", "Ok(x)"));
+    assert!(
+        matches!(&positive, Some(ReturnPathGate::ErrVariant { qualifier, variant })
+            if qualifier == "E" && variant == "Negative"),
+        "the sibling-variant exit must leave the variant gate"
+    );
+    let Some(positive) = positive else { return };
+    assert!(positive.admits("Err(E::Negative { at: 7 })"));
+    assert!(positive.admits(" Err(crate::E::Negative { at: 7 }) "));
+    for expected in [
+        "Err(E::Zero { at: 7 })",
+        "Err(F::Negative { at: 7 })",
+        "Ok(7)",
+        "Err(e)",
+        "Err(E::Negative { at: 7 }).map(|v| v)",
+    ] {
+        assert!(!positive.admits(expected), "{expected}");
+    }
+    for (other, tail) in [
+        // A second return of the same variant.
+        ("return Err(E::Negative { at: 0 });", "Ok(x)"),
+        // An opaque error may hold the changed variant.
+        ("return Err(zero_error());", "Ok(x)"),
+        ("return Err(e);", "Ok(x)"),
+        // Another enum's variant is not read as a sibling.
+        ("return Err(F::Zero);", "Ok(x)"),
+        // A `?` converts a callee error into any variant.
+        ("return Err(E::Zero { at: x });", "Ok(g(x)?)"),
+        // A tail that is not one `Ok(..)` (or a sibling variant) call.
+        ("return Err(E::Zero { at: x });", "lookup(x)"),
+        (
+            "return Err(E::Zero { at: x });",
+            "Err(E::Negative { at: 0 })",
+        ),
+    ] {
+        let text = body(other, tail);
+        assert!(gate_of(&text).is_none(), "{text}");
+    }
+    // A bare variant names no enum.
+    let bare = "fn f(x: i32) -> Result<i32, E> {\n    if x < 0 {\n        return Err(Negative { at: x });\n    }\n    if x == 0 {\n        return Err(E::Zero);\n    }\n    Ok(x)\n}";
+    assert!(gate(bare, "return Err(Negative { at: x });").is_none());
+}
+
+/// The config parser behind `config-missing-equals-line` (#7063).
+const MISSING_EQUALS_LIB: &str = "#[derive(Debug, Clone, PartialEq, Eq)]\npub enum ConfigError {\n    MissingEquals { line: usize },\n    EmptyKey { line: usize },\n}\n\npub fn parse_pairs(text: &str) -> Result<Vec<String>, ConfigError> {\n    let mut keys = Vec::new();\n    for (idx, raw) in text.lines().enumerate() {\n        let line_no = idx + 1;\n        let Some((key, _value)) = raw.split_once('=') else {\n            return Err(ConfigError::MissingEquals { line: idx + 1 });\n        };\n        if key.trim().is_empty() {\n            return Err(ConfigError::EmptyKey { line: line_no });\n        }\n        keys.push(key.trim().to_string());\n    }\n    Ok(keys)\n}\n";
+
+const MISSING_EQUALS_TESTS: &str = "use demo::{parse_pairs, ConfigError};\n\n#[test]\nfn missing_equals_reports_its_line() {\n    assert_eq!(parse_pairs(\"a = 1\\nport 9000\"), Err(ConfigError::MissingEquals { line: 2 }));\n    assert_eq!(parse_pairs(\"= 1\"), Err(ConfigError::EmptyKey { line: 1 }));\n    assert!(matches!(parse_pairs(\"port\"), Err(ConfigError::MissingEquals { .. })));\n    assert_eq!(parse_pairs(\"a = 1\"), Ok(vec![\"a\".to_string()]));\n}\n";
+
+/// The owner pin for a probe of `family` on the changed `MissingEquals`
+/// line of [`MISSING_EQUALS_LIB`] (or `lib`).
+fn config_pin(
+    lib: &str,
+    family: ProbeFamily,
+    expression: &str,
+) -> (RustIndex, Option<OwnerReturnPin>) {
+    let index = index(&[(LIB, lib), (TESTS, MISSING_EQUALS_TESTS)]);
+    let pin = {
+        let owner = owner(&index, "parse_pairs");
+        let line = owner.start_line
+            + owner
+                .body
+                .lines()
+                .position(|line| line.contains("MissingEquals"))
+                .unwrap_or(0);
+        let probe = Probe {
+            family,
+            location: SourceLocation::new(owner.file.clone(), line, 1),
+            ..return_probe(owner, expression)
+        };
+        OwnerReturnPin::establish(&probe, owner, &index)
+    };
+    (index, pin)
+}
+
+/// #7063: the error-path, return-value and field-construction probes of a
+/// changed `return Err(E::V { line: .. });` are pinned only by an
+/// `assert_eq!` expecting that variant, and only when the enum's `==` is
+/// the derived one, so the pin compares the payload.
+#[test]
+fn an_early_err_variant_pin_admits_only_its_variant_through_derived_equality() {
+    let changed = "return Err(ConfigError::MissingEquals { line: idx + 1 });";
+    let expected = vec![
+        "assert_eq!(parse_pairs(\"a = 1\\nport 9000\"), Err(ConfigError::MissingEquals { line: 2 }));"
+            .to_string(),
+    ];
+    for (family, expression) in [
+        (ProbeFamily::ErrorPath, changed),
+        (ProbeFamily::ReturnValue, changed),
+        (ProbeFamily::FieldConstruction, "line: idx + 1"),
+    ] {
+        let (index, pin) = config_pin(MISSING_EQUALS_LIB, family.clone(), expression);
+        assert!(pin.is_some(), "{family:?} must establish a pin");
+        let Some(pin) = pin else { return };
+        // Not the sibling `EmptyKey` pin, the variant-only `matches!`, or
+        // the `Ok` pin.
+        assert_eq!(admitted_texts(&index, &pin), expected, "{family:?}");
+    }
+    // A hand-written `==` may ignore the payload (or the variant).
+    let manual = MISSING_EQUALS_LIB.replace(
+        "#[derive(Debug, Clone, PartialEq, Eq)]",
+        "#[derive(Debug, Clone)]",
+    ) + "\nimpl PartialEq for ConfigError {\n    fn eq(&self, _other: &Self) -> bool {\n        true\n    }\n}\n";
+    // A second `MissingEquals` exit is another source of the variant.
+    let second = MISSING_EQUALS_LIB.replace(
+        "return Err(ConfigError::EmptyKey { line: line_no });",
+        "return Err(ConfigError::MissingEquals { line: 0 });",
+    );
+    for lib in [manual.as_str(), second.as_str()] {
+        for (family, expression) in [
+            (ProbeFamily::ErrorPath, changed),
+            (ProbeFamily::FieldConstruction, "line: idx + 1"),
+        ] {
+            assert!(
+                config_pin(lib, family.clone(), expression).1.is_none(),
+                "{family:?}\n{lib}"
+            );
+        }
+    }
+    // A field the construction does not initialize, or a construction
+    // spread over several lines, establishes no field pin.
+    assert!(
+        config_pin(
+            MISSING_EQUALS_LIB,
+            ProbeFamily::FieldConstruction,
+            "line: line_no"
+        )
+        .1
+        .is_none()
+    );
+    let spread = MISSING_EQUALS_LIB.replace(
+        "return Err(ConfigError::MissingEquals { line: idx + 1 });",
+        "return Err(ConfigError::MissingEquals {\n                line: idx + 1,\n            });",
+    );
+    assert!(
+        config_pin(&spread, ProbeFamily::FieldConstruction, "line: idx + 1,")
+            .1
+            .is_none()
+    );
+}
+
+/// #7063: a written-out `assert_eq!` against the changed variant pins its
+/// payload only when the enum's `==` is derived over by-value fields and the
+/// owner builds the variant once, with no `?` converting another error in.
+#[test]
+fn a_variant_equality_pins_the_payload_only_of_a_single_construction() {
+    let admitted = |lib: &str| {
+        let index = index(&[(LIB, lib)]);
+        let owner = owner(&index, "parse_pairs");
+        payload_equality_admitted(owner, "ConfigError", "MissingEquals", &index)
+    };
+    assert!(admitted(MISSING_EQUALS_LIB));
+    let manual = MISSING_EQUALS_LIB.replace(
+        "#[derive(Debug, Clone, PartialEq, Eq)]",
+        "#[derive(Debug, Clone)]",
+    ) + "\nimpl PartialEq for ConfigError {\n    fn eq(&self, _other: &Self) -> bool {\n        true\n    }\n}\n";
+    let second = MISSING_EQUALS_LIB.replace(
+        "return Err(ConfigError::EmptyKey { line: line_no });",
+        "return Err(ConfigError::MissingEquals { line: 0 });",
+    );
+    let question = MISSING_EQUALS_LIB.replace(
+        "keys.push(key.trim().to_string());",
+        "keys.push(check(key)?);",
+    );
+    for lib in [manual, second, question] {
+        assert!(!admitted(&lib), "{lib}");
     }
 }
 

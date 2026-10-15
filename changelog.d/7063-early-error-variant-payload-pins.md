@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A changed early `return Err(Type::Variant { .. });` beside other error variants is credited by an `assert_eq!` that pins that variant and its payload, so `config-missing-equals-line` no longer reads as a false gap; a payload-only change still needs a whole-value equality, so `matches!` on the variant, a sibling variant, a hand-written `PartialEq`, or a second construction of the variant stays below `exposed` (#7063).

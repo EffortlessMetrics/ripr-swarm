@@ -89,6 +89,13 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// itself, else `None` (`builder_override::method_cannot_store`).
     pub(in crate::analysis) call_cannot_store:
         &'a dyn Fn(&str, &str, &str, &str) -> Option<EarlierWrite>,
+    /// #7063: for `(qualifier, variant)`, whether the error enum compares
+    /// its variants' payloads by its derived `==` and the owner builds that
+    /// variant at the changed line alone, with no `?` that may convert
+    /// another error into it (`owner_pin::payload_equality_admitted`). A
+    /// whole-value `assert_eq!` against that variant then pins the changed
+    /// payload.
+    pub(in crate::analysis) payload_equality_admitted: &'a dyn Fn(&str, &str) -> bool,
 }
 
 #[cfg(test)]
@@ -119,6 +126,7 @@ fn reveal_evidence(
             owner_returns_value: true,
             constructor_starts_empty: &|_, _, _| false,
             call_cannot_store: &|_, _, _, _| None,
+            payload_equality_admitted: &|_, _| true,
         },
         None,
     );
@@ -1325,6 +1333,21 @@ fn analyze_related_assertions(
         .as_deref()
         .and_then(|path| path.rsplit("::").next())
         .map(str::to_string);
+    // #7063: a payload-carrying construction whose variant the change kept
+    // (or whose old text is unknown) may have changed only its payload.
+    // A changed variant is seen by a variant pin, as before.
+    let payload_pin_required = matches!(
+        probe.family,
+        ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
+    ) && error_construction_path.as_deref().is_some_and(|path| {
+        (super::text::variant_carries_payload(&probe.expression, path)
+            || super::text::variant_carries_payload(analysis_expression, path))
+            && probe
+                .before
+                .as_deref()
+                .and_then(error_path_variant_path)
+                .is_none_or(|before| before == path)
+    });
     // The enum segment before the variant (`PayError` in
     // `PayError::Insufficient`): the shared qualifier a sibling-variant pin
     // names. See `names_only_sibling_variants`.
@@ -1410,6 +1433,8 @@ fn analyze_related_assertions(
         owner_scoped_tokens: &owner_scoped_tokens,
         owner_shadowed: false,
         sibling_excluded: false,
+        payload_pin_required,
+        payload_equality_pinned: false,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
     // RIPR-SPEC-0040 builder override (#6613): the fields a changed struct
@@ -1665,9 +1690,15 @@ fn analyze_related_assertions(
                 // pin compares the owner's whole `Err(..)` result.
                 ProbeFamily::ErrorPath => matches!(assertion.kind, OracleKind::ExactErrorVariant),
                 ProbeFamily::Predicate => matches!(assertion.kind, OracleKind::RelationalCheck),
+                // #7063: a field of a changed `return Err(E::V { .. })` is
+                // pinned by an `exact_error_variant` `assert_eq!` whose
+                // expected `Err(E::V { .. })` the owner pin's early
+                // error-variant gate admits.
                 ProbeFamily::FieldConstruction => matches!(
                     assertion.kind,
-                    OracleKind::ExactValue | OracleKind::WholeObjectEquality
+                    OracleKind::ExactValue
+                        | OracleKind::WholeObjectEquality
+                        | OracleKind::ExactErrorVariant
                 ),
                 _ => false,
             } && pin_strength_admits(assertion)
@@ -1692,6 +1723,15 @@ fn analyze_related_assertions(
                 arm_lent_selected: unfiltered_arm_selector
                     .is_some_and(|selector| selector.lent_selects(test, assertion)),
                 sibling_excluded,
+                payload_equality_pinned: match_context.payload_pin_required
+                    && error_construction_path
+                        .as_deref()
+                        .zip(match_context.error_construction_qualifier)
+                        .zip(match_context.error_construction_variant)
+                        .is_some_and(|((path, qualifier), variant)| {
+                            equality_pins_variant_payload(&assertion.text, path)
+                                && (return_admission.payload_equality_admitted)(qualifier, variant)
+                        }),
                 ..match_context
             };
             let (matched, mut has_token_match) = assertion_matches_probe_detail_with_literals(
@@ -2190,6 +2230,84 @@ struct RevealMatchContext<'a> {
     /// sibling exclusion on the owner call (`excludes_only_sibling_variant`
     /// under standard macro bindings), decided once per assertion.
     sibling_excluded: bool,
+    /// #7063: the changed error construction carries a payload
+    /// (`Err(E::V { line: n })`) and the change may be confined to it: the
+    /// paired old text constructs the same variant, or there is none. A
+    /// variant-only oracle (`matches!(r, Err(E::V { .. }))`) cannot see a
+    /// payload change, so a value or error probe confirms observation only
+    /// through a whole-value equality: the owner-return pin, or
+    /// `payload_equality_pinned` (RIPR-SPEC-0197 "Early error-variant pins").
+    payload_pin_required: bool,
+    /// #7063: the current assertion is one plain `assert_eq!` whose operand
+    /// constructs the changed variant with a fully written payload (no `_`
+    /// or `..`), on an enum whose derived `==` compares that payload
+    /// (`equality_pins_variant_payload`), decided once per assertion.
+    payload_equality_pinned: bool,
+}
+
+/// #7063: whether `text` is one plain `assert_eq!` with an operand that
+/// constructs the error variant `variant_path` (`ParseError::TooLong`),
+/// optionally inside `Err(..)`, with its payload written out in full:
+/// `ParseError::TooLong(12)` or `Err(E::V { line: 2 })`, never a `_` or `..`
+/// that leaves part of the payload unchecked. Both trailing path segments
+/// must match. Such an equality fails when the payload differs, which a
+/// `matches!` on the variant does not.
+fn equality_pins_variant_payload(text: &str, variant_path: &str) -> bool {
+    let mut wanted = variant_path.rsplit("::");
+    let (Some(variant), Some(qualifier)) = (wanted.next(), wanted.next()) else {
+        return false;
+    };
+    if !super::owner_pin::is_plain_macro(text, "assert_eq") {
+        return false;
+    }
+    let Some(operands) = assertion_comparison_operands(text) else {
+        return false;
+    };
+    operands.iter().any(|operand| {
+        let operand = operand.trim();
+        let operand = operand
+            .strip_prefix("Err(")
+            .and_then(|rest| rest.strip_suffix(')'))
+            .filter(|inner| {
+                matching_parenthesis(operand, "Err".len()) == Some(operand.len() - 1)
+                    && !inner.trim().is_empty()
+            })
+            .map_or(operand, str::trim);
+        let head_len = operand
+            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
+            .unwrap_or(operand.len());
+        let mut segments = operand[..head_len].rsplit("::");
+        if segments.next() != Some(variant) || segments.next() != Some(qualifier) {
+            return false;
+        }
+        let payload = operand[head_len..].trim_start();
+        let masked = crate::analysis::extract::mask_comments_and_strings(payload);
+        let (open, close) = match masked.chars().next() {
+            Some('(') => ('(', ')'),
+            Some('{') => ('{', '}'),
+            _ => return false,
+        };
+        let closes_at_end = {
+            let mut depth = 0i32;
+            let mut end = None;
+            for (offset, ch) in masked.char_indices() {
+                if ch == open {
+                    depth += 1;
+                } else if ch == close {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(offset);
+                        break;
+                    }
+                }
+            }
+            end == Some(masked.len() - 1)
+        };
+        closes_at_end
+            && !masked.contains("..")
+            && !contains_as_whole_word(&masked, "_")
+            && !masked[1..masked.len() - 1].trim().is_empty()
+    })
 }
 
 /// The field a `field_construction` expression assigns: the identifier
@@ -3072,6 +3190,8 @@ fn assertion_matches_probe_detail_with_literals(
         owner_scoped_tokens,
         owner_shadowed,
         sibling_excluded,
+        payload_pin_required,
+        payload_equality_pinned,
     } = *context;
     // #4748: use the same operand boundary as extraction, including token and
     // exact-variant matching. A genuine error oracle cannot borrow its changed
@@ -3175,6 +3295,12 @@ fn assertion_matches_probe_detail_with_literals(
         import_defeats_owner,
         cross_package_defeats_owner,
     );
+    // #7063: on a construction whose change may sit only in its payload,
+    // only a whole-value equality confirms observation: the owner pin, or an
+    // `assert_eq!` against the changed variant with its payload written out.
+    // A variant token, a `matches!` or guarded match on the variant, or a
+    // shared field name says nothing about the payload's value (fail closed).
+    let payload_observed = !payload_pin_required || owner_return_pinned || payload_equality_pinned;
     // For MatchArm probes, restrict the confirmation check to variant-only
     // tokens (post-`::`). The qualifier ("Mode" in "Mode::Frozen") is shared
     // across all arms and therefore cannot confirm this specific arm.
@@ -3228,6 +3354,8 @@ fn assertion_matches_probe_detail_with_literals(
         // touches an error (`assert_eq!(reader.len(), 10)`) cannot observe
         // it, however many identifiers it shares with the changed line.
         false
+    } else if !payload_observed {
+        false
     } else if matches!(assertion.kind, OracleKind::GuardedResultMatch)
         && error_construction_variant.is_some()
     {
@@ -3274,10 +3402,11 @@ fn assertion_matches_probe_detail_with_literals(
         && let Some(variant) = error_construction_variant
     {
         let variant_matches = contains_as_whole_word(&assertion.text, variant);
+        let variant_confirms = variant_matches && payload_observed;
         if matches!(family, ProbeFamily::ErrorPath) {
-            return (variant_matches, variant_matches);
+            return (variant_matches, variant_confirms);
         }
-        return (token_match || effect_literal_match, variant_matches);
+        return (token_match || effect_literal_match, variant_confirms);
     }
     let family_match = oracle_matches_family(family, assertion);
     let matched = token_match
@@ -3343,6 +3472,8 @@ fn assertion_matches_probe_detail(
             owner_scoped_tokens: &[],
             owner_shadowed: false,
             sibling_excluded: false,
+            payload_pin_required: false,
+            payload_equality_pinned: false,
         },
         assertion,
         assertion_count,
@@ -4536,6 +4667,7 @@ mod tests {
             owner_returns_value: true,
             constructor_starts_empty: &|_, _, _| true,
             call_cannot_store: &|_, _, _, _| Some(EarlierWrite::Reads),
+            payload_equality_admitted: &|_, _| true,
         };
         let confirms = |test: &TestSummary| {
             keyed_field_read_confirms(
@@ -5136,6 +5268,156 @@ mod tests {
         Ok(())
     }
 
+    /// #7063: a changed construction whose payload may be all that changed
+    /// (`line: line_no` -> `line: idx + 1`) is not observed by a variant-only
+    /// oracle: `matches!(r, Err(E::V { .. }))`, a guarded match on the
+    /// variant, or an `assert_eq!` the owner-return pin refused. Only the
+    /// admitted whole-value owner pin confirms it. A changed variant is still
+    /// seen by a variant pin.
+    #[test]
+    fn a_payload_change_needs_the_whole_value_owner_pin() -> Result<(), String> {
+        let reveal = |probe: &Probe, test: &TestSummary, pinned: bool| {
+            let pin = move |_: &TestSummary, assertion: &OracleFact| {
+                pinned && assertion.text.starts_with("assert_eq!")
+            };
+            // The written-out equality route is admitted with the pin: a
+            // derived `==` and one construction of the variant.
+            let equality_admitted = move |_: &str, _: &str| pinned;
+            reveal_evidence_with_expression(
+                probe,
+                &probe.expression,
+                &[(test, RelationReason::DirectOwnerCall)],
+                &[],
+                &|_, _| false,
+                &|_, _| false,
+                &ReturnOracleAdmission {
+                    owner_return_pin: &pin,
+                    assertion_admitted: &|_, _| true,
+                    sibling_exclusion_admitted: &|_, _| true,
+                    proximity_may_reach_owner: &|_| false,
+                    owner_parameters: &[],
+                    expected_reaches_owner: &|_, _| false,
+                    effect_state_carried: &|_, _| true,
+                    setter_writes_field: &|_, _, _| true,
+                    collection_argument_observed: &|_, _| false,
+                    getter_reads_field: &|_, _, _| false,
+                    getter_reads_key: &|_, _, _| None,
+                    owner_argument_names: &[],
+                    owner_returns_value: true,
+                    constructor_starts_empty: &|_, _, _| false,
+                    call_cannot_store: &|_, _, _, _| None,
+                    payload_equality_admitted: &equality_admitted,
+                },
+                None,
+            )
+            .1
+        };
+        let changed = "return Err(ConfigError::MissingEquals { line: idx + 1 });";
+        let payload_only = |family: ProbeFamily| Probe {
+            before: Some("return Err(ConfigError::MissingEquals { line: line_no });".to_string()),
+            after: Some(changed.to_string()),
+            ..owned_probe(family, changed, "parse_pairs")
+        };
+        let whole = test_with_assertions(
+            "missing_equals_reports_its_line",
+            vec![oracle(
+                "assert_eq!(parse_pairs(\"port 9000\"), Err(ConfigError::MissingEquals { line: 1 }));",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let variant_only = test_with_assertions(
+            "missing_equals_is_reported",
+            vec![oracle(
+                "assert!(matches!(parse_pairs(\"port 9000\"), Err(ConfigError::MissingEquals { .. })));",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        for family in [ProbeFamily::ErrorPath, ProbeFamily::ReturnValue] {
+            // Positive: the admitted whole-value pin confirms the payload.
+            let pinned = reveal(&payload_only(family.clone()), &whole, true);
+            if pinned.state != StageState::Yes {
+                return Err(format!(
+                    "{family:?}: whole-value pin must confirm: {pinned:?}"
+                ));
+            }
+            // The same `assert_eq!` without an admitted pin names the
+            // variant but not, for ripr, the payload's source.
+            let refused = reveal(&payload_only(family.clone()), &whole, false);
+            if refused.state == StageState::Yes {
+                return Err(format!(
+                    "{family:?}: unpinned equality confirmed: {refused:?}"
+                ));
+            }
+            // A variant-only `matches!` never sees a payload change.
+            let loose = reveal(&payload_only(family.clone()), &variant_only, true);
+            if loose.state == StageState::Yes {
+                return Err(format!(
+                    "{family:?}: variant-only oracle confirmed: {loose:?}"
+                ));
+            }
+            // An unknown old text is held to the payload rule too.
+            let unknown_before = Probe {
+                before: None,
+                ..payload_only(family.clone())
+            };
+            let unknown = reveal(&unknown_before, &variant_only, true);
+            if unknown.state == StageState::Yes {
+                return Err(format!(
+                    "{family:?}: unknown old text confirmed: {unknown:?}"
+                ));
+            }
+            // A changed variant is what a variant pin sees.
+            let variant_changed = Probe {
+                before: Some("return Err(ConfigError::EmptyKey { line: line_no });".to_string()),
+                ..payload_only(family.clone())
+            };
+            if family == ProbeFamily::ErrorPath {
+                let seen = reveal(&variant_changed, &variant_only, false);
+                if seen.state != StageState::Yes {
+                    return Err(format!(
+                        "{family:?}: changed variant must confirm: {seen:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// #7063: only a plain `assert_eq!` against the changed variant with its
+    /// whole payload written out pins that payload.
+    #[test]
+    fn only_a_written_out_variant_equality_pins_the_payload() {
+        let path = "ParseError::TooLong";
+        for text in [
+            "assert_eq!(err, ParseError::TooLong(12));",
+            "assert_eq!(validate(\"aaaa\"), Err(ParseError::TooLong(12)));",
+            "assert_eq!(Err(crate::ParseError::TooLong { len: 12 }), validate(\"aaaa\"));",
+        ] {
+            assert!(equality_pins_variant_payload(text, path), "{text}");
+        }
+        for text in [
+            // The variant alone.
+            "assert!(matches!(err, ParseError::TooLong(_)));",
+            "assert!(matches!(err, ParseError::TooLong { .. }));",
+            // Part of the payload unchecked or unwritten.
+            "assert_eq!(err, ParseError::TooLong(_));",
+            "assert_eq!(err, ParseError::TooLong { len: 12, ..base });",
+            "assert_eq!(err, ParseError::TooLong);",
+            // A sibling variant, another enum, or a variant used as a
+            // function value inside a larger expression.
+            "assert_eq!(err, ParseError::Empty(12));",
+            "assert_eq!(err, OtherError::TooLong(12));",
+            "assert_eq!(err, ParseError::TooLong(12).into());",
+            // Not an equality the macro fails on.
+            "assert_ne!(err, ParseError::TooLong(12));",
+            "debug_assert_eq!(err, ParseError::TooLong(12));",
+        ] {
+            assert!(!equality_pins_variant_payload(text, path), "{text}");
+        }
+    }
+
     /// A deleted call on a binding the owner introduces (`let table = ..;
     /// table.validate()?;`, regex `dfa.accels.validate()?`) is not observed by
     /// a test's same-named local. A parameter receiver (`cache.insert(..)` on
@@ -5168,6 +5450,7 @@ mod tests {
                     owner_returns_value: true,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
+                    payload_equality_admitted: &|_, _| true,
                 },
                 None,
             )
@@ -5270,6 +5553,7 @@ mod tests {
                     owner_returns_value: true,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
+                    payload_equality_admitted: &|_, _| true,
                 },
                 None,
             )
@@ -5629,6 +5913,7 @@ mod tests {
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                payload_equality_admitted: &|_, _| true,
             },
             None,
         );
@@ -5707,6 +5992,7 @@ mod tests {
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                payload_equality_admitted: &|_, _| true,
             },
             None,
         );
@@ -5988,6 +6274,8 @@ mod tests {
                 owner_scoped_tokens: &empty,
                 owner_shadowed: false,
                 sibling_excluded: false,
+                payload_pin_required: false,
+                payload_equality_pinned: false,
             };
             let (_, has_token) = assertion_matches_probe_detail_with_literals(
                 &context,
@@ -7358,6 +7646,7 @@ return Err(\"typed pin\".into());
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                payload_equality_admitted: &|_, _| true,
             },
             None,
         );
@@ -7421,6 +7710,7 @@ return Err(\"typed pin\".into());
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                payload_equality_admitted: &|_, _| true,
             },
             None,
         );
@@ -7455,6 +7745,7 @@ return Err(\"typed pin\".into());
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                payload_equality_admitted: &|_, _| true,
             },
             None,
         );
@@ -7508,6 +7799,7 @@ return Err(\"typed pin\".into());
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                payload_equality_admitted: &|_, _| true,
             },
             None,
         );
@@ -7563,6 +7855,7 @@ return Err(\"typed pin\".into());
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                payload_equality_admitted: &|_, _| true,
             },
             None,
         );
@@ -7743,6 +8036,7 @@ return Err(\"typed pin\".into());
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                payload_equality_admitted: &|_, _| true,
             },
             None,
         );
@@ -7780,6 +8074,7 @@ return Err(\"typed pin\".into());
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                payload_equality_admitted: &|_, _| true,
             },
             None,
         );
@@ -8176,6 +8471,7 @@ return Err(\"typed pin\".into());
                     owner_returns_value: true,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
+                    payload_equality_admitted: &|_, _| true,
                 },
                 None,
             )
@@ -8459,6 +8755,7 @@ return Err(\"typed pin\".into());
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                payload_equality_admitted: &|_, _| true,
             },
             None,
         );
@@ -8557,6 +8854,7 @@ return Err(\"typed pin\".into());
                     owner_returns_value: true,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
+                    payload_equality_admitted: &|_, _| true,
                 },
                 None,
             );
@@ -8598,6 +8896,7 @@ return Err(\"typed pin\".into());
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                payload_equality_admitted: &|_, _| true,
             },
             None,
         );
@@ -8776,7 +9075,13 @@ return Err(\"typed pin\".into());
     fn error_path_exact_variant_oracle_keeps_discriminate_yes() {
         // Probe: Err(ParseError::TooLong(len)) — variant token "TooLong".
         // Assertion: assert_eq!(err, ParseError::TooLong(12)) — contains "TooLong".
-        let probe = probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))");
+        // #7063: the change replaced the variant (`Empty` -> `TooLong`), so a
+        // variant pin sees it; a payload-only change needs the whole-value pin
+        // (`a_payload_change_needs_the_whole_value_owner_pin`).
+        let probe = Probe {
+            before: Some("Err(ParseError::Empty)".to_string()),
+            ..probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))")
+        };
         let test = test_with_assertions(
             "too_long_error_pinned",
             vec![oracle(
@@ -8924,7 +9229,13 @@ return Err(\"typed pin\".into());
 
     #[test]
     fn error_path_parser_context_cannot_replace_emitted_probe_variant() {
-        let probe = probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))");
+        // #7063: the change replaced the variant (`Empty` -> `TooLong`), so a
+        // variant pin sees it; a payload-only change needs the whole-value pin
+        // (`a_payload_change_needs_the_whole_value_owner_pin`).
+        let probe = Probe {
+            before: Some("Err(ParseError::Empty)".to_string()),
+            ..probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))")
+        };
         let test = test_with_assertions(
             "too_long_is_exact",
             vec![oracle(
@@ -8957,6 +9268,7 @@ return Err(\"typed pin\".into());
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                payload_equality_admitted: &|_, _| true,
             },
             None,
         );
@@ -8977,7 +9289,13 @@ return Err(\"typed pin\".into());
     /// also pins the variant token and must keep the seam `exposed`.
     #[test]
     fn error_path_matches_variant_oracle_keeps_discriminate_yes() {
-        let probe = probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))");
+        // #7063: the change replaced the variant (`Empty` -> `TooLong`), so a
+        // variant pin sees it; a payload-only change needs the whole-value pin
+        // (`a_payload_change_needs_the_whole_value_owner_pin`).
+        let probe = Probe {
+            before: Some("Err(ParseError::Empty)".to_string()),
+            ..probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))")
+        };
         let test = test_with_assertions(
             "too_long_error_matches",
             vec![oracle(
@@ -8993,6 +9311,19 @@ return Err(\"typed pin\".into());
             discriminate.state,
             StageState::Yes,
             "ErrorPath probe with a matches! variant oracle must stay exposed"
+        );
+        // #7063: the same `matches!` cannot see a change confined to the
+        // payload (`TooLong(len - 1)` -> `TooLong(len)`).
+        let payload_only = Probe {
+            before: Some("Err(ParseError::TooLong(len - 1))".to_string()),
+            ..probe.clone()
+        };
+        let (_observe, payload_discriminate, _related) =
+            reveal_evidence(&payload_only, &[(&test, RelationReason::DirectOwnerCall)]);
+        assert_ne!(
+            payload_discriminate.state,
+            StageState::Yes,
+            "a variant-only matches! must not confirm a payload-only change"
         );
     }
 
@@ -9263,6 +9594,7 @@ return Err(\"typed pin\".into());
                 owner_returns_value: true,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                payload_equality_admitted: &|_, _| true,
             },
             None,
         );
