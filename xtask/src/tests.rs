@@ -54113,7 +54113,7 @@ fn gh_pr_status_identity_response(fixture: &Value) -> String {
 #[ignore = "requires real gh; set RIPR_TEST_GH to the supported gh 2.46 binary and run --ignored"]
 fn gh_pr_status_real_cli_schema() -> Result<(), String> {
     let gh = std::env::var_os("RIPR_TEST_GH").unwrap_or_else(|| "gh".into());
-    let text = super::run_output_owned(
+    let Err(text) = super::run_output_owned(
         &gh.to_string_lossy(),
         &[
             "pr".to_string(),
@@ -54121,8 +54121,9 @@ fn gh_pr_status_real_cli_schema() -> Result<(), String> {
             "--json".to_string(),
             "riprUnsupportedSchemaControl".to_string(),
         ],
-    )
-    .expect_err("unknown-field control unexpectedly succeeded");
+    ) else {
+        return Err("unknown-field control unexpectedly succeeded".to_string());
+    };
     assert!(
         text.contains("Unknown JSON field: \"riprUnsupportedSchemaControl\""),
         "{text}"

@@ -366,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn gh_pr_status_bracket_refuses_base_head_and_target_movement() {
+    fn gh_pr_status_bracket_refuses_base_head_and_target_movement() -> Result<(), String> {
         for (field, value) in [
             ("headRefOid", H2),
             ("baseRefOid", B2),
@@ -375,8 +375,9 @@ mod tests {
             let first = snapshot();
             let mut last = first.clone();
             last[field] = json!(value);
-            let error = bracket(vec![graphql(first.clone()), first, graphql(last)])
-                .expect_err("moved identity accepted");
+            let Err(error) = bracket(vec![graphql(first.clone()), first, graphql(last)]) else {
+                return Err(format!("moved {field} identity accepted"));
+            };
             assert!(
                 error.contains("subject changed during collection"),
                 "{field}: {error}"
@@ -385,10 +386,11 @@ mod tests {
                 assert!(error.contains("retain unchanged-head proof/review"));
             }
         }
+        Ok(())
     }
 
     #[test]
-    fn gh_pr_status_bracket_refuses_full_response_identity_mismatch() {
+    fn gh_pr_status_bracket_refuses_full_response_identity_mismatch() -> Result<(), String> {
         for field in ["number", "headRefOid", "baseRefName", "baseRefOid"] {
             let identity = snapshot();
             let mut full = identity.clone();
@@ -397,23 +399,29 @@ mod tests {
                 "baseRefName" => json!("release"),
                 _ => json!(H2),
             };
-            assert!(
-                bracket(vec![graphql(identity.clone()), full, graphql(identity)]).is_err(),
-                "{field}"
-            );
+            let Err(_) = bracket(vec![graphql(identity.clone()), full, graphql(identity)]) else {
+                return Err(format!("mismatched full-response {field} accepted"));
+            };
         }
+        Ok(())
     }
 
     #[test]
-    fn gh_pr_status_bracket_refuses_graphql_partial_errors_and_missing_subject() {
+    fn gh_pr_status_bracket_refuses_graphql_partial_errors_and_missing_subject()
+    -> Result<(), String> {
         for response in [
             json!({"errors":[{"message":"denied"}],"data":{"repository":{"pullRequest":snapshot()}}}),
             json!({"errors":"malformed", "data":{"repository":{"pullRequest":snapshot()}}}),
             json!({"data":{"repository":null}}),
             graphql(Value::Null),
         ] {
-            assert!(bracket(vec![response.clone()]).is_err());
-            assert!(bracket(vec![graphql(snapshot()), snapshot(), response]).is_err());
+            let Err(_) = bracket(vec![response.clone()]) else {
+                return Err("invalid first identity accepted".to_string());
+            };
+            let Err(_) = bracket(vec![graphql(snapshot()), snapshot(), response]) else {
+                return Err("invalid final bracket identity accepted".to_string());
+            };
         }
+        Ok(())
     }
 }
