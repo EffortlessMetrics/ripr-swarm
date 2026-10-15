@@ -431,8 +431,7 @@ mod tests {
     #[test]
     fn missing_inputs_disclose_when_powershell_form_is_unavailable() {
         let mut value = manifest();
-        value.missing_inputs[0].command =
-            "ripr check --root 'foo\u{201c}bar' --mode draft".to_string();
+        value.missing_inputs[0].command = "ripr check --root . --mode draft && true".to_string();
         let rendered = render_agent_workflow_commands_md(&value);
         let missing = rendered
             .split("## Missing Inputs")

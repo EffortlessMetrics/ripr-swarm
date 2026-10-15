@@ -3521,15 +3521,17 @@ mod tests {
             Path::new("."),
         );
         assert!(!plain.contains("(PowerShell)"), "{plain}");
+        // U+201C inside a double-quoted span has no honest PowerShell form.
+        // The same character inside `'...'` is SameAsBash and stays silent.
         let unavailable = super::render_finding_with_context_command(
             &finding,
             &config,
-            "ripr context --root 'foo\u{201c}bar' --at probe:x",
+            "ripr context --root \"foo\u{201c}bar\" --at probe:x",
             Path::new("."),
         );
         assert!(
             unavailable.contains(&format!(
-                "Next: ripr context --root 'foo\u{201c}bar' --at probe:x\n(PowerShell) {}\n",
+                "Next: ripr context --root \"foo\u{201c}bar\" --at probe:x\n(PowerShell) {}\n",
                 crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE
             )),
             "{unavailable}"
