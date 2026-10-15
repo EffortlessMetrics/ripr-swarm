@@ -105,7 +105,7 @@ impl PinAuthority for SharedAuthority<'_> {
     }
 
     fn field_integer(&self, type_name: &str, field: &str) -> Option<&'static str> {
-        field_builtin_integer(self.owner, type_name, field, self.index)
+        field_builtin_integer(self.owner, type_name, field, self.index, self.syntax)
     }
 
     fn may_redefine_iteration(&self) -> bool {
@@ -135,7 +135,10 @@ const ITERATION_METHODS: &[&str] = &["iter", "into_iter", "any"];
 /// local or inherent function, none of which a method call on an array or a
 /// slice iterator can reach.
 fn iteration_is_closed(index: &RustIndex) -> bool {
-    if !index.non_utf8_sources.is_empty() || !index.include_limitations.is_empty() {
+    if !index.non_utf8_sources.is_empty()
+        || !index.include_limitations.is_empty()
+        || !index.member_crates.is_dependency_closed(index.files().iter().map(|(path, _)| path))
+    {
         return false;
     }
     let roots: Vec<String> = CLOSED_ROOTS
@@ -202,7 +205,12 @@ fn iteration_is_closed(index: &RustIndex) -> bool {
             return false;
         }
         tree.syntax().descendants().all(|node| {
-            if ast::ExternCrate::can_cast(node.kind()) {
+            // A macro the workspace defines may write a method from tokens
+            // no scan here reads as one (`$kw iter` with `fn` passed in).
+            if ast::ExternCrate::can_cast(node.kind())
+                || ast::MacroRules::can_cast(node.kind())
+                || ast::MacroDef::can_cast(node.kind())
+            {
                 return false;
             }
             if let Some(item) = ast::Use::cast(node.clone()) {

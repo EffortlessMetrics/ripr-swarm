@@ -281,9 +281,15 @@ rejected alternative. Any can be reversed later without touching the rest.
      indexed file declares a type of that name;
    - `f` is declared once, without attributes, as a primitive integer
      (`u8`..`u128`, `usize`, `i8`..`i128`, `isize`) that no workspace type,
-     alias, rename or foreign import rebinds in the owner's file, so `==`
-     against an integer literal is the built-in comparison and not a
-     workspace `PartialEq`;
+     alias, rename or foreign import rebinds in the owner's file, and no
+     workspace macro may declare: every file parses, every item-level macro
+     call names a macro the workspace defines (or `thread_local!` or
+     `compile_error!`), and no macro body or argument that holds `struct`,
+     `enum`, `union` or `type` also holds the name or a `$` metavariable.
+     So `==` against an integer literal is the built-in comparison and not
+     a workspace `PartialEq`. An outside procedural macro's output is not
+     read; a derive or attribute macro that declares a type named after a
+     primitive is outside this decision;
 
    - the owner's name is the name of no other indexed function, because the
      owner call is matched by name and a nested module's `super::rows` or a
@@ -314,7 +320,12 @@ rejected alternative. Any can be reversed later without touching the rest.
      builds `f` from a decimal integer literal different from `literal`,
      every literal in range for `f`'s type (an out-of-range literal under
      `overflowing_literals` wraps onto another value), and the workspace is
-     closed for iteration: every indexed file parses, nothing sits outside
+     closed for iteration: every package holding an indexed file depends
+     only on others of them, through plain unrenamed `path` dependencies
+     (directly or through `[workspace.dependencies]`), none is a proc-macro
+     library, and no manifest `[patch]`/`[replace]` or `.cargo` configuration
+     sits between them and the root; the workspace defines no macro
+     (`macro_rules!` or `macro`); every indexed file parses, nothing sits outside
      the index (no non-UTF-8 source, include limitation, `include!` macro
      however qualified, or attribute naming `path`, `cfg_attr` included),
      every `use`, macro path and attribute path is rooted in `std`, `core`,
@@ -342,7 +353,10 @@ rejected alternative. Any can be reversed later without touching the rest.
    trait, a `#[path]` module (also behind `cfg_attr`), a macro body that
    imports, a qualified `std::include!`, a wrapping sibling literal, a
    `#[cfg]` element,
-   a field type with its own `PartialEq` and a decoy declaration of the
+   a field type with its own `PartialEq`, a macro that declares a type
+   named after the field's primitive or is handed `fn` to write `iter`, an
+   item-level macro the workspace does not define, any outside or renamed
+   dependency (`alloc = { package = .. }`) and a decoy declaration of the
    struct all keep the `FieldValue` missing discriminator. Owner calls get the same
    same-name import and cross-package defeats as reveal's owner pins. A
    `vec![..]` owner, a `let r = &rows[1]` or `let [_, r] = rows` read and a

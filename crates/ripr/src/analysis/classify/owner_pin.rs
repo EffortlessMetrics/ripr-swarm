@@ -210,6 +210,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// RIPR-SPEC-0225 decision 8: whether the workspace is closed for
     /// iteration, a whole-index scan computed once per run.
     iteration_closed: OnceCell<bool>,
+    /// RIPR-SPEC-0225 decision 8: the names a workspace macro may declare a
+    /// type under, `None` when any name may be declared.
+    macro_type_names: OnceCell<Option<BTreeSet<String>>>,
     withheld: WithheldMacroBindings,
 }
 
@@ -331,6 +334,14 @@ impl OwnerPinSyntax {
     /// The run's memo of a whole-index verdict that `compute` reads once.
     pub(in crate::analysis) fn iteration_closed(&self, compute: impl FnOnce() -> bool) -> bool {
         *self.iteration_closed.get_or_init(compute)
+    }
+
+    /// Whether a macro in the workspace may declare a type named `name`.
+    fn macro_may_declare(&self, name: &str, index: &RustIndex) -> bool {
+        self.macro_type_names
+            .get_or_init(|| macro_type_names(index))
+            .as_ref()
+            .is_none_or(|names| names.contains("$") || names.contains(name))
     }
 
     /// Bounded targeted-selection identity for a non-generic inherent call.
@@ -4973,6 +4984,7 @@ pub(in crate::analysis) fn field_builtin_integer(
     type_name: &str,
     field: &str,
     index: &RustIndex,
+    syntax: &OwnerPinSyntax,
 ) -> Option<&'static str> {
     let file = index.files().get(&owner.file)?;
     if file.used_lexical_fallback
@@ -5043,8 +5055,62 @@ pub(in crate::analysis) fn field_builtin_integer(
         .find(|integer| *integer == found.ty.trim())?;
     (!found.has_attributes
         && !type_declared_in_workspace(ty, index)
+        && !syntax.macro_may_declare(ty, index)
         && !declaring_file_rebinds(&file.source, ty, false, index))
     .then_some(ty)
+}
+
+/// The names a macro in the workspace may declare a type under: every
+/// identifier of a macro body or argument that also holds `struct`, `enum`,
+/// `union` or `type` (`$` among them when a metavariable may supply the
+/// name). `None` when any name may be declared: an unparsed file, or an
+/// item-level call of a macro the workspace does not define, whose output
+/// no scan reads (#8059 review: `shadow!(u32)` declared a local `u32`).
+fn macro_type_names(index: &RustIndex) -> Option<BTreeSet<String>> {
+    const ITEM_MACROS: &[&str] = &["thread_local", "compile_error"];
+    let mut names = BTreeSet::new();
+    let mut defined = BTreeSet::new();
+    let mut called = Vec::new();
+    for facts in index.files().values() {
+        if facts.used_lexical_fallback {
+            return None;
+        }
+        let parse = parse_clean_source_file(&facts.source)?;
+        for node in parse.tree().syntax().descendants() {
+            if let Some(rules) = ast::MacroRules::cast(node.clone()) {
+                defined.insert(rules.name()?.text().to_string());
+            } else if let Some(call) = ast::MacroCall::cast(node.clone()) {
+                if call.syntax().parent().is_some_and(|parent| {
+                    ast::SourceFile::can_cast(parent.kind())
+                        || ast::ItemList::can_cast(parent.kind())
+                        || ast::MacroItems::can_cast(parent.kind())
+                }) {
+                    called.push(call.path()?.segment()?.syntax().text().to_string());
+                }
+            } else if ast::TokenTree::can_cast(node.kind())
+                && !node
+                    .parent()
+                    .is_some_and(|parent| ast::TokenTree::can_cast(parent.kind()))
+            {
+                let tokens: Vec<String> = node
+                    .descendants_with_tokens()
+                    .filter_map(|element| element.into_token())
+                    .filter(|token| !token.kind().is_trivia())
+                    .map(|token| token.text().trim_start_matches("r#").to_string())
+                    .collect();
+                if tokens
+                    .iter()
+                    .any(|token| matches!(token.as_str(), "struct" | "enum" | "union" | "type"))
+                {
+                    names.extend(tokens);
+                }
+            }
+        }
+    }
+    called
+        .iter()
+        .all(|name| defined.contains(name) || ITEM_MACROS.contains(&name.as_str()))
+        .then_some(names)
 }
 
 const BUILTIN_INTEGERS: &[&str] = &[

@@ -61,6 +61,11 @@ struct TempRepo {
 
 impl TempRepo {
     fn create(lib: &str, diff: &str) -> Result<Self, String> {
+        Self::create_with(lib, diff, "")
+    }
+
+    /// `dependencies` is appended to the manifest after `[workspace]`.
+    fn create_with(lib: &str, diff: &str, dependencies: &str) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-returned-element-field-{}-{}",
@@ -71,7 +76,9 @@ impl TempRepo {
             .map_err(|error| format!("create source directory failed: {error}"))?;
         std::fs::write(
             root.join("Cargo.toml"),
-            "[package]\nname = \"element-field\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+            format!(
+                "[package]\nname = \"element-field\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n{dependencies}"
+            ),
         )
         .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
         std::fs::write(root.join("src/lib.rs"), lib)
@@ -116,7 +123,15 @@ fn field_class_of(lib: &str, first: &str) -> Result<ExposureClass, String> {
 }
 
 fn field_class_in(lib: &str, diff: &str) -> Result<ExposureClass, String> {
-    let findings = TempRepo::create(lib, diff)?.findings()?;
+    field_class_manifest(lib, diff, "")
+}
+
+fn field_class_manifest(
+    lib: &str,
+    diff: &str,
+    dependencies: &str,
+) -> Result<ExposureClass, String> {
+    let findings = TempRepo::create_with(lib, diff, dependencies)?.findings()?;
     let field = findings
         .iter()
         .find(|finding| {
@@ -472,6 +487,51 @@ index 1111111..2222222 100644
                 format!("premise: a field_construction finding on line 6, got {findings:?}")
             })?;
         assert_ne!(field.class, ExposureClass::Exposed, "{decoy}");
+    }
+    Ok(())
+}
+
+/// A macro may declare a type under a primitive's name, or write an
+/// iteration method from tokens no scan reads as one, and a dependency may
+/// bring a trait under a name the source reads as the standard library's;
+/// each keeps the gap (#8059 re-review G1, G2, G5, G6).
+#[test]
+fn a_macro_or_outside_crate_that_may_supply_the_name_keeps_the_gap() -> Result<(), String> {
+    const INDEX: &str = "        assert_eq!(rows(30, 3)[1].total, 33);";
+    for (tail, label) in [
+        (
+            "macro_rules! shadow {\n    ($n:ident) => {\n        pub struct $n(pub i64);\n    };\n}\nshadow!(u32);\n",
+            "a macro declares a local u32",
+        ),
+        (
+            "macro_rules! pass {\n    ($k:tt $n:ident) => {\n        pub $k $n(pub i64);\n    };\n}\npass!(struct u32);\n",
+            "a macro is handed the keyword and the name",
+        ),
+        ("outside::declare!();\n", "an item-level macro the workspace does not define"),
+    ] {
+        let lib = format!("{}{tail}", source_with("0", "", INDEX));
+        assert_eq!(field_class_of(&lib, "0")?, ExposureClass::WeaklyExposed, "{label}");
+    }
+    assert_eq!(
+        field_class_with(
+            "0",
+            "    const DECOY: [Row; 1] = [Row { total: 33 }];\n    macro_rules! hijack {\n        ($kw:tt) => {\n            trait Hijack {\n                $kw iter(&self) -> std::slice::Iter<'static, Row>;\n            }\n            impl Hijack for [Row; 2] {\n                $kw iter(&self) -> std::slice::Iter<'static, Row> {\n                    DECOY.iter()\n                }\n            }\n        };\n    }\n    hijack!(fn);\n",
+            ANY,
+        )?,
+        ExposureClass::WeaklyExposed,
+        "a macro is handed `fn`"
+    );
+    for (dependency, root) in [
+        ("alloc = { package = \"hackdep\", path = \"../hackdep\" }", "alloc"),
+        ("clippy = { package = \"hackdep\", path = \"../hackdep\" }", "clippy"),
+        ("hackdep = \"1\"", "hackdep"),
+    ] {
+        let lib = source_with("0", &format!("    use {root}::AnyHack;\n"), ANY);
+        assert_eq!(
+            field_class_manifest(&lib, &diff("0"), &format!("\n[dependencies]\n{dependency}\n"))?,
+            ExposureClass::WeaklyExposed,
+            "{dependency}"
+        );
     }
     Ok(())
 }
