@@ -441,14 +441,67 @@ jobs:
           SUBJECT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          # Diagnostics are advisory: keep every original decision and native status.
+          readiness_refused() {
+            local status=$? diagnostic='{"payload":"not-read"}'
+            trap - ERR
+            printf 'readiness_refusal phase=%s status=%s\n' "$readiness_phase" "$status" >&2
+            case "$readiness_phase" in
+              pull-request-check)
+                diagnostic=$(jq -cs --arg repo "$REPOSITORY" --arg head "$HEAD_SHA" --arg base "$BASE_SHA" --arg subject "$SUBJECT_SHA" '
+                  def check(f): try f catch "unreadable";
+                  def sha: if type == "string" and test("^[0-9a-f]{40}$") then . else null end;
+                  .[0] as $pr | {payload:(if length == 0 then "missing" else ($pr | type) end),
+                   expected:{head:$head,base:$base,subject:$subject}, checks:($pr | {
+                     open: check(.state == "open"), non_draft: check(.draft == false),
+                     same_repository: check(.head.repo.full_name == $repo), main_base: check(.base.ref == "main"),
+                     mergeable: check(.mergeable == true), exact_head: check(.head.sha == $head),
+                     exact_base: check(.base.sha == $base), exact_subject: check(.merge_commit_sha == $subject),
+                     merge_ready: check(any(.labels[]; (.name | ascii_downcase) == "merge-ready"))}),
+                   observed:($pr | {head:check(.head.sha | sha),base:check(.base.sha | sha),subject:check(.merge_commit_sha | sha)})}' <<< "${pr-}" 2>/dev/null) || diagnostic='{"payload":"invalid-json-or-shape"}'
+                ;;
+              reviews-check)
+                diagnostic=$(jq -cs --arg head "$HEAD_SHA" '
+                  [ .[][] ] as $reviews |
+                  ($reviews | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
+                    group_by(.user.login) | map(max_by(.submitted_at))) as $dispositions |
+                  ($reviews | group_by(.user.login) | map(max_by(.submitted_at))) as $latest |
+                  {payload:"review-pages", pages:length, latest_count:($latest | length),
+                   latest_ids:($latest | map(.id | if type == "number" then . else null end) | .[:20]),
+                   checks:{no_changes_requested:all($dispositions[]; .state != "CHANGES_REQUESTED"),
+                     current_head_approved:any($dispositions[]; .commit_id == $head and .state == "APPROVED"),
+                     current_head_marker:any($latest[];
+                       .commit_id == $head and .state == "COMMENTED" and
+                       (.body | test("(^|[^A-Z_])(SOURCE_REVIEW_READY|REVIEW_READY)([^A-Z_]|$)")))}}' <<< "${reviews-}" 2>/dev/null) || diagnostic='{"payload":"invalid-json-or-shape"}'
+                ;;
+              threads-check|threads-page-parse|threads-cursor-parse)
+                diagnostic=$(jq -cs '
+                  def check(f): try f catch "unreadable";
+                  .[0] as $page | {payload:(if length == 0 then "missing" else ($page | type) end),
+                   checks:($page | {no_graphql_errors:check(.errors == null),
+                     all_resolved:check(.data.repository.pullRequest.reviewThreads.nodes | all(.isResolved == true)),
+                     next_page_boolean:check(.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type == "boolean"),
+                     cursor_nonempty:check(.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | type == "string" and length > 0)}),
+                   unresolved_count:($page | check([.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved != true)] | length))}' <<< "${threads-}" 2>/dev/null) || diagnostic='{"payload":"invalid-json-or-shape"}'
+                ;;
+            esac
+            printf 'readiness_detail=%s\n' "$diagnostic" >&2
+            exit "$status"
+          }
+          trap readiness_refused ERR
           [ "${LABEL,,}" = merge-ready ] || exit 0
+          readiness_phase=pull-request-fetch
           pr=$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER")
+          readiness_phase=pull-request-check
           jq -e --arg repo "$REPOSITORY" --arg head "$HEAD_SHA" --arg base "$BASE_SHA" --arg subject "$SUBJECT_SHA" '
             .state == "open" and .draft == false and .head.repo.full_name == $repo and .base.ref == "main" and
             .mergeable == true and .head.sha == $head and .base.sha == $base and
             .merge_commit_sha == $subject and any(.labels[]; (.name | ascii_downcase) == "merge-ready")' <<< "$pr" >/dev/null
+          readiness_phase=reviews-fetch
           reviews=$(gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100")
+          readiness_phase=author-parse
           author=$(jq -r .user.login <<< "$pr")
+          readiness_phase=reviews-check
           jq -s -e --arg head "$HEAD_SHA" --arg author "$author" '
             [ .[][] ] as $reviews |
             ($reviews | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
@@ -460,10 +513,14 @@ jobs:
                (.body | test("(^|[^A-Z_])(SOURCE_REVIEW_READY|REVIEW_READY)([^A-Z_]|$)"))))' <<< "$reviews" >/dev/null
           cursor=null
           while :; do
+            readiness_phase=threads-fetch
             threads=$(gh api graphql -f query='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}' -F number="$PR_NUMBER" -F cursor="$cursor")
+            readiness_phase=threads-check
             jq -e '.errors == null and (.data.repository.pullRequest.reviewThreads.nodes | all(.isResolved == true))' <<< "$threads" >/dev/null
+            readiness_phase=threads-page-parse
             more=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | tostring' <<< "$threads")
             [ "$more" = true ] || break
+            readiness_phase=threads-cursor-parse
             cursor=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | select(length > 0)' <<< "$threads")
           done
       - name: Summarize routed result
