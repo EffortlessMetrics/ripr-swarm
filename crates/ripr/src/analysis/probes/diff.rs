@@ -1592,7 +1592,6 @@ mod tests {
     }
 
     /// One changed line `removed` -> `added` with a single parser shape.
-
     /// `file_source` is the file text the shape offsets resolve against; call
     /// shapes need the real bytes (a line-leading shape followed by `;`) to
     /// route as standalone, while other families only need the shape text.
