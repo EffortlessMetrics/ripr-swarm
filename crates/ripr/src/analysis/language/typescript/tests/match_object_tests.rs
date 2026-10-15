@@ -695,6 +695,15 @@ fn match_object_pin_reads_a_test_body_object_const() -> Result<(), String> {
         .ok_or("expected a related test row")?;
     assert_eq!(row.oracle_kind, OracleKind::ExactValue);
     assert_eq!(row.oracle_strength, OracleStrength::Strong);
+    // The argument is resolved, so the finding does not also say it is not.
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("typescript_dynamic_assertion_unresolved")),
+        "{:?}",
+        finding.evidence
+    );
 
     let pin = "  expect(buildProfile(\"bo\", 18)).toMatchObject(expected);";
     let declared = "  const expected = { adult: true };";
@@ -733,6 +742,17 @@ fn match_object_pin_reads_a_test_body_object_const() -> Result<(), String> {
             format!("{declared}\n  const s = \"\\u0041\";\n{pin}"),
         ),
         ("nested-block", format!("  {{\n  {declared}\n  {pin}\n  }}")),
+        // The binding is top-level but the call sits in a nested block.
+        (
+            "call-in-block",
+            format!("{declared}\n  if (true) {{\n  {pin}\n  }}"),
+        ),
+        (
+            "resolves-chain",
+            format!(
+                "{declared}\n  await expect(Promise.resolve(buildProfile(\"bo\", 18))).resolves.toMatchObject(expected);"
+            ),
+        ),
     ] {
         let test = profile_test(&body);
         let tests = extract_tests(Path::new("tests/profile.test.ts"), &test);

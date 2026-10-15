@@ -76,11 +76,13 @@ written with `toEqual` already read `exposed`.
 own it says nothing about the fields `o` leaves out. When `o` is a flat
 object literal of scalar literals (`{ name: "ana", adult: false }`, the
 shape RIPR-SPEC-0247 reads for mock payloads) the assertion records it as
-its expected value. Amended 2026-10-15: when `o` is a bare identifier
-naming a test-body `const o = {...}` of that flat shape, and the body
-names `o` only in that binding and this one argument (and contains no
-`eval`, `with` or `\u` escape), the assertion records the bound literal
-the same way. `.rejects.toMatchObject(o)` keeps its error-payload
+its expected value. Amended 2026-10-15: on a direct
+`expect(x).toMatchObject(o)` statement (not `.not`, `.resolves` or
+`.rejects`), when `o` is a bare identifier naming a `const o = {...}` of
+that flat shape, declared as a top-level statement of the same test or
+callback body before the call, and the body names `o` only in that
+binding and this one argument (and contains no `eval`, `with` or `\u`
+escape), the assertion records the bound literal the same way. `.rejects.toMatchObject(o)` keeps its error-payload
 reading (RIPR-SPEC-0243); one that reading cannot resolve stays `unknown`.
 
 **Rule 1. A match-object pin reads exact for a returned field it lists.**
@@ -176,7 +178,10 @@ documented decisions and proceed"). Recorded on #6654.
 ## Required Evidence
 
 - On the TypeScript verdict corpus, `jest-mined-tomatchobject-field` moves
-  from `gap` to `credited` and no other row moves.
+  from `gap` to `credited` and no other row moves. Amended 2026-10-15:
+  `jest-spec0250-ex04-normalized-result` and
+  `jest-spec0250-ex05-non-literal-expected` each move from `gap` to
+  `credited` with their amendments.
 - `cargo xtask goldens check` reports no drift.
 
 ## Non-Goals
@@ -251,7 +256,9 @@ documented decisions and proceed"). Recorded on #6654.
   `crates/ripr/src/analysis/language/typescript/match_object_guard.rs`:
   `match_object_consts`, `match_object_const_argument`; attached in
   `crates/ripr/src/analysis/language/typescript/oracle.rs`:
-  `attach_match_object_const`.
+  `attach_match_object_const`; a read argument no longer lists
+  `typescript_dynamic_assertion_unresolved` in
+  `crates/ripr/src/analysis/language/typescript/static_limit.rs`.
 
 ## Metrics
 
