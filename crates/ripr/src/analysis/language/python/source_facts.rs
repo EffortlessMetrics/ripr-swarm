@@ -225,8 +225,8 @@ fn is_pytest_import_line(line: &str) -> bool {
 fn text_has_unittest_framework_import(text: &str) -> bool {
     let mut pending = String::new();
     for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('#') {
+        let trimmed = strip_python_line_comment(line);
+        if trimmed.is_empty() {
             continue;
         }
         if pending.is_empty() {
@@ -234,7 +234,7 @@ fn text_has_unittest_framework_import(text: &str) -> bool {
                 pending.push_str(trimmed);
                 continue;
             }
-            if is_unittest_import_line(line) {
+            if is_unittest_import_line(trimmed) {
                 return true;
             }
         } else {
@@ -249,6 +249,13 @@ fn text_has_unittest_framework_import(text: &str) -> bool {
         }
     }
     false
+}
+
+fn strip_python_line_comment(line: &str) -> &str {
+    match line.split_once('#') {
+        Some((code, _)) => code.trim(),
+        None => line.trim(),
+    }
 }
 
 fn unittest_from_import_is_open_paren(trimmed: &str) -> bool {
