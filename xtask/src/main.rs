@@ -5825,7 +5825,9 @@ fn finish_traceability_report(violations: &[String], advisories: &[String]) -> R
          and the file paths named by registered references. It does not enumerate Rust tests. \
          It does not require every newly added test to appear in `.ripr/traceability.toml`. \
          A `::symbol` suffix remains advisory and is not proof that the symbol exists, has \
-         a test role, ran, or establishes the behavior (see #2345).\n\n",
+         a test role, ran, or establishes the behavior (see #2345). \
+         An explicit planned test mapping may satisfy an accepted contract's mapping obligation; \
+         it is not an existing evidence reference, implementation, executed proof, or support promotion.\n\n",
     );
 
     if violations.is_empty() {
@@ -5858,8 +5860,9 @@ fn finish_traceability_report(violations: &[String], advisories: &[String]) -> R
     if !advisories.is_empty() {
         body.push_str("## Advisories (non-blocking)\n\n");
         body.push_str(
-            "These references point to existing files but carry a `::symbol` suffix that the \
-             structural checker cannot verify yet. They do not fail the gate.\n\n",
+            "Symbol advisories describe existing-file references whose symbols are not verified. \
+             Planned-mapping advisories describe future test obligations, not existing or executed evidence. \
+             Neither advisory promotes implementation or support.\n\n",
         );
         for advisory in advisories {
             body.push_str("```text\n");
@@ -5890,6 +5893,7 @@ fn traceability_recommended_fixes() -> &'static [&'static str] {
         "Keep every docs/specs/RIPR-SPEC-*.md file represented in the manifest.",
         "Use valid RIPR-SPEC-NNNN IDs (exactly 4 digits) in specs, fixtures, and manifest entries.",
         "List only paths that exist, or leave planned fields empty until the artifact exists.",
+        "For an accepted contract without current tests or fixtures, declare named obligations under `Planned tests:` in its Test Mapping section.",
     ]
 }
 
@@ -5949,12 +5953,93 @@ fn validate_trace_behavior(
         && behavior.tests.is_empty()
         && behavior.fixtures.is_empty()
     {
-        violations.push(format!(
-            "{id} is accepted but has no current test or fixture mapping"
-        ));
+        let planned = match behavior.spec.as_deref() {
+            Some(spec) => has_explicit_planned_test_mapping(&read_text_lossy(Path::new(spec))?),
+            None => false,
+        };
+        if planned {
+            advisories.push(format!(
+                "{id} is accepted with an explicit planned test mapping and no current test or fixture references; \
+                 this is an obligation, not implemented behavior or executed/sufficient evidence"
+            ));
+        } else {
+            violations.push(format!(
+                "{id} is accepted but has no current test or fixture mapping or explicit planned test mapping"
+            ));
+        }
     }
 
     Ok(())
+}
+
+fn has_explicit_planned_test_mapping(text: &str) -> bool {
+    let mut in_mapping = false;
+    let mut planned_list = false;
+    let mut fence = None;
+    let mut comment = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(delimiter) = fence {
+            if trimmed.starts_with(delimiter) {
+                fence = None;
+            }
+            continue;
+        }
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fence = Some(if trimmed.starts_with('`') {
+                "```"
+            } else {
+                "~~~"
+            });
+            continue;
+        }
+        if comment {
+            comment = !trimmed.contains("-->");
+            continue;
+        }
+        if trimmed.starts_with("<!--") {
+            comment = !trimmed.contains("-->");
+            continue;
+        }
+        if line.trim_end() == "## Test Mapping" {
+            in_mapping = true;
+            planned_list = false;
+            continue;
+        }
+        if !in_mapping {
+            continue;
+        }
+        if line.starts_with("## ") {
+            break;
+        }
+        if trimmed.eq_ignore_ascii_case("Planned tests:") {
+            planned_list = true;
+            continue;
+        }
+        if trimmed.is_empty() {
+            continue;
+        }
+        let item = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "));
+        if let Some(item) = item {
+            let item = item.trim().trim_matches('`').trim().to_ascii_lowercase();
+            let placeholder = item.is_empty()
+                || matches!(
+                    item.as_str(),
+                    "..." | "-" | "none" | "n/a" | "tbd" | "todo" | "planned"
+                )
+                || ["none ", "todo:", "todo ", "tbd:", "tbd ", "<!--", "<"]
+                    .iter()
+                    .any(|prefix| item.starts_with(prefix));
+            if planned_list && !placeholder {
+                return true;
+            }
+        } else {
+            planned_list = false;
+        }
+    }
+    false
 }
 
 fn validate_behavior_spec_path(
