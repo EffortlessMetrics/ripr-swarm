@@ -123,6 +123,13 @@ pub(crate) struct TypeScriptTest {
     /// outside the test body and to detect shadowed constructor names; owner
     /// calls and assertions must still sit in `body_text`.
     pub(crate) scope_bindings: Vec<TypeScriptScopeBinding>,
+    /// Test-local identity helpers of the containing test file
+    /// (RIPR-SPEC-0249 / RIPR-SPEC-0250, amended 2026-10-15): top-level
+    /// `function f(p) { return p; }` or `const f = (p) => p;` declarations
+    /// whose name appears nowhere else in the file except as a direct call
+    /// `f(`. Populated once per file by `extract_tests`; empty when anything
+    /// could rebind or replace the name.
+    pub(crate) identity_helpers_in_file: Vec<String>,
     /// Whether the test's assertion state is established: a recognized
     /// assertion, an established absence of anything assertion-like, or
     /// something assertion-like RIPR cannot resolve (#5524). An empty

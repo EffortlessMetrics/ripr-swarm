@@ -368,6 +368,110 @@ fn match_object_facts_read_field_construction_changes_only() -> Result<(), Strin
     Ok(())
 }
 
+/// RIPR-SPEC-0250 example 4 (amended 2026-10-15): a pin on
+/// `normalize(buildProfile(...))` reads as a pin on the owner call when
+/// `normalize` is a test-local identity helper, and stays weak when the
+/// helper rebuilds its argument.
+#[test]
+fn match_object_pin_looks_through_a_test_local_identity_helper() -> Result<(), String> {
+    let pins = "test(\"profile records adulthood\", () => {\n  expect(normalize(buildProfile(\"ana\", 17))).toMatchObject({ name: \"ana\", adult: false });\n  expect(normalize(buildProfile(\"bo\", 18))).toMatchObject({ name: \"bo\", adult: true });\n});\n";
+    let with_helper = |helper: &str| {
+        format!("import {{ buildProfile }} from \"../src/profile\";\n{helper}\n{pins}")
+    };
+    let identity = with_helper("function normalize<T>(value: T): T {\n  return value;\n}");
+    let tests = extract_tests(Path::new("tests/profile.test.ts"), &identity);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].assertions.len(), 2);
+    assert_eq!(
+        tests[0].identity_helpers_in_file,
+        vec!["normalize".to_string()]
+    );
+    let finding = profile_finding("match-object-identity", &identity)?;
+    assert_eq!(finding.probe.family, ProbeFamily::FieldConstruction);
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    let row = finding
+        .related_tests
+        .first()
+        .ok_or("expected a related test row")?;
+    assert_eq!(row.oracle_kind, OracleKind::ExactValue);
+    assert_eq!(row.oracle_strength, OracleStrength::Strong);
+
+    // Through the owner's namespace import the identity reading holds; a
+    // body-local `ns` shadowing that import reaches the shadow instead.
+    let namespaced = |body: &str| {
+        format!(
+            "import * as ns from \"../src/profile\";\nimport {{ buildProfile }} from \"../src/profile\";\nfunction normalize<T>(value: T): T {{\n  return value;\n}}\ntest(\"profile records adulthood\", () => {{\n{body}\n}});\n"
+        )
+    };
+    let pin = "  expect(normalize(ns.buildProfile(\"bo\", 18))).toMatchObject({ name: \"bo\", adult: true });";
+    let finding = profile_finding("match-object-namespace", &namespaced(pin))?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    let shadowed = namespaced(&format!(
+        "  const ns = fakeProfiles();\n  buildProfile(\"ana\", 17);\n{pin}"
+    ));
+    let tests = extract_tests(Path::new("tests/profile.test.ts"), &shadowed);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].assertions.len(), 1);
+    let finding = profile_finding("match-object-shadowed-namespace", &shadowed)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    // A dynamic import is the owner namespace only as the whole
+    // initializer: a chained `.then(...)` binds the callback's value.
+    let dynamic = |init: &str| {
+        format!(
+            "import {{ buildProfile }} from \"../src/profile\";\nfunction normalize<T>(value: T): T {{\n  return value;\n}}\ntest(\"profile records adulthood\", async () => {{\n  const ns = {init};\n  buildProfile(\"ana\", 17);\n{pin}\n}});\n"
+        )
+    };
+    let finding = profile_finding(
+        "match-object-dynamic-namespace",
+        &dynamic("await import(\"../src/profile\")"),
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    let finding = profile_finding(
+        "match-object-chained-dynamic-namespace",
+        &dynamic("await import(\"../src/profile\").then(() => fakeProfiles())"),
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+
+    for (label, helper) in [
+        (
+            "match-object-rebuilding-helper",
+            "function normalize<T>(value: T): T {\n  return { ...value, adult: true };\n}",
+        ),
+        (
+            "match-object-reassigned-helper",
+            "let normalize = <T>(value: T): T => value;",
+        ),
+    ] {
+        let finding = profile_finding(label, &with_helper(helper))?;
+        let row = finding
+            .related_tests
+            .first()
+            .ok_or_else(|| format!("{label}: expected a related test row"))?;
+        assert_ne!(
+            (row.oracle_kind.clone(), row.oracle_strength.clone()),
+            (OracleKind::ExactValue, OracleStrength::Strong),
+            "{label}"
+        );
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
+    Ok(())
+}
+
 /// #7497: a local bound once to the owner result that the test rewrites
 /// before asserting observes the test's own write, not the owner call, so
 /// the whole-result credit stays unavailable. Every shape below read
