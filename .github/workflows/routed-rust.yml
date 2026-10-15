@@ -441,10 +441,10 @@ jobs:
           SUBJECT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          # Diagnostics are advisory: keep every original decision and native status.
-          readiness_refused() {
+          readiness_refused() { # Advisory diagnostics preserve the original status.
             local status=$? diagnostic='{"payload":"not-read"}'
             trap - ERR
+            set +e
             printf 'readiness_refusal phase=%s status=%s\n' "$readiness_phase" "$status" >&2
             case "$readiness_phase" in
               pull-request-check)
