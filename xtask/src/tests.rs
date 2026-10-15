@@ -53967,8 +53967,12 @@ fn gh_pr_status_provider_quota_observations_preserve_evidence() -> Result<(), St
     });
     let pr = super::collect_gh_pr_status_with(42, |program, args| {
         assert_eq!(program, "gh");
+        if args.first().is_some_and(|arg| arg == "api") {
+            return Ok(gh_pr_status_identity_response(&fixture));
+        }
         assert_eq!(args.len(), 5);
         assert_eq!(&args[..4], &["pr", "view", "42", "--json"]);
+        assert!(!args[4].split(',').any(|field| field == "baseRefOid"));
         let fields: std::collections::BTreeSet<_> = args[4].split(',').collect();
         for required in ["comments", "headRefOid", "latestReviews"] {
             assert!(fields.contains(required), "collector omitted {required}");
@@ -54019,5 +54023,122 @@ fn gh_pr_status_provider_quota_observations_preserve_evidence() -> Result<(), St
         readiness.safe_next_action, "merge",
         "advisory provider disclosure must not silently become a new gate"
     );
+    Ok(())
+}
+
+#[test]
+fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Result<(), String> {
+    for (status, conclusion, review, expected) in [
+        ("COMPLETED", "SUCCESS", "APPROVED", "merge"),
+        ("IN_PROGRESS", "", "APPROVED", "wait"),
+        ("COMPLETED", "FAILURE", "APPROVED", "inspect failure"),
+        (
+            "COMPLETED",
+            "SUCCESS",
+            "CHANGES_REQUESTED",
+            "inspect failure",
+        ),
+    ] {
+        let first = serde_json::json!({
+            "number":42,"title":"final snapshot","headRefOid":"1111111111111111111111111111111111111111",
+            "baseRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"main",
+            "headRefName":"candidate","isDraft":false,"mergeStateStatus":"CLEAN","reviewDecision":"APPROVED",
+            "latestReviews":[{"author":{"login":"fixture-reviewer"},"state":"APPROVED","submittedAt":"2026-10-15T01:00:00Z"}],
+            "reviews":[{"author":{"login":"fixture-reviewer"},"state":"APPROVED","submittedAt":"2026-10-15T01:00:00Z","commit":{"oid":"1111111111111111111111111111111111111111"}}],"comments":[],
+            "statusCheckRollup":[{"__typename":"CheckRun","name":"rust","status":"COMPLETED","conclusion":"SUCCESS"}]
+        });
+        let mut last = first.clone();
+        last["reviewDecision"] = serde_json::json!(review);
+        last["statusCheckRollup"][0]["status"] = serde_json::json!(status);
+        last["statusCheckRollup"][0]["conclusion"] = serde_json::json!(conclusion);
+        let mut reads = 0;
+        let observation = super::gh_pr_status_snapshot::collect_current(
+            42,
+            || {
+                reads += 1;
+                super::collect_gh_pr_status_json_with(42, |program, args| {
+                    assert_eq!(program, "gh");
+                    if args.first().is_some_and(|arg| arg == "api") {
+                        return Ok(gh_pr_status_identity_response(if reads == 1 {
+                            &first
+                        } else {
+                            &last
+                        }));
+                    }
+                    assert_eq!(&args[..4], ["pr", "view", "42", "--json"]);
+                    let fields = args[4].split(',').collect::<Vec<_>>();
+                    assert!(fields.contains(&"headRefOid") && !fields.contains(&"baseRefOid"));
+                    Ok(if reads == 1 {
+                        first.to_string()
+                    } else {
+                        last.to_string()
+                    })
+                })
+            },
+            |target| {
+                assert_eq!(target, "main");
+                Ok(vec!["rust".to_string()])
+            },
+        )?;
+        assert_eq!(reads, 2);
+        let pr = parse_gh_pr_status_pull_request(&observation.pr.to_string())?;
+        let readiness = gh_pr_status_readiness(
+            &pr,
+            &observation.contexts,
+            observation.contexts_available,
+            observation.warnings,
+        );
+        assert_eq!(readiness.safe_next_action, expected);
+        let json: Value =
+            serde_json::from_str(&gh_pr_status_json(&pr, &observation.contexts, &readiness))
+                .map_err(|error| error.to_string())?;
+        assert_eq!(json["safe_next_action"], expected);
+        let markdown = gh_pr_status_markdown(&pr, &observation.contexts, &readiness);
+        assert!(markdown.contains(&format!("safe next action: `{expected}`")));
+        assert!(markdown.contains("1111111111111111111111111111111111111111"));
+        assert!(markdown.contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        assert!(markdown.contains("not atomic"));
+    }
+    Ok(())
+}
+
+fn gh_pr_status_identity_response(fixture: &Value) -> String {
+    let mut identity = fixture.clone();
+    if identity.get("baseRefOid").is_none() {
+        identity["baseRefOid"] = serde_json::json!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    }
+    serde_json::json!({"data":{"repository":{"pullRequest":identity}}}).to_string()
+}
+
+/// Use the existing approved runner to inspect real gh's offline field registry.
+#[test]
+#[ignore = "requires real gh; set RIPR_TEST_GH to the supported gh 2.46 binary and run --ignored"]
+fn gh_pr_status_real_cli_schema() -> Result<(), String> {
+    let gh = std::env::var_os("RIPR_TEST_GH").unwrap_or_else(|| "gh".into());
+    let Err(text) = super::run_output_owned(
+        &gh.to_string_lossy(),
+        &[
+            "pr".to_string(),
+            "view".to_string(),
+            "--json".to_string(),
+            "riprUnsupportedSchemaControl".to_string(),
+        ],
+    ) else {
+        return Err("unknown-field control unexpectedly succeeded".to_string());
+    };
+    assert!(
+        text.contains("Unknown JSON field: \"riprUnsupportedSchemaControl\""),
+        "{text}"
+    );
+    let (_, registry) = text
+        .split_once("Available fields:")
+        .ok_or("real gh did not expose its field registry")?;
+    let available: std::collections::BTreeSet<_> = registry.lines().map(str::trim).collect();
+    for field in super::gh_pr_status_snapshot::VIEW_FIELDS.split(',') {
+        assert!(
+            available.contains(field),
+            "real gh rejects production field {field}: {text}"
+        );
+    }
     Ok(())
 }
