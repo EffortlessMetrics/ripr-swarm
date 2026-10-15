@@ -141,6 +141,15 @@ fn scalar_marker_preserves_cargo_uv_git_and_unmarked_root_boundaries() -> TestRe
         }
         if let Some((name, contents)) = marker {
             fs::write(repo.join(name), contents)?;
+            // This fixture tests root discovery with Rust source. Keep the uv
+            // marker, but opt out of unavailable Python preview auto-detection.
+            #[cfg(not(feature = "lang-python"))]
+            if name == "pyproject.toml" {
+                fs::write(
+                    repo.join("ripr.toml"),
+                    "[languages]\nenabled = [\"rust\"]\n",
+                )?;
+            }
         }
         fs::write(
             member.join("package.json"),
