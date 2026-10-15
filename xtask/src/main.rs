@@ -1765,9 +1765,11 @@ fn stage_vscode_license_notices(
             }
             continue;
         }
+        // Own the destination before writing so Drop removes a partial file
+        // if `fs::write` creates or truncates it and then fails.
+        staged.paths.push(path.clone());
         fs::write(&path, bytes)
             .map_err(|err| format!("failed to stage {name} into {}: {err}", path.display()))?;
-        staged.paths.push(path);
     }
     Ok(staged)
 }
@@ -1776,7 +1778,7 @@ fn cleanup_staged_vscode_license_notices(paths: &[PathBuf]) -> Result<(), String
     let mut errors = Vec::new();
     for path in paths {
         if let Err(err) = fs::remove_file(path)
-            && path.exists()
+            && err.kind() != std::io::ErrorKind::NotFound
         {
             errors.push(format!("failed to remove staged {}: {err}", path.display()));
         }
