@@ -404,3 +404,61 @@ peak additional budget4GiB, reserve8GiB, two Cargo jobs. No original witness was
 available locally; immutable source refs are preserved and prior external proof
 stays attributed to its original executor. These resources are retained for
 independent review and parent continuation; no unrelated resources are removed.
+
+
+### CI leaf successor — three-child source graph, cutover still held
+
+The delegated continuation now explicitly supplies reviewed CI leaf
+`efaa7fa7f391adc07c3816c84053284ad7f7b922` on
+`codex/4987-ci-exact-subject`. Its remote ref was checked unchanged before
+integration. This supersedes only the earlier statement that CI remains
+unintegrated/untouched; wheel ownership and all activation holds survive.
+The exact leaf was merged at `3cbcf6e7c37a9712dcc196afedadf7f78c150cec`.
+The sole additive process-allowance conflict preserves native-admission,
+printed-command and CI-leaf test allowances. The leaf file itself is unchanged.
+
+The `ci-feature` job now consumes the same seven admitted string inputs as the
+other leaves and four explicit frozen booleans: `run_rust_only=true`,
+`run_release_proof=true`, `run_msrv=true`, `run_vscode=true`. All rows are
+conservatively mandatory for every new execution, including docs-only subjects.
+No canonical applicability plan is evaluated here, no second classifier is
+introduced, and no row is silently pruned based on incomplete applicability.
+This deliberately over-selects proof and does not claim label-specific savings,
+a portfolio deadline or final selection optimization. `full-ci`/`release-check`
+requests cannot select a missing row because all retained rows are included.
+The canonical plan/label-snapshot integration may narrow rows only with its own
+reviewed completeness and fail-closed selected/unselected obligations.
+
+The protected caller now depends on native `ci-feature` success as well as
+Windows and printed-command success. Its own child result additionally requires
+source validation, every selected native child success, every unselected child
+skipped, and cancellation refusal. Candidate receipts cannot replace native
+results. The caller retains fresh-event admission, exact H/B/G/T/generation,
+final readiness and terminal cancellation checks plus admission-owned prior reuse.
+The new CI aggregate guard runs before either docs-only or Rust route success.
+
+Legacy CI PR/main-push/manual triggers remain exactly as supplied by the reviewed
+leaf, and printed-command's legacy routes remain. Retiring legacy automatic
+triggers is a separately reviewed full-graph cutover; this staged candidate must
+not be activated or described as zero-early-launch acceptance. The wheel leaf is
+still separately owned and unmodified. Release proof here names the retained
+package/publish-dry-run/readiness checks, not publication authority.
+
+The new pre-wiring controls run on the composed baseline3cbcf6e7c and fail at
+both intended assertions: missing CI call and aggregate false-green for a failed
+CI result (2 failures, native101). The repaired composed source passes the
+focused Cargo suites: native admission12, printed-command6, CI leaf10 and
+Rust-only routing10, with no failed/ignored subjects. The ten CI-leaf tests plus
+ten routing tests are a fresh local rerun of the supplied leaf's20-test population;
+its earlier check-fast/actionlint/real-Git review evidence stays attributed to
+efaa7fa7 and its original executor, not the composed candidate.
+
+Resource continuation reuses the warm exclusive target at
+`/workspace/caller-integration-proof/target`;30GiB free and235MiB retained proof
+were observed before the new batch. Existing4GiB additional peak/8GiB reserve and
+two-job bounds remain. Logs `ci-red.log` and `ci-green.log` distinguish prewire
+behavior from final source. Native Actions/expression/token/check association,
+three-OS payload execution, complete wheel graph, broad local preflight and
+rehearsal/economics remain unqualified. Keep PR8082 Draft; parent integrates the
+remaining reviewed wheel leaf and completes full-graph review before any
+separately authorized activation transition.
