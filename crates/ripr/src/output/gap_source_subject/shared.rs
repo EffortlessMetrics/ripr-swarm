@@ -87,6 +87,15 @@ pub(crate) fn absolute_root(root: &Path) -> PathBuf {
 /// - whitespace in a filename or directory is identity, not padding (#5128).
 pub(crate) fn subject_relative_path(root: &Path, raw: &str) -> Option<String> {
     let file = subject_named_file(raw)?;
+    // #7937: a derived artifact can echo the verbatim `\\?\F:\...` spelling
+    // its producer resolved (the gap-ledger selected root is canonicalized),
+    // and that spelling compares against a plain-spelled root as a different
+    // prefix component. Both spellings name the same file, so the token is
+    // compared in the plain drive family before normalization.
+    let file = match file.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => rest,
+        _ => file,
+    };
     let normalized = file.replace('\\', "/");
     let path = Path::new(&normalized);
     let relative = if path.is_absolute() {
@@ -124,12 +133,26 @@ fn relative_stamp_path(relative: &Path) -> Option<String> {
     Some(parts.join("/"))
 }
 
+/// Strip the Windows verbatim prefix from a drive-letter path, comparing it
+/// in the plain spelling every other artifact side spells (#7937): the
+/// gap-ledger CLI resolves the selected root with `fs::canonicalize`, which
+/// on Windows returns `\\?\F:\...`, while the analysis stamp and the records
+/// name plain `F:\...` paths. Both spellings name the same file; other
+/// verbatim forms (`\\?\UNC\..`) have no plain spelling and stay.
+fn plain_drive_root(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path.to_path_buf(),
+    }
+}
+
 fn strip_absolute_root(root: &Path, path: &Path) -> Option<PathBuf> {
-    let absolute = absolute_root(root);
+    let absolute = plain_drive_root(&absolute_root(root));
     if let Ok(relative) = path.strip_prefix(&absolute) {
         return Some(relative.to_path_buf());
     }
-    let canonical_root = std::fs::canonicalize(&absolute).ok()?;
+    let canonical_root = plain_drive_root(&std::fs::canonicalize(&absolute).ok()?);
     if let Ok(relative) = path.strip_prefix(&canonical_root) {
         return Some(relative.to_path_buf());
     }

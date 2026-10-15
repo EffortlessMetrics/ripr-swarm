@@ -454,6 +454,18 @@ impl ManifestInventory {
     /// verified 1.95.0) but canonicalizes symlinks on Unix (#3637
     /// review, demonstrated by the Linux CI run of the alias pin), so
     /// one form alone cannot cover both hosts.
+    ///
+    /// #7937: both resolved forms go through the shared plain-drive
+    /// spelling first. `WorkspaceRootAuthority` canonicalizes its root,
+    /// and Windows `fs::canonicalize` returns the verbatim `\\?\F:\...`
+    /// form; carried through here, the anchor's prefix compared as
+    /// verbatim against cargo's plain `F:\...` echoed keys, every lookup
+    /// missed, and each metadata-owned verdict failed closed (`test =
+    /// false` / `required-features` / `harness = false` skips went
+    /// unestablished; nested members went uncredited). The two spellings
+    /// name the same file, so the anchor compares in the family cargo
+    /// echoes — the same rule `finding_location_text` applies to
+    /// rendered locations.
     fn lookup_test_owners(
         &mut self,
         workspace_root: &Path,
@@ -461,18 +473,24 @@ impl ManifestInventory {
     ) -> (PathBuf, InventoryLookup) {
         let joined = workspace_root.join(registration_target);
         let absolute = std::path::absolute(&joined).unwrap_or(joined);
-        let anchored = lexical(&normalize(&absolute));
+        let anchored = lexical(&normalize(&crate::analysis::plain_drive_verbatim_path(
+            &absolute,
+            cfg!(windows),
+        )));
         self.ensure_workspace_metadata(workspace_root);
         let lookup = match &self.metadata {
             MetadataState::Loaded(targets) => {
                 let owners = targets.get(&anchored).cloned().or_else(|| {
                     // `fs::canonicalize` returns verbatim `\\?\`
-                    // paths on Windows; those can only match
-                    // verbatim keys cargo never echoes, so a miss
-                    // there is harmless — the alias-form lookup
-                    // above already covered the Windows behavior.
+                    // paths on Windows; stripped to the plain drive
+                    // spelling, the real path compares in the same
+                    // family as the echoed keys (#7937).
                     let real = std::fs::canonicalize(&absolute).ok()?;
-                    targets.get(&lexical(&normalize(&real))).cloned()
+                    targets
+                        .get(&lexical(&normalize(
+                            &crate::analysis::plain_drive_verbatim_path(&real, cfg!(windows)),
+                        )))
+                        .cloned()
                 });
                 match owners {
                     Some(owners) => InventoryLookup::Present(owners),

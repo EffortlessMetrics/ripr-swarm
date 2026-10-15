@@ -285,9 +285,20 @@ mod tests {
         assert!(rendered.contains("Static exposure"));
         assert!(rendered.contains("no_static_path"));
         assert!(rendered.contains("InvoiceError::InvalidCurrency"));
-        let root = crate::agent::loop_commands::shell_arg(&sample_root().display().to_string());
+        // #7937: the expectation goes through the same rendering owners the
+        // drill-in builder uses (`bound_root` for the analyzed root,
+        // `bound_root_path` + `root_path_display` for the diff file, then
+        // `shell_arg`). Re-deriving the spelling from `Path::display`
+        // asserted the renderer's POSIX form against the renderer's own
+        // Windows form (`F:\...` vs the stable-separator `F:/...` bound
+        // spelling), so the pin failed only where it was already honest.
+        let root = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&sample_root().display().to_string()),
+        );
         let diff = crate::agent::loop_commands::shell_arg(
-            &sample_root().join("example.diff").display().to_string(),
+            &crate::agent::loop_commands::root_path_display(
+                &crate::agent::loop_commands::bound_root_path(&sample_root().join("example.diff")),
+            ),
         );
         assert!(rendered.contains(
             &format!(
