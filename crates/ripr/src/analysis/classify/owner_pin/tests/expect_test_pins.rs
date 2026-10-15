@@ -325,6 +325,7 @@ fn a_test_that_may_write_files_lends_no_golden_pin() {
         "<std::fs::File>::create(\"w.txt\")?;",
         "fs_err::write(\"w.txt\", x).unwrap();",
         "F::create(\"w.txt\")?;",
+        "write::<_, _>(\"w.txt\", render(4)).unwrap();",
     ] {
         assert!(test_may_write_files(body), "{body}");
     }

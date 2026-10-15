@@ -6075,8 +6075,20 @@ fn test_may_write_files(body: &str) -> bool {
         "persist",
     ];
     WRITERS.iter().any(|writer| compact.contains(writer))
-        || ["write", "create", "copy", "rename"].iter().any(|name| {
-            compact.match_indices(&format!("{name}(")).any(|(at, _)| {
+        || [
+            "write(",
+            "create(",
+            "copy(",
+            "rename(",
+            "write::<",
+            "create::<",
+            "copy::<",
+            "rename::<",
+        ]
+        .iter()
+        .any(|call| {
+            // A turbofish (`write::<_, _>(..)`) is the same call.
+            compact.match_indices(call).any(|(at, _)| {
                 let before = &compact[..at];
                 // A bare or path-qualified call (`save::write(`, `<File>::create(`,
                 // `fs_err::write(`) may write; a method call or `io::copy(`
