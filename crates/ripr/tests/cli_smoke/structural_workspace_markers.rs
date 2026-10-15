@@ -80,7 +80,9 @@ fn typescript_workspace_evidence_uses_structural_markers_and_package_fallback() 
             );
             for finding in findings {
                 let evidence = finding["evidence"].as_array().ok_or("missing evidence")?;
-                assert!(evidence.contains(&Value::from("typescript_package_root: packages/member")));
+                assert!(
+                    evidence.contains(&Value::from("typescript_package_root: packages/member"))
+                );
                 assert!(
                     evidence.contains(&Value::from(format!(
                         "typescript_workspace_root: {expected_workspace}"
