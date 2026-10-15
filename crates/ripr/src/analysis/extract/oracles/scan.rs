@@ -1231,6 +1231,14 @@ fn statement_diverges_with(statement: &str, admit_pinned_if: bool) -> bool {
         && let Some(inner) = balanced_block(statement)
         && statement.len() == inner.len() + 2
     {
+        // The strict reading (no pinned `if`) backs the accepted-Err form,
+        // where every path must fail. A nested block qualifies there only
+        // as one diverging statement, so `{ if skip { return Ok(()); }
+        // panic!() }` cannot borrow the later panic (CodeRabbit on #8036).
+        if !admit_pinned_if {
+            return single_arm_statement(statement)
+                .is_some_and(|nested| statement_diverges_with(nested, false));
+        }
         return top_level_statements(inner)
             .iter()
             .any(|nested| statement_diverges_with(nested, admit_pinned_if));
@@ -5101,9 +5109,18 @@ mod accepted_err_arm_tests {
             "        Ok(_) => { if skip { return Ok(()); } panic!(\"ok\"); }\n        Err(PayError::Insufficient) => {}\n        Err(other) => panic!(\"{other:?}\"),",
             "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(_) => { if skip { return Ok(()); }; panic!(\"wrong\") }",
             "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(_) => { let _ = skip.then(|| ()); panic!(\"wrong\") }",
+            // A nested block hides the same early exit behind one statement.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(_) => { { if skip { return Ok(()); } panic!(\"wrong\") } }",
+            "        Ok(_) => { { if skip { return Ok(()); }; panic!(\"ok\"); } }\n        Err(PayError::Insufficient) => {}\n        Err(other) => panic!(\"{other:?}\"),",
         ] {
             assert!(scan_one(arms).is_empty(), "must not pin: {arms}");
         }
+    }
+
+    #[test]
+    fn nested_block_holding_one_failure_still_pins() {
+        let arms = "        Ok(_) => { { panic!(\"ok\"); } }\n        Err(PayError::Insufficient) => {}\n        Err(other) => { { panic!(\"{other:?}\") } }";
+        assert_eq!(scan_one(arms).len(), 1, "must pin: {arms}");
     }
 }
 
