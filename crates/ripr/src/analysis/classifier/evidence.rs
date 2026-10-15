@@ -607,6 +607,12 @@ impl ClassifiedProbeEvidence {
             tuple_match::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);
         let discriminate =
             side_flip::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);
+        // RIPR-SPEC-0227 rule 3 pairs its own oracles: both sides of the
+        // guard's edge are asserted in one test, so the #4828 same-test
+        // pairing below has nothing left to establish.
+        let guard_side_flip = side_flip::guard::discrimination(context, &observe, &discriminate);
+        let guard_side_flip_paired = guard_side_flip.is_some();
+        let discriminate = guard_side_flip.unwrap_or(discriminate);
         // #4828: a boundary-class probe may not read `exposed` by taking a
         // boundary input from one test and a discriminating oracle from
         // another. Infection and discrimination stay independently scored;
@@ -632,6 +638,7 @@ impl ClassifiedProbeEvidence {
         let discriminate = if matches!(context.probe.family, ProbeFamily::Predicate)
             && infect.state == StageState::Yes
             && discriminate.state == StageState::Yes
+            && !guard_side_flip_paired
             && !has_same_test_boundary_oracle_pairing(
                 context.probe,
                 context.owner_fn,

@@ -14321,6 +14321,14 @@ tests = [
   "crates/ripr/src/analysis/classifier/evidence/side_flip.rs::tests::macro_definitions_and_inner_cfg_make_a_test_file_unreadable",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0227_uncompared_unwrap_err_is_a_weak_broad_error_oracle",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0227_uncompared_expect_err_reads_like_unwrap_err",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/guard.rs::tests::a_first_statement_integer_guard_over_an_ok_tail_is_read",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/guard.rs::tests::a_guard_the_rule_cannot_establish_is_not_read",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/guard.rs::tests::err_on_the_edge_and_ok_beside_it_observe_both_sides",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/guard.rs::tests::one_side_far_inputs_and_disagreeing_assertions_do_not",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/guard.rs::tests::the_old_guard_must_return_the_same_error",
+  "crates/ripr/tests/guard_side_flip.rs::err_and_ok_on_both_sides_of_the_edge_expose_the_guard",
+  "crates/ripr/tests/guard_side_flip.rs::an_oracle_short_of_both_sides_keeps_the_gap",
+  "crates/ripr/tests/guard_side_flip.rs::a_changed_error_or_an_unreadable_guard_keeps_the_gap",
 ]
 fixtures = []
 code = [
@@ -14330,6 +14338,7 @@ code = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/syntax/ra.rs",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/guard.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0227-result-side-oracles.md",
