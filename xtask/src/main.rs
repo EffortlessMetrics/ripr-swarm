@@ -1544,13 +1544,8 @@ fn vscode_package() -> Result<(), String> {
         .map_err(|err| format!("failed to create {}: {err}", dist.display()))?;
     let version = vscode_package_version(&extension_dir.join("package.json"))?;
     let notices = load_repository_license_notices(&repo_root()?)?;
-    let staged = stage_vscode_license_notices(&extension_dir, &notices)?;
-    let packaged = package_and_verify_vsix(&dist, &version, &notices);
-    staged.cleanup().map_err(|cleanup_err| match &packaged {
-        Ok(_) => cleanup_err,
-        Err(packaged_err) => format!("{packaged_err}; {cleanup_err}"),
-    })?;
-    println!("{}", packaged?);
+    verify_source_vscode_license(&extension_dir.join("LICENSE"), &notices)?;
+    println!("{}", package_and_verify_vsix(&dist, &version, &notices)?);
     Ok(())
 }
 
@@ -1676,14 +1671,13 @@ fn is_workspace_build_output(name: &str) -> bool {
     name.ends_with(".rlib") || name.ends_with(".rmeta")
 }
 
-/// Archive member names `vsce` uses for files staged into `editors/vscode/`.
-const VSIX_LICENSE_MIT_ENTRY: &str = "extension/LICENSE-MIT";
-const VSIX_LICENSE_APACHE_ENTRY: &str = "extension/LICENSE-APACHE";
-const STAGED_LICENSE_MIT: &str = "LICENSE-MIT";
-const STAGED_LICENSE_APACHE: &str = "LICENSE-APACHE";
-/// The current `editors/vscode/LICENSE` pointer is 174 bytes. Complete
+/// `vsce package` ships `editors/vscode/LICENSE` as this archive member.
+const VSIX_LICENSE_TXT_ENTRY: &str = "extension/LICENSE.txt";
+const ROOT_LICENSE_MIT: &str = "LICENSE-MIT";
+const ROOT_LICENSE_APACHE: &str = "LICENSE-APACHE";
+/// The historic `editors/vscode/LICENSE` pointer is 174 bytes. Complete
 /// repository notices are larger; this bound rejects that pointer class
-/// even when a file is named `LICENSE-MIT` or `LICENSE-APACHE`.
+/// even when the file is named `LICENSE.txt`.
 const COMPLETE_LICENSE_NOTICE_MIN_BYTES: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1692,29 +1686,9 @@ struct RepositoryLicenseNotices {
     apache: Vec<u8>,
 }
 
-struct StagedVscodeLicenseNotices {
-    paths: Vec<PathBuf>,
-}
-
-impl StagedVscodeLicenseNotices {
-    fn cleanup(mut self) -> Result<(), String> {
-        let paths = std::mem::take(&mut self.paths);
-        cleanup_staged_vscode_license_notices(&paths)
-    }
-}
-
-impl Drop for StagedVscodeLicenseNotices {
-    fn drop(&mut self) {
-        for path in std::mem::take(&mut self.paths) {
-            let _ = fs::remove_file(path);
-        }
-    }
-}
-
 fn load_repository_license_notices(root: &Path) -> Result<RepositoryLicenseNotices, String> {
-    let mit = read_complete_license_notice(root.join(STAGED_LICENSE_MIT), STAGED_LICENSE_MIT)?;
-    let apache =
-        read_complete_license_notice(root.join(STAGED_LICENSE_APACHE), STAGED_LICENSE_APACHE)?;
+    let mit = read_complete_license_notice(root.join(ROOT_LICENSE_MIT), ROOT_LICENSE_MIT)?;
+    let apache = read_complete_license_notice(root.join(ROOT_LICENSE_APACHE), ROOT_LICENSE_APACHE)?;
     if mit == apache {
         return Err(
             "LICENSE-MIT and LICENSE-APACHE are identical; repository notices must stay distinct"
@@ -1740,54 +1714,17 @@ fn read_complete_license_notice(path: PathBuf, label: &str) -> Result<Vec<u8>, S
     Ok(bytes)
 }
 
-fn stage_vscode_license_notices(
-    extension_dir: &Path,
+fn verify_source_vscode_license(
+    path: &Path,
     notices: &RepositoryLicenseNotices,
-) -> Result<StagedVscodeLicenseNotices, String> {
-    let mut staged = StagedVscodeLicenseNotices { paths: Vec::new() };
-    for (name, bytes) in [
-        (STAGED_LICENSE_MIT, notices.mit.as_slice()),
-        (STAGED_LICENSE_APACHE, notices.apache.as_slice()),
-    ] {
-        let path = extension_dir.join(name);
-        if path.exists() {
-            let existing = fs::read(&path).map_err(|err| {
-                format!(
-                    "failed to read existing staged {name} {}: {err}",
-                    path.display()
-                )
-            })?;
-            if existing != bytes {
-                return Err(format!(
-                    "{} already exists and differs from the repository {name} notice",
-                    path.display()
-                ));
-            }
-            continue;
-        }
-        // Own the destination before writing so Drop removes a partial file
-        // if `fs::write` creates or truncates it and then fails.
-        staged.paths.push(path.clone());
-        fs::write(&path, bytes)
-            .map_err(|err| format!("failed to stage {name} into {}: {err}", path.display()))?;
-    }
-    Ok(staged)
-}
-
-fn cleanup_staged_vscode_license_notices(paths: &[PathBuf]) -> Result<(), String> {
-    let mut errors = Vec::new();
-    for path in paths {
-        if let Err(err) = fs::remove_file(path)
-            && err.kind() != std::io::ErrorKind::NotFound
-        {
-            errors.push(format!("failed to remove staged {}: {err}", path.display()));
-        }
-    }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors.join("; "))
-    }
+) -> Result<(), String> {
+    let actual = fs::read(path).map_err(|err| {
+        format!(
+            "failed to read {}: {err}; editors/vscode/LICENSE must carry the complete repository notices so raw vsce also ships them",
+            path.display()
+        )
+    })?;
+    require_license_bytes_contain_notices(&actual, notices, &path.display().to_string())
 }
 
 fn verify_packaged_vsix_license_notices(
@@ -1798,55 +1735,92 @@ fn verify_packaged_vsix_license_notices(
         .map_err(|err| format!("packaged VSIX {} is missing: {err}", vsix_path.display()))?;
     let mut archive = zip::ZipArchive::new(file)
         .map_err(|err| format!("packaged VSIX {} is not a zip: {err}", vsix_path.display()))?;
-    check_vsix_license_member(
-        &mut archive,
-        vsix_path,
-        VSIX_LICENSE_MIT_ENTRY,
-        &notices.mit,
-    )?;
-    check_vsix_license_member(
-        &mut archive,
-        vsix_path,
-        VSIX_LICENSE_APACHE_ENTRY,
-        &notices.apache,
-    )?;
-    Ok(())
+    let actual = read_vsix_license_txt_member(&mut archive, vsix_path)?;
+    require_license_bytes_contain_notices(
+        &actual,
+        notices,
+        &format!(
+            "packaged VSIX {} member {VSIX_LICENSE_TXT_ENTRY}",
+            vsix_path.display()
+        ),
+    )
 }
 
-fn check_vsix_license_member(
+fn read_vsix_license_txt_member(
     archive: &mut zip::ZipArchive<fs::File>,
     vsix_path: &Path,
-    name: &str,
-    expected: &[u8],
-) -> Result<(), String> {
-    let mut member = archive.by_name(name).map_err(|err| {
+) -> Result<Vec<u8>, String> {
+    let mut member = archive.by_name(VSIX_LICENSE_TXT_ENTRY).map_err(|err| {
         format!(
-            "packaged VSIX {} is missing {name}: {err}; the archive must carry the complete repository LICENSE-MIT and LICENSE-APACHE notices, not only editors/vscode/LICENSE",
+            "packaged VSIX {} is missing {VSIX_LICENSE_TXT_ENTRY}: {err}; vsce ships editors/vscode/LICENSE as that member, and it must carry the complete repository LICENSE-MIT and LICENSE-APACHE notices",
             vsix_path.display()
         )
     })?;
     if member.is_dir() {
         return Err(format!(
-            "packaged VSIX {} member {name} is a directory, not a license notice",
+            "packaged VSIX {} member {VSIX_LICENSE_TXT_ENTRY} is a directory, not a license notice",
             vsix_path.display()
         ));
     }
     let mut actual = Vec::new();
     std::io::copy(&mut member, &mut actual).map_err(|err| {
         format!(
-            "failed to read packaged VSIX {} member {name}: {err}",
+            "failed to read packaged VSIX {} member {VSIX_LICENSE_TXT_ENTRY}: {err}",
             vsix_path.display()
         )
     })?;
-    if actual != expected {
+    Ok(actual)
+}
+
+fn require_license_bytes_contain_notices(
+    actual: &[u8],
+    notices: &RepositoryLicenseNotices,
+    subject: &str,
+) -> Result<(), String> {
+    if actual.len() < COMPLETE_LICENSE_NOTICE_MIN_BYTES {
         return Err(format!(
-            "packaged VSIX {} member {name} is {} bytes and does not match the repository notice ({} bytes)",
-            vsix_path.display(),
-            actual.len(),
-            expected.len()
+            "{subject} is {} bytes; complete repository notices must be at least {COMPLETE_LICENSE_NOTICE_MIN_BYTES} bytes, not the historic editors/vscode/LICENSE pointer",
+            actual.len()
+        ));
+    }
+    require_notice_contained(actual, &notices.mit, subject, ROOT_LICENSE_MIT)?;
+    require_notice_contained(actual, &notices.apache, subject, ROOT_LICENSE_APACHE)?;
+    Ok(())
+}
+
+fn require_notice_contained(
+    haystack: &[u8],
+    notice: &[u8],
+    subject: &str,
+    label: &str,
+) -> Result<(), String> {
+    let needle = trim_ascii_bytes(notice);
+    if needle.is_empty() || !bytes_contain(haystack, needle) {
+        return Err(format!(
+            "{subject} does not contain the complete repository {label} notice"
         ));
     }
     Ok(())
+}
+
+fn trim_ascii_bytes(bytes: &[u8]) -> &[u8] {
+    let Some(start) = bytes.iter().position(|byte| !byte.is_ascii_whitespace()) else {
+        return &[];
+    };
+    let end = bytes
+        .iter()
+        .rposition(|byte| !byte.is_ascii_whitespace())
+        .map_or(start, |index| index + 1);
+    bytes.get(start..end).unwrap_or(&[])
+}
+
+fn bytes_contain(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
 }
 
 fn vscode_test() -> Result<(), String> {

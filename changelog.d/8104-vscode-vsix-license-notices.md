@@ -1,3 +1,4 @@
 <!-- section: Fixed -->
-- `cargo xtask vscode-package` stages the repository MIT and Apache notices
-  into the sealed VSIX and rejects a pointer-only archive (#8104, #8109).
+- The VS Code VSIX now ships the complete repository MIT and Apache notices
+  in `extension/LICENSE.txt`; packaging rejects a pointer-only archive
+  (#8104, #8109).

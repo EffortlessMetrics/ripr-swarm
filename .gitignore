@@ -19,11 +19,6 @@ editors/vscode/node_modules/
 editors/vscode/out/
 editors/vscode/dist/
 editors/vscode/.vscode-test/
-# Staged by `cargo xtask vscode-package` from the repository root notices
-# and removed after the VSIX is sealed. Ignore leftovers from a failed
-# cleanup so they cannot be committed as a second license source.
-editors/vscode/LICENSE-MIT
-editors/vscode/LICENSE-APACHE
 packaging/npm/**/node_modules/
 packaging/npm/**/*.tgz
 .claude/
