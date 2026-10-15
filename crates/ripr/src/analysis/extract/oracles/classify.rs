@@ -78,6 +78,17 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
                 whole
             };
         }
+        Some(BoolOperandReading::Rest(rest)) => {
+            let whole = classify_non_negated_assertion(line, scalar_integer_relation);
+            let rest = classify_assertion(&rest);
+            // The pinning conjuncts decide the kind, but the reading never
+            // rises above the whole assertion's.
+            return if rest.strength.rank() <= whole.strength.rank() {
+                rest
+            } else {
+                whole
+            };
+        }
         None => {}
     }
     // A negated pattern takes rule 1 before any pattern-reading step, so

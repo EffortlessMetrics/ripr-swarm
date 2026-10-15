@@ -27,6 +27,12 @@ pub(super) enum BoolOperandReading {
     /// `==` conjunct asserted true, which reads like the same chain in
     /// `assert!` (rule 3): this assertion text.
     Chain(String),
+    /// The operand is an `&&` chain with a pinning `==` conjunct and at
+    /// least one conjunct that states only a relation
+    /// (`a == b && !matches!(r, Err(E::Bad))`, `a == b && r != Err(E::Bad)`):
+    /// the same equality assertion over the other conjuncts. The relation conjunct pins
+    /// nothing, so it lends the reading no kind (rule 1; #7947).
+    Rest(String),
 }
 
 /// The reading of an equality macro with one boolean-literal operand
@@ -105,7 +111,20 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
         if conjuncts.iter().any(|conjunct| {
             has_top_level_exact_equality(conjunct) && !conjunct_states_relation(conjunct)
         }) {
-            return None;
+            let rest: Vec<&str> = conjuncts
+                .iter()
+                .filter(|conjunct| !conjunct_states_relation(conjunct))
+                .map(|conjunct| conjunct.trim())
+                .collect();
+            if rest.len() == conjuncts.len() {
+                return None;
+            }
+            // The rest keeps the equality-macro form, so `a == b` reads as
+            // `assert_eq!(a == b, true)` does.
+            return Some(BoolOperandReading::Rest(format!(
+                "assert_eq!({}, true);",
+                rest.join(" && ")
+            )));
         }
         // With no pinning `==` conjunct, a negated, `!=`, relational or
         // false-compared conjunct states only a relation
