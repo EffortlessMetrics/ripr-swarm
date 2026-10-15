@@ -17225,10 +17225,6 @@ fn assert_pilot_does_not_read_as_clean(stdout: &str, md: &str) {
         "no-Rust-seam pilot must not print the plain no-recommendation line:\n{stdout}"
     );
     assert!(
-        stdout.contains("none: pilot ranks Rust seams and found none here"),
-        "{stdout}"
-    );
-    assert!(
         stdout.contains("Languages outside pilot's Rust seam scan:"),
         "{stdout}"
     );
@@ -17242,6 +17238,34 @@ fn assert_pilot_does_not_read_as_clean(stdout: &str, md: &str) {
     );
     assert!(md.contains("This is not a clean result"), "{md}");
     assert!(!md.contains("ripr outcome --before"), "{md}");
+}
+
+/// #7665: when an enabled supported language has a check route, that route
+/// is the headline, not a Rust-framed "none".
+fn assert_pilot_headline_names_supported_check_route(
+    stdout: &str,
+    md: &str,
+    language_display: &str,
+    command: &str,
+) {
+    let headline = format!("analyze the {language_display} diff: {command}");
+    assert!(
+        stdout.contains(&format!("Top recommendation:\n  {headline}\n")),
+        "headline must name the supported-language check route:\n{stdout}"
+    );
+    assert!(
+        !stdout
+            .contains("none: pilot ranks Rust seams and found none here; see the languages below"),
+        "headline must not read as an empty recommendation:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("(pilot ranks Rust seams and found none here; see the languages below)"),
+        "{stdout}"
+    );
+    assert!(
+        md.contains(&format!("Analyze the {language_display} diff: `{command}`")),
+        "{md}"
+    );
 }
 
 #[test]
@@ -17288,6 +17312,19 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
         "{route}"
     );
     assert_pilot_does_not_read_as_clean(&stdout, &md);
+    // Default config leaves TypeScript disabled: `ripr check` will not
+    // analyze it, so the headline stays none while the languages section
+    // still names the route (#7665).
+    assert!(
+        stdout
+            .contains("none: pilot ranks Rust seams and found none here; see the languages below"),
+        "disabled TypeScript must not headline the check route:\n{stdout}"
+    );
+    assert!(!stdout.contains("analyze the TypeScript diff:"), "{stdout}");
+    assert!(
+        summary.get("top_recommendation").is_none(),
+        "schema must not grow a top_recommendation field: {summary}"
+    );
     assert!(
         stdout.contains(
             "typescript: 2 files (preview, diff-first; not enabled in ripr.toml [languages])"
@@ -17314,7 +17351,8 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
         "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
     )
     .map_err(|err| format!("write ripr.toml: {err}"))?;
-    let (enabled_stdout, _, enabled_summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    let (enabled_stdout, enabled_md, enabled_summary, _) =
+        run_pilot_language_fixture(&root, &out_dir)?;
     assert_eq!(
         required_language_route(&enabled_summary, "typescript")?["enabled"],
         true
@@ -17322,6 +17360,12 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
     assert!(
         enabled_stdout.contains("typescript: 2 files (preview, diff-first)\n"),
         "{enabled_stdout}"
+    );
+    assert_pilot_headline_names_supported_check_route(
+        &enabled_stdout,
+        &enabled_md,
+        "TypeScript",
+        &command,
     );
 
     ignore_remove_dir_all(&root);
@@ -17404,6 +17448,15 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
         "{stdout}"
     );
     assert!(
+        !stdout
+            .contains("none: pilot ranks Rust seams and found none here; see the languages below"),
+        "a Python repair card remains the top recommendation:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("analyze the Python diff:"),
+        "a Python repair card outranks the language-route headline:\n{stdout}"
+    );
+    assert!(
         !stdout.contains("Next, analyze the changed code in these languages:"),
         "{stdout}"
     );
@@ -17453,11 +17506,24 @@ fn pilot_says_perl_is_unavailable_when_repo_has_no_rust_seams() -> Result<(), St
     assert_pilot_does_not_read_as_clean(&stdout, &md);
     if cfg!(feature = "lang-perl") {
         assert_eq!(route["language_status"], "preview");
-        assert_eq!(
-            route["command"],
-            serde_json::json!(format!("ripr check --root {}", root.display()))
+        let command = format!("ripr check --root {}", root.display());
+        assert_eq!(route["command"], serde_json::json!(command));
+        // Perl is compiled in but not in the default enabled set, so the
+        // headline stays none (same as disabled TypeScript).
+        assert!(
+            stdout.contains(
+                "none: pilot ranks Rust seams and found none here; see the languages below"
+            ),
+            "disabled Perl keeps the none headline:\n{stdout}"
         );
+        assert!(!stdout.contains("analyze the Perl diff:"), "{stdout}");
     } else {
+        assert!(
+            stdout.contains(
+                "none: pilot ranks Rust seams and found none here; see the languages below"
+            ),
+            "unavailable Perl keeps the none headline:\n{stdout}"
+        );
         let notice = "Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`perl-ripr-facts`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it.";
         assert_eq!(route["language_status"], "unavailable");
         assert_eq!(route["route"], "unavailable_in_this_binary");
@@ -17822,6 +17888,141 @@ fn pilot_names_no_build_script_when_rust_is_disabled() -> Result<(), String> {
     assert!(!md.contains("build.rs"), "{md}");
     ignore_remove_dir_all(&root);
     ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// #5604: later lines of normalized match heads follow the real working-tree
+/// change, including a warm inventory, partial tests and both seam caps.
+#[test]
+fn pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps() -> Result<(), String> {
+    let lib = "pub fn first(n: u32) -> bool {\n    n > 10\n}\npub fn target(n: u32) -> u8 {\n    match (\n        n,\n    ) {\n        0\n        | 1\n        => 7,\n        _ => 9,\n    }\n}\n";
+    for partial in [false, true] {
+        let mut files = vec![
+            (
+                "Cargo.toml",
+                "[package]\nname = 'match_fixture'\nversion = '0.1.0'\nedition = '2024'\n",
+            ),
+            ("src/lib.rs", lib),
+        ];
+        if partial {
+            files.push((
+                "tests/partial.rs",
+                "#[test]\nfn smoke_only() { let _ = match_fixture::target(4); }\n",
+            ));
+        }
+        let root = pilot_language_fixture_repo(
+            "pilot-multiline-head",
+            &files,
+            ("NOTES.md", "unrelated change\n"),
+        )?;
+        let out = unique_temp_workspace("pilot-multiline-head-out");
+        // Seed the classified cache with a diff that touches no seam.
+        let (_, _, summary, _) = run_pilot_language_fixture(&root, &out)?;
+        assert_eq!(summary["current_change"]["actionable_seams_in_change"], 0);
+        for (edited, expected_line) in [
+            (lib.replace("        n,", "        n + 1,"), 5),
+            (lib.replace("        | 1", "        | 2"), 10),
+        ] {
+            std::fs::write(root.join("src/lib.rs"), &edited).map_err(|e| e.to_string())?;
+            // Repeat identical bytes to exercise a warm classified cache;
+            // moving the changed line then requires a fresh source identity.
+            for _ in 0..2 {
+                let (stdout, md, summary, exposure) = run_pilot_language_fixture(&root, &out)?;
+                let match_seams: Vec<_> = exposure["seams"]
+                    .as_array()
+                    .ok_or("missing seam population")?
+                    .iter()
+                    .filter(|seam| seam["kind"] == "match_arm")
+                    .collect();
+                assert_eq!(match_seams.len(), 3, "{exposure}");
+                for seam in match_seams {
+                    let related = seam["related_tests"]
+                        .as_array()
+                        .ok_or("missing related-test population")?;
+                    assert_eq!(related.len(), usize::from(partial), "{seam}");
+                    if partial {
+                        assert_eq!(related[0]["name"], "smoke_only", "{seam}");
+                        assert_eq!(related[0]["file"], "tests/partial.rs", "{seam}");
+                    }
+                }
+                assert_eq!(
+                    summary["top_actionable_seams"][0]["line"], expected_line,
+                    "{summary}"
+                );
+                assert_eq!(
+                    summary["top_actionable_seams"][0]["kind"], "match_arm",
+                    "{summary}"
+                );
+                assert_eq!(
+                    summary["current_change"]["actionable_seams_in_change"], 1,
+                    "{summary}"
+                );
+                assert_eq!(
+                    summary["current_change"]["top_recommendation_in_change"], true,
+                    "{summary}"
+                );
+                assert!(stdout.contains("current change: part of it"), "{stdout}");
+                assert!(md.contains("- Current change: part of it"), "{md}");
+            }
+            let warm = run_ripr_with_env(
+                &[
+                    "pilot",
+                    "--root",
+                    &root.display().to_string(),
+                    "--out",
+                    &out.display().to_string(),
+                ],
+                &[("RIPR_REPO_EXPOSURE_LATENCY_TRACE", "1")],
+            );
+            assert_success(&warm);
+            let trace = String::from_utf8_lossy(&warm.stderr);
+            assert!(trace.contains("phase=cache_load status=hit"), "{trace}");
+            let output = run_ripr_with_env(
+                &[
+                    "pilot",
+                    "--root",
+                    &root.display().to_string(),
+                    "--out",
+                    &out.display().to_string(),
+                ],
+                &[
+                    ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1"),
+                    ("RIPR_PILOT_SEAM_BUDGET", "1"),
+                ],
+            );
+            assert_success(&output);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains(
+                    "pilot hit the seam limit; classifying the current change's 1 Rust file(s)"
+                ),
+                "{stderr}"
+            );
+            let summary: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(out.join("pilot-summary.json"))
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            let md =
+                std::fs::read_to_string(out.join("pilot-summary.md")).map_err(|e| e.to_string())?;
+            assert_eq!(
+                summary["top_actionable_seams"].as_array().map(Vec::len),
+                Some(1),
+                "{summary}"
+            );
+            assert_eq!(
+                summary["top_actionable_seams"][0]["line"], expected_line,
+                "{summary}"
+            );
+            assert_eq!(
+                summary["current_change"]["top_recommendation_in_change"], true,
+                "{summary}"
+            );
+            assert!(md.contains("ranked 1 of 5 seams"), "{md}");
+        }
+        ignore_remove_dir_all(&root);
+        ignore_remove_dir_all(&out);
+    }
     Ok(())
 }
 
@@ -24061,6 +24262,42 @@ fn agent_status_names_a_refused_after_phase_before_repeating_it()
         .unwrap_or_default()
         .to_string();
     assert!(recorded.contains("no repository movement"), "{manifest:#}");
+    assert_eq!(refused_document["attempt_id"], attempt_id);
+    let error = refused_document["error"]
+        .as_str()
+        .ok_or("missing original typed error")?;
+    assert!(recorded.starts_with(error), "{recorded}");
+    assert!(
+        refused_stderr.contains(&format!("ripr: {error}")),
+        "{refused_stderr}"
+    );
+    let narration = refused_document["narration"]
+        .as_array()
+        .ok_or("missing refusal narration")?;
+    assert!(!narration.is_empty(), "{refused_document}");
+    for line in narration {
+        let line = line.as_str().ok_or("non-string refusal narration")?;
+        assert!(
+            refused_stderr.contains(&format!("ripr: {line}")),
+            "{refused_stderr}"
+        );
+        assert!(
+            recorded
+                .to_lowercase()
+                .contains(&line.trim_end_matches('.').to_lowercase()),
+            "{recorded}"
+        );
+    }
+    for expected in [
+        "awaiting_edit",
+        "tests/pricing.rs",
+        "then rerun",
+        "ripr agent status --root",
+        &format!("--attempt {attempt_id}"),
+    ] {
+        assert!(recorded.contains(expected), "{recorded}");
+    }
+    assert!(!root.join("target/ripr/reports/agent-receipt.json").exists());
 
     let report = repair_route_status(&root)?;
     let (step, command) = repair_route_next(&report);

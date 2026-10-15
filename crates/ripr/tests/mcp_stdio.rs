@@ -948,12 +948,20 @@ fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
                 "uri": "ripr://workspace/missing"
             }
         }))?,
+        line(json!({
+            "jsonrpc": "2.0", "id": "missing-snapshot", "method": "resources/read",
+            "params": { "_meta": current_meta(), "uri": "ripr://snapshot/snapshot:sha256:absent" }
+        }))?,
+        line(json!({
+            "jsonrpc": "2.0", "id": "recovered-status", "method": "resources/read",
+            "params": { "_meta": current_meta(), "uri": "ripr://workspace/status" }
+        }))?,
     ]
     .concat();
     let output = run_mcp(&root, &[&request_bytes])?;
     let responses = response_lines(&output)?;
-    if responses.len() != 4 {
-        return Err(format!("expected 4 MCP responses, got {}", responses.len()));
+    if responses.len() != 6 {
+        return Err(format!("expected 6 MCP responses, got {}", responses.len()));
     }
     let expected: [(&str, i64); 3] = [
         ("unknown-tool", -32601),
@@ -972,6 +980,99 @@ fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
                 "rejection for {id} must echo the request id: {response}"
             ));
         }
+    }
+    let by_id = responses
+        .iter()
+        .map(|response| {
+            response
+                .get("id")
+                .and_then(Value::as_str)
+                .map(|id| (id, response))
+                .ok_or_else(|| format!("response lost its string id: {response}"))
+        })
+        .collect::<Result<std::collections::BTreeMap<_, _>, _>>()?;
+    if by_id.len() != 6 {
+        return Err("resource recovery responses must have distinct ids".to_string());
+    }
+    let discover = by_id.get("discover").ok_or("missing discovery response")?;
+    if !discover.get("result").is_some_and(Value::is_object) || discover.get("error").is_some() {
+        return Err(format!(
+            "discovery failed before recovery controls: {discover}"
+        ));
+    }
+    let snapshot = by_id
+        .get("missing-snapshot")
+        .ok_or("missing snapshot response")?;
+    if snapshot.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+        || snapshot.pointer("/error/message").and_then(Value::as_str)
+            != Some("unavailable snapshot resource: no_snapshot")
+        || snapshot.pointer("/error/data/code").and_then(Value::as_str) != Some("no_snapshot")
+        || snapshot.pointer("/error/data/available").is_some()
+        || snapshot.pointer("/error/data/resource_templates").is_some()
+    {
+        return Err(format!(
+            "recognized snapshot lost its typed refusal: {snapshot}"
+        ));
+    }
+    let status = by_id
+        .get("recovered-status")
+        .ok_or("missing status recovery response")?;
+    if status.get("error").is_some()
+        || status
+            .pointer("/result/contents/0/uri")
+            .and_then(Value::as_str)
+            != Some("ripr://workspace/status")
+    {
+        return Err(format!(
+            "valid status read failed after resource miss: {status}"
+        ));
+    }
+    let status_text = status
+        .pointer("/result/contents/0/text")
+        .and_then(Value::as_str)
+        .ok_or("recovered status omitted JSON document")?;
+    let status_document: Value =
+        serde_json::from_str(status_text).map_err(|error| error.to_string())?;
+    if status_document
+        .pointer("/workspace/authority/source_edit_capability")
+        .and_then(Value::as_str)
+        != Some("none")
+        || status_document
+            .get("schema_version")
+            .and_then(Value::as_str)
+            != Some("ripr-mcp-workspace-status-v1")
+        || status_document
+            .pointer("/session/attempt_state")
+            .and_then(Value::as_str)
+            != Some("no_snapshot")
+    {
+        return Err(format!(
+            "recovered status lost its read-only contract: {status_document}"
+        ));
+    }
+    // Literal consumer contract, independent of the production template registry.
+    let miss = by_id
+        .get("unknown-resource")
+        .ok_or("missing unknown-resource response")?;
+    let expected_message = "unknown resource; available: ripr://workspace/status; templates: ripr://snapshot/{snapshot_id}, ripr://gap/{canonical_id}, ripr://repair-attempt/{attempt_id}, ripr://receipt/{receipt_id}, ripr://repair-card/{canonical_id}";
+    if miss.pointer("/error/data/available") != Some(&json!(["ripr://workspace/status"]))
+        || miss.pointer("/error/data/resource_templates")
+            != Some(&json!([
+                "ripr://snapshot/{snapshot_id}",
+                "ripr://gap/{canonical_id}",
+                "ripr://repair-attempt/{attempt_id}",
+                "ripr://receipt/{receipt_id}",
+                "ripr://repair-card/{canonical_id}"
+            ]))
+    {
+        return Err(format!(
+            "resource miss changed structured recovery routes: {miss}"
+        ));
+    }
+    if miss.pointer("/error/message").and_then(Value::as_str) != Some(expected_message) {
+        return Err(format!(
+            "unknown-resource message hides valid recovery routes: {miss}"
+        ));
     }
     Ok(())
 }
@@ -1808,6 +1909,141 @@ fn check_filtered_gap_page(
         return Err(format!(
             "filtered transport page differs from exact IDs/counts: expected {expected_ids:?}, selected={selected}, filtered={filtered}: {document}"
         ));
+    }
+    Ok(())
+}
+
+/// #7768: an empty page still carries its echoed filters. Exercise the
+/// interval where that document fits but its required structured envelope
+/// does not, using the real CLI transport and an independently sized result.
+#[test]
+fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<(), String> {
+    const RESPONSE_BOUND: usize = 128 * 1024;
+    let timeout = Duration::from_secs(30);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let (binary, digest) = Observation::executable_custody(Path::new(env!("CARGO_BIN_EXE_ripr")))?;
+    eprintln!(
+        "empty-page control binary={} sha256={digest}",
+        binary.display()
+    );
+    let mut session = SequentialStdio::spawn(&root)?;
+    let discovery = session.call("empty-discover", "server/discover", json!({}), timeout)?;
+    if discovery.get("result").is_none() {
+        return Err("empty-page fixture failed discovery".into());
+    }
+    let refresh = session.call_tool("empty-refresh", "ripr_refresh", json!({}), timeout)?;
+    let refresh = structured_tool_success(&refresh, "empty-page refresh")?;
+    if refresh["attempt"]["state"] != "completed"
+        || refresh["snapshot"]["outcome_kind"] != "complete_with_findings"
+    {
+        return Err(format!(
+            "empty-page fixture did not complete analysis: {refresh}"
+        ));
+    }
+    let all = session.call_tool("empty-baseline", "ripr_list_gaps", json!({}), timeout)?;
+    let all = structured_tool_success(&all, "empty-page baseline")?;
+    let items = all["items"].as_array().ok_or("baseline omitted items")?;
+    if items.is_empty() || all["selected"] != json!(items.len()) {
+        return Err("empty-page fixture must first expose a nonempty selected set".into());
+    }
+    let snapshot_id = all["snapshot_id"]
+        .as_str()
+        .ok_or("baseline omitted snapshot ID")?;
+
+    for field in ["file", "class", "language"] {
+        let fitting_filter = "\u{1}".repeat(9_500);
+        let mut arguments = json!({});
+        arguments[field] = json!(fitting_filter);
+        let fitting = session.call_tool("empty-fitting", "ripr_list_gaps", arguments, timeout)?;
+        if serde_json::to_vec(&fitting)
+            .map_err(|error| error.to_string())?
+            .len()
+            > RESPONSE_BOUND
+        {
+            return Err(format!(
+                "fitting empty {field} page exceeded the response cap"
+            ));
+        }
+        let fitting = structured_tool_success(&fitting, "fitting empty page")?;
+        if fitting["items"] != json!([])
+            || fitting["filtered"] != 0
+            || fitting["selected"] != all["selected"]
+            || fitting["filters"][field] != fitting_filter
+            || fitting["snapshot_id"] != snapshot_id
+            || fitting["page"]["has_more"] != false
+            || fitting["page"]["next_offset"] != Value::Null
+        {
+            return Err(format!(
+                "fitting empty {field} page lost its counts, echo, or identity"
+            ));
+        }
+
+        // Size the consumer-required envelope independently of the pager's
+        // fit helper. This stimulus must sit below the raw-document ceiling
+        // and above the complete structured-envelope cap before testing refusal.
+        let overflowing_filter = "\u{1}".repeat(10_000);
+        let mut expected = fitting;
+        expected["filters"][field] = json!(overflowing_filter);
+        let text = serde_json::to_string(&expected).map_err(|error| error.to_string())?;
+        let raw_bytes = text.len();
+        let envelope = json!({
+            "content": [{"type": "text", "text": text}],
+            "structuredContent": expected,
+            "isError": false,
+        });
+        let structured_bytes = serde_json::to_vec(&envelope)
+            .map_err(|error| error.to_string())?
+            .len();
+        if raw_bytes > RESPONSE_BOUND / 2 - 256 || structured_bytes <= RESPONSE_BOUND {
+            return Err(format!(
+                "{field} overflow fixture missed its interval: raw={raw_bytes}, structured={structured_bytes}"
+            ));
+        }
+        eprintln!(
+            "empty {field} page raw={raw_bytes} structured={structured_bytes} bound={RESPONSE_BOUND}"
+        );
+        for filter in [overflowing_filter, "\u{1}".repeat(11_000)] {
+            let mut arguments = json!({});
+            arguments[field] = json!(filter);
+            let refused =
+                session.call_tool("empty-refused", "ripr_list_gaps", arguments, timeout)?;
+            if refused.get("error").is_some()
+                || refused.pointer("/result/isError") != Some(&json!(true))
+                || refused.pointer("/result/structuredContent/schema_version")
+                    != Some(&json!("ripr-mcp-gap-list-v2"))
+                || refused.pointer("/result/structuredContent/failure/code")
+                    != Some(&json!("result_too_large"))
+                || refused.pointer("/result/structuredContent/failure/data/current_snapshot_id")
+                    != Some(&json!(snapshot_id))
+            {
+                return Err(format!(
+                    "empty {field} overflow must return typed result_too_large: isError={:?}, has_structured={}, code={:?}",
+                    refused.pointer("/result/isError"),
+                    refused.pointer("/result/structuredContent").is_some(),
+                    refused.pointer("/result/structuredContent/failure/code")
+                ));
+            }
+            let recovery = refused
+                .pointer("/result/structuredContent/failure/recovery")
+                .and_then(Value::as_str)
+                .ok_or("empty-page refusal omitted recovery")?;
+            if !recovery.contains("ripr://snapshot/{snapshot_id}")
+                || !recovery.contains("ripr_get_gap")
+                || serde_json::to_vec(&refused)
+                    .map_err(|error| error.to_string())?
+                    .len()
+                    > RESPONSE_BOUND
+            {
+                return Err(format!(
+                    "empty {field} refusal lost its bounded identity recovery"
+                ));
+            }
+        }
+    }
+    let recovered = session.call_tool("empty-recovered", "ripr_list_gaps", json!({}), timeout)?;
+    if structured_tool_success(&recovered, "same-session recovery")? != all {
+        return Err("empty-page refusals changed the completed snapshot or selection".into());
     }
     Ok(())
 }

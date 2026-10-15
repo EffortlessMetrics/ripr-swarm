@@ -64,7 +64,9 @@ an operand, an argument, a receiver, a field or index base, an element, a
 `for` iterable, or a non-unit return through block tails, `if` branches and
 match arms) emits no `call_presence` seam: deleting it does not compile, so no
 mutant asks that question, and the consumer's predicate, return or error seam
-carries the behavior (#6677). Diff-scope `call_deletion` probes are unchanged.
+carries the behavior (#6677). Diff-scope `call_deletion` probes are unchanged,
+except that a bare local accumulator update (`count += f(x);`) is not one
+(RIPR-SPEC-0228, Problem).
 
 The seam inventory should be deterministic: two runs over the same source tree
 with the same analyzer version and configuration must produce the same seam IDs

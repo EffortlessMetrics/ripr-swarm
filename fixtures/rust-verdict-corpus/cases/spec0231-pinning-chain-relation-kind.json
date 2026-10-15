@@ -1,0 +1,73 @@
+{
+  "case_id": "spec0231-pinning-chain-relation-kind",
+  "subject_id": "authored-pinning-chain-relation-kind",
+  "diff": "cases/spec0231-pinning-chain-relation-kind.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "scalar_return_value",
+  "test_shape": "assert_eq_pinning_chain_with_relation_conjunct",
+  "hard_case": "Measured defect (#7947): ripr reported the related test's oracle `assert_eq!(score(2) == 4 && check(2) != Err(E::Bad), true)` as exact_error_variant / strong, taking its kind from the `!=` conjunct. RIPR-SPEC-0231 rule 1 (example 33): that conjunct only excludes a variant and lends no kind; `score(2) == 4` pins, so the oracle is exact_value / strong. The strength and line verdict were already right; the wrong kind showed in the related test's reported oracle. Since #7947's fix ripr reports exact_value / strong.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.97.0 (2d8144b78 2026-07-07), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x * 3",
+        "mutated_line": "x * 3",
+        "outcome": "tests_failed",
+        "failing_test": "tests::score_pins_and_check_is_not_bad",
+        "equivalence_review": "not equivalent: score(2) becomes 6, so score(2) == 4 is false"
+      },
+      {
+        "replacement": "x * 0",
+        "mutated_line": "x * 0",
+        "outcome": "tests_failed",
+        "failing_test": "tests::score_pins_and_check_is_not_bad",
+        "equivalence_review": "not equivalent: score(2) becomes 0, so score(2) == 4 is false"
+      },
+      {
+        "replacement": "x + 2",
+        "mutated_line": "x + 2",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: score(2) is still 4, but score(3) becomes 5 instead of 6"
+      },
+      {
+        "replacement": "x / 2",
+        "mutated_line": "x / 2",
+        "outcome": "tests_failed",
+        "failing_test": "tests::score_pins_and_check_is_not_bad",
+        "equivalence_review": "not equivalent: score(2) becomes 1, so score(2) == 4 is false"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "assert_eq!(score(2) == 4 && check(2) != Err(E::Bad), true) pins score(2) through its == conjunct: x * 3, x * 0 and x / 2 fail it, x + 2 passes because it agrees at 2. The != conjunct only excludes E::Bad and lends the oracle no kind, so the oracle is exact_value / strong (RIPR-SPEC-0231 example 33) on an input that leaves one mutant alive.",
+  "labeling_observation": {
+    "ripr_commit": "322088b17",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#33"
+  ],
+  "expected_oracle": {
+    "kind": "exact_value",
+    "strength": "strong",
+    "spec": "RIPR-SPEC-0231#33"
+  }
+}

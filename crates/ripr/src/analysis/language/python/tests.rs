@@ -86,8 +86,8 @@ fn detect_python_test_framework_recognizes_from_unittest_import() -> Result<(), 
 
 #[test]
 fn detect_python_test_framework_rejects_lookalike_and_commented_imports() -> Result<(), String> {
-    // Negative fixtures (#2106 review): a lookalike identifier and a
-    // commented-out import must NOT report unittest.
+    // Negative fixtures (#2106 review / #7662): a lookalike identifier and a
+    // commented-out import must NOT report unittest or pytest.
     let root = unique_test_root("lookalike");
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     std::fs::write(root.join("test_lookalike.py"), "import unittesting\n")
@@ -100,6 +100,323 @@ fn detect_python_test_framework_rejects_lookalike_and_commented_imports() -> Res
     std::fs::write(root.join("test_commented.py"), "# import unittest\n")
         .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(super::detect_python_test_framework(&root), None);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("pytest-lookalike");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("test_lookalike.py"), "import pytesting\n")
+        .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_framework(&root), None);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("pytest-commented");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("test_commented.py"), "# import pytest\n")
+        .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_framework(&root), None);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_framework_detects_pytest_from_test_file_import() -> Result<(), String> {
+    // #7662: a zero-config pytest repo (bare test_*.py + `import pytest`,
+    // no pytest.ini/conftest/section marker) is pytest evidence.
+    let root = unique_test_root("pytest-import");
+    let tests_dir = root.join("tests");
+    std::fs::create_dir_all(&tests_dir).map_err(|err| format!("create tests dir: {err}"))?;
+    std::fs::write(
+        tests_dir.join("test_module.py"),
+        "import pytest\n\n@pytest.mark.parametrize('n', [1])\ndef test_n(n):\n    assert n == 1\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_framework_recognizes_from_pytest_import() -> Result<(), String> {
+    let root = unique_test_root("from-pytest");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_pricing.py"),
+        "from pytest import mark\n\n@mark.parametrize('n', [1])\ndef test_n(n):\n    assert n == 1\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_framework_prefers_config_markers_over_unittest_imports() -> Result<(), String>
+{
+    // Primary-of-set stays pytest (#7662): a pytest.ini repo that also has
+    // unittest imports still returns pytest from the singular detector so
+    // adapter repo-input does not flip. The full set is #7664.
+    let root = unique_test_root("config-first");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+        .map_err(|err| format!("write pytest.ini: {err}"))?;
+    std::fs::write(
+        root.join("test_pricing.py"),
+        "import unittest\n\nclass TestPricing(unittest.TestCase):\n    pass\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_reports_both_on_mixed_import_evidence() -> Result<(), String> {
+    // #7664: zero-config mixed imports must not collapse to a single winner.
+    let root = unique_test_root("mixed-imports");
+    let tests_dir = root.join("tests");
+    std::fs::create_dir_all(&tests_dir).map_err(|err| format!("create tests dir: {err}"))?;
+    std::fs::write(
+        tests_dir.join("test_pytest_style.py"),
+        "import pytest\n\ndef test_multiply():\n    assert 2 * 3 == 6\n",
+    )
+    .map_err(|err| format!("write pytest file: {err}"))?;
+    std::fs::write(
+        tests_dir.join("test_unit_style.py"),
+        "import unittest\n\nclass TestClamp(unittest.TestCase):\n    def test_clamp_lower(self):\n        self.assertEqual(1, 1)\n",
+    )
+    .map_err(|err| format!("write unittest file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["pytest", "unittest"]
+    );
+    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_reports_both_when_config_and_unittest_coexist()
+-> Result<(), String> {
+    // #7664: config markers add pytest; they must not skip unittest.
+    let root = unique_test_root("mixed-config");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+        .map_err(|err| format!("write pytest.ini: {err}"))?;
+    std::fs::write(
+        root.join("test_pricing.py"),
+        "import unittest\n\nclass TestPricing(unittest.TestCase):\n    pass\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["pytest", "unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<(), String> {
+    // #7664 review: pytest.ini + unittest.mock is not a mixed test surface.
+    let root = unique_test_root("mock-only");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+        .map_err(|err| format!("write pytest.ini: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import mock\n\ndef test_api():\n    assert True\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("mock-and-testcase");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import mock, TestCase\n\nclass ApiTest(TestCase):\n    pass\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // Parentheses must not turn mock-only into unittest (#7664 review).
+    let root = unique_test_root("mock-paren");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+        .map_err(|err| format!("write pytest.ini: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import (mock)\n\ndef test_api():\n    assert True\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("mock-paren-multiline");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+        .map_err(|err| format!("write pytest.ini: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import (\n    mock,\n)\n\ndef test_api():\n    assert True\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("mock-paren-comment");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+        .map_err(|err| format!("write pytest.ini: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import (\n    mock,  # patching\n)\n\ndef test_api():\n    assert True\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("mock-backslash");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+        .map_err(|err| format!("write pytest.ini: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import \\\n    mock\n\ndef test_api():\n    assert True\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("testcase-backslash");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import \\\n    TestCase\n\nclass ApiTest(TestCase):\n    pass\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("testcase-paren-multiline");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import (\n    mock,\n    TestCase,\n)\n\nclass ApiTest(TestCase):\n    pass\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_does_not_complete_a_truncated_import() -> Result<(), String> {
+    // Prefix contract (#7664 review): if byte 4096 cuts `import unittest_extra`
+    // after `import unittest`, the incomplete line is not framework evidence.
+    const PREFIX: usize = 4096;
+    const UNITTEST_IMPORT: &str = "import unittest";
+
+    let root = unique_test_root("prefix-truncated-lookalike");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let mut lookalike = "x".repeat(PREFIX - UNITTEST_IMPORT.len() - 1);
+    lookalike.push('\n');
+    lookalike.push_str("import unittest_extra\n");
+    std::fs::write(root.join("test_truncated.py"), lookalike)
+        .map_err(|err| format!("write truncated lookalike: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        Vec::<&str>::new()
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // The genuine import whose trailing newline sits in the extra byte
+    // is still complete and must count.
+    let root = unique_test_root("prefix-newline-in-lookahead");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let mut newline_in_extra = "x".repeat(PREFIX - UNITTEST_IMPORT.len() - 1);
+    newline_in_extra.push('\n');
+    newline_in_extra.push_str("import unittest\n");
+    std::fs::write(root.join("test_newline_extra.py"), newline_in_extra)
+        .map_err(|err| format!("write newline-in-extra: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // A newline-terminated import that ends exactly at the prefix, with
+    // more bytes after it, still counts.
+    let root = unique_test_root("prefix-complete-at-bound");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let complete = format!("{UNITTEST_IMPORT}\n");
+    let mut at_bound = "x".repeat(PREFIX - complete.len() - 1);
+    at_bound.push('\n');
+    at_bound.push_str(&complete);
+    at_bound.push_str("trailing source after the inspection window\n");
+    std::fs::write(root.join("test_complete_bound.py"), at_bound)
+        .map_err(|err| format!("write complete-at-bound: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_reads_only_the_file_prefix() -> Result<(), String> {
+    // Prefix contract (#7664 review): an import after 4096 bytes is ignored,
+    // and an import at the start of a larger file still counts.
+    let root = unique_test_root("prefix-late");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let mut late = " ".repeat(4096);
+    late.push_str("import unittest\n");
+    std::fs::write(root.join("test_late.py"), late)
+        .map_err(|err| format!("write late file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        Vec::<&str>::new()
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("prefix-early");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let mut early = String::from("import unittest\n");
+    early.push_str(&" ".repeat(8192));
+    std::fs::write(root.join("test_early.py"), early)
+        .map_err(|err| format!("write early file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_reports_both_when_one_file_imports_both() -> Result<(), String> {
+    let root = unique_test_root("same-file-both");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_mixed.py"),
+        "import pytest\nimport unittest\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["pytest", "unittest"]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }

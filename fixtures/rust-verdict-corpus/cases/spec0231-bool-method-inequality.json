@@ -1,0 +1,66 @@
+{
+  "case_id": "spec0231-bool-method-inequality",
+  "subject_id": "authored-bool-method-inequality",
+  "diff": "cases/spec0231-bool-method-inequality.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "scalar_return_value",
+  "test_shape": "assert_eq_bool_method_inequality",
+  "hard_case": "Measured defect (#7931): ripr reported the related test's oracle `assert_eq!(score(2).ne(&0), true)` as exact_value / strong, because the method spelling of the inequality was not read as a comparison. RIPR-SPEC-0231 rule 1 (example 32): `score(2).ne(&0)` compared with `true` asserts only that inequality, so it pins no value. The line verdict stays gap; the overclaim showed in the related test's reported oracle. Since #7931's fix ripr reports relational_check / weak.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.97.0 (2d8144b78 2026-07-07), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x * 3",
+        "mutated_line": "x * 3",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: score(2) becomes 6, still nonzero, so score(2).ne(&0) stays true"
+      },
+      {
+        "replacement": "x * 0",
+        "mutated_line": "x * 0",
+        "outcome": "tests_failed",
+        "failing_test": "tests::score_is_nonzero",
+        "equivalence_review": "not equivalent: score(2) becomes 0, so score(2).ne(&0) is false"
+      },
+      {
+        "replacement": "x - 2",
+        "mutated_line": "x - 2",
+        "outcome": "tests_failed",
+        "failing_test": "tests::score_is_nonzero",
+        "equivalence_review": "not equivalent: score(2) becomes 0, so score(2).ne(&0) is false"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "assert_eq!(score(2).ne(&0), true) only rejects a zero score(2): x * 0 and x - 2 fail it, x * 3 passes. The method spelling of the inequality, compared with true, pins no value.",
+  "labeling_observation": {
+    "ripr_commit": "7922ca9a3",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#32"
+  ],
+  "expected_oracle": {
+    "kind": "relational_check",
+    "strength": "weak",
+    "spec": "RIPR-SPEC-0231#32"
+  }
+}

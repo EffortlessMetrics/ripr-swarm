@@ -1,0 +1,27 @@
+//! Short-circuit owner tails (RIPR-SPEC-0197 rule 3).
+
+pub fn both_zero(x: i32, y: i32) -> bool {
+    x == 0 && y == 0
+}
+
+pub fn in_band(level: u8, open: bool) -> bool {
+    open && level >= 3
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn both_zero_rejects_nonzero_x() {
+        assert_eq!(both_zero(1, 0), false);
+        assert_eq!(both_zero(2, 0), false);
+    }
+
+    #[test]
+    fn in_band_table() {
+        for (level, open, want) in [(3, true, true), (2, true, false), (5, false, false)] {
+            assert_eq!(in_band(level, open), want);
+        }
+    }
+}

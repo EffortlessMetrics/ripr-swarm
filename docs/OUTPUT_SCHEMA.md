@@ -2127,7 +2127,8 @@ JSON fields:
   `wrapper_error_binding_unresolved`, or
   `python_transitive_reach_unresolved`, or
   `rust_assertion_context_unresolved`, or
-  `rust_log_capture_unresolved`.
+  `rust_log_capture_unresolved`, or
+  `rust_panic_outcome_unresolved`.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
   limitation detail. Current Rust transitive-reach, integration public-API path,
@@ -2626,6 +2627,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 
 - `rust_assertion_context_unresolved` -- (RIPR-SPEC-0240, additive) Every related `assert_eq!` ripr refused was refused for a limit of its own reading (an unparsed or unplaced file, an unidentified test, a feature `cfg`, a binding that only may rebind the macro). The `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
 - `rust_log_capture_unresolved` -- (#7133, additive) A changed `log::` record is checked by a related test that installs a capturing logger before calling the owner and asserts exactly on the captured store, against a string literal that carries the record's static template text. `tracing::` events and count or status assertions (`lines.len()`) keep their gap. ripr does not resolve the logger or the format template, so the `weakly_exposed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
+- `rust_panic_outcome_unresolved` -- (RIPR-SPEC-0240, additive) A related, non-ignored test with no assertion carries `#[should_panic]` (bare, `expected = ""`, or an `expected` message found in a literal argument of a panicking macro on or after the changed line), calls the owner directly, and the owner invokes a panicking macro on or after the changed line. ripr does not resolve whether the changed code decides that panic, so the `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
 
 Reserved `flow_sink` values:
 
@@ -8015,7 +8017,11 @@ Field contract:
 
   `error` is the terse final error; `narration` is the ordered cause and
   recovery lines stderr carries (without the `ripr: ` prefix), the same lines
-  the attempt joins into `last_after_refusal.reason`. Operational failures after
+  the attempt joins into `last_after_refusal.reason`. On no movement, these
+  lines name the selected awaiting attempt, its retained packet's focused test
+  surface (including an inline-module restriction), edit then retry, and a
+  root/attempt-bound status command; `error` keeps the original verify refusal.
+  Operational failures after
   attempt selection exit `2`; stdout is empty when the failure precedes the
   verify render, and is the bare verify 0.3 document when it follows it (for
   example a failed receipt publication with the attempt still
@@ -17816,7 +17822,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.70",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.74",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -18516,7 +18522,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.37",
+    "schema_version": "1.39",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -18527,7 +18533,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.70",
+      "schema_version": "1.74",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
@@ -19136,3 +19142,38 @@ classified cache generation 1.63 and compact/sharded generation 0.69 reject
 prior envelopes; eligible standalone packages also revalidate locked dependency
 and effective configuration identity before classified reuse. Public finding
 and oracle schemas are unchanged.
+
+## GitHub PR Status Provider Observations
+
+`cargo xtask gh-pr-status --pr <number>` collects `comments` as well as
+`latestReviews`. Its advisory JSON adds `provider_review_observations` with:
+
+- `snapshot_head`: the valid full head SHA observed while collecting the packet,
+  or an empty string if unavailable. This is not a response's original subject.
+- `scope: "observed_responses_only"`: only returned responses from the four
+  recognized provider identities are assessed; pagination completeness,
+  configured/required providers and review independence are not established.
+- `quota_notice_count`: the number of returned responses with a recognized
+  provider-specific leading quota notice, not the number of unavailable providers.
+- `responses`: original `author`, `source_kind` (`review` or `issue_comment`),
+  native review `state`, `timestamp`, `url` and unmodified `body`, plus
+  `disposition` (`quota_exhausted` or `substance_unknown`) and
+  `subject_attribution: "not_established"`.
+
+Detection recognizes the observed Sourcery weekly-limit paragraph, Gemini quota
+warning, Codex review-usage notice and CodeRabbit generated rate-limit marker.
+Unknown, changed or unsupported templates remain `substance_unknown`; this is
+never a completed or clean review. Native `APPROVED`/`COMMENTED` states alone do
+not establish substance. Other unavailable/skipped/completed response families
+remain outside this bounded detection slice.
+
+The Markdown section displays the same notice count and dispositions. Raw bodies and any returned
+source URLs and timestamps are preserved in JSON as untrusted source evidence;
+embedded instructions do not authorize actions. Historical notices remain
+visible alongside later reviews and do not establish current-head unavailability.
+This section does not replace exact-review subject attribution, create a new
+required gate, change `safe_next_action`, or grant merge authority. Issue #2432
+retains completion classification and configured-provider coverage follow-ups.
+
+Missing source URLs/timestamps remain empty strings; in particular the CLI
+latest-review summary does not supply a review URL. No identity is fabricated.

@@ -115,6 +115,10 @@ pub(crate) enum AssertionContextRefusal {
     DuplicateSpelling,
     /// The invocation sits where it may not run: names the construct.
     ConditionalPath(&'static str),
+    /// The test body's only `return` is the whole body of a root
+    /// `if <condition> { return; }` before the invocation: whether the
+    /// invocation runs depends on the condition, held here as written.
+    GuardedReturn(String),
     /// The test uses a macro name some workspace file may rebind.
     MacroBinding(String),
     /// The indexed body no longer matches the parsed source.
@@ -1379,8 +1383,15 @@ fn admitted_assertions(
             // OracleFact has line/text, not an offset. No identical spelling
             // on the same line may borrow another invocation's context.
             let admitted = if calls.len() == 1 {
-                eager_path(calls[0].clone(), function, false, first_return)
-                    .map_err(AssertionContextRefusal::ConditionalPath)
+                eager_path(calls[0].clone(), function, false, first_return).map_err(|construct| {
+                    match (construct == EARLIER_RETURN)
+                        .then(|| sole_return_guard(function))
+                        .flatten()
+                    {
+                        Some(condition) => AssertionContextRefusal::GuardedReturn(condition),
+                        None => AssertionContextRefusal::ConditionalPath(construct),
+                    }
+                })
             } else {
                 Err(AssertionContextRefusal::DuplicateSpelling)
             };
@@ -1619,6 +1630,57 @@ fn plain_check_helper(
 pub(crate) fn err_return_guard_key(condition: &str) -> String {
     let compact: String = condition.split_whitespace().collect();
     format!("if {compact}")
+}
+
+const EARLIER_RETURN: &str = "a block that an earlier `return` can skip";
+
+/// The condition of `if <condition> { return; }` when that `return` is the
+/// only one the test body holds outside closures and nested items, the
+/// `if` has no `else`, its block holds nothing else, and it is a statement
+/// of the body itself.
+fn sole_return_guard(function: &ast::Fn) -> Option<String> {
+    let body = function.body()?;
+    let mut returns = body
+        .syntax()
+        .descendants()
+        .filter_map(ast::ReturnExpr::cast)
+        .filter(|expression| {
+            !expression.syntax().ancestors().any(|node| {
+                ast::ClosureExpr::can_cast(node.kind())
+                    || (node != *function.syntax() && ast::Fn::can_cast(node.kind()))
+            })
+        });
+    let returned = returns.next()?;
+    if returns.next().is_some() || returned.expr().is_some() {
+        return None;
+    }
+    let only = |list: &ast::StmtList, expression: &SyntaxNode| match (
+        list.statements().collect::<Vec<_>>().as_slice(),
+        list.tail_expr(),
+    ) {
+        ([ast::Stmt::ExprStmt(statement)], None) => statement
+            .expr()
+            .is_some_and(|inner| inner.syntax() == expression),
+        ([], Some(tail)) => tail.syntax() == expression,
+        _ => false,
+    };
+    let block = returned
+        .syntax()
+        .ancestors()
+        .find_map(ast::BlockExpr::cast)?;
+    let guard = ast::IfExpr::cast(block.syntax().parent()?)?;
+    if guard.else_branch().is_some()
+        || block.modifier().is_some()
+        || block.label().is_some()
+        || !only(&block.stmt_list()?, returned.syntax())
+    {
+        return None;
+    }
+    let statement = ast::ExprStmt::cast(guard.syntax().parent()?)?;
+    (statement.syntax().parent()? == *body.stmt_list()?.syntax())
+        .then(|| guard.condition())
+        .flatten()
+        .map(|condition| condition.syntax().text().to_string())
 }
 
 /// The condition of `if <condition> { return Err(..); .. }` with no `else`:
@@ -2828,7 +2890,7 @@ fn eager_path(
                 return Err("a context outside the test body");
             }
             if first_return.is_some_and(|position| position < execution_start) {
-                return Err("a block that an earlier `return` can skip");
+                return Err(EARLIER_RETURN);
             }
             return Ok(());
         }
@@ -3025,6 +3087,23 @@ fn bound_constant_rows(
 /// must be a tuple of the pattern's arity. `None` when any part is not
 /// established.
 pub(crate) fn constant_table_column(fn_text: &str, name: &str) -> Option<Vec<String>> {
+    table_column(fn_text, name).map(|(column, _)| column)
+}
+
+/// [`constant_table_column`], but only when the table's loop body holds
+/// byte offset `at` of `fn_text` (#7969): a call outside the loop that
+/// names the column reads some other `name`, such as a module `const`.
+pub(crate) fn constant_table_column_around(
+    fn_text: &str,
+    name: &str,
+    at: usize,
+) -> Option<Vec<String>> {
+    let (column, body) = table_column(fn_text, name)?;
+    body.contains(&at).then_some(column)
+}
+
+/// The column and the byte range of its loop body.
+fn table_column(fn_text: &str, name: &str) -> Option<(Vec<String>, std::ops::Range<usize>)> {
     // Most tests hold no `for` at all; skip the parse for them.
     if !fn_text.contains("for") || !fn_text.contains(name) {
         return None;
@@ -3134,7 +3213,10 @@ pub(crate) fn constant_table_column(fn_text: &str, name: &str) -> Option<Vec<Str
         return None;
     }
     let rows = constant_row_array(&table, &function)?;
-    rows.exprs()
+    let range = body.syntax().text_range();
+    let body_range = usize::from(range.start())..usize::from(range.end());
+    let column = rows
+        .exprs()
         .map(|row| match position {
             None => Some(row.syntax().text().to_string()),
             Some((index, arity)) => {
@@ -3150,7 +3232,8 @@ pub(crate) fn constant_table_column(fn_text: &str, name: &str) -> Option<Vec<Str
                     .map(|cell| cell.syntax().text().to_string())
             }
         })
-        .collect()
+        .collect::<Option<Vec<_>>>()?;
+    Some((column, body_range))
 }
 
 fn constant_rows(rows: &ast::ArrayExpr) -> bool {

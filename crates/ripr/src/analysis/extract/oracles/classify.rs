@@ -78,8 +78,29 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
                 whole
             };
         }
+        Some(BoolOperandReading::Rest(rest)) => {
+            // The pinning conjuncts decide the kind, but the reading never
+            // rises above what the rules below give the whole assertion: a
+            // dropped compared or negated pattern still caps it
+            // (`a == b && matches!(..) == false`). A tie takes the rest,
+            // unlike `Chain`, because the fix is a kind change at equal
+            // strength.
+            let whole = classify_after_bool_reading(line, scalar_integer_relation);
+            let rest = classify_assertion(&rest);
+            return if rest.strength.rank() <= whole.strength.rank() {
+                rest
+            } else {
+                whole
+            };
+        }
         None => {}
     }
+    classify_after_bool_reading(line, scalar_integer_relation)
+}
+
+/// The reading of an assertion that no bool-literal comparison rule
+/// decided: the pattern, negation and whole-condition rules.
+fn classify_after_bool_reading(line: &str, scalar_integer_relation: bool) -> OracleClassification {
     // A negated pattern takes rule 1 before any pattern-reading step, so
     // `!matches!(r, Err(E::X))` never reads as the variant it excludes.
     if is_negated_pattern_assertion(line) {
@@ -1828,6 +1849,26 @@ fn ok_literal() {
                 "mock.expect_err().returning(|| ());",
                 vec![(MockExpectation, Medium)],
             ),
+            // A call receiver does not make a zero-argument `expect_err()`
+            // a `Result::expect_err`, with or without inner whitespace.
+            (
+                "mock_expectation_for_err_method_on_a_constructor",
+                "MockFoo::new().expect_err();",
+                vec![(MockExpectation, Medium)],
+            ),
+            (
+                "mock_expectation_for_err_method_spaced",
+                "MockFoo::new().expect_err( );",
+                vec![(MockExpectation, Medium)],
+            ),
+            // A comment is not an argument.
+            (
+                "mock_expectation_for_err_method_with_a_comment",
+                "MockFoo::new().expect_err(/* setup */);",
+                vec![(MockExpectation, Medium)],
+            ),
+            // `expect_` in a comment is not a mock expectation name.
+            ("expect_word_in_comment", "run(); // expect_called", vec![]),
             // `expect_` text in the message is not a mock expectation name.
             (
                 "expect_err_expect_word_message",

@@ -805,17 +805,22 @@ impl ServerHandler for McpServer {
                 Err(failure) => Err(resource_failure("repair-card", &failure, None)),
             };
         }
+        let resource_templates = [
+            protocol::SNAPSHOT_RESOURCE_TEMPLATE,
+            protocol::GAP_RESOURCE_TEMPLATE,
+            repair::REPAIR_ATTEMPT_TEMPLATE,
+            repair::RECEIPT_TEMPLATE,
+            repair_card::REPAIR_CARD_TEMPLATE,
+        ];
         Err(ErrorData::resource_not_found(
-            "unknown resource; available: ripr://workspace/status",
+            format!(
+                "unknown resource; available: {}; templates: {}",
+                protocol::STATUS_RESOURCE_URI,
+                resource_templates.join(", ")
+            ),
             Some(serde_json::json!({
                 "available": [protocol::STATUS_RESOURCE_URI],
-                "resource_templates": [
-                    protocol::SNAPSHOT_RESOURCE_TEMPLATE,
-                    protocol::GAP_RESOURCE_TEMPLATE,
-                    repair::REPAIR_ATTEMPT_TEMPLATE,
-                    repair::RECEIPT_TEMPLATE,
-                    repair_card::REPAIR_CARD_TEMPLATE,
-                ],
+                "resource_templates": resource_templates,
             })),
         ))
     }

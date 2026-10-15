@@ -178,7 +178,6 @@ fn environment_identity_inputs(env: &BTreeMap<String, String>) -> BTreeMap<Strin
 }
 
 fn snapshot(root: &Path) -> Option<BTreeMap<String, String>> {
-    let root = root.canonicalize().ok()?;
     let env = std::env::vars_os()
         .filter(|(key, _)| relevant_environment_name(key))
         .map(|(key, value)| {
@@ -188,15 +187,23 @@ fn snapshot(root: &Path) -> Option<BTreeMap<String, String>> {
             ))
         })
         .collect::<Option<BTreeMap<_, _>>>()?;
-    if !environment_allowed(&env) {
+    snapshot_with_environment(root, &env, &home::env::OS_ENV)
+}
+
+fn snapshot_with_environment(
+    root: &Path,
+    env: &BTreeMap<String, String>,
+    home_env: &dyn home::env::Env,
+) -> Option<BTreeMap<String, String>> {
+    let root = root.canonicalize().ok()?;
+    if !environment_allowed(env) {
         return None;
     }
-    let home = match env.get("CARGO_HOME") {
-        Some(home) if !home.is_empty() => PathBuf::from(home),
-        Some(_) => return None,
-        None => PathBuf::from(env.get(if cfg!(windows) { "USERPROFILE" } else { "HOME" })?)
-            .join(".cargo"),
-    };
+    // Use the same Cargo-maintained resolver as cargo_input_identity: a
+    // quarantined child may lack HOME/CARGO_HOME while Cargo still discovers
+    // its OS home. An empty CARGO_HOME also falls back rather than disabling
+    // home configuration. This discovers a path; it forwards no environment.
+    let home = home::env::cargo_home_with_cwd_env(home_env, &root).ok()?;
     // Relative homes are resolved by Cargo against the process directory.
     let home = if home.is_absolute() {
         home
@@ -206,7 +213,7 @@ fn snapshot(root: &Path) -> Option<BTreeMap<String, String>> {
     let mut identities = BTreeMap::new();
     identities.insert("effective-home".into(), home.to_str()?.into());
     identities.insert("effective-home-resolved".into(), directory_identity(&home)?);
-    identities.extend(environment_identity_inputs(&env));
+    identities.extend(environment_identity_inputs(env));
     let mut configs = vec![home.join("config"), home.join("config.toml")];
     let mut manifests = Vec::new();
     for dir in root.ancestors() {
@@ -829,6 +836,125 @@ mod tests {
             ("CARGO_TARGET_DIR".into(), "target".into())
         ])));
         Ok(())
+    }
+
+    #[derive(Clone)]
+    struct HomeEnvironment {
+        cargo_home: Option<std::ffi::OsString>,
+        home: Option<PathBuf>,
+    }
+
+    impl home::env::Env for HomeEnvironment {
+        fn home_dir(&self) -> Option<PathBuf> {
+            self.home.clone()
+        }
+
+        fn current_dir(&self) -> std::io::Result<PathBuf> {
+            Err(std::io::Error::other("snapshot must use the metadata cwd"))
+        }
+
+        fn var_os(&self, key: &str) -> Option<std::ffi::OsString> {
+            (key == "CARGO_HOME")
+                .then(|| self.cargo_home.clone())
+                .flatten()
+        }
+    }
+
+    #[test]
+    fn assertion_snapshot_uses_cargo_home_fallback_without_home_environment() -> Result<(), String>
+    {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-assertion-home-fallback-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let fallback = root.join("owned-home");
+        let cargo_home = fallback.join(".cargo");
+        std::fs::create_dir_all(&cargo_home).map_err(|e| e.to_string())?;
+        let root = root.canonicalize().map_err(|e| e.to_string())?;
+        let config = cargo_home.join("config.toml");
+        for cargo_home_value in [None, Some(std::ffi::OsString::new())] {
+            let home_env = HomeEnvironment {
+                cargo_home: cargo_home_value.clone(),
+                home: Some(fallback.clone()),
+            };
+            let env = if cargo_home_value.is_some() {
+                BTreeMap::from([("CARGO_HOME".into(), String::new())])
+            } else {
+                BTreeMap::new()
+            };
+            let read = || snapshot_with_environment(&root, &env, &home_env);
+            let absent = read().ok_or("OS Cargo-home fallback must be discoverable")?;
+            assert_eq!(
+                absent.get("effective-home"),
+                cargo_home.to_str().map(String::from).as_ref()
+            );
+            std::fs::write(&config, "[build]\njobs=1\n").map_err(|e| e.to_string())?;
+            let configured = read().ok_or("ordinary fallback configuration must qualify")?;
+            assert_ne!(configured, absent, "fallback config bytes participate");
+            std::fs::write(&config, "[build]\njobs=2\n").map_err(|e| e.to_string())?;
+            assert_ne!(
+                read(),
+                Some(configured.clone()),
+                "fallback config edits invalidate"
+            );
+            std::fs::write(&config, "[source.crates-io]\nreplace-with='fake'\n")
+                .map_err(|e| e.to_string())?;
+            assert!(read().is_none(), "fallback source replacement must refuse");
+            std::fs::write(&config, "[build\n").map_err(|e| e.to_string())?;
+            assert!(read().is_none(), "malformed fallback config must refuse");
+            std::fs::remove_file(&config).map_err(|e| e.to_string())?;
+            assert_eq!(read(), Some(absent), "removing config restores identity");
+            let source_override =
+                BTreeMap::from([("CARGO_SOURCE_CRATES_IO_REPLACE_WITH".into(), "fake".into())]);
+            assert!(snapshot_with_environment(&root, &source_override, &home_env).is_none());
+        }
+        let undiscoverable = HomeEnvironment {
+            cargo_home: None,
+            home: None,
+        };
+        assert!(snapshot_with_environment(&root, &BTreeMap::new(), &undiscoverable).is_none());
+        std::fs::remove_dir_all(root).map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn assertion_snapshot_resolves_relative_home_at_metadata_root() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-assertion-home-relative-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(root.join("explicit-home")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(root.join("fallback-home/.cargo")).map_err(|e| e.to_string())?;
+        let root = root.canonicalize().map_err(|e| e.to_string())?;
+        for (cargo_home, home, expected) in [
+            (Some("explicit-home"), None, root.join("explicit-home")),
+            (
+                None,
+                Some("fallback-home"),
+                root.join("fallback-home/.cargo"),
+            ),
+        ] {
+            let home_env = HomeEnvironment {
+                cargo_home: cargo_home.map(std::ffi::OsString::from),
+                home: home.map(PathBuf::from),
+            };
+            let env = cargo_home
+                .map(|value| BTreeMap::from([("CARGO_HOME".into(), value.into())]))
+                .unwrap_or_default();
+            let before = snapshot_with_environment(&root, &env, &home_env)
+                .ok_or("relative Cargo-home snapshot")?;
+            assert_eq!(
+                before.get("effective-home"),
+                expected.to_str().map(String::from).as_ref()
+            );
+            std::fs::write(expected.join("config.toml"), "[build]\njobs=1\n")
+                .map_err(|e| e.to_string())?;
+            let configured = snapshot_with_environment(&root, &env, &home_env)
+                .ok_or("relative Cargo-home configuration")?;
+            assert_ne!(before, configured, "relative config binds at metadata root");
+        }
+        std::fs::remove_dir_all(root).map_err(|e| e.to_string())
     }
 
     #[test]

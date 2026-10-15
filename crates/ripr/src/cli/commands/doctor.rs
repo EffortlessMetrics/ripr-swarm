@@ -805,7 +805,7 @@ fn language_runtime_probes_for_detected(
         // --features lang-rust (#2418).
         #[cfg(feature = "lang-python")]
         {
-            if analysis::detect_python_test_framework(root) == Some("pytest") {
+            if analysis::detect_python_test_frameworks(root).contains(&"pytest") {
                 probes.push((
                     "python",
                     "pytest",
@@ -1116,26 +1116,28 @@ fn detect_test_surfaces(
                 }
             }
             LanguageId::Python => {
-                // One shared detector (#2106): the same pytest/unittest
+                // One shared detector (#2106 / #7664): the same pytest/unittest
                 // marker set the adapter's code-level detection implies.
+                // Mixed evidence emits one surface per confirmed framework.
                 #[cfg(feature = "lang-python")]
-                let framework = analysis::detect_python_test_framework(root);
+                let frameworks = analysis::detect_python_test_frameworks(root);
                 #[cfg(not(feature = "lang-python"))]
-                let framework: Option<&'static str> =
+                let frameworks: Vec<&'static str> =
                     if root.join("pytest.ini").exists() || root.join("pyproject.toml").exists() {
-                        Some("pytest")
+                        vec!["pytest"]
                     } else {
-                        None
+                        Vec::new()
                     };
-                match framework {
-                    Some(name) => {
-                        surfaces.push(surface("python", Some(name), format!("python: {name}")))
-                    }
-                    None => surfaces.push(surface(
+                if frameworks.is_empty() {
+                    surfaces.push(surface(
                         "python",
                         None,
                         "python: test framework not detected".to_string(),
-                    )),
+                    ));
+                } else {
+                    for name in frameworks {
+                        surfaces.push(surface("python", Some(name), format!("python: {name}")));
+                    }
                 }
             }
             LanguageId::TypeScript | LanguageId::JavaScript => {
@@ -3600,6 +3602,163 @@ mod tests {
                 .any(|surface| surface.evidence == "typescript: ava"
                     && surface.framework.as_deref() == Some("ava")),
             "expected typescript: ava in {lines:?}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "lang-python")]
+    fn doctor_reports_pytest_from_zero_config_test_file_import() -> Result<(), String> {
+        // #7662: doctor must agree with check on a zero-config pytest repo
+        // whose tests import pytest without pytest.ini/conftest/section markers.
+        let root = unique_command_test_dir("doctor-pytest-import");
+        let tests_dir = root.join("tests");
+        std::fs::create_dir_all(&tests_dir).map_err(|err| format!("create tests dir: {err}"))?;
+        std::fs::write(
+            tests_dir.join("test_module.py"),
+            "import pytest\n\ndef test_n():\n    assert True\n",
+        )
+        .map_err(|err| format!("write test file: {err}"))?;
+        let lines = detect_test_surfaces(&root, &detect_languages(&root));
+        assert!(
+            lines
+                .iter()
+                .any(|surface| surface.evidence == "python: pytest"
+                    && surface.framework.as_deref() == Some("pytest")),
+            "expected python: pytest in {lines:?}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[cfg(feature = "lang-python")]
+    fn python_surface_evidence(surfaces: &[output::doctor::DoctorTestSurface]) -> Vec<&str> {
+        surfaces
+            .iter()
+            .filter(|surface| surface.language == "python")
+            .map(|surface| surface.evidence.as_str())
+            .collect()
+    }
+
+    #[test]
+    #[cfg(feature = "lang-python")]
+    fn doctor_reports_both_pytest_and_unittest_surfaces_for_mixed_imports() -> Result<(), String> {
+        // #7664: mixed pytest+unittest imports, no config markers. After
+        // #7995 the primary Option is pytest; unittest must still appear as
+        // its own catalog entry.
+        let root = unique_command_test_dir("doctor-mixed-py");
+        let tests_dir = root.join("tests");
+        std::fs::create_dir_all(&tests_dir).map_err(|err| format!("create tests dir: {err}"))?;
+        std::fs::write(
+            tests_dir.join("test_pytest_style.py"),
+            "import pytest\n\ndef test_multiply():\n    assert 2 * 3 == 6\n",
+        )
+        .map_err(|err| format!("write pytest file: {err}"))?;
+        std::fs::write(
+            tests_dir.join("test_unit_style.py"),
+            "import unittest\n\nclass TestClamp(unittest.TestCase):\n    def test_clamp_lower(self):\n        self.assertEqual(1, 1)\n",
+        )
+        .map_err(|err| format!("write unittest file: {err}"))?;
+        let surfaces = detect_test_surfaces(&root, &detect_languages(&root));
+        assert_eq!(
+            python_surface_evidence(&surfaces),
+            vec!["python: pytest", "python: unittest"],
+            "mixed imports must emit both Python surfaces, got {surfaces:?}"
+        );
+        assert!(
+            surfaces.iter().any(|surface| {
+                surface.language == "python" && surface.framework.as_deref() == Some("unittest")
+            }),
+            "unittest must be typed, not only present in evidence: {surfaces:?}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "lang-python")]
+    fn doctor_reports_both_when_pytest_config_and_unittest_imports_coexist() -> Result<(), String> {
+        // #7664: pytest.ini adds pytest; it must not skip the unittest scan.
+        let root = unique_command_test_dir("doctor-mixed-cfg");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+            .map_err(|err| format!("write pytest.ini: {err}"))?;
+        std::fs::write(
+            root.join("test_unit_style.py"),
+            "import unittest\n\nclass TestClamp(unittest.TestCase):\n    def test_clamp_lower(self):\n        self.assertEqual(1, 1)\n",
+        )
+        .map_err(|err| format!("write unittest file: {err}"))?;
+        let surfaces = detect_test_surfaces(&root, &detect_languages(&root));
+        assert_eq!(
+            python_surface_evidence(&surfaces),
+            vec!["python: pytest", "python: unittest"],
+            "config markers must not hide unittest, got {surfaces:?}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "lang-python")]
+    fn doctor_does_not_invent_a_second_python_surface_for_pytest_only() -> Result<(), String> {
+        // Negative: a pytest-only repo must not grow a unittest row.
+        let root = unique_command_test_dir("doctor-pytest-only");
+        let tests_dir = root.join("tests");
+        std::fs::create_dir_all(&tests_dir).map_err(|err| format!("create tests dir: {err}"))?;
+        std::fs::write(
+            tests_dir.join("test_module.py"),
+            "import pytest\n\ndef test_n():\n    assert True\n",
+        )
+        .map_err(|err| format!("write test file: {err}"))?;
+        let surfaces = detect_test_surfaces(&root, &detect_languages(&root));
+        assert_eq!(
+            python_surface_evidence(&surfaces),
+            vec!["python: pytest"],
+            "pytest-only must stay a single surface, got {surfaces:?}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "lang-python")]
+    fn doctor_does_not_treat_pytest_lookalike_import_as_a_second_surface() -> Result<(), String> {
+        // Negative: `import pytesting` is not pytest evidence (#7662).
+        let root = unique_command_test_dir("doctor-lookalike-mixed");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("test_lookalike.py"), "import pytesting\n")
+            .map_err(|err| format!("write lookalike: {err}"))?;
+        std::fs::write(root.join("test_unit_style.py"), "import unittest\n")
+            .map_err(|err| format!("write unittest: {err}"))?;
+        let surfaces = detect_test_surfaces(&root, &detect_languages(&root));
+        assert_eq!(
+            python_surface_evidence(&surfaces),
+            vec!["python: unittest"],
+            "lookalike pytest import must not mint a pytest surface, got {surfaces:?}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "lang-python")]
+    fn doctor_does_not_treat_unittest_mock_as_a_second_surface() -> Result<(), String> {
+        // #7664 review: pytest.ini + `from unittest import mock` is pytest-only.
+        let root = unique_command_test_dir("doctor-unittest-mock");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+            .map_err(|err| format!("write pytest.ini: {err}"))?;
+        std::fs::write(
+            root.join("test_api.py"),
+            "from unittest import mock\n\ndef test_api():\n    assert True\n",
+        )
+        .map_err(|err| format!("write test file: {err}"))?;
+        let surfaces = detect_test_surfaces(&root, &detect_languages(&root));
+        assert_eq!(
+            python_surface_evidence(&surfaces),
+            vec!["python: pytest"],
+            "unittest.mock must not mint a unittest surface, got {surfaces:?}"
         );
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())

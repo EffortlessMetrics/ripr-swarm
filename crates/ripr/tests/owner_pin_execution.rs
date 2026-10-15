@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[path = "owner_pin_execution/field_projected_collection.rs"]
+mod field_projected_collection;
+
 struct Scratch(PathBuf);
 
 impl Scratch {

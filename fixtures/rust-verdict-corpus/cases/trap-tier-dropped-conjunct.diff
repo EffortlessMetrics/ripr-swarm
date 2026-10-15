@@ -1,0 +1,11 @@
+diff --git a/src/tiers.rs b/src/tiers.rs
+index d2f630d..1d451df 100644
+--- a/src/tiers.rs
++++ b/src/tiers.rs
+@@ -1,5 +1,5 @@
+ pub fn gold_tier(points: i64, other: i64) -> u8 {
+-    if other > 0 && 100 <= points {
++    if 100 < points {
+         1
+     } else {
+         0

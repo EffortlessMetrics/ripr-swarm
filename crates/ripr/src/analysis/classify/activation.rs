@@ -1701,8 +1701,9 @@ pub(in crate::analysis) use crate::domain::GUARD_UNENTERED_REASON_PREFIX;
 
 /// RIPR-SPEC-0263 (#7132): name the `if` around a changed side effect or
 /// call as the missing discriminator when every related test calls the
-/// owner directly and every call's literal input provably leaves the guard
-/// false (`add(&mut v, 4)` against `if x > 10`). The probe then never runs
+/// owner directly and every call's input provably leaves the guard false
+/// (`add(&mut v, 4)` against `if x > 10`; a let-bound literal or a
+/// file-level `const` bound reads too, #7964). The probe then never runs
 /// under the tests, so no assertion over its effect can reveal it. The same
 /// refusals as [`missing_match_arm_discriminator`] apply: one unreadable
 /// use of the owner, one computed input, a partial index, a same-named
@@ -1722,7 +1723,9 @@ fn missing_guard_entry_discriminator(
     }
     // The cheap text read first: most side effects sit under no readable
     // guard, and those need no workspace lookups.
-    let guard = super::arm_selection::GuardEntry::establish(probe, owner)?;
+    let guard = super::arm_selection::GuardEntry::establish(probe, owner, |name| {
+        super::arm_selection::named_integer_bound(index, owner, name)
+    })?;
     if !super::helper_transfer::callee_is_unique(&owner.name, index) {
         return None;
     }
@@ -3183,6 +3186,35 @@ pub(crate) fn signature_parameters(function: &FunctionSummary) -> Vec<String> {
     split_top_level_args(&arguments)
         .iter()
         .flat_map(|argument| pattern_bindings(top_level_pattern(argument)))
+        .collect()
+}
+
+/// The names of `function`'s call parameters in declaration order, the
+/// `self` receiver excluded, so index `i` is the method call's argument
+/// `i`. A parameter whose pattern binds more or fewer than one name
+/// (`(a, b): (u8, u8)`, `_: u8`) is an empty name.
+pub(crate) fn call_parameter_names(function: &FunctionSummary) -> Vec<String> {
+    let body = function.body.as_str();
+    let Some(arguments) =
+        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
+    else {
+        return Vec::new();
+    };
+    split_top_level_args(&arguments)
+        .iter()
+        .filter_map(|argument| {
+            let pattern = top_level_pattern(argument).trim();
+            let receiver = pattern.is_empty()
+                || pattern.strip_prefix("mut ").unwrap_or(pattern).trim() == "self";
+            if receiver {
+                return None;
+            }
+            let mut names = pattern_bindings(pattern);
+            Some(match (names.pop(), names.is_empty()) {
+                (Some(name), true) => name,
+                _ => String::new(),
+            })
+        })
         .collect()
 }
 
@@ -6083,6 +6115,26 @@ assert_eq!(input.amount, 100);"#
             expected_sinks: Vec::new(),
             required_oracles: Vec::new(),
         }
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: argument `i` of a method call is call
+    /// parameter `i`, receiver excluded.
+    #[test]
+    fn call_parameter_names_follow_argument_positions() {
+        let names = |signature: &str| call_parameter_names(&function(signature));
+        assert_eq!(
+            names("pub fn ship(&mut self, sku: &str, qty: u32) -> u32 { 0 }"),
+            ["sku", "qty"]
+        );
+        assert_eq!(names("fn f(self: Box<Self>, mut a: u8) {}"), ["a"]);
+        assert_eq!(names("fn f(mut self, a: u8) {}"), ["a"]);
+        assert_eq!(names("fn f<F: Fn(u8)>(f: F, b: u8) {}"), ["f", "b"]);
+        // A pattern binding two names or none keeps its position, unnamed.
+        assert_eq!(
+            names("fn f((a, b): (u8, u8), _: u8, c: u8) {}"),
+            ["", "", "c"]
+        );
+        assert_eq!(names("fn f(a: HashMap<String, u8>, c: u8) {}"), ["a", "c"]);
     }
 
     fn function(body: &str) -> FunctionSummary {

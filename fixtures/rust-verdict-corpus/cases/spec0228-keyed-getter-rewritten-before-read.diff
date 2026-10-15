@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index ab1f58e..e310714 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -101,7 +101,7 @@ pub struct Bin {
+ impl Bin {
+     /// Fills `sku`; the test sets the entry again before reading it.
+     pub fn fill(&mut self, sku: &str, qty: u32) {
+-        self.stock.insert(sku.to_string(), qty);
++        self.stock.insert(sku.to_owned(), qty);
+     }
+ 
+     pub fn set(&mut self, sku: &str, qty: u32) {

@@ -3,6 +3,7 @@ mod arm_selection;
 mod boundary_pairing;
 mod builder_override;
 mod call_identity;
+mod changed_span;
 mod context;
 mod decision;
 mod effect_carrier;
@@ -26,14 +27,19 @@ mod transitive_reach;
 mod value_transfer;
 
 pub(in crate::analysis) use activation::{
-    LocalBoundary, TestValueFacts, activation_and_boundary_input, comparison_operands,
-    computed_input_parameters, literal_operand_value, local_boundary, signature_parameters,
+    LocalBoundary, TestValueFacts, activation_and_boundary_input, call_parameter_names,
+    comparison_operands, computed_input_parameters, literal_operand_value, local_boundary,
+    signature_parameters,
 };
 pub(in crate::analysis) use arm_selection::ArmSelector;
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
 };
-pub(in crate::analysis) use builder_override::{getter_plainly_reads, setter_plainly_writes};
+pub(in crate::analysis) use builder_override::{
+    constructor_starts_empty, function_returns_value, getter_plainly_reads,
+    getter_plainly_reads_key, method_cannot_store, owner_touches_field_only_at, parameter_rebound,
+    setter_plainly_writes,
+};
 pub(in crate::analysis) use call_identity::{
     CallIdentityMemos, CallTarget, OwnerCallIdentity, shared_owner_call_identity,
 };
@@ -45,7 +51,8 @@ pub(in crate::analysis) use decision::{
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
 pub(in crate::analysis) use gap_admission::{
-    REFUSALS_ARE_ANALYZER_LIMITS, withhold_log_capture_gap, withhold_unsupported_gap,
+    REFUSALS_ARE_ANALYZER_LIMITS, withhold_log_capture_gap, withhold_should_panic_gap,
+    withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{
     HELPER_RESULT_NOT_FORWARDED, HelperChain, ReturnedLedger,
@@ -56,15 +63,16 @@ pub(in crate::analysis) use helper_transfer::{
 };
 pub(in crate::analysis) use infection::infection_evidence_with_boundary_input;
 pub(in crate::analysis) use operand_pin::operand_only_pin;
-pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
 pub(in crate::analysis) use owner_pin::{
-    OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, helper_pins_owner_call, pin_scope_needs,
-    targeted_free_call_reaches_owner, targeted_name_is_alias, targeted_type_name_is_unresolved,
-    trait_impl_self_type_names,
+    AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, direct_call_name,
+    helper_pins_owner_call, pin_scope_needs, targeted_free_call_reaches_owner,
+    targeted_name_is_alias, targeted_type_name_is_unresolved, trait_impl_self_type_names,
 };
+pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use propagation_witness::{
-    PropagationWitnessV1, assertion_observes_direct_collection, current_path_witness,
+    PropagationWitnessV1, assertion_observes_collection_argument,
+    assertion_observes_direct_collection, current_path_witness,
     direct_collection_mutation_receiver, retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use propagation_witness::{
@@ -83,6 +91,7 @@ pub(in crate::analysis) use related_tests::{
     requires_inherent_receiver_identity, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::reveal_outcome;
+pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 pub(in crate::analysis) use reveal::{
     ASSERTION_CONTEXT_UNESTABLISHED, FileUseStatements, oracle_crediting_relations,
