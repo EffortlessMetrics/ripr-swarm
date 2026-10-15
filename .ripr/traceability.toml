@@ -14430,6 +14430,8 @@ tests = [
   "crates/ripr/src/analysis/probes/lexical.rs::tests::let_binding_type_annotations_are_not_field_construction",
   "crates/ripr/src/analysis/probes/lexical.rs::tests::struct_literal_fields_keep_field_construction_beside_let_bindings",
   "crates/ripr/src/analysis/probes/diff.rs::tests::reordered_replacement_does_not_repeat_the_removed_static_unknown",
+  "crates/ripr/src/analysis/probes/lexical.rs::tests::a_local_accumulator_update_is_not_a_call_deletion",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::an_accumulator_rewrite_of_a_call_leaves_no_removed_call_deletion",
 ]
 fixtures = []
 code = [

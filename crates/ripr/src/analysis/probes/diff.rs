@@ -15,7 +15,7 @@ use super::classify::{
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
 use super::ids::{diff_probe_id, normalize_expression};
-use super::lexical::classify_changed_line;
+use super::lexical::{classify_changed_line, is_accumulator_rewrite_of};
 use crate::analysis::diagnostic_origin::ParserByteSpan;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::cfg_predicates::{attributes_require_test, split_leading_attribute};
@@ -1010,7 +1010,15 @@ fn has_matching_added_line(
             } else {
                 classify_changed_line(line.text.trim())
             };
-            if !added_families.iter().any(|family| family == removed_family) {
+            // `total = compute(x);` rewritten as `total += compute(x);`: the
+            // added line consumes the same call into an accumulator, which
+            // reads `static_unknown` rather than `call_deletion` (#8027).
+            // A different callee is a real deletion and does not pair.
+            let accumulator_rewrite = *removed_family == ProbeFamily::CallDeletion
+                && !added_bounds[index]
+                && is_accumulator_rewrite_of(&removed_line.text, &line.text);
+            if !accumulator_rewrite && !added_families.iter().any(|family| family == removed_family)
+            {
                 return false;
             }
             let added_tokens = extract_identifier_tokens(&line.text);
@@ -1538,6 +1546,67 @@ mod tests {
                 .iter()
                 .any(|sink| sink == "branch result")
         );
+    }
+
+    #[test]
+    fn an_accumulator_rewrite_of_a_call_leaves_no_removed_call_deletion() {
+        // #8027: the removed `total = compute(x);` is paired away by its
+        // accumulator rewrite instead of minting a base-side call_deletion.
+        for (removed, added) in [
+            (
+                "        total = compute(*x);",
+                "        total += compute(*x);",
+            ),
+            (
+                "        count = count + line.split_whitespace().count();",
+                "        count += line.split_whitespace().count();",
+            ),
+        ] {
+            let probes = shapes_probes(added, removed, &[], "");
+            assert!(
+                probes
+                    .iter()
+                    .all(|probe| probe.family != ProbeFamily::CallDeletion),
+                "{removed} -> {added}: {probes:?}"
+            );
+        }
+        // A real call deletion on the removed side is still reported: the
+        // update calls nothing, another callee, only the deleted call's
+        // argument, the same method on another receiver, or appends to
+        // another accumulator.
+        for (removed, added) in [
+            ("        notify(total);", "        total += 1;"),
+            ("        notify(total);", "        total += compute(*x);"),
+            (
+                "        notify(total);",
+                "        total = total + compute(*x);",
+            ),
+            (
+                "        notify(compute(*x));",
+                "        total += compute(*x);",
+            ),
+            (
+                "        total = notify.compute(*x);",
+                "        total += other.compute(*x);",
+            ),
+            (
+                "        notify.push_str(&format!(\"{}\", x));",
+                "        total += &format!(\"{}\", x);",
+            ),
+        ] {
+            let probes = shapes_probes(added, removed, &[], "");
+            assert!(
+                probes
+                    .iter()
+                    .any(|probe| probe.family == ProbeFamily::CallDeletion
+                        && (probe.expression.contains("notify")
+                            || probe
+                                .before
+                                .as_deref()
+                                .is_some_and(|before| before.contains("notify")))),
+                "{removed} -> {added}: {probes:?}"
+            );
+        }
     }
 
     /// One changed line `removed` -> `added` with a single parser shape.

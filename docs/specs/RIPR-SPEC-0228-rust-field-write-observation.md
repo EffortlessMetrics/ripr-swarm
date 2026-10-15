@@ -85,6 +85,34 @@ receiver (`items.push`) and leaves field-path receivers on its Part C.
 RIPR-SPEC-0001 says labels "should be available for state writes" without
 defining them for assignments.
 
+A bare local accumulator update follows the call-free rule even when its
+right-hand side calls something. `count += line.split_whitespace().count();`
+and `count = count + f(x);` consume the call's value (#6677), so deleting the
+call is not a mutant of the line; the lexical fallback no longer reads them as
+`call_deletion` and the line reads `static_unknown`, like `sum += w;`
+(`analysis/probes/lexical.rs`, `is_local_accumulator_assignment`; corpus row
+`grid-loop-table`). Only a line holding one statement qualifies
+(`count += 1; notify(x);` keeps its `call_deletion`). Diff pairing treats a
+removed `call_deletion` line rewritten as such an update (`total =
+compute(x);` to `total += compute(x);`) as the same edit when the update
+consumes the removed line's outermost call, receiver included, or when the
+removed call appends to the same accumulator (`push_str`, `push`, `extend`,
+`extend_from_slice`, `append`) and the update adds the same argument calls
+(`out.push_str(&format!(..));` to `out += &format!(..);`). The removed line
+then mints no base-side `call_deletion` (`analysis/probes/diff.rs`,
+`has_matching_added_line`). A different outer callee (`notify(total);` or
+`notify(compute(x));` to `total += compute(x);`) or receiver (`a.f(x)` to
+`b.f(x)`) is a real deletion of the removed call and keeps its
+`call_deletion`. Closing braces after the one statement (`total += f(x); }`)
+do not count as a second statement. Field, deref and index targets
+(`self.total += f(x)`, `*out += f(x)`, `v[i] += f(x)`) and a
+non-self-referential `total = compute(x)` keep their current families; the
+latter also consumes the call's value, but this rule covers only updates that
+accumulate into their target and leaves plain assignments to the existing
+`call_deletion` handling. Crediting an accumulator observed
+through an exact owner-return assertion needs loop-count reasoning
+RIPR-SPEC-0197 leaves out, and stays future work.
+
 ## Behavior
 
 ### Probe
