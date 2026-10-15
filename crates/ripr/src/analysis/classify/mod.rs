@@ -46,7 +46,8 @@ pub(in crate::analysis) use decision::{
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
 pub(in crate::analysis) use gap_admission::{
-    REFUSALS_ARE_ANALYZER_LIMITS, withhold_log_capture_gap, withhold_unsupported_gap,
+    REFUSALS_ARE_ANALYZER_LIMITS, withhold_log_capture_gap, withhold_should_panic_gap,
+    withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{
     HELPER_RESULT_NOT_FORWARDED, HelperChain, ReturnedLedger,
@@ -65,7 +66,8 @@ pub(in crate::analysis) use owner_pin::{
 pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use propagation_witness::{
-    PropagationWitnessV1, assertion_observes_direct_collection, current_path_witness,
+    PropagationWitnessV1, assertion_observes_collection_argument,
+    assertion_observes_direct_collection, current_path_witness,
     direct_collection_mutation_receiver, retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use propagation_witness::{

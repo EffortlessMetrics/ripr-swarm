@@ -1151,12 +1151,51 @@ fn replaced_line_counterpart(added_new_side_line: usize, changed: &ChangedFile) 
 
 /// The two predicate texts join their operands with the same sequence of
 /// `&&` and `||`, so an edit between them stays inside one operand.
-fn same_connectives(after: &str, before: &str) -> bool {
+pub(crate) fn same_connectives(after: &str, before: &str) -> bool {
     // Masked, so `&&` or `||` inside a string or comment is not a connective.
-    let connectives = |text: &str| {
-        let text = crate::analysis::extract::mask_comments_and_strings(text);
+    // A `||` that opens an argument or a value (`unwrap_or_else(|| x)`,
+    // `= || x`) is an empty closure, not an operator.
+    // Masking blanks a literal too, so `s == "a" || x` would end in `=` and
+    // pass for `= || x`. The context text therefore keeps a quote where each
+    // live literal opens: a literal before `||` reads as an operand, while
+    // comments stay blank and cannot pose as an opener or an operand (#7943
+    // review). Masking keeps byte offsets, so `at` lines up with the source.
+    let connectives = |source: &str| {
+        let (mut text, char_literals) = crate::analysis::extract::mask_with_char_literals(source);
+        let opens = crate::analysis::extract::string_literal_spans(source)
+            .into_iter()
+            .map(|(open, _, _)| open)
+            .chain(char_literals.into_iter().map(|(start, _)| start))
+            .collect::<Vec<_>>();
+        for open in opens {
+            if text.get(open..=open) == Some(" ") {
+                text.replace_range(open..=open, "\"");
+            }
+        }
+        let opens_closure = |at: usize| {
+            let before = text[..at].trim_end();
+            // `move` and `return` count only as whole keywords: `should_remove
+            // || x` and the raw identifier `r#move || x` are operators
+            // (#7943 review).
+            let ends_with_word = |word: &str| {
+                before.strip_suffix(word).is_some_and(|head| {
+                    !head
+                        .chars()
+                        .next_back()
+                        .is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '#')
+                })
+            };
+            before.is_empty()
+                || before.ends_with(['(', ',', '=', '{', ';', '[', ':'])
+                || before.ends_with("=>")
+                || ends_with_word("move")
+                || ends_with_word("return")
+        };
         text.match_indices("&&")
-            .chain(text.match_indices("||"))
+            .chain(
+                text.match_indices("||")
+                    .filter(|&(at, _)| !opens_closure(at)),
+            )
             .map(|(at, connective)| (at, connective.to_string()))
             .collect::<std::collections::BTreeMap<_, _>>()
             .into_values()
@@ -2078,6 +2117,74 @@ mod tests {
                 "{probes:?}"
             );
         }
+    }
+
+    #[test]
+    fn same_connectives_reads_operators_not_empty_closures() {
+        // An edit inside one operand keeps the chain.
+        assert!(same_connectives("a > 0 && b < 1", "a > 0 && b <= 1"));
+        // A dropped or added operand changes it (#7898).
+        assert!(!same_connectives("b < 1", "a > 0 && b <= 1"));
+        assert!(!same_connectives("a > 0 || b < 1", "b <= 1"));
+        assert!(!same_connectives("a || b && c", "a && b || c"));
+        // `||` that opens an empty closure is not an operator.
+        assert!(same_connectives(
+            "x.unwrap_or_else(|| 0) > 1",
+            "x.unwrap_or_else(|| 0) >= 1"
+        ));
+        assert!(!same_connectives(
+            "n > 1",
+            "n.map_or_else(|| 0, f) >= 1 && ok"
+        ));
+        assert!(same_connectives("f(|| 1) && g", "f(|| 2) && g"));
+        assert!(same_connectives("move || 1", "return || 2"));
+        assert!(same_connectives("x => || 1", "x => || 2"));
+        assert!(same_connectives("Foo { f: || 1 }", "Foo { f: || 2 }"));
+        assert!(same_connectives("remove || a", "remove || b"));
+        // A name that merely ends in `move` or `return` is an operand.
+        assert!(!same_connectives("100 < p", "should_remove || 100 <= p"));
+        assert!(!same_connectives("100 < p", "early_return || 100 <= p"));
+        assert!(!same_connectives("100 < p", "café_move || 100 <= p"));
+        assert!(!same_connectives("100 < p", "r#move || 100 <= p"));
+        assert!(!same_connectives("100 < p", "r#return || 100 <= p"));
+        // A literal left of `||` is an operand, not a closure opener.
+        assert!(!same_connectives(
+            "100 < p",
+            "name == \"admin\" || 100 <= p"
+        ));
+        assert!(!same_connectives("100 < p", "c == 'x' || 100 <= p"));
+        assert!(!same_connectives("100 < p", "flag == '(' || 100 <= p"));
+        assert!(same_connectives("f(\"a\", || 1)", "f(\"b\", || 2)"));
+        // A comment before `||` changes neither reading.
+        assert!(!same_connectives("x || y", "f(/*c*/ || 1)"));
+        assert!(!same_connectives("100 < p", "a // note:\n || 100 <= p"));
+        // A line comment ending in a quote is not a literal.
+        assert!(same_connectives("f( // \"x\"\n || 1)", "f( // ok\n || 2)"));
+        assert!(same_connectives("f( // r#\n || 1)", "f( // ok\n || 2)"));
+        // A comment beside the literal does not hide it.
+        assert!(!same_connectives(
+            "a == \"x\" /* c */",
+            "a == \"x\" /* c */ || b"
+        ));
+        assert!(!same_connectives(
+            "a == 'x' /* c */",
+            "a == 'x' /* c */ || b"
+        ));
+        assert!(!same_connectives(
+            "a == /* c */ \"y\"",
+            "a == /* c */ \"y\" || b"
+        ));
+        assert!(!same_connectives(
+            "a == \"x\" // c\n",
+            "a == \"x\" // c\n || b"
+        ));
+        assert!(!same_connectives("a == r#\"x\"#", "a == r#\"x\"# || b"));
+        assert!(same_connectives(
+            "f(\"a\" /*c*/, || 1)",
+            "f(\"b\" /*c*/, || 2)"
+        ));
+        // Operators in strings or comments are masked.
+        assert!(same_connectives("s == \"a && b\"", "s != \"a && b\""));
     }
 
     #[test]

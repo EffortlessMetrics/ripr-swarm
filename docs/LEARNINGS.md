@@ -38,6 +38,29 @@ entry with `digest: null` is legal and must survive derivation for absent
 files, so lexical prefix strips must not depend on `canonicalize`
 succeeding; (4) these failures are invisible to a Linux-only lib CI lane —
 a Windows lib run at the exact base is the discriminator.
+## 2026-10-15: Pytest evidence must not skip the unittest scan (#7664)
+
+`detect_python_test_frameworks` collects a set. Config markers and
+`import pytest` add pytest; they must not `return` before the unittest
+import scan. Doctor emits one `test_surfaces[]` row per confirmed
+framework. The singular `detect_python_test_framework` is pytest-first
+primary-of-set for adapter repo-input, not mixed catalog authority.
+Django `tests.py` admission stays #7706.
+
+A 4096-byte evidence prefix that cuts `import unittest_extra` after
+`import unittest` is not unittest evidence. Read one extra byte; if the
+file continues and the last line is not newline-terminated (and the extra
+byte is not that newline), drop the incomplete line. Fail-closed is
+correct; a false `python: unittest` surface is not.
+
+`from unittest import mock` is not a runner. Parenthesized and multiline
+forms (`from unittest import (mock)` / `from unittest import (\n    mock,\n)`)
+must be accumulated and have delimiters stripped before that mock-only
+check; classifying each line independently treats `(` as a non-mock name.
+Strip `#` comments before joining those lines, or `mock,  # patching`
+becomes a `#` token and mints a false unittest surface. Explicit
+backslash continuations (`from unittest import \\\n    mock`) must wait
+for the next line; classifying `\\` as a name is the same false surface.
 
 ## 2026-10-12: A timed-out pilot packet must not keep the previous run's repo-exposure (#7425)
 

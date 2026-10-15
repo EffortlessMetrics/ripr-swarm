@@ -51,7 +51,7 @@
     },
     {
       "path": "src/lib.rs",
-      "sha256": "909e8978cc759daafb425c2170d6a2eac249c2692205e94965975d873669d62e"
+      "sha256": "e04c9968e86d4db03c1d28ea16c83d461577f78d6241f02090779ff136737697"
     },
     {
       "path": "src/lifts.rs",
@@ -88,6 +88,10 @@
     {
       "path": "src/stacks.rs",
       "sha256": "8226e9f65e4caba7eb44931d58cd18767f26f8bff423e747a74bf544c47a1212"
+    },
+    {
+      "path": "src/tiers.rs",
+      "sha256": "44bba49cac5eaa2824955b6c82fc05c56ee435ad2dcc4828903a88b0b0ae9ed6"
     },
     {
       "path": "tests/registered.rs",

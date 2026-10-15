@@ -269,6 +269,23 @@ an oracle, not an input, so it must not produce `infection yes`; RIPR reports
 owner's inputs. A `mut`, shadowed, string, or computed binding is not an
 exact input value.
 
+An edit that adds or removes a `&&` or `||` operand (`other > 0 && 100 <=
+points` to `100 < points`, in an `if` or a match guard) changes more than the
+surviving comparison. An input at that comparison's boundary says nothing
+about the operand that came or went, so the predicate reads `infection
+unknown` and names the old predicate (#7898). The rule compares the masked
+sequence of `&&`/`||` connectives in the probe's old and new text (a `||`
+that opens an empty closure, as in `unwrap_or_else(|| 0)`, is not one), the
+same reading the guard-only arm filter uses. It replaces only boundary
+credit: an unresolved boundary keeps its own reason, and a predicate with no
+input at its boundary keeps its weak reading. An edit inside one operand of
+an unchanged chain keeps its boundary credit. Because it compares only the
+connectives, swapping one operand for another (`a && 100 <= p` to `100 < p
+&& b`) or regrouping a chain is not yet caught. The rule reads one changed
+line: a chain that rustfmt splits across lines (`if other > 0` over `&&
+100 <= points`) pairs only its first old line as `before`, so it is not yet
+covered (#7945).
+
 A computed argument or operand is not the literal it contains. An owner-call,
 table-row, or builder-method argument that applies a binary arithmetic,
 bitwise, or shift operator (`order_discount(base + 1)`, `.amount(base + 10)`,
