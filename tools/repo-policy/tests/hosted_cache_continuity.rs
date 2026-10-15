@@ -8,8 +8,12 @@ const CALLER: &str = include_str!("../../../.github/workflows/routed-rust.yml");
 const PRODUCER: &str = include_str!("../../../.github/workflows/rust-gates.yml");
 
 fn block<'a>(source: &'a str, name: &str, indent: usize) -> Option<&'a str> {
-    let marker = format!("{}{name}:\n", " ".repeat(indent));
-    let (_, tail) = source.split_once(&marker)?;
+    let marker = format!("{}{name}:", " ".repeat(indent));
+    let mut start = 0;
+    let tail = source.split_inclusive('\n').find_map(|line| {
+        start += line.len();
+        (line.trim_end_matches(['\n', '\r']) == marker).then(|| &source[start..])
+    })?;
     let mut offset = 0;
     for line in tail.split_inclusive('\n') {
         if !line.trim().is_empty()
@@ -32,6 +36,7 @@ fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
         .and_then(|jobs| block(jobs, "rust-github", 2))
         .unwrap_or("");
     for required in [
+        "    needs: [route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]\n",
         "    uses: ./.github/workflows/rust-gates.yml\n",
         "      use-scratch: false\n",
     ] {
@@ -54,10 +59,31 @@ fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
     {
         findings.push("hosted job eligibility changed; requalify the main writer opportunity");
     }
-    let step = producer
-        .split("\n      - ")
-        .find(|block| block.starts_with("name: Restore hosted Rust cache\n"))
+    let producer_job = block(producer, "jobs", 0)
+        .and_then(|jobs| block(jobs, "rust-gates", 2))
         .unwrap_or("");
+    let header = producer_job.split("    steps:\n").next().unwrap_or("");
+    if producer_job.is_empty()
+        || header
+            .lines()
+            .any(|line| line.starts_with("    if:") || line.starts_with("    needs:"))
+    {
+        findings.push("producer job admission changed; requalify the main writer opportunity");
+    }
+    let cache_steps: Vec<_> = producer_job
+        .split("\n      - ")
+        .filter(|step| {
+            step.lines()
+                .any(|line| line.trim().starts_with("uses: Swatinem/rust-cache@"))
+        })
+        .collect();
+    if cache_steps.len() != 1 {
+        findings.push("producer cache action set changed; review every cache write authority");
+    }
+    let step = cache_steps.first().copied().unwrap_or("");
+    if !step.starts_with("name: Restore hosted Rust cache\n") {
+        findings.push("declared hosted producer is missing from its job");
+    }
     for required in [
         "        if: ${{ !inputs.use-scratch }}\n",
         "        uses: Swatinem/rust-cache@v2\n",
@@ -152,4 +178,30 @@ fn disabled_hosted_job_or_filtered_push_is_not_writer_continuity() {
             .iter()
             .any(|finding| finding.contains("loses its automatic writer"))
     );
+}
+
+#[test]
+fn missing_caller_dependencies_cannot_supply_guard_outputs() {
+    for needs in [
+        "needs: [detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]",
+        "needs: [route, rust-cx43, rust-cpx42, rust-cx53]",
+    ] {
+        let changed = CALLER.replace(
+            "needs: [route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]",
+            needs,
+        );
+        assert_ne!(changed, CALLER);
+        assert!(!continuity_findings(&changed, PRODUCER).is_empty());
+    }
+}
+
+#[test]
+fn disabled_producer_or_additional_cache_is_not_writer_continuity() {
+    for changed in [
+        PRODUCER.replace("  rust-gates:\n", "  rust-gates:\n    if: false\n"),
+        PRODUCER.replace("      - name: Restore hosted Rust cache\n", "      - uses: Swatinem/rust-cache@v2\n        with:\n          save-if: true\n      - name: Restore hosted Rust cache\n"),
+    ] {
+        assert_ne!(changed, PRODUCER);
+        assert!(!continuity_findings(CALLER, &changed).is_empty());
+    }
 }
