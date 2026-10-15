@@ -1,0 +1,20 @@
+full retained golden equality: True files 3
+golden inputs/expectation unchanged fixtures/owner_return_pin_fallible_literal/input/src/lib.rs True
+golden inputs/expectation unchanged fixtures/owner_return_pin_fallible_literal/diff.patch True
+golden inputs/expectation unchanged fixtures/owner_return_pin_fallible_literal/expected/check.json True
+bytesize-as-kib-div case labels unchanged True
+{'truth': 'discriminated', 'ideal_verdict': 'credited', 'observed_verdict': 'gap', 'outcome': 'false_actionable'}
+raw classifications ['weakly_exposed']
+bytesize-as-mb-div case labels unchanged True
+{'truth': 'discriminated', 'ideal_verdict': 'credited', 'observed_verdict': 'gap', 'outcome': 'false_actionable'}
+raw classifications ['weakly_exposed']
+lib-rstest-fixture-injected-receiver case labels unchanged True
+{'truth': 'discriminated', 'ideal_verdict': 'credited', 'observed_verdict': 'gap', 'outcome': 'false_actionable'}
+raw classifications ['weakly_exposed']
+serde-derive-rename-field-upper case labels unchanged True
+{'truth': 'discriminated', 'ideal_verdict': 'credited', 'observed_verdict': 'gap', 'outcome': 'false_actionable'}
+raw classifications ['weakly_exposed']
+serde-derive-rename-variant-lower case labels unchanged True
+{'truth': 'discriminated', 'ideal_verdict': 'credited', 'observed_verdict': 'gap', 'outcome': 'false_actionable'}
+raw classifications ['weakly_exposed']
+append resolution 89ac47a603092ba7f9f55cf74999b88649621abf True True True

@@ -1,0 +1,28 @@
+diff --git a/crates/ripr/src/analysis/test_grip_evidence/tests.rs b/crates/ripr/src/analysis/test_grip_evidence/tests.rs
+index 0bb9bb672..cedd3a887 100644
+--- a/crates/ripr/src/analysis/test_grip_evidence/tests.rs
++++ b/crates/ripr/src/analysis/test_grip_evidence/tests.rs
+@@ -19674,3 +19674,23 @@ fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), S
+     }
+     Ok(())
+ }
++#[test]
++fn independent_review_8004_paths() -> Result<(), String> {
++    for case in ["macro", "helper", "wrapper", "live", "qualified"] {
++        let source = fs::read_to_string(format!("/workspace/review8004-evidence/controls/{case}/src/lib.rs")).map_err(|e| e.to_string())?;
++        let path = PathBuf::from("src/lib.rs");
++        let index = index_from_files(&[(path.clone(), &source)])?;
++        let seams: Vec<_> = inventory_seams_from_index(&[path], &index).into_iter().filter(|s| s.owner() == "src/lib.rs::impl JsonValue::as_object").collect();
++        assert!(!seams.is_empty(), "nonempty owner seams: {case}");
++        let context = CompactGripContext::new(&index);
++        for seam in &seams {
++            let full = evidence_for_seam(seam, &index);
++            let compact = find_related_tests_with_context(seam, &context);
++            let full_rows: BTreeMap<_, _> = full.related_tests.iter().map(|t| (t.test_name.as_str(), t.relation_reason)).collect();
++            let compact_rows: BTreeMap<_, _> = compact.iter().map(|(t,r)| (t.test.name.as_str(), *r)).collect();
++            println!("REVIEW8004 case={case} kind={:?} full={full_rows:?} compact={compact_rows:?} reach={:?}", seam.kind(), full.reach);
++            assert_eq!(full_rows, compact_rows);
++        }
++    }
++    Ok(())
++}

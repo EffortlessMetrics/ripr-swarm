@@ -1,0 +1,48 @@
+macro json exit 0
+probe:src_lib.rs:match_arm:f9032269 [('genuine', 'direct_owner_call', 'high'), ('ignored_operand', 'direct_owner_call', 'high')]
+probe:src_lib.rs:return_value:3068903e [('genuine', 'direct_owner_call', 'high'), ('ignored_operand', 'direct_owner_call', 'high')]
+macro repo-exposure-json exit 0
+87333f71c0c4ad19 [('genuine', 'direct_owner_call', 'high'), ('ignored_operand', 'same_test_file', 'medium')]
+87224c71c0b64ffd [('genuine', 'direct_owner_call', 'high'), ('ignored_operand', 'same_test_file', 'medium')]
+db956cf6daa5f406 [('genuine', 'direct_owner_call', 'high'), ('ignored_operand', 'assertion_target_affinity', 'medium')]
+6db83e71b27aea52 [('genuine', 'direct_owner_call', 'high'), ('ignored_operand', 'same_test_file', 'medium')]
+helper json exit 0
+probe:src_lib.rs:match_arm:f9032269 [('foreign_helper', 'same_test_file', 'medium'), ('genuine_helper', 'same_test_file', 'medium')]
+probe:src_lib.rs:return_value:3068903e [('foreign_helper', 'same_test_file', 'medium'), ('genuine_helper', 'same_test_file', 'medium')]
+helper repo-exposure-json exit 0
+87333f71c0c4ad19 [('foreign_helper', 'helper_owner_call', 'high'), ('genuine_helper', 'helper_owner_call', 'high')]
+87224c71c0b64ffd [('foreign_helper', 'helper_owner_call', 'high'), ('genuine_helper', 'helper_owner_call', 'high')]
+db956cf6daa5f406 [('foreign_helper', 'helper_owner_call', 'high'), ('genuine_helper', 'helper_owner_call', 'high')]
+6db83e71b27aea52 [('foreign_helper', 'helper_owner_call', 'high'), ('genuine_helper', 'helper_owner_call', 'high')]
+wrapper json exit 0
+probe:src_lib.rs:match_arm:f9032269 [('wrapper_route', 'weak_token_substring', 'low')]
+probe:src_lib.rs:return_value:3068903e [('wrapper_route', 'weak_token_substring', 'low')]
+wrapper repo-exposure-json exit 0
+87333f71c0c4ad19 [('wrapper_route', 'helper_owner_call', 'high')]
+87224c71c0b64ffd [('wrapper_route', 'helper_owner_call', 'high')]
+db956cf6daa5f406 [('wrapper_route', 'helper_owner_call', 'high')]
+6db83e71b27aea52 [('wrapper_route', 'helper_owner_call', 'high')]
+wrapper_local json exit 0
+probe:src_lib.rs:match_arm:f9032269 [('wrapper_route', 'weak_token_substring', 'low')]
+probe:src_lib.rs:return_value:3068903e [('wrapper_route', 'weak_token_substring', 'low')]
+wrapper_local repo-exposure-json exit 0
+87333f71c0c4ad19 [('wrapper_route', 'helper_owner_call', 'high')]
+87224c71c0b64ffd [('wrapper_route', 'helper_owner_call', 'high')]
+db956cf6daa5f406 [('wrapper_route', 'helper_owner_call', 'high')]
+6db83e71b27aea52 [('wrapper_route', 'helper_owner_call', 'high')]
+live json exit 0
+probe:src_lib.rs:match_arm:f9032269 [('expired_inner', 'direct_owner_call', 'high'), ('live_outer', 'weak_token_substring', 'low')]
+probe:src_lib.rs:return_value:3068903e [('expired_inner', 'direct_owner_call', 'high'), ('live_outer', 'weak_token_substring', 'low')]
+live repo-exposure-json exit 0
+87333f71c0c4ad19 [('expired_inner', 'direct_owner_call', 'high'), ('live_outer', 'helper_owner_call', 'high')]
+87224c71c0b64ffd [('expired_inner', 'direct_owner_call', 'high'), ('live_outer', 'helper_owner_call', 'high')]
+db956cf6daa5f406 [('expired_inner', 'direct_owner_call', 'high'), ('live_outer', 'helper_owner_call', 'high')]
+6db83e71b27aea52 [('expired_inner', 'direct_owner_call', 'high'), ('live_outer', 'helper_owner_call', 'high')]
+qualified json exit 0
+probe:src_lib.rs:match_arm:f9032269 [('bound_null', 'direct_owner_call', 'high'), ('qualified_null', 'direct_owner_call', 'high')]
+probe:src_lib.rs:return_value:3068903e [('bound_null', 'direct_owner_call', 'high'), ('qualified_null', 'direct_owner_call', 'high')]
+qualified repo-exposure-json exit 0
+87333f71c0c4ad19 [('bound_null', 'direct_owner_call', 'high'), ('qualified_null', 'direct_owner_call', 'high')]
+87224c71c0b64ffd [('bound_null', 'direct_owner_call', 'high'), ('qualified_null', 'direct_owner_call', 'high')]
+db956cf6daa5f406 [('bound_null', 'direct_owner_call', 'high'), ('qualified_null', 'direct_owner_call', 'high')]
+6db83e71b27aea52 [('bound_null', 'direct_owner_call', 'high'), ('qualified_null', 'direct_owner_call', 'high')]

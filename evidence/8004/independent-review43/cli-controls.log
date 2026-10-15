@@ -1,0 +1,36 @@
+qualified json 0 12247
+keys ['schema_version', 'tool', 'mode', 'root', 'summary', 'analysis_outcome', 'findings', 'canonical_next_action']
+probe:src_lib.rs:match_arm:f9032269 weakly_exposed [('bound_null', 'direct_owner_call', 'high'), ('qualified_null', 'direct_owner_call', 'high')]
+probe:src_lib.rs:return_value:3068903e weakly_exposed [('bound_null', 'direct_owner_call', 'high'), ('qualified_null', 'direct_owner_call', 'high')]
+qualified repo-exposure-json 0 22701
+keys ['schema_version', 'artifact', 'source_subject', 'scope', 'run_status', 'metrics', 'seams']
+macro json 0 12833
+keys ['schema_version', 'tool', 'mode', 'root', 'summary', 'analysis_outcome', 'findings', 'canonical_next_action']
+probe:src_lib.rs:match_arm:f9032269 weakly_exposed [('genuine', 'direct_owner_call', 'high'), ('ignored_operand', 'direct_owner_call', 'high')]
+probe:src_lib.rs:return_value:3068903e weakly_exposed [('genuine', 'direct_owner_call', 'high'), ('ignored_operand', 'direct_owner_call', 'high')]
+macro repo-exposure-json 0 22595
+keys ['schema_version', 'artifact', 'source_subject', 'scope', 'run_status', 'metrics', 'seams']
+helper json 0 15996
+keys ['schema_version', 'tool', 'mode', 'root', 'summary', 'analysis_outcome', 'findings', 'canonical_next_action']
+probe:src_lib.rs:match_arm:f9032269 weakly_exposed [('foreign_helper', 'same_test_file', 'medium'), ('genuine_helper', 'same_test_file', 'medium')]
+probe:src_lib.rs:return_value:3068903e weakly_exposed [('foreign_helper', 'same_test_file', 'medium'), ('genuine_helper', 'same_test_file', 'medium')]
+helper repo-exposure-json 0 38877
+keys ['schema_version', 'artifact', 'source_subject', 'scope', 'run_status', 'metrics', 'seams']
+live json 0 12193
+keys ['schema_version', 'tool', 'mode', 'root', 'summary', 'analysis_outcome', 'findings', 'canonical_next_action']
+probe:src_lib.rs:match_arm:f9032269 weakly_exposed [('live_outer', 'direct_owner_call', 'high'), ('expired_inner', 'weak_token_substring', 'low')]
+probe:src_lib.rs:return_value:3068903e weakly_exposed [('live_outer', 'direct_owner_call', 'high'), ('expired_inner', 'weak_token_substring', 'low')]
+live repo-exposure-json 0 27959
+keys ['schema_version', 'artifact', 'source_subject', 'scope', 'run_status', 'metrics', 'seams']
+wrapper json 0 12069
+keys ['schema_version', 'tool', 'mode', 'root', 'summary', 'analysis_outcome', 'findings', 'canonical_next_action']
+probe:src_lib.rs:match_arm:f9032269 weakly_exposed [('wrapper_route', 'weak_token_substring', 'low')]
+probe:src_lib.rs:return_value:3068903e weakly_exposed [('wrapper_route', 'weak_token_substring', 'low')]
+wrapper repo-exposure-json 0 26464
+keys ['schema_version', 'artifact', 'source_subject', 'scope', 'run_status', 'metrics', 'seams']
+wrapper_local json 0 12105
+keys ['schema_version', 'tool', 'mode', 'root', 'summary', 'analysis_outcome', 'findings', 'canonical_next_action']
+probe:src_lib.rs:match_arm:f9032269 weakly_exposed [('wrapper_route', 'weak_token_substring', 'low')]
+probe:src_lib.rs:return_value:3068903e weakly_exposed [('wrapper_route', 'weak_token_substring', 'low')]
+wrapper_local repo-exposure-json 0 26455
+keys ['schema_version', 'artifact', 'source_subject', 'scope', 'run_status', 'metrics', 'seams']

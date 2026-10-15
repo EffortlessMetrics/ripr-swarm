@@ -1,0 +1,29 @@
+
+running 2 tests
+test tests::qualified_null ... FAILED
+test tests::bound_null ... FAILED
+
+failures:
+
+---- tests::qualified_null stdout ----
+
+thread 'tests::qualified_null' (4145) panicked at /workspace/review8004-evidence/controls/qualified/null-mutant.rs:14:9:
+assertion `left == right` failed
+  left: Some(9)
+ right: None
+
+---- tests::bound_null stdout ----
+
+thread 'tests::bound_null' (4144) panicked at /workspace/review8004-evidence/controls/qualified/null-mutant.rs:18:9:
+assertion `left == right` failed
+  left: Some(9)
+ right: None
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::bound_null
+    tests::qualified_null
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

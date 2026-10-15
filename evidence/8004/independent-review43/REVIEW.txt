@@ -1,0 +1,171 @@
+Independent review of EffortlessMetrics/ripr-swarm PR #8004 — 2026-10-15 UTC
+Disposition: REPAIR_REQUIRED. No Ready/merge clearance.
+
+Identity and authority
+Reviewed published head 43f00b54eeb239c240bb71553c30a7bde3a4e080,
+tree b520b108591cf046c3498e6558604c9f6101eac7. GitHub re-read confirms Draft,
+unchanged head. Parents cd141db8d0f10c30d8fd2dea764a4ccac3966a05 and
+67866bc95a72462840c3eedac0f213ed658474b4. Three-dot inventory: 24 paths.
+Read AGENTS.md, review-pr/deliver-pr skills, review guidelines/rules,
+engineering/architecture/scoped contract, relevant CI/validation/spec paths.
+Source writer's checkout was not moved or edited. Review used detached owned
+checkouts. Only a 20-line observation test was added in the review checkout;
+experiment.diff retains it. Experimental tree f46498653b3520de7071d0d02cd6bbcbe0b07769
+is NOT the submitted source. Its test emits relations and asserts producer parity;
+a passing observation test is not a semantic clearance of the emitted relations.
+
+Observed remote merge 50dbb658b771bed33a2f494c8059a445fb9fc03a has parents
+42b064feae6f1faf3ee3370882f2f6c9ea891d1f and reviewed head, tree
+3ee0987fe590695c7b646d58a19f2ef8f684926c. Local merge-tree matches. Later main
+is TypeScript-only relative to 67866bc9. No local execution of that merge tree.
+Fresh hosted Rust-only feature job 116287116012, run 38694285274, actually
+checked out 50dbb658; 83 terminal test-result blocks total 10,379 passed,
+0 failed, 2 ignored (including doctests). Command: cargo test -p ripr --locked
+--no-default-features --features lang-rust --no-fail-fast. This is a feature-lane
+pass, not default-feature/Routed Rust Small required qualification. Historical
+run 38660627400 remains bound to 2fa3df5b: 15,980 passed with 2 skipped,
+plus a doctest result with 1 ignored. Neither substitutes for missing required
+qualification of the reviewed candidate.
+
+Findings (all high confidence; verified_current)
+
+[P1] Module assertion shadow still creates false direct/high diff evidence.
+Surface: classify/related_tests.rs::inherent_assertion_arguments_resolve
+(around lines 3123-3136), owner_call_relation_reason and diff consumer.
+Minimal source: an enclosing test module defines
+  macro_rules! assert_eq { ($($tokens:tt)*) => {}; }
+then a test binds let value = JsonValue::Object(7) and writes
+  assert_eq!(value.as_object(), Some(7));
+The macro discards the call. Native test still passes after replacing the
+owner's Some(*value) with None. Final CLI diff JSON nevertheless says
+ignored_operand: direct_owner_call/high for both owner probes. In the isolated
+negative, match-arm is weakly_exposed and return-value reachable_unrevealed;
+this is false reach, not a claim that the finding becomes exposed.
+Exact-base replay produces the same false direct/high rows: INHERITED, not an
+introduced promotion. Full/compact repository consumers already demote this
+macro case to SameTestFile/AssertionTargetAffinity: consumer parity is broken.
+Reason: the new authority parses test.body and scans only StmtList macro items;
+the enclosing module definition is unavailable there. The bounded claim needs
+real evaluated assertion operands; this case does not require general macro
+expansion to reject. Reuse existing scope/source identity refusals or
+conservatively withhold shadowed macro operands on the diff path.
+Evidence: controls/macro/{json.json,native.log,mutant.log};
+isolated-negatives/macro_discard_only/; base-controls/macro-*; full-compact.log.
+
+[P1] Foreign helper last hop creates false high repository reach.
+Surface: test_grip_evidence/related_tests/context.rs::
+helper_owner_calls_by_file_with_fanout (1557+), helper_name_carries_owner_token;
+related_tests.rs::match_helper_owner_call (300+).
+read_as_object() calls only Foreign's as_object, then foreign_helper asserts
+its return. Native owner mutant is irrelevant to that test; genuine helper
+positive fails the same mutant. In the foreign-only case all four JsonValue
+owner seams become strongly_gripped with foreign_helper helper_owner_call/high,
+although no test executes JsonValue::as_object. Diff JSON only grants file
+relation. Full and compact repository producers agree on the wrong helper edge.
+Exact-base replay reproduces the same edge: INHERITED, not newly introduced by
+this PR. Helper last-hop identity is explicitly excluded from the direct-only
+claim, but this is still a real high-confidence false promotion at the touched
+helper seam and must remain recorded. No clean broad repository-attribution
+clearance is justified by the existing genuine-helper positive. A bounded
+repair can refuse unestablished/foreign inherent last-hop receivers without
+adding arbitrary value-flow/type resolution.
+Evidence: controls/helper/; isolated-negatives/helper_foreign_only/;
+base-controls/helper-*; full-compact.log.
+
+[P2] Blanket self-name filtering removes executable same-name delegations.
+Surface: context.rs lines 1560-1564, call.name != function.name.
+A Wrapper::as_object calling self.inner.as_object really executes the owner;
+its native test detects the owner's None mutant. Base repository reports
+helper_owner_call/high; final reports same_test_file/medium and weak reach on
+all four owner seams. Diff's weak relation is unchanged. This repository
+under-attribution is INTRODUCED. It is not false direct/high evidence.
+A second control replaces field flow with a simple local
+  let value = JsonValue::Object(7); value.as_object()
+inside Wrapper::as_object, with the same base/head loss and native mutation
+failure. Thus the blanket filter discards even a receiver shape already
+admitted by the new bounded authority. Do not restore name-only self edges:
+distinguish declaration artifacts from executable calls, then admit only
+established last-hop receivers. Field-based wrapper flow may remain unresolved
+if its identity cannot be established; the supported-local control must survive.
+Evidence: controls/wrapper/ and controls/wrapper_local/; base-controls/wrapper*;
+full-compact.log. Real native wrappers fail owner mutant, not setup/compile.
+
+Positive/negative challenges and author proof applicability
+- Independently built default-feature head and exact base with locked Cargo,
+  Rust 1.95, one job, incremental off, debug 0. Both binaries are byte-identical
+  to the author's retained witnesses: final fd33e00778c23c0747185523e9903d26d1e9b5931bca30f92243ad2240220ba2;
+  base 4842b5b349fba387af608e74f175395402ed633286090e08efec408a4ff8e6e3.
+- Three submitted receiver units pass independently. Added observation test
+  runs five cases across four nonempty owner seams each and confirms full /
+  compact parity. This experiment changes tests only, not production.
+- Qualified JsonValue::Null and bound Null retain direct/high on diff and
+  repository paths. A Null-arm Some(9) mutation fails both native tests.
+- Live outer actual receiver after an expired foreign shadow retains direct
+  credit. An actual receiver in an expired inner block cannot type the outer
+  foreign receiver. Native Object-arm mutation fails live_outer only; final
+  demotes expired_inner while base falsely credits it. The current scope fix is
+  effective on these independent controls. Original red packet (one pass,
+  two assertion failures) is applicable to its earlier guard, not new-head CI.
+- Five case definitions/labels are byte-unchanged from exact base. Re-materialized
+  all five retained inputs, applied their diffs and matched every author input
+  hash. Final CLI independently emits exactly one weakly_exposed finding per
+  case. Arbitrary ByteSize::gb/kib factories, rstest parameter and bare imported
+  enum variants in loop patterns are actual unsupported evidence shapes. Their
+  lost advice is a real accuracy cost; the expected rows honestly retain
+  discriminated truth, credited ideal and false_actionable outcome. No oracle
+  label, acceptable list, threshold or gate was weakened. No blind bless.
+- Verified all 93 packet files against SHA256SUMS (manifest hash
+  b5b126500547af5e90b52d3ad22e6d72e524c3950c1863916d9fbf1a5c94a51c).
+  Independently verified merge test bytes equal common prefix + complete repair
+  append + complete upstream append. No suite was discarded in the conflict.
+- Inspected terminal author logs: units3/field1/integration7/native-path5/CLI17,
+  corpus all4 (Rust485, oracle44/44, no overclaim), check-fast15/no skips,
+  dogfood and supporting gates. These remain applicable AUTHOR execution,
+  not rerun full-matrix results from this reviewer. We reran the concrete
+  receiver/corpus/analyzer questions above; no full default suite claim.
+
+Golden limitation — setup cause isolated; no re-bless
+Original failed full-golden log is retained. The three complete retained base /
+head15 / final JSON files really are equal; input and expected fixture bytes are
+unchanged. That equality establishes shared behavior, not its cause.
+Review found docs/TESTING.md: the pinned fixture's anyhow 1.0.100 is separate
+from workspace dependencies and MUST be cargo-fetched before offline analysis,
+using the same Cargo home. CI explicitly performs this step (rust-gates.yml180,
+ci.yml151). It was absent from this environment. Executed the documented locked
+fetch, then used proper PATH/CARGO_HOME/RUSTUP_HOME. Exact base and final now
+both report exposed with direct/high observes_answer and exact-value oracle;
+complete base/final parsed JSON are equal. Findings and summary equal the
+committed expected/check.json. A separate Cargo cache view excluding only
+anyhow1.0.100 reproduces weakly_exposed with the same final binary and proper
+toolchain. This isolates missing fixture dependency preparation as a sufficient
+cause of the retained drift, rather than a persistent product regression.
+Do not re-bless. No fresh FULL goldens pass is claimed; only this named fixture
+was replayed. Before Ready, Rook should perform the documented preparation in
+the validation Cargo home and rerun the applicable golden gate. Its known-red
+local receipt is superseded for this fixture's semantic behavior only, not
+rewritten as an original passing suite.
+Evidence: golden-{dependency-fetch.log,missing-dependency.json,prepared-head.json,
+prepared-base.json}; packet-audit.log and original final-goldens.log.
+
+Next bounded repair / owner
+Rook assigns ONE source writer on the existing candidate. Join the related
+refusals: scope-aware assertion admission on diff; executable helper call sites
+with receiver-qualified inherent last hops; preservation of established
+same-name local delegation while excluding declarations/foreign calls. Add
+negative honesty fixtures and paired genuine/native controls, preserve all
+five corpus labels and existing suites. Re-review new head and run affected
+checks; prepare fixture dependency before goldens. Keep Draft until source
+findings, fresh affected review and required qualification are reconciled.
+No source push, public comment, thread resolution, Ready, merge, bot interaction,
+release, credential or security-setting change was performed.
+
+Recovery / resources
+identity.json binds source, binary and remote merge. experiment.diff and
+experiment-diff-blob.txt retain test changes. Review worktrees are removable
+once terminal commands complete; shared checkout/common Git store/old target
+are preserved. Evidence contains native sources, reports, logs and two frozen
+binary witnesses; retain for Rook's repair/review consumer. Mutable build output
+is /workspace/review8004-build, last built subject exact base. It is NOT a
+qualified head executable; use frozen ripr-43f00b54 explicitly. Small archive
+excludes binaries, mutable cache views and preliminary duplicate reports;
+source/commands/logs/manifest retain their identities and replay route.

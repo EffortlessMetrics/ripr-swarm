@@ -1,0 +1,20 @@
+
+running 1 test
+test tests::wrapper_route ... FAILED
+
+failures:
+
+---- tests::wrapper_route stdout ----
+
+thread 'tests::wrapper_route' (5291) panicked at /workspace/review8004-evidence/native-sources/wrapper_local/mutant.rs:19:9:
+assertion `left == right` failed
+  left: None
+ right: Some(7)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::wrapper_route
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

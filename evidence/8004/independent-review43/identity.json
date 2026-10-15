@@ -1,0 +1,35 @@
+{
+  "source_head": "43f00b54eeb239c240bb71553c30a7bde3a4e080",
+  "source_tree": "b520b108591cf046c3498e6558604c9f6101eac7",
+  "artifact": "/workspace/review8004-evidence/ripr-43f00b54",
+  "sha256": "fd33e00778c23c0747185523e9903d26d1e9b5931bca30f92243ad2240220ba2",
+  "size": 121005600,
+  "built_before_experiment": true,
+  "cargo_home": "/workspace/.cargo",
+  "rustup_home": "/workspace/.rustup",
+  "target": "/workspace/review8004-build",
+  "jobs": 1,
+  "incremental": false,
+  "debug": 0,
+  "rustc": "1.95.0 (59807616e 2026-04-14)",
+  "toolchain_path": "/workspace/.cargo/bin",
+  "remote_merge": {
+    "sha": "50dbb658b771bed33a2f494c8059a445fb9fc03a",
+    "tree": "3ee0987fe590695c7b646d58a19f2ef8f684926c",
+    "parents": [
+      "42b064feae6f1faf3ee3370882f2f6c9ea891d1f",
+      "43f00b54eeb239c240bb71553c30a7bde3a4e080"
+    ],
+    "executed": "not locally; hosted lang-rust job 116287116012 executed this merge"
+  },
+  "experimental_tree": "f46498653b3520de7071d0d02cd6bbcbe0b07769",
+  "base_binary": {
+    "source": "89ac47a603092ba7f9f55cf74999b88649621abf",
+    "sha256": "4842b5b349fba387af608e74f175395402ed633286090e08efec408a4ff8e6e3"
+  },
+  "final_cli_environment": {
+    "PATH_prefix": "/workspace/.cargo/bin",
+    "CARGO_HOME": "/workspace/.cargo",
+    "RUSTUP_HOME": "/workspace/.rustup"
+  }
+}

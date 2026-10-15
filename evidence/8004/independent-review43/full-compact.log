@@ -1,0 +1,66 @@
+   Compiling bitflags v2.13.2
+   Compiling getrandom v0.3.4
+   Compiling errno v0.3.14
+   Compiling signal-hook-registry v1.4.8
+   Compiling mio v1.2.3
+   Compiling rustix v1.1.5
+   Compiling tokio v1.53.2
+   Compiling rand_core v0.9.5
+   Compiling linux-raw-sys v0.12.1
+   Compiling oxc_regular_expression v0.130.0
+   Compiling oxc_syntax v0.130.0
+   Compiling fastrand v2.5.0
+   Compiling tempfile v3.27.0
+   Compiling oxc_ast v0.130.0
+   Compiling tokio-util v0.7.20
+   Compiling ppv-lite86 v0.2.21
+   Compiling wait-timeout v0.2.1
+   Compiling bit-vec v0.8.0
+   Compiling fnv v1.0.7
+   Compiling quick-error v1.2.3
+   Compiling rmcp v3.5.1
+   Compiling rusty-fork v0.3.1
+   Compiling bit-set v0.8.0
+   Compiling rand_chacha v0.9.0
+   Compiling oxc_ecmascript v0.130.0
+   Compiling ls-types v0.0.6
+   Compiling parking_lot v0.12.5
+   Compiling rand_xorshift v0.4.0
+   Compiling rand v0.9.5
+   Compiling tokio-stream v0.1.19
+   Compiling serial_test_derive v4.0.1
+   Compiling unarray v0.1.4
+   Compiling regex-syntax v0.8.11
+   Compiling proptest v1.11.0
+   Compiling oxc_parser v0.130.0
+   Compiling ripr v0.11.0 (/workspace/review8004/crates/ripr)
+   Compiling serial_test v4.0.1
+   Compiling tower-lsp-server v0.23.0
+    Finished `test` profile [unoptimized] target(s) in 3m 38s
+     Running unittests src/lib.rs (/workspace/review8004-build/debug/deps/ripr-67c20de708634f70)
+
+running 1 test
+REVIEW8004 case=macro kind=MatchArm full={"genuine": DirectOwnerCall, "ignored_operand": SameTestFile} compact={"genuine": DirectOwnerCall, "ignored_operand": SameTestFile} reach=StageEvidence { state: Yes, confidence: Medium, summary: "Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: genuine" }
+REVIEW8004 case=macro kind=MatchArm full={"genuine": DirectOwnerCall, "ignored_operand": SameTestFile} compact={"genuine": DirectOwnerCall, "ignored_operand": SameTestFile} reach=StageEvidence { state: Yes, confidence: Medium, summary: "Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: genuine" }
+REVIEW8004 case=macro kind=ReturnValue full={"genuine": DirectOwnerCall, "ignored_operand": AssertionTargetAffinity} compact={"genuine": DirectOwnerCall, "ignored_operand": AssertionTargetAffinity} reach=StageEvidence { state: Yes, confidence: Medium, summary: "Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: genuine" }
+REVIEW8004 case=macro kind=MatchArm full={"genuine": DirectOwnerCall, "ignored_operand": SameTestFile} compact={"genuine": DirectOwnerCall, "ignored_operand": SameTestFile} reach=StageEvidence { state: Yes, confidence: Medium, summary: "Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: genuine" }
+REVIEW8004 case=helper kind=MatchArm full={"foreign_helper": HelperOwnerCall, "genuine_helper": HelperOwnerCall} compact={"foreign_helper": HelperOwnerCall, "genuine_helper": HelperOwnerCall} reach=StageEvidence { state: Yes, confidence: Medium, summary: "Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: foreign_helper, genuine_helper" }
+REVIEW8004 case=helper kind=MatchArm full={"foreign_helper": HelperOwnerCall, "genuine_helper": HelperOwnerCall} compact={"foreign_helper": HelperOwnerCall, "genuine_helper": HelperOwnerCall} reach=StageEvidence { state: Yes, confidence: Medium, summary: "Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: foreign_helper, genuine_helper" }
+REVIEW8004 case=helper kind=ReturnValue full={"foreign_helper": HelperOwnerCall, "genuine_helper": HelperOwnerCall} compact={"foreign_helper": HelperOwnerCall, "genuine_helper": HelperOwnerCall} reach=StageEvidence { state: Yes, confidence: Medium, summary: "Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: foreign_helper, genuine_helper" }
+REVIEW8004 case=helper kind=MatchArm full={"foreign_helper": HelperOwnerCall, "genuine_helper": HelperOwnerCall} compact={"foreign_helper": HelperOwnerCall, "genuine_helper": HelperOwnerCall} reach=StageEvidence { state: Yes, confidence: Medium, summary: "Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: foreign_helper, genuine_helper" }
+REVIEW8004 case=wrapper kind=MatchArm full={"wrapper_route": SameTestFile} compact={"wrapper_route": SameTestFile} reach=StageEvidence { state: Weak, confidence: Low, summary: "No test is seen calling as_object; tests share only its file or a name token: wrapper_route" }
+REVIEW8004 case=wrapper kind=MatchArm full={"wrapper_route": SameTestFile} compact={"wrapper_route": SameTestFile} reach=StageEvidence { state: Weak, confidence: Low, summary: "No test is seen calling as_object; tests share only its file or a name token: wrapper_route" }
+REVIEW8004 case=wrapper kind=ReturnValue full={"wrapper_route": SameTestFile} compact={"wrapper_route": SameTestFile} reach=StageEvidence { state: Weak, confidence: Low, summary: "No test is seen calling as_object; tests share only its file or a name token: wrapper_route" }
+REVIEW8004 case=wrapper kind=MatchArm full={"wrapper_route": SameTestFile} compact={"wrapper_route": SameTestFile} reach=StageEvidence { state: Weak, confidence: Low, summary: "No test is seen calling as_object; tests share only its file or a name token: wrapper_route" }
+REVIEW8004 case=live kind=MatchArm full={"expired_inner": SameTestFile, "live_outer": DirectOwnerCall} compact={"expired_inner": SameTestFile, "live_outer": DirectOwnerCall} reach=StageEvidence { state: Yes, confidence: Medium, summary: "Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: live_outer" }
+REVIEW8004 case=live kind=MatchArm full={"expired_inner": SameTestFile, "live_outer": DirectOwnerCall} compact={"expired_inner": SameTestFile, "live_outer": DirectOwnerCall} reach=StageEvidence { state: Yes, confidence: Medium, summary: "Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: live_outer" }
+REVIEW8004 case=live kind=ReturnValue full={"expired_inner": AssertionTargetAffinity, "live_outer": DirectOwnerCall} compact={"expired_inner": AssertionTargetAffinity, "live_outer": DirectOwnerCall} reach=StageEvidence { state: Yes, confidence: Medium, summary: "Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: live_outer" }
+REVIEW8004 case=live kind=MatchArm full={"expired_inner": SameTestFile, "live_outer": DirectOwnerCall} compact={"expired_inner": SameTestFile, "live_outer": DirectOwnerCall} reach=StageEvidence { state: Yes, confidence: Medium, summary: "Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: live_outer" }
+REVIEW8004 case=qualified kind=MatchArm full={"bound_null": DirectOwnerCall, "qualified_null": DirectOwnerCall} compact={"bound_null": DirectOwnerCall, "qualified_null": DirectOwnerCall} reach=StageEvidence { state: Yes, confidence: Medium, summary: "Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: bound_null, qualified_null" }
+REVIEW8004 case=qualified kind=MatchArm full={"bound_null": DirectOwnerCall, "qualified_null": DirectOwnerCall} compact={"bound_null": DirectOwnerCall, "qualified_null": DirectOwnerCall} reach=StageEvidence { state: Yes, confidence: Medium, summary: "Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: bound_null, qualified_null" }
+REVIEW8004 case=qualified kind=ReturnValue full={"bound_null": DirectOwnerCall, "qualified_null": DirectOwnerCall} compact={"bound_null": DirectOwnerCall, "qualified_null": DirectOwnerCall} reach=StageEvidence { state: Yes, confidence: Medium, summary: "Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: bound_null, qualified_null" }
+REVIEW8004 case=qualified kind=MatchArm full={"bound_null": DirectOwnerCall, "qualified_null": DirectOwnerCall} compact={"bound_null": DirectOwnerCall, "qualified_null": DirectOwnerCall} reach=StageEvidence { state: Yes, confidence: Medium, summary: "Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: bound_null, qualified_null" }
+test analysis::test_grip_evidence::tests::independent_review_8004_paths ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10930 filtered out; finished in 0.10s
+

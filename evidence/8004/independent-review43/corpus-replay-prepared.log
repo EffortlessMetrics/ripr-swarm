@@ -1,0 +1,10 @@
+bytesize-as-kib-div identical retained inputs True
+exit 0 findings 1 classes ['weakly_exposed']
+bytesize-as-mb-div identical retained inputs True
+exit 0 findings 1 classes ['weakly_exposed']
+lib-rstest-fixture-injected-receiver identical retained inputs True
+exit 0 findings 1 classes ['weakly_exposed']
+serde-derive-rename-field-upper identical retained inputs True
+exit 0 findings 1 classes ['weakly_exposed']
+serde-derive-rename-variant-lower identical retained inputs True
+exit 0 findings 1 classes ['weakly_exposed']

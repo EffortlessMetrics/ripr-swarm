@@ -1,0 +1,21 @@
+
+running 2 tests
+test discarded::ignored_operand ... ok
+test real::genuine ... FAILED
+
+failures:
+
+---- real::genuine stdout ----
+
+thread 'real::genuine' (2801) panicked at /workspace/review8004-evidence/controls/macro/mutant.rs:15:9:
+assertion `left == right` failed
+  left: None
+ right: Some(7)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    real::genuine
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

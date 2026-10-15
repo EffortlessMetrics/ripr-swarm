@@ -1,0 +1,10 @@
+{
+  "documented_preparation": "cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml",
+  "fetch_exit": 0,
+  "missing_fixture_cache_result": "weakly_exposed",
+  "prepared_cache_base": "exposed",
+  "prepared_cache_head": "exposed",
+  "complete_prepared_base_head_equal": true,
+  "prepared_findings_and_summary_equal_committed_expected": true,
+  "full_suite_rerun": false
+}
