@@ -2741,6 +2741,38 @@ pub(crate) fn owner_namespace_receivers(
     receivers
 }
 
+/// [`owner_namespace_receivers`] without a static namespace import the test
+/// body rebinds (`const ns = { owner: () => ... }`): a call through that
+/// local reaches the shadow, not the owner module. A dynamic-import binding
+/// of the owner module is a body declaration by construction and stays.
+pub(crate) fn unshadowed_owner_namespace_receivers(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<String> {
+    let dynamic: Vec<String> = dynamic_import_namespace_bindings(&test.body_text)
+        .into_iter()
+        .filter(|name| {
+            let import = TypeScriptImport {
+                source: name.source.clone(),
+                imported: None,
+                local: name.binding.clone(),
+                namespace: true,
+            };
+            import_source_matches_owner(&import, &test.file, owner, alias_map, workspace_root)
+        })
+        .map(|name| name.binding)
+        .collect();
+    owner_namespace_receivers(test, owner, alias_map, workspace_root)
+        .into_iter()
+        .filter(|receiver| {
+            dynamic.contains(receiver)
+                || !local_identifier_declared_in_test_body(&test.body_text, receiver)
+        })
+        .collect()
+}
+
 /// A test-body dynamic import binding: the local name and the imported
 /// module's literal source.
 struct DynamicImportBinding {

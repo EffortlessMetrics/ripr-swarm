@@ -401,6 +401,30 @@ fn match_object_pin_looks_through_a_test_local_identity_helper() -> Result<(), S
     assert_eq!(row.oracle_kind, OracleKind::ExactValue);
     assert_eq!(row.oracle_strength, OracleStrength::Strong);
 
+    // Through the owner's namespace import the identity reading holds; a
+    // body-local `ns` shadowing that import reaches the shadow instead.
+    let namespaced = |body: &str| {
+        format!(
+            "import * as ns from \"../src/profile\";\nimport {{ buildProfile }} from \"../src/profile\";\nfunction normalize<T>(value: T): T {{\n  return value;\n}}\ntest(\"profile records adulthood\", () => {{\n{body}\n}});\n"
+        )
+    };
+    let pin = "  expect(normalize(ns.buildProfile(\"bo\", 18))).toMatchObject({ name: \"bo\", adult: true });";
+    let finding = profile_finding("match-object-namespace", &namespaced(pin))?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    let shadowed = namespaced(&format!(
+        "  const ns = fakeProfiles();\n  buildProfile(\"ana\", 17);\n{pin}"
+    ));
+    let tests = extract_tests(Path::new("tests/profile.test.ts"), &shadowed);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].assertions.len(), 1);
+    let finding = profile_finding("match-object-shadowed-namespace", &shadowed)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+
     for (label, helper) in [
         (
             "match-object-rebuilding-helper",

@@ -95,7 +95,8 @@ ladder and in its related-test row, when all of these hold:
 - it observes the whole result of one owner call: `owner(...)`,
   `ns.owner(...)`, optionally awaited, or a local bound once to that call
   (not `f(owner(...))` or `owner(...).field`), and the test does not
-  shadow the owner;
+  shadow the owner or, for `ns.owner(...)`, the namespace import `ns`
+  (`const ns = fake()` in the body reaches the shadow; amended 2026-10-15);
 - the owner body has no arrow or nested `function`, and the changed line
   starts with `if (` or `else if (` (a changed `case`, `for` or `while`
   line fails: a failing `case` label jumps to the next label, not the next

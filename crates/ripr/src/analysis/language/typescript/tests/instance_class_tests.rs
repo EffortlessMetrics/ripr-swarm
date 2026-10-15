@@ -737,6 +737,9 @@ fn errors_test_with(prelude: &str, body: &str) -> String {
 
 const IDENTITY_WRAP: &str = "function wrap(err: Error): Error {\n  return err;\n}";
 
+const NAMESPACE_WRAP: &str =
+    "import * as ns from \"../src/errors\";\nfunction wrap(err: Error): Error {\n  return err;\n}";
+
 /// RIPR-SPEC-0249 example 5 (amended 2026-10-15): a pin on
 /// `wrap(errorFor(404))` reads as a pin on `errorFor(404)` when `wrap` is a
 /// test-local identity helper; any other helper, call shape or binding keeps
@@ -868,6 +871,27 @@ fn instance_pin_looks_through_a_test_local_identity_helper() -> Result<(), Strin
             0,
         ),
         ("undeclared-wrap", "", pin, 0),
+        (
+            "namespace-wrap",
+            NAMESPACE_WRAP,
+            "  expect(wrap(ns.errorFor(404))).toBeInstanceOf(NotFound);",
+            1,
+        ),
+        // A body-local `ns` shadows the namespace import, so the pinned call
+        // reaches the shadow even while a real owner call keeps the test
+        // related.
+        (
+            "shadowed-namespace-wrap",
+            NAMESPACE_WRAP,
+            "  const ns = fakeErrors();\n  errorFor(403);\n  expect(wrap(ns.errorFor(404))).toBeInstanceOf(NotFound);",
+            0,
+        ),
+        (
+            "shadowed-namespace-direct",
+            NAMESPACE_WRAP,
+            "  const ns = fakeErrors();\n  errorFor(403);\n  expect(ns.errorFor(404)).toBeInstanceOf(NotFound);",
+            0,
+        ),
     ] {
         let test = errors_test_with(prelude, body);
         let tests = extract_tests(Path::new("tests/errors.test.ts"), &test);
@@ -884,6 +908,9 @@ fn instance_pin_looks_through_a_test_local_identity_helper() -> Result<(), Strin
                 | "wrapped-local"
                 | "wrapped-member"
                 | "nested-wrap"
+                | "namespace-wrap"
+                | "shadowed-namespace-wrap"
+                | "shadowed-namespace-direct"
         );
         assert_eq!(
             tests[0].identity_helpers_in_file.is_empty(),
