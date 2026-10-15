@@ -107,6 +107,7 @@ fn accepted_empty_placeholder_fenced_and_unrelated_plans_remain_failures() -> Re
         "````text\n```\nPlanned tests:\n- boundary_obligation\n````\n",
         "````text\n    ````\nPlanned tests:\n- boundary_obligation\n````\n",
         "````text\n\t````\nPlanned tests:\n- boundary_obligation\n````\n",
+        "````text\n````\u{00a0}\nPlanned tests:\n- boundary_obligation\n````\n",
         "    Planned tests:\n    - boundary_obligation\n",
         "```text\n```not-a-close\nPlanned tests:\n- boundary_obligation\n```\n",
         "<!--\nPlanned tests:\n- boundary_obligation\n-->\n",
