@@ -851,6 +851,20 @@ mod tests {
     }
 
     #[test]
+    fn linked_same_kind_receipt_cannot_answer_an_unsupported_task_kind() -> Result<(), String> {
+        let p = Packet::new()?;
+        let mut row = receipt("shared", "head_passed");
+        row["kind"] = json!("future-kind");
+        p.write("review/proof_receipts.json", json!([row]))?;
+        let mut task = linked_head_portfolio(&["shared"]);
+        task["candidate_tasks"][0]["kind"] = json!("future-kind");
+        task["decisions"][0]["kind"] = json!("future-kind");
+        p.write("review/proof_portfolio.json", task)?;
+        assert!(render(&p.0).contains("MISSING EVIDENCE: snippet:"));
+        Ok(())
+    }
+
+    #[test]
     fn non_discriminating_refused_timeout_and_unknown_results_do_not_satisfy_tasks()
     -> Result<(), String> {
         let p = Packet::new()?;
