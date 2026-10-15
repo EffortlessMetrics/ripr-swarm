@@ -1109,13 +1109,17 @@ fn arm_terminates(body: &str) -> bool {
     first_control_transfer_diverges(body) == Some(true)
 }
 
-/// Whether an arm fails on every value it matches: [`arm_terminates`]
-/// without the body-predicate `if` form, whose pin-hit path ends the arm
-/// quietly. The accepted-Err form needs this of every other arm, because
-/// only the accept arm's own pattern may let the test pass.
+/// Whether an arm fails on every value it matches. The accepted-Err form
+/// needs this of every other arm, because only the accept arm's own
+/// pattern may let the test pass. So the arm's whole body is ONE statement
+/// that diverges under [`statement_diverges`] without the body-predicate
+/// `if` form (whose pin-hit path ends the arm quietly). A body with any
+/// other statement is refused, even when a later statement diverges: an
+/// earlier conditional (`if skip { return Ok(()); }`) can end the arm
+/// before the failure runs, and [`first_control_transfer_statement`]
+/// skips such conditionals.
 fn arm_fails_unconditionally(body: &str) -> bool {
-    first_control_transfer_statement(body)
-        .is_some_and(|statement| statement_diverges_with(statement, false))
+    single_arm_statement(body).is_some_and(|statement| statement_diverges_with(statement, false))
 }
 
 /// The in-order walk behind [`arm_terminates`]: `Some(diverges)` is the
@@ -5092,6 +5096,11 @@ mod accepted_err_arm_tests {
             "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(other) => if !matches!(other, PayError::Limit) { panic!(\"{other:?}\") },",
             "        Ok(state) => { if state != Balance::Empty { panic!(\"ok\"); } }\n        Err(PayError::Insufficient) => {}\n        Err(other) => panic!(\"{other:?}\"),",
             "        Err(PayError::Insufficient) => {}\n        other => { if !matches!(other, Err(PayError::Limit)) { panic!(\"{other:?}\"); } }",
+            // An earlier conditional exit ends the arm before its failure.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(other) => { if skip { return Ok(()); } panic!(\"{other:?}\") }",
+            "        Ok(_) => { if skip { return Ok(()); } panic!(\"ok\"); }\n        Err(PayError::Insufficient) => {}\n        Err(other) => panic!(\"{other:?}\"),",
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(_) => { if skip { return Ok(()); }; panic!(\"wrong\") }",
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(_) => { let _ = skip.then(|| ()); panic!(\"wrong\") }",
         ] {
             assert!(scan_one(arms).is_empty(), "must not pin: {arms}");
         }
