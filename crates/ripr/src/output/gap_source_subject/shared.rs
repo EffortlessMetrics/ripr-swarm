@@ -156,7 +156,10 @@ fn strip_absolute_root(root: &Path, path: &Path) -> Option<PathBuf> {
     if let Ok(relative) = path.strip_prefix(&canonical_root) {
         return Some(relative.to_path_buf());
     }
-    let canonical_path = std::fs::canonicalize(path).ok()?;
+    // Same family on both sides: Windows canonicalize returns the verbatim
+    // spelling, and a verbatim remainder cannot strip a plain root (#8030
+    // review). Both spellings name the same file.
+    let canonical_path = plain_drive_root(&std::fs::canonicalize(path).ok()?);
     canonical_path
         .strip_prefix(&canonical_root)
         .ok()
