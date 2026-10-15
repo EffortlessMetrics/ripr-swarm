@@ -1783,6 +1783,7 @@ mod tests {
         let baseline = render_baseline_create_json(&created)?;
         let baseline_value: Value = serde_json::from_str(&baseline).map_err(|e| e.to_string())?;
         assert_eq!(baseline_value["entries"].as_array().map(Vec::len), Some(1));
+        let warning = "required current gate-decision input current.json contains a decision without stable identity";
 
         for malformed in [Value::Null, json!(42), json!({}), json!({"seam_id": "  "})] {
             // A valid sibling must not hide a corrupt record in a partial denominator.
@@ -1804,7 +1805,15 @@ mod tests {
                 assert_eq!(rendered["delta"]["still_present"], 0, "{rendered}");
                 assert_eq!(rendered["delta"]["missing_current_input"], 1, "{rendered}");
                 assert_eq!(rendered["items"][0]["identity"]["seam_id"], "reviewed");
-                assert!(render_baseline_delta_markdown(&report).contains("Missing current input"));
+                assert!(
+                    rendered["warnings"]
+                        .as_array()
+                        .is_some_and(|warnings| warnings.contains(&json!(warning))),
+                    "{rendered}"
+                );
+                let markdown = render_baseline_delta_markdown(&report);
+                assert!(markdown.contains("Missing current input"));
+                assert!(markdown.contains(warning), "{markdown}");
 
                 for (remove_resolved, migrate_legacy_identities) in [(true, false), (false, true)] {
                     let update = build_baseline_update_remove_resolved(BaselineUpdateInput {
