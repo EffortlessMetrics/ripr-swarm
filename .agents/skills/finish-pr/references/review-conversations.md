@@ -49,7 +49,7 @@ for ($conversationIndex = 0; $conversationIndex -lt $conversationPages.Count; $c
     $conversationRepo = $conversationPage.data.repository
     $conversationSubject = $conversationRepo.pullRequest
     $conversationConnection = $conversationSubject.reviewThreads
-    if (($conversationPage.PSObject.Properties['errors'] -and $conversationPage.errors) -or $conversationRepo.nameWithOwner -cne $conversationRepository -or $conversationSubject.number -ne $conversationPr -or $conversationSubject.headRefOid -notmatch '^[0-9a-fA-F]{40}$' -or $null -eq $conversationConnection.nodes) { throw 'Incomplete or wrong-subject conversation page' }
+    if (($conversationPage.PSObject.Properties['errors'] -and $conversationPage.errors) -or $conversationRepo.nameWithOwner -ne $conversationRepository -or $conversationSubject.number -ne $conversationPr -or $conversationSubject.headRefOid -notmatch '^[0-9a-fA-F]{40}$' -or $null -eq $conversationConnection.nodes) { throw 'Incomplete or wrong-subject conversation page' }
     if ($null -eq $conversationHead) { $conversationHead = $conversationSubject.headRefOid }
     if ($conversationSubject.headRefOid -cne $conversationHead) { throw 'PR head changed during pagination; recollect' }
     $conversationMore = $conversationConnection.pageInfo.hasNextPage
@@ -94,6 +94,25 @@ the action list; outdated is not resolved.
 
 ## Fixture verification
 
+On native Windows with PowerShell 7, run the committed Rust fixture harness:
+
+```bash
+cargo test -p xtask --bin xtask review_conversations
+```
+
+Two tests each exercise 16 scenarios against the actual Markdown code block,
+including normal and inherited StrictMode sessions. Rust owns inputs and packet
+assertions; each bounded child process provides only a read-only CLI mock and
+runs the recipe. The mock cannot leak into a later live CLI call. Generated
+inputs stay in unique task-owned target directories for inspection. The Windows
+coverage declaration does not claim native execution on Unix.
+
+Repository spelling comparisons ignore capitalization while different repository
+names, PR numbers and inconsistent heads still refuse. The case-only alias and
+wrong-repository controls pin that distinction.
+
+For manual exploration, the same fixture and expected outcomes follow.
+
 The adjacent [fixture](review-conversations.fixture.json) is a synthetic two-page
 response, not live GitHub evidence: a resolved thread, an outdated unresolved
 thread, and a current unresolved thread on the second page. Run the collection
@@ -107,6 +126,8 @@ Challenge the same block with each fixture variant:
 | Variant | Expected result |
 | --- | --- |
 | Run valid and empty inventories under inherited StrictMode | Same packet and obligations as normal mode |
+| Use differently capitalized repository input | Canonical response accepted; wrong repository still refuses |
+| Empty complete inventory | 0 inspected, 0 unresolved; review/check/protection obligations remain |
 | Resolve both open threads | 3 inspected, 0 unresolved; next action still requires review/checks/protections |
 | Keep only page 1 (`hasNextPage=true`) | Error, no success packet |
 | Change page 2 head | Error, no success packet |
