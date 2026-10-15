@@ -937,8 +937,12 @@ snapshot; a strong related oracle never substitutes for a missing premise.
    version requirement alone is insufficient. Before this query, capture both
    legacy `config` and `config.toml` at every `.cargo` directory from the query
    working directory through its filesystem ancestors, plus both files in the
-   effective `CARGO_HOME` (or Cargo's default home). Bind present bytes and
-   absent-file identities; unreadable files, indeterminate home/ancestry or
+   effective `CARGO_HOME` (or Cargo's default home). Use Cargo's canonical
+   resolver, including OS-home discovery when home environment inputs are
+   absent and default-home fallback for an empty `CARGO_HOME`; resolve relative
+   homes at the metadata query's working directory. Discovery never forwards
+   ambient environment to a quarantined child or prepares registry dependencies.
+   Bind present bytes and absent-file identities; unreadable files, indeterminate home/ancestry or
    unresolved config paths refuse the receipt. Parse every present file, not
    just the winning precedence entry. Initially reject any `[source]`, `paths`,
    `[patch]` or `[replace]` entry, or config `[env]` entry setting a `CARGO_*`
