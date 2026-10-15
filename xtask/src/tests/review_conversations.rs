@@ -51,7 +51,7 @@ fn run_fixtures(strict: bool) -> Result<(), String> {
     )
     .map_err(|error| error.to_string())?;
     let pages = fixture["pages"].clone();
-    if !pages.as_array().is_some_and(|pages| pages.len() == 2) {
+    if pages.as_array().is_none_or(|pages| pages.len() != 2) {
         return Err("fixture must supply two pages".to_string());
     }
     let cases = fixture_cases(&pages, &recipe)?;
@@ -99,7 +99,7 @@ fn run_fixtures(strict: bool) -> Result<(), String> {
         let output = crate::run::run_output_owned_with_timeout(
             "pwsh",
             &args,
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             "review-conversation fixture recipe",
         )?;
         let result: Value = serde_json::from_str(&output).map_err(|error| {
