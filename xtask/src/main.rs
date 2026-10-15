@@ -5986,20 +5986,33 @@ fn has_explicit_planned_test_mapping(text: &str) -> bool {
             }
             continue;
         }
+        let mut remainder = line;
+        let mut comment_line = comment;
+        loop {
+            if comment {
+                let Some(end) = remainder.find("-->") else {
+                    break;
+                };
+                comment = false;
+                remainder = &remainder[end + 3..];
+            } else {
+                let Some(start) = remainder.find("<!--") else {
+                    break;
+                };
+                comment = true;
+                comment_line = true;
+                remainder = &remainder[start + 4..];
+            }
+        }
+        if comment_line {
+            continue;
+        }
         if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
             let delimiter = if trimmed.starts_with('`') { '`' } else { '~' };
             fence = Some((
                 delimiter,
                 trimmed.chars().take_while(|ch| *ch == delimiter).count(),
             ));
-            continue;
-        }
-        if comment {
-            comment = !trimmed.contains("-->");
-            continue;
-        }
-        if trimmed.starts_with("<!--") {
-            comment = !trimmed.contains("-->");
             continue;
         }
         if line.trim_end() == "## Test Mapping" {
@@ -6029,9 +6042,19 @@ fn has_explicit_planned_test_mapping(text: &str) -> bool {
             .strip_prefix("- ")
             .or_else(|| trimmed.strip_prefix("* "));
         if let Some(item) = item {
-            let item = item.trim().trim_matches('`').trim().to_ascii_lowercase();
+            let item = item.trim();
+            let item = item
+                .strip_prefix("[ ]")
+                .or_else(|| item.strip_prefix("[x]"))
+                .or_else(|| item.strip_prefix("[X]"))
+                .unwrap_or(item);
+            let item = item
+                .trim()
+                .trim_matches(['`', '*', '_', '~'])
+                .trim()
+                .to_ascii_lowercase();
             let sentinel = item.trim_end_matches(['.', '!', '?', ';', ':', ',']);
-            let placeholder = sentinel.is_empty()
+            let placeholder = !sentinel.chars().any(char::is_alphanumeric)
                 || matches!(
                     sentinel,
                     "..." | "-" | "none" | "n/a" | "tbd" | "todo" | "planned"
