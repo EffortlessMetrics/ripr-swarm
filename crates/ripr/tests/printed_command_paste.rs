@@ -373,7 +373,9 @@ fn code_spans(line: &str) -> Vec<String> {
 }
 
 fn is_powershell_unavailable_disclosure(form: &str) -> bool {
-    form.contains(POWERSHELL_UNAVAILABLE_DISCLOSURE)
+    // Exact match: a translated command may carry this sentence as argument
+    // data and must still paste. Substring matching would skip that case.
+    form == POWERSHELL_UNAVAILABLE_DISCLOSURE
 }
 
 /// Remainder after a `(PowerShell)` label that sits outside code spans.
@@ -1391,4 +1393,16 @@ fn extract_text_marks_unavailable_powershell_disclosure_and_does_not_paste_it() 
     assert_eq!(silent.len(), 1, "{silent:?}");
     assert!(!silent[0].powershell_unavailable, "{silent:?}");
     assert_eq!(silent[0].powershell, None);
+
+    // A translated form that merely contains the disclosure as argument data
+    // is still a pasteable PowerShell command.
+    let embedded =
+        format!("ripr check --root 'it''s {POWERSHELL_UNAVAILABLE_DISCLOSURE}' --diff HEAD");
+    let found = extracted(&format!(
+        "`ripr check --root 'it'\\''s {POWERSHELL_UNAVAILABLE_DISCLOSURE}' --diff HEAD`\n\
+         (PowerShell) {embedded}\n"
+    ));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(!found[0].powershell_unavailable, "{found:?}");
+    assert_eq!(found[0].powershell.as_deref(), Some(embedded.as_str()));
 }
