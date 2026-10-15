@@ -146,7 +146,13 @@ pub(crate) fn render_pilot_timeout_summary_md(context: PilotSummaryContext<'_>) 
     ));
 
     out.push_str("## Next Command\n\n");
-    out.push_str("Rerun with a larger explicit budget:\n\n");
+    if suggested_retry_timeout_ms(context.timeout_ms) > context.timeout_ms {
+        out.push_str("Rerun with a larger explicit budget:\n\n");
+    } else {
+        out.push_str(
+            "Rerun with an explicit --timeout-ms at least as large as the time already spent:\n\n",
+        );
+    }
     out.push_str(super::COMMAND_SHELL_DISCLOSURE);
     out.push_str("```bash\n");
     out.push_str(&commands.retry);

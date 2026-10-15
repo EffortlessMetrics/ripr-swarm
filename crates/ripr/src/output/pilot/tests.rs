@@ -1293,6 +1293,10 @@ fn timeout_summary_after_default_extension_names_the_default_and_caps_retry() {
     assert!(md.contains("--timeout-ms 300000"), "{md}");
     assert!(!md.contains("1080000"), "{md}");
     assert!(
+        md.contains("Rerun with a larger explicit budget:"),
+        "300s is larger than the 270s spent budget:\n{md}"
+    );
+    assert!(
         md.contains("never smaller than the time already spent"),
         "capped retry must disclose the interactive bound:\n{md}"
     );
@@ -1357,6 +1361,13 @@ fn timeout_summary_explicit_large_timeout_never_suggests_a_smaller_retry() {
         "{md}"
     );
     assert!(!md.contains("automatic extension"), "{md}");
+    assert!(
+        md.contains(
+            "Rerun with an explicit --timeout-ms at least as large as the time already spent:"
+        ),
+        "a retry equal to spent must not promise a larger budget:\n{md}"
+    );
+    assert!(!md.contains("Rerun with a larger explicit budget:"), "{md}");
     assert!(
         md.contains("never smaller than the time already spent"),
         "a retry floored at spent must still disclose the bound:\n{md}"
