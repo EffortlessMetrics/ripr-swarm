@@ -353,7 +353,7 @@ fn a_golden_path_stays_in_tree_and_fs_renames_refuse() {
         "\"w.txt\"",
         "\"snapshots/w.txt\"",
         "r#\"w.txt\"#",
-        "\"a\\\\b.txt\"",
+        "r\"a\\b.txt\"",
     ] {
         assert!(is_in_tree_relative_path(path), "{path}");
     }
@@ -363,6 +363,9 @@ fn a_golden_path_stays_in_tree_and_fs_renames_refuse() {
         "\"C:w.txt\"",
         "\"\\\\\\\\host\\\\w.txt\"",
         "\"../w.txt\"",
+        "\"\\u{2e}\\u{2e}/w.txt\"",
+        "\"a\\x2e\\x2e/w.txt\"",
+        "\"a\\\\b.txt\"",
         "\"a/../../w.txt\"",
         "\"\"",
     ] {

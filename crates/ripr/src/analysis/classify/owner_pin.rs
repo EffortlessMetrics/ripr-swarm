@@ -6004,7 +6004,13 @@ fn is_in_tree_relative_path(path: &str) -> bool {
         .trim_matches('#')
         .trim_matches('"');
     let absolute = inner.starts_with(['/', '\\', '~']) || inner.as_bytes().get(1) == Some(&b':');
-    !inner.is_empty() && !absolute && !inner.split(['/', '\\']).any(|segment| segment == "..")
+    // A non-raw literal's escapes (`\u{2e}\u{2e}/w.txt`) decode to segments
+    // this text check cannot see, so any escape refuses.
+    let escaped = !path.starts_with('r') && inner.contains('\\');
+    !inner.is_empty()
+        && !absolute
+        && !escaped
+        && !inner.split(['/', '\\']).any(|segment| segment == "..")
 }
 
 /// #6578 review: whether a test file renames an import from `std::fs` or

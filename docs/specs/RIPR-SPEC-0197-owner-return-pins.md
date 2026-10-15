@@ -1424,7 +1424,9 @@ The rules above apply with four differences:
    brackets refuses. `expect_file!` resolves the path against the test
    source's directory, so the literal must be relative and stay in the
    tree: an absolute path (`/tmp/x`, a drive-letter path, `\\host\x`), a `~` path or
-   any `..` segment may name text the commit does not fix, and refuses.
+   any `..` segment may name text the commit does not fix, and refuses. A
+   non-raw literal with any escape (`"\u{2e}\u{2e}/x"`) refuses too, since
+   its decoded segments are not the source text.
 2. The bare `expect_file!` must be expect-test's under rule 2: its file
    imports `use expect_test::expect_file;` (alone or grouped) under its own
    name, verified against the manifest, and nothing else binds
