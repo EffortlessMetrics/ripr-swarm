@@ -282,7 +282,9 @@ mod tests {
                 }));
             }
             for handle in handles {
-                handle.join().map_err(|_| "snapshot worker failed")??;
+                handle
+                    .join()
+                    .map_err(|payload| format!("snapshot worker failed: {payload:?}"))??;
             }
             Ok(())
         })?;
