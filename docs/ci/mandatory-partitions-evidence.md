@@ -150,18 +150,12 @@ existing caller, workflows, doctest obligation and caller-supplied trust boundar
 The duplicate-row control must fail against the inherited implementation before
 the scoped repair. Existing function-level controls remain useful separately.
 
-Task-owned resources: clone/common Git directory
-`H:\Temp\ripr-task17-partition[\.git]`; proof/temporary outputs
-`H:\Temp\ripr-task17-proof`; reviewer scratch, if needed,
-`H:\Temp\ripr-task17-review`. No shared build directory is writable by this task.
-H: had approximately 2.4 TB free at discovery; conservative additional budget is
-1 GiB for clone, small prototype executables and fixtures, with no full product
-build admitted. Cached dependency artifacts are read-only inputs from
-`H:\Temp\ripr-task5-build\debug\deps`; retain their hashes and compiler identity.
-Queue heavy Cargo baseline/policy gates while existing heavy builds are active;
-direct prototype-only compilation establishes neither those gates nor full
-Cargo dependency qualification. Retain exact baseline/negative/current witnesses
-and logs through review and parent handoff; no unrelated cleanup is authorized.
+The original direct-compiler observations below precede subsequent Cargo and
+repository-gate qualification. They retain their original subjects and epochs;
+the PR continuation records later exact-head evidence. Cached dependency
+artifacts were read-only inputs, verified by hash and compiler identity. Exact
+baseline, negative and repaired witnesses remain in external task-owned proof
+storage for review and parent handoff.
 
 ### Task 17 observed proof
 
@@ -191,17 +185,19 @@ entry point's status behavior, not only `run(args)` assertions. Rustfmt 1.95.0
 on the changed Rust source and `git diff --check` pass.
 
 Focused compilation deliberately avoided Cargo's product dependency rebuild.
-Reproduction from the repository root (PowerShell; add `--test` and select a
+Set `VERIFIED_DEPENDENCY_DIR` to the hash-verified dependency directory and
+`PROOF_DIR` to a writable proof directory. Reproduction from the repository root
+(PowerShell; add `--test` and select a
 test-output filename for the eight-test executable):
 
 ```powershell
-$deps = 'H:\Temp\ripr-task5-build\debug\deps'
+$deps = $env:VERIFIED_DEPENDENCY_DIR
 rustc +1.95.0 --edition=2024 xtask/examples/mandatory_partitions.rs `
   --crate-name mandatory_partitions -L "dependency=$deps" `
   --extern "serde=$deps\libserde-721fe3bf8bf6b84c.rlib" `
   --extern "serde_json=$deps\libserde_json-05e5baa929c68c83.rlib" `
   --extern "toml=$deps\libtoml-55f65ee380479082.rlib" `
-  -C debuginfo=0 -o H:\Temp\ripr-task17-proof\mandatory_partitions.exe
+  -C debuginfo=0 -o "$env:PROOF_DIR\mandatory_partitions.exe"
 ```
 
 The three direct rlib SHA256 values, captured before use, respectively are
@@ -215,7 +211,7 @@ the isolated pre-repair test executable SHA256 is
 `ebdc802bc30379f510e0d8ac6ecd7290e67af449bae92aa8b700a4cb3beaf020`.
 
 Exact native fixtures, logs, hashes and executables are retained at
-`H:\Temp\ripr-task17-proof`; this committed receipt and test source are the
+the task-owned external proof directory; this committed receipt and test source are the
 portable deliverables. Baseline `worktree doctor`, `check-fast`, narrow Cargo
 compile, precommit and full hosted qualification have not run in this Windows
 lane: multiple existing Cargo/rustc builds remained active, and rebuilding
@@ -242,7 +238,7 @@ compile because bypassing the guard left an uninferred unused set; that is
 instrument failure, not behavioral evidence. The corrected mutation retains
 the insert side effect while discarding its result, isolating the decision.
 Scratch source/executable witnesses are retained in
-`H:\Temp\ripr-task17-review`, and their hashes in the task proof directory.
+the reviewer-owned external scratch directory, and their hashes in the task proof directory.
 
 A separate direct pinned `clippy-driver --test --emit metadata -D warnings`
 check on this same example passed, exit 0, using the recorded dependency paths.
