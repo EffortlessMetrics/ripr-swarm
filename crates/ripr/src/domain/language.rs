@@ -359,9 +359,10 @@ pub enum StaticLimitKind {
     /// A test appears to call public API that may transitively reach the
     /// changed owner through a `pub -> pub(crate)` helper chain or similar
     /// internal call graph, but ripr's lexical call facts cannot fully resolve
-    /// the path (macro invocations, generics, trait dispatch, or depth > 5
-    /// stop the walk). The classification stays `no_static_path` -- this label
-    /// is a named limitation, not a coverage claim. See RIPR-SPEC-0114.
+    /// the path (macro invocations, generics, trait dispatch, or a helper
+    /// chain longer than the five-hop witness walk). The classification
+    /// stays `no_static_path` -- this label is a named limitation, not a
+    /// coverage claim. See RIPR-SPEC-0114.
     RustTransitiveReachUnresolved,
     /// An integration test appears to call a crate public API, or a test helper
     /// that calls that public API, and a bounded same-repo lexical path may lead

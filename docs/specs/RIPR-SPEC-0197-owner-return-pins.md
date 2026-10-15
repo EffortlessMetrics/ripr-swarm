@@ -839,7 +839,7 @@ rule only for an assertion whose context was admitted.
      module of the file are refused.
    - The helper runs to its end on every call: no attributes other than
      `#[track_caller]`, no generic parameters or `where` clause, not `async`,
-     `const` or `unsafe`, no `self` parameter, no return type, and no `return`
+     `const` or `unsafe`, no `self` parameter, and no `return`
      or `?` anywhere in its body. It passes the same escape gate as a test
      (only the trusted standard macros, no `break`, `continue` or `yield`) and
      the same item-context and cfg gates, and the macros it invokes join the
@@ -847,6 +847,11 @@ rule only for an assertion whose context was admitted.
      `macro_rules!` or `use` inside the helper's own body) is checked at the
      borrowed assertion's line as well as across the test's span, since the
      helper's scope never overlaps the test's.
+     An explicit return type is allowed (#7818): a synchronous call runs the
+     panic assertion even if the caller discards a returned `Result` or
+     `Option`. This lends only the `assert_eq!`, never the returned value or
+     error. An early exit, including an opaque `ensure!`/`bail!`, still refuses
+     the helper; rule 7a's separate fallible-literal grammar is unchanged.
    - The assertion sits on the helper's own eager path and is uniquely
      identified by its line and text, as rule 1 requires within a test.
    - The assertion must also reach the test's oracle facts through the
@@ -1066,7 +1071,9 @@ Implementation and validation obligations:
 2. Extend the existing owner-pin owner with private bounded extraction and
    composition modules under `syntax/owner_pin/` and `classify/owner_pin/`.
    Reuse cfg/source-role provenance, body identity and call-binding defeats;
-   do not broaden `plain_check_helper` or the existing helper producer.
+   do not broaden `plain_check_helper` for this fallible adapter or the existing
+   helper producer. Rule 7's later explicit-return panic-assertion extension
+   (#7818) does not admit fallible macros here.
 3. Add a lazily memoized dependency-identity query under `analysis/workspace/`,
    bounded to structurally eligible shapes and using the existing deadline,
    output budget and process policy. Failure yields no receipt, without fetching,
