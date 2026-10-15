@@ -1,0 +1,36 @@
+{
+  "main_rows": 804,
+  "pilot_rows": 32,
+  "main_exit_codes": {
+    "0": 800,
+    "124": 3,
+    "-1": 1
+  },
+  "raw_files": 1672,
+  "orphan_or_unadmitted_raw_files": 0,
+  "all_process_row_order_matches_AB_BA_prefix": true,
+  "all_stdout_sizes_equal_tsv": true,
+  "workload_files_unchanged": 290,
+  "native_workloads": 17,
+  "native_test_executions": 608,
+  "completed_statistical_groups": 60,
+  "completed_paired_observations": 396,
+  "incomplete_groups": 8,
+  "within_variant_output_failures": 0,
+  "full_compact_grip_parity_failures": 0,
+  "inventory_parity_failures": 0,
+  "subjects": {
+    "base": {
+      "head": "98c8f172bfd6aa2b808f63431ed4eac9c224c102",
+      "tree": "44ec9fc5ce66738f17efdf238ca4c1a1fe950464",
+      "tracked_worktree_clean": true,
+      "binary_sha256": "712d17edb677ab0d17fb996cf04602a4a1ba6b70b2fa4702e338120358ef3c00"
+    },
+    "candidate": {
+      "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+      "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d",
+      "tracked_worktree_clean": true,
+      "binary_sha256": "6bc633f15ea163df34b195039efeb6bae4f4ba2e23f14fafb4a51908d5a4ee72"
+    }
+  }
+}

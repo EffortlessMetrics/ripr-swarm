@@ -1,0 +1,19 @@
+{
+  "async-4-single": 9,
+  "async-16-single": 3,
+  "async-64-single": 3,
+  "async-64-split": 3,
+  "direct-4-single": 9,
+  "direct-16-single": 9,
+  "direct-64-single": 9,
+  "direct-64-split": 9,
+  "fixture-mix-16": 9,
+  "sync-4-single": 9,
+  "sync-16-single": 3,
+  "sync-64-single": 3,
+  "sync-64-split": 3,
+  "unique-4-single": 9,
+  "unique-16-single": 9,
+  "unique-64-single": 3,
+  "unique-64-split": 3
+}

@@ -18,8 +18,13 @@
   `cli/commands/check.rs`, `analysis/seam_cache.rs`, and fixture `input/`.
   These lookups establish no analyzer failure.
 * No `/usr/bin/time`, perf, or gdb is installed. The harness uses Rust's
-  monotonic wall clock. Per-process peak RSS and exact runtime parse-call
-  counts are not measured; machine/cgroup resources are recorded.
+  monotonic wall clock. Exact runtime parse-call counts and an independent
+  external RSS measurement are unavailable. Correction after the pilot:
+  the unmodified product emits `ripr_resource_cost_receipt` with self-observed
+  Linux CPU ticks and peak resident bytes. These receipts are retained and
+  extracted separately. CPU source resolution is 100 ticks/second; a zero
+  quantized CPU observation is not proof of zero CPU work. Machine/cgroup
+  resources are recorded independently.
 * Around 21:12 UTC a new shell read failed with
   `exec_command failed: CreateProcess { message: "Rejected(\"Failed to create unified exec process: exec-server transport disconnected\")" }`.
   This was transport failure, not approval denial. The existing base build
@@ -61,3 +66,34 @@ if any, are retained in raw process output and the final report.
   files/TSV and independently completed at nine pairs. They remain valid; do
   not repeat async-4 samples. The driver was corrected to exact workload names,
   retaining suffix matching only for the explicit pilot selector `-4-single`.
+* At 21:47 UTC the parent reported another environment disconnect. Direct
+  recovery at 21:47:49 UTC succeeded: 570 completed-process TSV rows were
+  present (including 32 pilot), the existing benchmark driver and candidate
+  child remained active, both build receipts were terminal 0, and no Cargo or
+  rustc process existed. The original benchmark session continued responding.
+  No interrupted sample was observed or admitted and no replacement run was
+  started. Later raw/row membership checks determine any orphaned output.
+* A protocol documentation patch missed its expected text context and was
+  rejected atomically. After reading the actual tail, the intended prospective
+  sample-count amendment was applied. This establishes no product/test failure.
+
+## Terminal failure envelope and instructed stop
+
+Three candidate cold processes hit the unchanged 120-second bound, native
+timeout status 124: async-64-single full and compact, and sync-64-single full.
+Each raw stdout/stderr and driver error is retained; dependent warm paths were
+not run, no timing median/CI is claimed for those incomplete groups, and the
+driver did not retry them. The base cold/warm processes completed separately.
+
+At 22:03 UTC the parent instructed this task to prioritize the durable bounded
+report and stop spending repeated long timeouts once the failure envelope was
+established. By recovery inspection the final sync-64-single compact candidate
+was already active. At 22:04:31 UTC SIGTERM was sent only to verified owned PID
+14556 with that exact argv. It terminated at 18.957066504 seconds; Rust reported
+signal 15 and the TSV encodes no numeric exit code as -1. This is an instructed
+interruption, not a product assertion failure or 120-second timeout. No completed
+candidate output, warm observation, median or CI is claimed for that mode.
+`controlled-stop.log` retains the action/target, and the wrapper's four stdout
+lines plus both driver/status logs are retained. A post-stop process check found
+no candidate, base, timeout, or benchmark driver process. Remaining unrun planned
+rounds stay unrun; the already established envelope was not repeated.

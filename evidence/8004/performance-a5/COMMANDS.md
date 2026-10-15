@@ -83,15 +83,21 @@ After every build/setup process ends:
 ```bash
 BENCH_RUN_LABEL=pilot /workspace/perf8004/bench-driver measure /workspace/perf8004 1 -4-single
 /workspace/perf8004/bench-driver measure /workspace/perf8004 9 <exact-workload-name>
+/workspace/perf8004/bench-driver measure /workspace/perf8004 3 <remaining-scaling-workload-name>
+/workspace/perf8004/bench-driver measure /workspace/perf8004 3 <timed-out-workload-name> compact
 ```
 
-The second command is repeated once for each of the 17 workloads; each batch
-finishes before analyzing it or starting another. No overlapping timing jobs.
-Within each workload, nine AB/BA rounds each run full and compact, both variants,
-and cold/warm. The main matrix therefore has 1,224 processes, 612 paired
-observations, 68 groups of nine pairs. Pilot: 32 processes, excluded from main
-statistics but retained. An explicit timeout or failure is retained and stops
-that batch; it is never a zero-time sample.
+`sample-plan.json` fixes nine pairs for nine decision/control workloads and
+three pairs for eight remaining scaling workloads, following the prospective
+amendment in PROTOCOL.md. Each batch finishes before analyzing it or starting
+another. No overlapping timing jobs. Within each workload, AB/BA rounds run
+full and compact, both variants, and cold/warm. Maximum main matrix is 840
+processes / 420 pairs in 68 groups before stop-on-failure effects. Pilot: 32
+processes, excluded from main statistics but retained. An explicit timeout or
+failure is retained and stops that batch; it is never a zero-time sample.
+The independent `compact` selector exercises that mode if full timed out;
+already failed entries are not retried and warm is not run after a failed cold
+entry. Final actual counts and incomplete/censored groups are authoritative.
 
 Actual child commands are:
 
@@ -127,3 +133,7 @@ equal evidence. Raw reports remain available for inspection.
 Statistics and prespecified materiality are in PROTOCOL.md. Analysis runs
 between completed workload batches, never alongside timed processes. Raw
 archive creation, compression, manifests and publication happen afterward.
+The analyzer extracts each unmodified product's `ripr_resource_cost_receipt`
+to `resource-receipts.json`. These self-observed CPU/peak-memory observations
+are distinct from the independent monotonic wall clock; CPU ticks have 10ms
+resolution and do not support a zero-work inference for small warm commands.

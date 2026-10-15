@@ -75,6 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let count: usize = args[3].parse()?;
     let label = env::var("BENCH_RUN_LABEL").unwrap_or_else(|_| "main".to_string());
     let workload_filter = args.get(4).map(String::as_str).unwrap_or("");
+    let mode_filter = args.get(5).map(String::as_str).unwrap_or("");
     let mut workloads: Vec<_> = fs::read_dir(home.join("workloads"))?.map(|e| e.unwrap().path()).collect();
     workloads.sort();
     let raw = home.join("evidence/raw");
@@ -84,6 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let workload = root.file_name().unwrap().to_str().unwrap();
         if !workload_filter.is_empty() && !(if workload_filter.starts_with('-') { workload.ends_with(workload_filter) } else { workload==workload_filter }) { continue; }
         for (mode, format) in [("full", "repo-exposure-json"), ("compact", "repo-exposure-summary-json")] {
+            if !mode_filter.is_empty() && mode!=mode_filter {continue;}
             for round in 0..count {
                 let order = if round % 2 == 0 { ["base", "candidate"] } else { ["candidate", "base"] };
                 for variant in order {

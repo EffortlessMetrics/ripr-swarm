@@ -1,0 +1,5 @@
+Thu Oct 15 22:04:31 UTC 2026
+Parent steering: stop repeated long timeout work after the failure envelope is established; preserve interruptions.
+    PID    PPID     ELAPSED COMMAND         COMMAND
+  14556   14555       00:18 candidate       /workspace/perf8004/bin/candidate check --root /workspace/perf8004/workloads/sync-64-single --format repo-exposure-summary-json
+signal_request_exit=0

@@ -1,13 +1,61 @@
-workload	mode	path	n	base_median_s	candidate_median_s	median_paired_ratio	ci95_lo	ci95_hi	median_delta_s	material_regression
-async-4-single	compact	cold	9	0.017796608	0.038759098	2.406973	2.122549	2.707520	0.022313559	true
-async-4-single	compact	warm	9	0.005797641	0.005800422	1.000480	0.872813	1.114907	0.000002781	false
-async-4-single	full	cold	9	0.028928605	0.042536953	1.501626	1.323757	1.604343	0.014366979	false
-async-4-single	full	warm	9	0.017593055	0.017539158	1.042546	0.865305	1.115991	0.000748512	false
-sync-4-single	compact	cold	9	0.018468431	0.197997814	10.761848	6.727475	12.184613	0.178961418	true
-sync-4-single	compact	warm	9	0.005343865	0.005401602	0.999795	0.773750	1.128931	-0.000000942	false
-sync-4-single	full	cold	9	0.026591689	0.136565975	4.975128	4.239367	5.599617	0.109116236	true
-sync-4-single	full	warm	9	0.016425687	0.016483393	0.996987	0.840573	1.085250	-0.000048719	false
-unique-4-single	compact	cold	9	0.011485035	0.034728853	3.023835	2.066331	4.395456	0.023243818	true
-unique-4-single	compact	warm	9	0.005615796	0.005049736	0.970544	0.809762	1.173043	-0.000138604	false
-unique-4-single	full	cold	9	0.028283872	0.043057291	1.736032	1.454890	1.860521	0.018375907	false
-unique-4-single	full	warm	9	0.016592234	0.016999197	0.973276	0.833311	1.134052	-0.000443406	false
+workload	mode	path	n	base_median_s	candidate_median_s	median_paired_ratio	ci95_lo	ci95_hi	median_delta_s	material_screen	evidence_weight
+async-16-single	compact	cold	3	0.361558198	6.505680096	17.993452	17.907763	19.404990	6.144121898	true	three_pair_descriptive_scaling
+async-16-single	compact	warm	3	0.007711369	0.009510386	1.233294	0.996704	1.917068	0.001799017	false	three_pair_descriptive_scaling
+async-16-single	full	cold	3	0.191407911	2.574523744	14.141816	11.415878	15.457187	2.392473315	true	three_pair_descriptive_scaling
+async-16-single	full	warm	3	0.039279776	0.038680251	0.980147	0.909953	1.166378	-0.000783467	false	three_pair_descriptive_scaling
+async-4-single	compact	cold	9	0.017796608	0.038759098	2.406973	2.122549	2.707520	0.022313559	true	nine_pair_decision_control
+async-4-single	compact	warm	9	0.005797641	0.005800422	1.000480	0.872813	1.114907	0.000002781	false	nine_pair_decision_control
+async-4-single	full	cold	9	0.028928605	0.042536953	1.501626	1.323757	1.604343	0.014366979	false	nine_pair_decision_control
+async-4-single	full	warm	9	0.017593055	0.017539158	1.042546	0.865305	1.115991	0.000748512	false	nine_pair_decision_control
+async-64-split	compact	cold	3	0.882206232	1.474845140	1.658767	1.577817	1.708421	0.585723556	true	three_pair_descriptive_scaling
+async-64-split	compact	warm	3	0.018811626	0.018124332	0.952501	0.613739	0.995608	-0.000893531	false	three_pair_descriptive_scaling
+async-64-split	full	cold	3	0.778330962	0.762872787	0.994566	0.933158	1.005933	-0.004167798	false	three_pair_descriptive_scaling
+async-64-split	full	warm	3	0.146172116	0.095883604	0.651834	0.531414	0.674250	-0.050892197	false	three_pair_descriptive_scaling
+direct-16-single	compact	cold	9	0.111540892	0.143867279	1.156834	0.999204	1.367083	0.019616778	false	nine_pair_decision_control
+direct-16-single	compact	warm	9	0.005091292	0.005632343	1.091995	0.784166	1.271672	0.000531608	false	nine_pair_decision_control
+direct-16-single	full	cold	9	0.060778582	0.074348435	1.272071	0.817364	1.559961	0.015901676	false	nine_pair_decision_control
+direct-16-single	full	warm	9	0.014752914	0.015587953	1.175500	0.853344	1.345226	0.002061698	false	nine_pair_decision_control
+direct-4-single	compact	cold	9	0.015276185	0.012449551	0.941996	0.397238	1.213379	-0.000886083	false	nine_pair_decision_control
+direct-4-single	compact	warm	9	0.005540355	0.005011023	0.828153	0.498602	2.012857	-0.000933496	false	nine_pair_decision_control
+direct-4-single	full	cold	9	0.018478134	0.017828607	1.036739	0.863995	1.155217	0.000685792	false	nine_pair_decision_control
+direct-4-single	full	warm	9	0.012147732	0.012540089	1.005962	0.871012	1.118912	0.000070841	false	nine_pair_decision_control
+direct-64-single	compact	cold	9	7.591903480	7.709095829	1.008660	0.945544	1.130658	0.064739931	false	nine_pair_decision_control
+direct-64-single	compact	warm	9	0.006006349	0.006333699	1.114481	1.005631	1.287372	0.000650604	false	nine_pair_decision_control
+direct-64-single	full	cold	9	2.847080813	3.076461179	1.047716	0.975001	1.128945	0.132179653	false	nine_pair_decision_control
+direct-64-single	full	warm	9	0.021392922	0.020826007	0.953428	0.799492	1.174451	-0.000996321	false	nine_pair_decision_control
+direct-64-split	compact	cold	9	0.273837445	0.292590814	1.066586	1.028559	1.134196	0.018233665	false	nine_pair_decision_control
+direct-64-split	compact	warm	9	0.006624103	0.006453537	0.976737	0.867241	1.139482	-0.000145049	false	nine_pair_decision_control
+direct-64-split	full	cold	9	0.143478576	0.158541743	1.076400	0.635510	1.349649	0.009974408	false	nine_pair_decision_control
+direct-64-split	full	warm	9	0.021865252	0.021469077	0.996604	0.946761	1.196885	-0.000073149	false	nine_pair_decision_control
+fixture-mix-16	compact	cold	9	0.198324348	17.619392465	91.216350	80.699325	100.732545	17.431898362	true	nine_pair_decision_control
+fixture-mix-16	compact	warm	9	0.006990044	0.007825567	1.192668	0.884552	1.614169	0.001203397	false	nine_pair_decision_control
+fixture-mix-16	full	cold	9	0.137722356	9.371076634	67.435198	46.614506	98.362025	9.184467230	true	nine_pair_decision_control
+fixture-mix-16	full	warm	9	0.032543566	0.035897653	1.118724	0.790979	1.396757	0.003659901	false	nine_pair_decision_control
+sync-16-single	compact	cold	3	0.353131896	33.270393808	94.215205	93.141242	95.669516	32.917261912	true	three_pair_descriptive_scaling
+sync-16-single	compact	warm	3	0.006297183	0.008811738	1.208756	0.056044	1.781206	0.001271852	false	three_pair_descriptive_scaling
+sync-16-single	full	cold	3	0.190364171	14.879962692	77.818228	74.201161	80.311883	14.679427250	true	three_pair_descriptive_scaling
+sync-16-single	full	warm	3	0.034339693	0.038738499	1.175727	0.999712	1.187108	0.006105820	false	three_pair_descriptive_scaling
+sync-4-single	compact	cold	9	0.018468431	0.197997814	10.761848	6.727475	12.184613	0.178961418	true	nine_pair_decision_control
+sync-4-single	compact	warm	9	0.005343865	0.005401602	0.999795	0.773750	1.128931	-0.000000942	false	nine_pair_decision_control
+sync-4-single	full	cold	9	0.026591689	0.136565975	4.975128	4.239367	5.599617	0.109116236	true	nine_pair_decision_control
+sync-4-single	full	warm	9	0.016425687	0.016483393	0.996987	0.840573	1.085250	-0.000048719	false	nine_pair_decision_control
+sync-64-split	compact	cold	3	0.867074795	14.156084645	16.078031	14.902179	19.051791	13.413052941	true	three_pair_descriptive_scaling
+sync-64-split	compact	warm	3	0.014006716	0.039134967	1.391222	1.235113	3.487747	0.011005053	true	three_pair_descriptive_scaling
+sync-64-split	full	cold	3	0.776480850	4.774018958	6.380712	4.927687	7.001994	3.822153995	true	three_pair_descriptive_scaling
+sync-64-split	full	warm	3	0.128614915	0.087832218	0.755672	0.627939	0.893794	-0.028398358	false	three_pair_descriptive_scaling
+unique-16-single	compact	cold	9	0.030759482	0.386394404	13.821156	9.607234	15.091192	0.355976014	true	nine_pair_decision_control
+unique-16-single	compact	warm	9	0.007998941	0.007646930	1.019426	0.693634	1.217770	0.000119401	false	nine_pair_decision_control
+unique-16-single	full	cold	9	0.104061319	0.299099379	2.689221	2.095063	4.375856	0.183330949	true	nine_pair_decision_control
+unique-16-single	full	warm	9	0.041105590	0.044257774	0.935068	0.745107	1.218106	-0.002468882	false	nine_pair_decision_control
+unique-4-single	compact	cold	9	0.011485035	0.034728853	3.023835	2.066331	4.395456	0.023243818	true	nine_pair_decision_control
+unique-4-single	compact	warm	9	0.005615796	0.005049736	0.970544	0.809762	1.173043	-0.000138604	false	nine_pair_decision_control
+unique-4-single	full	cold	9	0.028283872	0.043057291	1.736032	1.454890	1.860521	0.018375907	false	nine_pair_decision_control
+unique-4-single	full	warm	9	0.016592234	0.016999197	0.973276	0.833311	1.134052	-0.000443406	false	nine_pair_decision_control
+unique-64-single	compact	cold	3	0.215430022	6.048858911	34.720509	26.792616	45.539467	5.916032173	true	three_pair_descriptive_scaling
+unique-64-single	compact	warm	3	0.013473316	0.015799343	1.262765	0.599069	1.326333	0.003540316	false	three_pair_descriptive_scaling
+unique-64-single	full	cold	3	0.537872491	2.606808987	4.958440	3.661271	6.188110	2.080162991	true	three_pair_descriptive_scaling
+unique-64-single	full	warm	3	0.134761332	0.132891355	0.986124	0.921895	1.089731	-0.001869977	false	three_pair_descriptive_scaling
+unique-64-split	compact	cold	3	0.064988979	0.259442901	3.756464	3.171777	4.931406	0.179139767	true	three_pair_descriptive_scaling
+unique-64-split	compact	warm	3	0.010772959	0.011034409	1.024269	0.970172	1.184911	0.000261450	false	three_pair_descriptive_scaling
+unique-64-split	full	cold	3	0.151649913	0.243097855	1.603020	1.485596	1.805661	0.091447942	true	three_pair_descriptive_scaling
+unique-64-split	full	warm	3	0.066280620	0.066759010	1.007218	0.994783	1.015228	0.000478390	false	three_pair_descriptive_scaling

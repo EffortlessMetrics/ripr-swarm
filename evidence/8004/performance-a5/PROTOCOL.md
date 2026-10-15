@@ -49,7 +49,7 @@ All inputs must be nonempty and analyzer output must enumerate expected seams.
 
 ## Execution
 
-Run nine rounds per workload and each public production mode:
+Initial plan: nine rounds per workload and each public production mode:
 `ripr check --root <same absolute workload path> --format repo-exposure-json`
 (full), and `--format repo-exposure-summary-json` (compact, no gap ledger).
 Even rounds run base then candidate; odd rounds reverse. Each variant gets
@@ -66,6 +66,11 @@ Wall elapsed time comes from Rust's monotonic Instant around process execution
 and file-backed stdout/stderr. Retain every raw report, stderr, exit status,
 stdout byte count and sample. Stop and retain setup/process/timeout failures;
 revise protocol explicitly rather than erasing failed measurements.
+If a workload's first mode hits the timeout, its other mode may be invoked
+independently using the driver's explicit mode selector. Do not rerun the
+already failed cold entry or fabricate its warm observation; report censored
+lower bounds and missing completed-pair/output evidence. Nine repetitions of
+an identical timed-out entry are not required by the stop-on-failure policy.
 
 ## Analysis and bounded decision
 
@@ -97,3 +102,21 @@ that `repo-exposure-summary-json` reaches the compact classified producer.
 `repo-badge-json` reaches the full producer for canonical actionable parity
 (`ripr_repo_canonical_actionable_summary`, lines 529ff), so it would not measure
 compact analysis. The protocol and driver were corrected before any runs.
+
+## Prospective scaling-count amendment, 21:49 UTC
+
+The first nine-pair small/helper controls already establish material cold
+regression, and the nine-pair retained-fixture/direct batch is continuing.
+Observed per-process costs are now seconds to tens of seconds. Before any
+remaining scaling workloads are sampled, `sample-plan.json` fixes three pairs
+for async-16, sync-16, unique-64 single/split, and async/sync-64 single/split.
+All other nine-pair batches are retained without reducing or selecting rows.
+This is an explicit runtime-bound adjustment, not an after-the-fact selection
+of favorable measurements. Modes, input bytes, cache controls, build profile,
+AB/BA order, raw retention, and 120-second timeout remain unchanged.
+
+All 17 workloads and both modes/paths remain selected. Maximum main processes
+becomes 840 before stop-on-failure effects (plus 32 pilot processes). Three-pair
+scaling medians, MAD/range and bootstrap intervals are descriptive and imprecise;
+they cannot establish absence of regression or carry the primary accept/repair
+decision. The recommendation is anchored in completed nine-pair controls.

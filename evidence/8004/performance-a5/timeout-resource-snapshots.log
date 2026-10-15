@@ -1,0 +1,65 @@
+Thu Oct 15 21:58:02 UTC 2026
+main-sync-64-split-compact-2-candidate-warm 0.0489s exit status: 0
+main-async-64-single-full-0-base-cold 8.9399s exit status: 0
+main-async-64-single-full-0-base-warm 0.1348s exit status: 0
+    PID     ELAPSED %CPU   RSS
+  14360       00:39  399 47384
+usage_usec 4312053073
+user_usec 4136779923
+system_usec 175273150
+nice_usec 0
+nr_periods 29572
+nr_throttled 3279
+throttled_usec 158455174
+nr_bursts 0
+burst_usec 0
+low 0
+high 0
+max 0
+oom 0
+oom_kill 0
+oom_group_kill 0
+Thu Oct 15 22:00:09 UTC 2026
+main-async-64-single-full-0-candidate-cold 120.0142s exit status: 124
+Error: "run failed; retained main-async-64-single-full-0-candidate-cold"
+main-async-64-single-compact-0-base-cold 20.1634s exit status: 0
+main-async-64-single-compact-0-base-warm 0.0197s exit status: 0
+    PID     ELAPSED %CPU   RSS
+  14420       00:25  105 23800
+usage_usec 4683367328
+user_usec 4499022762
+system_usec 184344566
+nice_usec 0
+nr_periods 30837
+nr_throttled 4081
+throttled_usec 183149951
+nr_bursts 0
+burst_usec 0
+low 0
+high 0
+max 0
+oom 0
+oom_kill 0
+oom_group_kill 0
+Thu Oct 15 22:02:46 UTC 2026
+main-async-64-single-compact-0-candidate-cold 120.0078s exit status: 124
+Error: "run failed; retained main-async-64-single-compact-0-candidate-cold"
+main-sync-64-single-full-0-base-cold 8.5863s exit status: 0
+main-sync-64-single-full-0-base-warm 0.1330s exit status: 0
+    PID     ELAPSED %CPU   RSS
+  14473       00:54  399 72508
+usage_usec 5035607524
+user_usec 4839260993
+system_usec 196346530
+nice_usec 0
+nr_periods 32412
+nr_throttled 4703
+throttled_usec 199027987
+nr_bursts 0
+burst_usec 0
+low 0
+high 0
+max 0
+oom 0
+oom_kill 0
+oom_group_kill 0

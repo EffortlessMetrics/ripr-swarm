@@ -24,8 +24,11 @@ one parse site.
   An async entry is refused before body traversal. Sync chains visit retained
   entry, intermediate and last-hop helpers, then receiver syntax.
 * `context.rs:614` memoizes only `(test_index, owner_id) -> bool` helper reach,
-  not parsed files or declarations. This prevents repeating that final query
-  within a context; it does not remove work for distinct tests/owners. Test
+  not parsed files or declarations. Stored hits avoid repeating that final
+  query; computation occurs between the locked lookup and locked insertion,
+  so parallel seams can also duplicate an in-flight computation for the same
+  key. That concurrency effect is a source-based possibility, not a measured
+  count. The memo does not remove work for distinct tests/owners. Test
   and owner counts both grow in the generated scaling family. Shared common
   accessor/helper names intentionally stress this candidate fanout.
 * `classify/related_tests.rs:3120`'s `executable_call_resolves` separately
