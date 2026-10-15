@@ -8986,6 +8986,21 @@
           "class": "weakly_exposed"
         }
       ]
+    },
+    {
+      "id": "ts_test_rewritten_local_whole_result_stays_weakly_exposed",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_rewritten_local_whole_result",
+      "vector": "test_rewritten_local_field_write_is_not_owner_result_evidence",
+      "control": "must_stay_weakly_exposed",
+      "probe_family": "field_construction",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" }
+      ]
     }
   ]
 }

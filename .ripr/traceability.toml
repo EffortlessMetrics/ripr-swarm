@@ -14443,8 +14443,16 @@ metrics = [
 id = "RIPR-SPEC-0226"
 name = "Findings on one line agree on shared facts"
 spec = "docs/specs/RIPR-SPEC-0226-same-line-finding-agreement.md"
-tests = []
-fixtures = []
+tests = [
+  "crates/ripr/tests/cli_smoke/same_line_owner_tail.rs::retained_split_boundary_tail_keeps_the_predicate_gap_and_exposed_return",
+  "crates/ripr/tests/cli_smoke/same_line_owner_tail.rs::same_test_boundary_assertion_exposes_the_same_line_predicate",
+  "crates/ripr/tests/cli_smoke/same_line_owner_tail.rs::boundary_calls_without_any_oracle_do_not_expose_the_predicate",
+  "crates/ripr/src/analysis/classify/flow.rs::tests::same_line_owner_tail_comparison_reaches_return_sink",
+  "crates/ripr/src/analysis/classify/flow.rs::tests::same_line_owner_tail_refuses_non_tail_ambiguous_and_foreign_predicates",
+]
+fixtures = [
+  "fixtures/rust-verdict-corpus/cases/spec0226-gate-split-boundary-agreement.json",
+]
 code = [
   "crates/ripr/src/analysis/classify/related_tests.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",

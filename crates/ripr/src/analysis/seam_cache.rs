@@ -454,11 +454,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// changed field (#6578). Old entries keep the unconfirmed discriminator.
 /// `1.76`: compose the variant-field pattern evidence with explicit-return
 /// panic-assertion helper loans (#7818); neither standalone `1.75` is reusable.
-/// `1.77`: a changed early `return Err(Type::Variant { .. });` gets a
+/// `1.77`: a whole same-line comparison tail reaches its owner's return
+/// (#8042). Old entries can keep a predicate's propagation unknown.
+/// `1.78`: a changed early `return Err(Type::Variant { .. });` gets a
 /// complete error-variant witness and an owner-return pin beside sibling
 /// variant exits, and a payload-only change needs that whole-value pin
 /// (#7063). Old entries keep those seams weakly exposed or variant-credited.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.77";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.78";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -579,8 +581,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.77";
 /// `0.80`: same accepted-Err guarded-match pins as full `1.74`.
 /// `0.81`: same variant-field pattern evidence as full `1.75`.
 /// `0.82`: same composed helper/pattern evidence as full `1.76`.
-/// `0.83`: same early error-variant pins as full `1.77` (#7063).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.83";
+/// `0.83`: same returned-comparison transition as full `1.77` (#8042).
+/// `0.84`: same early error-variant pins as full `1.78` (#7063).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.84";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -703,8 +706,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.83";
 /// `0.80`: same accepted-Err guarded-match pins as full `1.74`.
 /// `0.81`: same variant-field pattern evidence as full `1.75`.
 /// `0.82`: same composed helper/pattern evidence as full `1.76`.
-/// `0.83`: same early error-variant pins as full `1.77` (#7063).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.83";
+/// `0.83`: same returned-comparison transition as full `1.77` (#8042).
+/// `0.84`: same early error-variant pins as full `1.78` (#7063).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.84";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4467,8 +4471,9 @@ mod tests {
         // 1.73 -> 1.74: accepted-Err guarded-match pins (RIPR-SPEC-0175).
         // 1.74 -> 1.75: literal variant-field patterns pin the field (#6578).
         // 1.75 -> 1.76: compose both independently allocated 1.75 semantics (#7818).
-        // 1.76 -> 1.77: early error-variant pins and payload witness (#7063).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.77");
+        // 1.76 -> 1.77: same-line returned comparisons gain a real sink (#8042).
+        // 1.77 -> 1.78: early error-variant pins and payload witness (#7063).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.78");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4537,9 +4542,10 @@ mod tests {
         // 0.79 -> 0.80: same evidence as full 1.74.
         // 0.80 -> 0.81: same evidence as full 1.75.
         // 0.81 -> 0.82: same composed evidence as full 1.76 (#7818).
-        // 0.82 -> 0.83: same evidence as full 1.77 (#7063).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.83");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.83");
+        // 0.82 -> 0.83: same returned-comparison evidence as full 1.77.
+        // 0.83 -> 0.84: same evidence as full 1.78 (#7063).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.84");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.84");
     }
 
     #[test]
@@ -4837,6 +4843,7 @@ mod tests {
             ("1.38", "0.44"),
             ("1.71", "0.77"),
             ("1.72", "0.78"),
+            ("1.73", "0.79"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {
