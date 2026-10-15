@@ -6013,23 +6013,18 @@ fn is_in_tree_relative_path(path: &str) -> bool {
 /// [`test_may_write_files`]. Fail-closed: any such rename refuses.
 fn file_renames_fs_or_env_import(source: &str) -> bool {
     let masked = mask_comments_and_strings(source);
+    // Word tokens rather than a statement prefix: a `use` may follow `{`, an
+    // item's `}`, an attribute or `pub(crate)` inside the same `;` fragment.
     masked.split(';').any(|statement| {
-        let statement = statement.trim();
-        let Some(tree) = statement
-            .strip_prefix("pub ")
-            .unwrap_or(statement)
-            .trim_start()
-            .strip_prefix("use ")
-        else {
-            return false;
-        };
-        let names_fs_or_env = tree
+        let mut words = statement
             .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .any(|segment| matches!(segment, "fs" | "env"));
-        names_fs_or_env
-            && tree
-                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-                .any(|segment| segment == "as")
+            .filter(|word| !word.is_empty())
+            .skip_while(|word| *word != "use");
+        if words.next().is_none() {
+            return false;
+        }
+        let tree: Vec<&str> = words.collect();
+        tree.iter().any(|word| matches!(*word, "fs" | "env")) && tree.contains(&"as")
     })
 }
 

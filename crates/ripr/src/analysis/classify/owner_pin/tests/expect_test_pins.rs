@@ -372,6 +372,10 @@ fn a_golden_path_stays_in_tree_and_fs_renames_refuse() {
         "use std::fs::write as save;",
         "use std::{env::set_var as on, fs};",
         "pub use std::fs as files;",
+        "mod tests { use std::fs::write as save; }",
+        "fn a() {}\nuse std::fs::write as save;",
+        "#[allow(unused_imports)] use std::fs::write as save;",
+        "pub(crate) use std::fs::write as save;",
     ] {
         assert!(file_renames_fs_or_env_import(source), "{source}");
     }
@@ -380,6 +384,7 @@ fn a_golden_path_stays_in_tree_and_fs_renames_refuse() {
         "use crate::offsets as o;",
         "use expect_test::expect_file as golden;",
         "// use std::fs::write as save;",
+        "fn reuse() { let used = fs_count as u8; }",
     ] {
         assert!(!file_renames_fs_or_env_import(source), "{source}");
     }
