@@ -1,0 +1,29 @@
+[
+  {
+    "archive": "/workspace/async8004-quarantine/1-s-hn8iee5bbl-10ve2b4-8cxc0f2wo6k16wreubwlnuroe.tar.gz",
+    "sha256": "19ab45d5a81aa3f088c5b4265e390af404fb5c507a5be37236c254d18952b4dd",
+    "bytes": 816751131,
+    "original": "/workspace/ripr-swarm/target/debug/incremental/ripr-18xjbubeqw4dr/s-hn8iee5bbl-10ve2b4-8cxc0f2wo6k16wreubwlnuroe",
+    "phase": "retained_compressed_quarantine",
+    "full_restore_verified": true,
+    "retained": true
+  },
+  {
+    "archive": "/workspace/async8004-quarantine/2-s-hn8iwsz4h9-0ti7vsb-02v0p2hzseonu8m2lqjuv7281.tar.gz",
+    "sha256": "8cda5330fe8630915a60449cef439f6f98ceacbe5acf8eb74c1133023f39f829",
+    "bytes": 800623443,
+    "original": "/workspace/ripr-swarm/target/debug/incremental/ripr-18xjbubeqw4dr/s-hn8iwsz4h9-0ti7vsb-02v0p2hzseonu8m2lqjuv7281",
+    "phase": "retained_compressed_quarantine",
+    "full_restore_verified": true,
+    "retained": true
+  },
+  {
+    "archive": "/workspace/async8004-quarantine/prior-executables.tar.gz",
+    "sha256": "879680dbb43a1f2d503e37920eb425ad5db8b8a7d05266d61f6a89e3bd137142",
+    "bytes": 313396841,
+    "original": null,
+    "phase": "retained_compressed_quarantine",
+    "full_restore_verified": true,
+    "retained": true
+  }
+]

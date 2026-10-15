@@ -1,0 +1,27 @@
+[
+  {
+    "label": "corpora-recovery",
+    "argv": [
+      "/workspace/async8004-evidence/run",
+      "cargo",
+      "xtask",
+      "verdict-corpus",
+      "check-all"
+    ],
+    "returncode": 0,
+    "head": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
+    "utc": "2026-10-15T15:16:20.688091+00:00"
+  },
+  {
+    "label": "precommit-confirmation",
+    "argv": [
+      "/workspace/async8004-evidence/run",
+      "cargo",
+      "xtask",
+      "precommit"
+    ],
+    "returncode": 0,
+    "head": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
+    "utc": "2026-10-15T15:19:15.384837+00:00"
+  }
+]

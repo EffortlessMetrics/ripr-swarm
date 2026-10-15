@@ -1,0 +1,16 @@
+[
+  {
+    "directory": "/workspace/ripr-swarm/target/debug/incremental/ripr-18xjbubeqw4dr/s-hn8iee5bbl-10ve2b4-8cxc0f2wo6k16wreubwlnuroe",
+    "query_bytes": 720122128,
+    "total_bytes": 2306802551,
+    "source_path_marker": true,
+    "unique_unit_marker": true
+  },
+  {
+    "directory": "/workspace/ripr-swarm/target/debug/incremental/ripr-18xjbubeqw4dr/s-hn8iwsz4h9-0ti7vsb-02v0p2hzseonu8m2lqjuv7281",
+    "query_bytes": 676110400,
+    "total_bytes": 2263250488,
+    "source_path_marker": true,
+    "unique_unit_marker": true
+  }
+]

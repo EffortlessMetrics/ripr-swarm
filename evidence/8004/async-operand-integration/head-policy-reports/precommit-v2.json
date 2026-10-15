@@ -1,8 +1,8 @@
 {
   "schema_version": "0.2",
   "composition": "local_precommit",
-  "status": "source_or_policy_failure",
-  "failure_kind": "source_or_policy",
+  "status": "pass",
+  "failure_kind": null,
   "repository_root": "$REPO",
   "head_sha": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
   "merge_base_ref": "origin/main",
@@ -1179,7 +1179,7 @@
         "outcome": "pass",
         "status": "exit status: 0",
         "exit_code": 0,
-        "elapsed_ms": 204,
+        "elapsed_ms": 103,
         "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
         "cargo_progress": null
       }
@@ -1200,7 +1200,7 @@
         "outcome": "pass",
         "status": "exit status: 0",
         "exit_code": 0,
-        "elapsed_ms": 101,
+        "elapsed_ms": 100,
         "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
         "cargo_progress": null
       }
@@ -1220,7 +1220,7 @@
         "outcome": "pass",
         "status": "exit status: 0",
         "exit_code": 0,
-        "elapsed_ms": 102,
+        "elapsed_ms": 101,
         "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
         "cargo_progress": null
       }
@@ -1245,15 +1245,15 @@
         "outcome": "pass",
         "status": "exit status: 0",
         "exit_code": 0,
-        "elapsed_ms": 1340,
+        "elapsed_ms": 1005,
         "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
         "cargo_progress": null
       }
     },
     {
       "command": "cargo clippy --manifest-path $REPO/Cargo.toml -p xtask --all-targets -- -D warnings",
-      "outcome": "failed",
-      "detail": "cargo clippy --manifest-path /workspace/async8004/Cargo.toml -p xtask --all-targets -- -D warnings failed with signal: 2 (SIGINT): Compiling rand_chacha v0.3.1\n    Checking tokio v1.53.2\n    Checking rustix v1.1.5\n   Compiling rand v0.8.8\n   Compiling phf_generator v0.11.3\n   Compiling phf_codegen v0.11.3\n   Compiling unicode_names2_generator v1.3.0\n   Compiling rustpython-parser v0.4.0\n   Compiling unicode_names2 v1.3.0\n    Checking xattr v1.6.1\n    Checking tar v0.4.46\n    Checking tokio-util v0.7.20\n    Checking rmcp v3.5.1\n    Checking tower-lsp-server v0.23.0\n    Checking ripr v0.11.0 (/workspace/async8004/crates/ripr)",
+      "outcome": "pass",
+      "detail": null,
       "diagnostic": {
         "program": "cargo",
         "argv": [
@@ -1267,22 +1267,16 @@
           "-D",
           "warnings"
         ],
-        "outcome": "failed",
-        "status": "signal: 2 (SIGINT)",
-        "exit_code": null,
-        "elapsed_ms": 117840,
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "exit_code": 0,
+        "elapsed_ms": 501,
         "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
-        "cargo_progress": {
-          "compiling_lines": 7,
-          "checking_lines": 8,
-          "fresh_lines": null
-        }
+        "cargo_progress": null
       }
     }
   ],
   "skipped": [],
-  "limitations": [
-    "cargo clippy --manifest-path /workspace/async8004/Cargo.toml -p xtask --all-targets -- -D warnings failed with signal: 2 (SIGINT): Compiling rand_chacha v0.3.1\n    Checking tokio v1.53.2\n    Checking rustix v1.1.5\n   Compiling rand v0.8.8\n   Compiling phf_generator v0.11.3\n   Compiling phf_codegen v0.11.3\n   Compiling unicode_names2_generator v1.3.0\n   Compiling rustpython-parser v0.4.0\n   Compiling unicode_names2 v1.3.0\n    Checking xattr v1.6.1\n    Checking tar v0.4.46\n    Checking tokio-util v0.7.20\n    Checking rmcp v3.5.1\n    Checking tower-lsp-server v0.23.0\n    Checking ripr v0.11.0 (/workspace/async8004/crates/ripr)"
-  ],
-  "report_digest": "sha256:420641b9cd70b2d4db965c2e6bc9cbce84622738a9e572289fdb422e57396d37"
+  "limitations": [],
+  "report_digest": "sha256:105433500c52b54e69642ca57679f23d7e8084946bd12e2b7d45ec99f7a33047"
 }

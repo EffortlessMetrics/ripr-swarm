@@ -10,3 +10,6 @@ python-corpus 0
 typescript-corpus 0
 honesty 0
 dogfood 0
+precommit-recovery 0
+corpora-recovery 0
+precommit-confirmation 0

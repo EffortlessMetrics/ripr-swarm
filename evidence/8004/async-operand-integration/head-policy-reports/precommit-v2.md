@@ -1,11 +1,11 @@
 # ripr precommit v2
 
-- Status: `source_or_policy_failure`
-- Failure kind: `source_or_policy_failure`
+- Status: `pass`
+- Failure kind: `none`
 - Head: `a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524`
 - Merge base: `a142074061128a85e76c1ac494b9939f3a58428b`
 - Changed records: `141`
-- Report digest: `sha256:420641b9cd70b2d4db965c2e6bc9cbce84622738a9e572289fdb422e57396d37`
+- Report digest: `sha256:105433500c52b54e69642ca57679f23d7e8084946bd12e2b7d45ec99f7a33047`
 
 - Composition: `local_precommit`
 
@@ -166,7 +166,7 @@
 - `git diff --cached --check`: `pass`
 - `git diff --check`: `pass`
 - `cargo clippy --manifest-path $REPO/Cargo.toml -p ripr --all-targets -- -D warnings`: `pass`
-- `cargo clippy --manifest-path $REPO/Cargo.toml -p xtask --all-targets -- -D warnings`: `failed`
+- `cargo clippy --manifest-path $REPO/Cargo.toml -p xtask --all-targets -- -D warnings`: `pass`
 
 ## Child command diagnostics
 
@@ -174,11 +174,11 @@ Diagnostic observations of existing child calls in this invocation only. Missing
 
 Capture scope: diff checks and selected Clippy children only. Metadata, aggregate policy gates and their children have unavailable diagnostics here. Argv retains argument boundaries with repository-root substitution `$REPO`. HEAD/base and changed paths are context, not an immutable digest of dirty source.
 
-- program="git"; argv=["-C", "$REPO", "diff", "--check", "a142074061128a85e76c1ac494b9939f3a58428b...HEAD"]; outcome=pass; status=exit status: 0; exit_code=0; elapsed_ms=204; elapsed_scope=runner_start_to_observed_exit_excluding_pipe_drain; cargo_progress=unavailable
-- program="git"; argv=["-C", "$REPO", "diff", "--cached", "--check"]; outcome=pass; status=exit status: 0; exit_code=0; elapsed_ms=101; elapsed_scope=runner_start_to_observed_exit_excluding_pipe_drain; cargo_progress=unavailable
-- program="git"; argv=["-C", "$REPO", "diff", "--check"]; outcome=pass; status=exit status: 0; exit_code=0; elapsed_ms=102; elapsed_scope=runner_start_to_observed_exit_excluding_pipe_drain; cargo_progress=unavailable
-- program="cargo"; argv=["clippy", "--manifest-path", "$REPO/Cargo.toml", "-p", "ripr", "--all-targets", "--", "-D", "warnings"]; outcome=pass; status=exit status: 0; exit_code=0; elapsed_ms=1340; elapsed_scope=runner_start_to_observed_exit_excluding_pipe_drain; cargo_progress=unavailable
-- program="cargo"; argv=["clippy", "--manifest-path", "$REPO/Cargo.toml", "-p", "xtask", "--all-targets", "--", "-D", "warnings"]; outcome=failed; status=signal: 2 (SIGINT); exit_code=unavailable; elapsed_ms=117840; elapsed_scope=runner_start_to_observed_exit_excluding_pipe_drain; cargo_progress=recognized_stderr_lines(compiling=7, checking=8, fresh=unavailable)
+- program="git"; argv=["-C", "$REPO", "diff", "--check", "a142074061128a85e76c1ac494b9939f3a58428b...HEAD"]; outcome=pass; status=exit status: 0; exit_code=0; elapsed_ms=103; elapsed_scope=runner_start_to_observed_exit_excluding_pipe_drain; cargo_progress=unavailable
+- program="git"; argv=["-C", "$REPO", "diff", "--cached", "--check"]; outcome=pass; status=exit status: 0; exit_code=0; elapsed_ms=100; elapsed_scope=runner_start_to_observed_exit_excluding_pipe_drain; cargo_progress=unavailable
+- program="git"; argv=["-C", "$REPO", "diff", "--check"]; outcome=pass; status=exit status: 0; exit_code=0; elapsed_ms=101; elapsed_scope=runner_start_to_observed_exit_excluding_pipe_drain; cargo_progress=unavailable
+- program="cargo"; argv=["clippy", "--manifest-path", "$REPO/Cargo.toml", "-p", "ripr", "--all-targets", "--", "-D", "warnings"]; outcome=pass; status=exit status: 0; exit_code=0; elapsed_ms=1005; elapsed_scope=runner_start_to_observed_exit_excluding_pipe_drain; cargo_progress=unavailable
+- program="cargo"; argv=["clippy", "--manifest-path", "$REPO/Cargo.toml", "-p", "xtask", "--all-targets", "--", "-D", "warnings"]; outcome=pass; status=exit status: 0; exit_code=0; elapsed_ms=501; elapsed_scope=runner_start_to_observed_exit_excluding_pipe_drain; cargo_progress=unavailable
 
 ## Skipped
 
@@ -186,18 +186,4 @@ Capture scope: diff checks and selected Clippy children only. Metadata, aggregat
 
 ## Limitations
 
-- cargo clippy --manifest-path /workspace/async8004/Cargo.toml -p xtask --all-targets -- -D warnings failed with signal: 2 (SIGINT): Compiling rand_chacha v0.3.1
-    Checking tokio v1.53.2
-    Checking rustix v1.1.5
-   Compiling rand v0.8.8
-   Compiling phf_generator v0.11.3
-   Compiling phf_codegen v0.11.3
-   Compiling unicode_names2_generator v1.3.0
-   Compiling rustpython-parser v0.4.0
-   Compiling unicode_names2 v1.3.0
-    Checking xattr v1.6.1
-    Checking tar v0.4.46
-    Checking tokio-util v0.7.20
-    Checking rmcp v3.5.1
-    Checking tower-lsp-server v0.23.0
-    Checking ripr v0.11.0 (/workspace/async8004/crates/ripr)
+- none

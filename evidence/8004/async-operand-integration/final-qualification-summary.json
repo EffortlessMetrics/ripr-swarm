@@ -1,0 +1,16 @@
+{
+  "head": "a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524",
+  "tree": "6bd2c8c772cfbb11eb9c8ae709fff98d465e7f85",
+  "base": "a142074061128a85e76c1ac494b9939f3a58428b",
+  "selector_count": 141,
+  "precommit": "pass",
+  "native_precommit_returncode": 0,
+  "precommit_skips": [],
+  "precommit_limitations": [],
+  "all_corpora_native_returncode": 0,
+  "default_binary_hash_equal": true,
+  "prior_capacity_attempts_retained": true,
+  "archive_recovery_verified": true,
+  "later_main_executed": false,
+  "reported_8131_owned_by": "Harrier/#8126"
+}

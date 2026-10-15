@@ -1,0 +1,769 @@
+{
+  "phase": "retained_compressed_quarantine",
+  "owner": "this task: exact native compile argv, independent working-tree CLI hash, committed-head unit executable log and dependency path",
+  "logical_bytes": 1128685968,
+  "entries": [
+    {
+      "original": "/workspace/async8004-evidence/bin/integrated-ripr",
+      "arcname": "lane-cli/integrated-ripr",
+      "bytes": 217442064,
+      "sha256": "05ffa88f40db78babad3b8181b71dfbda30b0eec0aae07e4d119e3d013fe38c2",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792072486432271701
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/direct-async-move-mutant/test",
+      "arcname": "lane-native/native-final-controls/direct-async-move-mutant/test",
+      "bytes": 6884280,
+      "sha256": "d6d779c2e693af1e4500999202fbe00550035e114fc2b9120ec7e7a7ed2ec6e9",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070890604650167
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/direct-async-move-original/test",
+      "arcname": "lane-native/native-final-controls/direct-async-move-original/test",
+      "bytes": 6884280,
+      "sha256": "586a82b828f11cac343c2687f71b562f2e0c7e38421e7777ecd2299f6e53e620",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070890412651496
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/direct-async-mutant/test",
+      "arcname": "lane-native/native-final-controls/direct-async-mutant/test",
+      "bytes": 6884280,
+      "sha256": "59e2a14d7559c15ee2996b6922b5ba50e7cf66b98c9da955dbcf5dde5ec25258",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070890152653297
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/direct-async-original/test",
+      "arcname": "lane-native/native-final-controls/direct-async-original/test",
+      "bytes": 6884280,
+      "sha256": "7f2c5aad76f84b2ae40b264a2b49bc9d72feffffd9579086c55e005252d2cfda",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070889924654876
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/direct-closure-mutant/test",
+      "arcname": "lane-native/native-final-controls/direct-closure-mutant/test",
+      "bytes": 6884104,
+      "sha256": "ba1049cf81c3b9450704f46915bf1326221d6fd9d20f430630e2d7ca3d325826",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070891004647396
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/direct-closure-original/test",
+      "arcname": "lane-native/native-final-controls/direct-closure-original/test",
+      "bytes": 6884104,
+      "sha256": "90de7f603c88fadd1b6958bfbb28cfea44536a2cfc6c81259b05abbbdca047f2",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070890804648782
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/direct-item-mutant/test",
+      "arcname": "lane-native/native-final-controls/direct-item-mutant/test",
+      "bytes": 6884088,
+      "sha256": "2f68420fc8463dc7bdfde7295a8d98471fea39905d081452e06a8be16d4ccf0e",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070891384644765
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/direct-item-original/test",
+      "arcname": "lane-native/native-final-controls/direct-item-original/test",
+      "bytes": 6884088,
+      "sha256": "f00c3b90715bc603189229057d70b126eedd71027df186bb70806ba89055431f",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070891204646012
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/direct-mixed-async-mutant/test",
+      "arcname": "lane-native/native-final-controls/direct-mixed-async-mutant/test",
+      "bytes": 6886056,
+      "sha256": "b0a90c94dba2b7884814d4164fbb468d680ed8ebc9225fa67b44c06102154c8c",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070892556636649
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/direct-mixed-async-original/test",
+      "arcname": "lane-native/native-final-controls/direct-mixed-async-original/test",
+      "bytes": 6886072,
+      "sha256": "34938ac1d74eb7c926f8806cea36d031c5c637553aa2f91e829491eb78bb0095",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070892384637839
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/direct-outer-mutant/test",
+      "arcname": "lane-native/native-final-controls/direct-outer-mutant/test",
+      "bytes": 6885864,
+      "sha256": "cf0953ff3a09c870f1bb80df086b160a0352fa4ae59dff92b3deb2577e5b8e17",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070892004640471
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/direct-outer-original/test",
+      "arcname": "lane-native/native-final-controls/direct-outer-original/test",
+      "bytes": 6885880,
+      "sha256": "a1a51243777cbb4361266db068cac666df3740c16eb0383aaee0989e6ba487ae",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070891624643103
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/helper-async-move-mutant/test",
+      "arcname": "lane-native/native-final-controls/helper-async-move-mutant/test",
+      "bytes": 6884280,
+      "sha256": "142812bd8d4cc6d90109802f270a9b25aaecb7d166f992b2fd1b488dbcf0b4c5",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070893364631053
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/helper-async-move-original/test",
+      "arcname": "lane-native/native-final-controls/helper-async-move-original/test",
+      "bytes": 6884280,
+      "sha256": "d0bd517e7953c9cbcc6a24436551d1708d9a8b79792bc7342a3c3c8e5acb66fa",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070893136632632
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/helper-async-mutant/test",
+      "arcname": "lane-native/native-final-controls/helper-async-mutant/test",
+      "bytes": 6884280,
+      "sha256": "684da85cc37cc30b5c78512efb101f39ead29da1ab9479726695abcaeab5436b",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070892936634017
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/helper-async-original/test",
+      "arcname": "lane-native/native-final-controls/helper-async-original/test",
+      "bytes": 6884280,
+      "sha256": "4492be73a95a76b37035619611429bdcb229281e0d2cf3dfda863f9c14a7a3cd",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070892752635292
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/helper-closure-mutant/test",
+      "arcname": "lane-native/native-final-controls/helper-closure-mutant/test",
+      "bytes": 6884104,
+      "sha256": "4a913cb926de6aa67eeea7d7ab0d66f02b9475cceb0ef042aded7a4120b31698",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070893664628975
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/helper-closure-original/test",
+      "arcname": "lane-native/native-final-controls/helper-closure-original/test",
+      "bytes": 6884104,
+      "sha256": "63eac3a78a921f89dd276fc300f50e50fc5a8962f48590e2e4980b11c4eb0028",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070893512630028
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/helper-item-mutant/test",
+      "arcname": "lane-native/native-final-controls/helper-item-mutant/test",
+      "bytes": 6884088,
+      "sha256": "90d9e838967b35d40935adb70a16b22b01298f6f9f8d0b17975415d3c3ed6455",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070894036626400
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/helper-item-original/test",
+      "arcname": "lane-native/native-final-controls/helper-item-original/test",
+      "bytes": 6884088,
+      "sha256": "02774456d398cc7e11cbfbe34ce9df4666b1611b38ac83fd93c067b261cf41cb",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070893836627784
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/helper-mixed-async-mutant/test",
+      "arcname": "lane-native/native-final-controls/helper-mixed-async-mutant/test",
+      "bytes": 6886176,
+      "sha256": "ff3af9827b9e3fcfcb70779914e36bd7959f62d342d1d5324781550a9dad6390",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070894932620218
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/helper-mixed-async-original/test",
+      "arcname": "lane-native/native-final-controls/helper-mixed-async-original/test",
+      "bytes": 6886192,
+      "sha256": "8d798105e17edf2879c857ab465b75ef8916a0dfc4b08b06d32c36c89916fdcd",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070894748621482
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/helper-outer-mutant/test",
+      "arcname": "lane-native/native-final-controls/helper-outer-mutant/test",
+      "bytes": 6885968,
+      "sha256": "2a395d6de6e3dbf55ec3665ce6c0f23bb174ddf5ac538dcb21738e7658cda1c0",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070894568622718
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-final-controls/helper-outer-original/test",
+      "arcname": "lane-native/native-final-controls/helper-outer-original/test",
+      "bytes": 6885984,
+      "sha256": "5e5a79c12d2b42a8113977dac8f6323cdf4ed1c1108beb015132d8aa341bc01c",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070894296624599
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/direct-async-move-mutant/test",
+      "arcname": "lane-native/native-supported/direct-async-move-mutant/test",
+      "bytes": 6884280,
+      "sha256": "804a3af7f676921aaeaa067396e3fe77325fe02677958c11c55a456776819c4d",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070822325136502
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/direct-async-move-original/test",
+      "arcname": "lane-native/native-supported/direct-async-move-original/test",
+      "bytes": 6884280,
+      "sha256": "a3b1609b731a7ed7d1ae98452243bbc7e1d9184f0960e90d2727cf549e2023cc",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070822017138942
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/direct-async-mutant/test",
+      "arcname": "lane-native/native-supported/direct-async-mutant/test",
+      "bytes": 6884280,
+      "sha256": "64b866b110576693efb9b30ff85a4ec443d78d43915cbc75f71f88f65f71711a",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070821769140625
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/direct-async-original/test",
+      "arcname": "lane-native/native-supported/direct-async-original/test",
+      "bytes": 6884280,
+      "sha256": "623707739ce2ddd4b8f38d8ebd86b32cb2f6d616dc4fe7063164ded83fd381d5",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070821397143149
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/direct-closure-mutant/test",
+      "arcname": "lane-native/native-supported/direct-closure-mutant/test",
+      "bytes": 6884088,
+      "sha256": "9f49a4dac2106ff2d79fc47166022dc3ceb9d7fa888eaa8b5dee278d576bc31d",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070822929130484
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/direct-closure-original/test",
+      "arcname": "lane-native/native-supported/direct-closure-original/test",
+      "bytes": 6884088,
+      "sha256": "03b5dbe5278d393e6099bbc7aae56f3f32f9e523cd183e9a95e8233fba071b10",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070822645133314
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/direct-item-mutant/test",
+      "arcname": "lane-native/native-supported/direct-item-mutant/test",
+      "bytes": 6884088,
+      "sha256": "f1b736c8bebe9713bd4c1a7cfedd646b5db8188d5ebad512627bd0f04c29588d",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070823549124305
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/direct-item-original/test",
+      "arcname": "lane-native/native-supported/direct-item-original/test",
+      "bytes": 6884088,
+      "sha256": "d6a92e59bc2c2d278f911e79889a4bf42d6143a5bb535622c09b872023ef6625",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070823233127454
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/direct-mixed-async-mutant/test",
+      "arcname": "lane-native/native-supported/direct-mixed-async-mutant/test",
+      "bytes": 6886040,
+      "sha256": "2d289b663dc0062328928470d2840807ed1a38ccc14fdbc17500218b4cb6c7f8",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070824621113622
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/direct-mixed-async-original/test",
+      "arcname": "lane-native/native-supported/direct-mixed-async-original/test",
+      "bytes": 6886072,
+      "sha256": "e744222bdc52792d834c4f09ce9321365e34c1f390151b21a1342bf35b129d19",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070824301116810
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/direct-outer-mutant/test",
+      "arcname": "lane-native/native-supported/direct-outer-mutant/test",
+      "bytes": 6885864,
+      "sha256": "7d5fb8221245c4f837ca2dcd0cd0bbae0f23a400e910dad48ce874ea9514eecb",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070824153118286
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/direct-outer-original/test",
+      "arcname": "lane-native/native-supported/direct-outer-original/test",
+      "bytes": 6885880,
+      "sha256": "92a71c82a7f7256ed162df3572d1611b6d84c840cf96a53ab472e1bef48949a1",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070823977120040
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/helper-async-move-mutant/test",
+      "arcname": "lane-native/native-supported/helper-async-move-mutant/test",
+      "bytes": 6884280,
+      "sha256": "9d416a0ad6578b3b075fe5fea71e30a9fd85882101915eecfea1f23d07e384fa",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070825609106106
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/helper-async-move-original/test",
+      "arcname": "lane-native/native-supported/helper-async-move-original/test",
+      "bytes": 6884280,
+      "sha256": "d956279b45e07d93aabeefd7adcbc91a5a562d67c6461af84c85a78749c2855e",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070825421107365
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/helper-async-mutant/test",
+      "arcname": "lane-native/native-supported/helper-async-mutant/test",
+      "bytes": 6884280,
+      "sha256": "634de979f9465273a96146646e2d2df6c8de084810fb5f42c186e45e8881632d",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070825225108678
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/helper-async-original/test",
+      "arcname": "lane-native/native-supported/helper-async-original/test",
+      "bytes": 6884280,
+      "sha256": "75f63ca312f3d53db270f2c0cfcdea970060347a163e37dee2b60875f2be33fd",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070824921110715
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/helper-closure-mutant/test",
+      "arcname": "lane-native/native-supported/helper-closure-mutant/test",
+      "bytes": 6884088,
+      "sha256": "d27a4e27e05f5466df140d3edf05238c77ce5776f567a6240f4fc8fad2635361",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070826101102811
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/helper-closure-original/test",
+      "arcname": "lane-native/native-supported/helper-closure-original/test",
+      "bytes": 6884088,
+      "sha256": "7cdb5af69907e9ba0ec332e3407d0daa3541c865fc73caea1616b68af7cbd1cf",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070825789104901
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/helper-item-mutant/test",
+      "arcname": "lane-native/native-supported/helper-item-mutant/test",
+      "bytes": 6884088,
+      "sha256": "e45d3676aa8fed971d86cbb2c89aab0824fd1d733293a476e707f0f2e9c8a96f",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070826589099542
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/helper-item-original/test",
+      "arcname": "lane-native/native-supported/helper-item-original/test",
+      "bytes": 6884088,
+      "sha256": "e59ac749d8abf30715cf41af8dd04b23b049515d8fbace6a4f9b4846c83f11ca",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070826405100775
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/helper-mixed-async-mutant/test",
+      "arcname": "lane-native/native-supported/helper-mixed-async-mutant/test",
+      "bytes": 6886176,
+      "sha256": "a58299c296c1d45da4356a206d05400693975ad70fb2e91080a2d6db167c3b02",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070827385094209
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/helper-mixed-async-original/test",
+      "arcname": "lane-native/native-supported/helper-mixed-async-original/test",
+      "bytes": 6886192,
+      "sha256": "78e7a91f3721ffc7595554711ba625639fd5358256aacdd90ccf771d920a0077",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070827149095790
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/helper-outer-mutant/test",
+      "arcname": "lane-native/native-supported/helper-outer-mutant/test",
+      "bytes": 6885968,
+      "sha256": "49c4b9afd4140d724afbba274496e9f6fbce2670ae0d956c2c03a7d3fcc1a65d",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070826957097076
+    },
+    {
+      "original": "/workspace/async8004-evidence/native-supported/helper-outer-original/test",
+      "arcname": "lane-native/native-supported/helper-outer-original/test",
+      "bytes": 6885984,
+      "sha256": "db12071f3bb3e0451b52ef521bbccbf7cfacc0e3422a2ced40626af803c1b5ae",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070826753098443
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/direct-async-move-mutant/test",
+      "arcname": "lane-native/native/direct-async-move-mutant/test",
+      "bytes": 6884248,
+      "sha256": "1a8b0cd47affc06b309377bf0f4f91e9151f723571a566a9662057bc4bad872b",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070407711731692
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/direct-async-move-original/test",
+      "arcname": "lane-native/native/direct-async-move-original/test",
+      "bytes": 6884248,
+      "sha256": "0350b3e0c96b9cc8d50d1e10926bf2c6ef52fcbf25793d799d68831ad1c2bdfc",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070407559732940
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/direct-async-mutant/test",
+      "arcname": "lane-native/native/direct-async-mutant/test",
+      "bytes": 6884248,
+      "sha256": "1880406cec6a6085cf0409c9c158b178759e365901ffda6b4a6d1ed140536249",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070407403734221
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/direct-async-original/test",
+      "arcname": "lane-native/native/direct-async-original/test",
+      "bytes": 6884248,
+      "sha256": "0576e8c7caf616ea15c8649e76fa4774f730078e793490084a96ae63bbb870ce",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070407235735601
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/direct-closure-mutant/test",
+      "arcname": "lane-native/native/direct-closure-mutant/test",
+      "bytes": 6884072,
+      "sha256": "e01f8fd4d7dd7fde8c2ddb7c477d8be67a70ed7fe929ae19b5edc409dec52ea8",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070408019729163
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/direct-closure-original/test",
+      "arcname": "lane-native/native/direct-closure-original/test",
+      "bytes": 6884072,
+      "sha256": "dacbfa9a43b90b6a70e598584194747c6bc4ca204b8cef39fe508374aa4c934d",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070407867730411
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/direct-item-mutant/test",
+      "arcname": "lane-native/native/direct-item-mutant/test",
+      "bytes": 6884056,
+      "sha256": "af897a2f63412840229c14641e7b74ffbade9487b36a162733795aafd58f3646",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070408319726699
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/direct-item-original/test",
+      "arcname": "lane-native/native/direct-item-original/test",
+      "bytes": 6884072,
+      "sha256": "7b32f4e86ab2be43943b7916c522c8216ca5c887a476d9424a9e8e380898d389",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070408171727914
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/direct-mixed-async-mutant/test",
+      "arcname": "lane-native/native/direct-mixed-async-mutant/test",
+      "bytes": 6886024,
+      "sha256": "fb62738c07815ef7e8cec8d5eed3a340072e487c60d74f11c7c475dad22ae359",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070408971721345
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/direct-mixed-async-original/test",
+      "arcname": "lane-native/native/direct-mixed-async-original/test",
+      "bytes": 6886040,
+      "sha256": "e5834314a81d432a56e16a8b46db470da4e92f6f28667e3928c572d3cc30032a",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070408811722658
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/direct-outer-mutant/test",
+      "arcname": "lane-native/native/direct-outer-mutant/test",
+      "bytes": 6885832,
+      "sha256": "381e347eb56c8080c08e1915acdef34804a37c09d28bc5f9454f9c7ca1d1e215",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070408635724104
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/direct-outer-original/test",
+      "arcname": "lane-native/native/direct-outer-original/test",
+      "bytes": 6885848,
+      "sha256": "d8bed78e2ddba4282db9e70bd108eeaa338383ee6599da4b4b818a05720459ca",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070408483725353
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/helper-async-move-mutant/test",
+      "arcname": "lane-native/native/helper-async-move-mutant/test",
+      "bytes": 6884248,
+      "sha256": "265a581245bbc659eecc3bf856f191b27611d46001ec4c046d009ee5c301602f",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070409631715926
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/helper-async-move-original/test",
+      "arcname": "lane-native/native/helper-async-move-original/test",
+      "bytes": 6884248,
+      "sha256": "9d0a2336f51b8aa8576b91b83323765b667a5d3cbb737e0bd10da2fc814b78fd",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070409447717437
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/helper-async-mutant/test",
+      "arcname": "lane-native/native/helper-async-mutant/test",
+      "bytes": 6884248,
+      "sha256": "081d13406c29a53461b5dac8aa5ba2f1b34e54a19e5329a2fa5f3b77b6cb2797",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070409283718783
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/helper-async-original/test",
+      "arcname": "lane-native/native/helper-async-original/test",
+      "bytes": 6884248,
+      "sha256": "6e3296b4cd3fceb8cff2a985c1df6bcf464df910ee9692ec40fe21b40850f058",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070409123720097
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/helper-closure-mutant/test",
+      "arcname": "lane-native/native/helper-closure-mutant/test",
+      "bytes": 6884072,
+      "sha256": "d658e20b968850a43a02d23cd5f1580e29b9f8e7a9110af550a84d4bac179b51",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070409951713281
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/helper-closure-original/test",
+      "arcname": "lane-native/native/helper-closure-original/test",
+      "bytes": 6884072,
+      "sha256": "0e82e0a740839e16ff95a890b4e80820915eaec9b3c6619c08a174d9c0e6dd7f",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070409795714571
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/helper-item-mutant/test",
+      "arcname": "lane-native/native/helper-item-mutant/test",
+      "bytes": 6884056,
+      "sha256": "a5ad48697b72d5a4335372046866ad9dc34b83709f153b7b1f911ec6f984ec15",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070410279710571
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/helper-item-original/test",
+      "arcname": "lane-native/native/helper-item-original/test",
+      "bytes": 6884072,
+      "sha256": "c0e97e8bdd66256bdca483390187e57b7439d6338a00b5b2cfb8349aa12db448",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070410119711893
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/helper-mixed-async-mutant/test",
+      "arcname": "lane-native/native/helper-mixed-async-mutant/test",
+      "bytes": 6886144,
+      "sha256": "0ffd85df8f2243f6a708820792f999e898dd90f45fdbbacb2b8de0705a6d35c0",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070411019704455
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/helper-mixed-async-original/test",
+      "arcname": "lane-native/native/helper-mixed-async-original/test",
+      "bytes": 6886160,
+      "sha256": "12cdfeec0dc80c5c21adaef8ffc250301bd9dc241b714a246d17ea413f090f40",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070410859705777
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/helper-outer-mutant/test",
+      "arcname": "lane-native/native/helper-outer-mutant/test",
+      "bytes": 6885936,
+      "sha256": "c33cf82a7727c49cf1a5dd13e92d0e5b3c69f18c78997860780ae9035c462c23",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070410667707364
+    },
+    {
+      "original": "/workspace/async8004-evidence/native/helper-outer-original/test",
+      "arcname": "lane-native/native/helper-outer-original/test",
+      "bytes": 6885952,
+      "sha256": "ef1d0c0795ee8a7ac09c86ec59163ef9230529425d1888da517a6bd6f83b495d",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792070410443709216
+    },
+    {
+      "original": "/workspace/ripr-swarm/target/debug/deps/ripr-4dfb141009a72db0",
+      "arcname": "lane-unit/ripr-4dfb141009a72db0",
+      "bytes": 415539120,
+      "sha256": "1acd7bca9303a70b8a5c71f8b52a1d746c87dc459669b3a4550ab72c2934f23c",
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1792072951256443864
+    }
+  ],
+  "tmp_reserve_gib": 4,
+  "workspace_reserve_gib": 8,
+  "excluded_current_witnesses": [
+    "source8b-ripr",
+    "head-ripr",
+    "native-integrated-matrix",
+    "same-line-native"
+  ],
+  "archive_sha256": "879680dbb43a1f2d503e37920eb425ad5db8b8a7d05266d61f6a89e3bd137142",
+  "archive_bytes": 313396841,
+  "verified_metadata": [
+    "bytes",
+    "sha256",
+    "mode",
+    "uid",
+    "gid",
+    "mtime_ns"
+  ],
+  "free_gain_before_archive_copy": 1126985728,
+  "archive": "/workspace/async8004-quarantine/prior-executables.tar.gz",
+  "restore_instructions": "Verify archive hash, extract into owned staging, restore each arcname to original path from entries with original mode/uid/gid/mtime_ns and SHA256; refuse an occupied mismatched destination",
+  "workspace_available_gib": 11.199535369873047
+}
