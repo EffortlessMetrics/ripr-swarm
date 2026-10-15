@@ -8202,7 +8202,7 @@ fn workspace_constant_table(index: &RustIndex) -> BTreeMap<String, Vec<(PathBuf,
             };
             if let Some((item_name, body)) = item {
                 add(
-                    &item_name.text(),
+                    item_name.text(),
                     mask_comments_and_strings(&body.syntax().to_string()),
                 );
             }
