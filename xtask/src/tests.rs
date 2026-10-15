@@ -11241,7 +11241,7 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
 }
 
 #[test]
-fn routed_rust_merge_ready_event_matrix_withholds_unrequested_context() {
+fn routed_rust_merge_ready_event_matrix_withholds_unrequested_context() -> Result<(), String> {
     let workflow = include_str!("../../.github/workflows/routed-rust.yml");
     assert!(
         routed_rust_ready_event_contract_violations(workflow).is_empty(),
@@ -11347,7 +11347,7 @@ fn routed_rust_merge_ready_event_matrix_withholds_unrequested_context() {
     let group = workflow
         .lines()
         .find(|line| line.starts_with("  group:"))
-        .expect("concurrency group");
+        .ok_or("missing concurrency group")?;
     let shared_group = replace_once(
         workflow,
         group,
@@ -11369,10 +11369,10 @@ fn routed_rust_merge_ready_event_matrix_withholds_unrequested_context() {
 
     let hosted = workflow
         .split_once("\n  rust-github:\n")
-        .expect("hosted job")
+        .ok_or("missing hosted job")?
         .1
         .split_once("\n  docs-gate:\n")
-        .expect("next job")
+        .ok_or("missing next job")?
         .0;
     for condition in ["      always() &&", "      Always () &&"] {
         let changed_hosted = replace_once(hosted, "      !cancelled() &&", condition);
@@ -11403,11 +11403,11 @@ fn routed_rust_merge_ready_event_matrix_withholds_unrequested_context() {
 
     let result_name = workflow
         .split_once("\n  result:\n")
-        .expect("result job")
+        .ok_or("missing result job")?
         .1
         .lines()
         .find(|line| line.starts_with("    name:"))
-        .expect("result name");
+        .ok_or("missing result name")?;
     for name in ["Ripr Rust Small Result", "Ripr Rust Small Draft Result"] {
         let changed = replace_once(workflow, result_name, &format!("    name: {name}"));
         rejected(&changed, "must post event-bound");
@@ -11421,6 +11421,7 @@ fn routed_rust_merge_ready_event_matrix_withholds_unrequested_context() {
         &pseudo_result,
         "retired `Ripr Rust Small Ignored Label Event`",
     );
+    Ok(())
 }
 
 #[test]
