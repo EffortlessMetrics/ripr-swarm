@@ -99,6 +99,99 @@ fn tests_module(helper: &str, calls: &str) -> String {
     )
 }
 
+fn returned_helper_module(body: &str, calls: &str) -> String {
+    format!(
+        "\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    fn check(input: u32, want: bool) -> Result<(), ()> {{\n        {body}\n    }}\n    #[test]\n    fn boundary() -> Result<(), ()> {{\n        {calls}\n    }}\n}}\n"
+    )
+}
+
+#[test]
+fn returned_helper_panic_assertion_exposes_even_when_result_is_discarded() -> Result<(), String> {
+    for (body, calls) in [
+        ("assert_eq!(gate(input), want); Ok(())", "check(10, true)"),
+        (
+            "assert_eq!(gate(input), want); Ok(())",
+            "let _ = check(10, true);\n        Ok(())",
+        ),
+        (
+            "assert_eq!(gate(input), want); Err(())",
+            "let _ = check(10, true);\n        Ok(())",
+        ),
+    ] {
+        let finding = TempRepo::create(&returned_helper_module(body, calls))?.predicate()?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{body}: {finding:?}");
+        assert_eq!(finding.source_currentness.as_str(), "candidate_current");
+        assert_eq!(finding.probe.before.as_deref(), Some("input > 10"));
+        assert_eq!(finding.probe.after.as_deref(), Some("input >= 10"));
+        assert!(
+            finding.related_tests.iter().any(|test| {
+                test.name == "boundary"
+                    && test.oracle.as_deref() == Some("assert_eq!(gate(input), want);")
+            }),
+            "the caller must retain the helper's exact oracle: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn returned_helper_keeps_execution_binding_and_value_refusals() -> Result<(), String> {
+    for (body, calls) in [
+        (
+            "if input == 10 { return Ok(()); } assert_eq!(gate(input), want); Ok(())",
+            "check(10, true)",
+        ),
+        (
+            "let _: () = Err(())?; assert_eq!(gate(input), want); Ok(())",
+            "let _ = check(10, true);\n        Ok(())",
+        ),
+        (
+            "let _later = || { assert_eq!(gate(input), want); }; Ok(())",
+            "check(10, true)",
+        ),
+        (
+            "if input != 10 { assert_eq!(gate(input), want); } Ok(())",
+            "check(10, true)",
+        ),
+        (
+            "macro_rules! assert_eq { ($a:expr, $b:expr) => {{ let _ = ($a, $b); }}; } assert_eq!(gate(input), want); Ok(())",
+            "check(10, true)",
+        ),
+        (
+            "let _ = gate(input); assert_eq!(input, 10); Ok(())",
+            "check(10, true)",
+        ),
+        (
+            "assert_eq!(gate(input), want); Ok(())",
+            "let _ = gate(10); Ok(())",
+        ),
+        (
+            "assert_eq!(gate(input), want); Ok(())",
+            "check(10, gate(10))",
+        ),
+        (
+            "macro_rules! ensure { ($c:expr) => { if !$c { return Err(()); } }; } ensure!(input != 10); assert_eq!(gate(input), want); Ok(())",
+            "let _ = check(10, true);\n        Ok(())",
+        ),
+        (
+            "let _ = gate(input); Err(())",
+            "let _ = check(10, true);\n        Ok(())",
+        ),
+        (
+            "assert_eq!(gate(input), want); Ok(())",
+            "let check = |_: u32, _: bool| Ok(()); check(10, true)",
+        ),
+    ] {
+        let finding = TempRepo::create(&returned_helper_module(body, calls))?.predicate()?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{body} / {calls}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn helper_ignoring_its_arguments_does_not_take_the_callers_boundary() -> Result<(), String> {
     let calls = "        check(10, true);\n        check(9, false);\n";
