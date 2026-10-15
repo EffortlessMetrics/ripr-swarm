@@ -327,8 +327,20 @@ pub(crate) fn validate_repo_exposure_artifact(
             );
             // Host-aware first-form label (#7729): off Windows the recovery
             // command is bash source; on Windows it is double-quoted for the
-            // Windows console, so naming it "Bash" would be false.
-            let first_form = if cfg!(windows) { "cmd.exe" } else { "Bash/Git Bash" };
+            // Windows console, so naming it "Bash" would be false. #8152
+            // review: a command with single-quoted segments (`$`/backtick
+            // values, or the printf escape segments of control characters)
+            // is literal in Git Bash and PowerShell but not cmd.exe, so the
+            // label must not advertise cmd.exe for it.
+            let first_form = if cfg!(windows) {
+                if super::loop_commands::is_windows_console_form(&bash_recovery) {
+                    "cmd.exe"
+                } else {
+                    "Git Bash/PowerShell"
+                }
+            } else {
+                "Bash/Git Bash"
+            };
             let recovery = match crate::output::markdown::powershell_command(&bash_recovery) {
                 Some(powershell) => {
                     format!("{first_form}: `{bash_recovery}`; PowerShell: `{powershell}`")
@@ -1394,12 +1406,18 @@ mod tests {
             ));
         }
         if cfg!(windows) {
-            // `$` inside the double-quoted Windows form makes the PowerShell
-            // translation withhold honestly, so the console form alone is
+            // #8152 review: the `$` value keeps the single-quote form, which
+            // Git Bash and PowerShell read literally and cmd.exe mangles, so
+            // the label names those two shells and no cmd.exe form is
             // advertised.
-            if !error.contains("cmd.exe only:") {
+            if !error.contains("Git Bash/PowerShell:") {
                 return Err(format!(
-                    "shell-labeled literal recovery omitted the cmd.exe label: {error}"
+                    "shell-labeled literal recovery omitted the Git Bash/PowerShell label: {error}"
+                ));
+            }
+            if error.contains("cmd.exe") {
+                return Err(format!(
+                    "single-quoted recovery must not be advertised for cmd.exe: {error}"
                 ));
             }
         } else {
@@ -1415,6 +1433,9 @@ mod tests {
             validate_repo_exposure_artifact(Path::new("selected>root"), raw, "before")
                 .err()
                 .ok_or("legacy artifact was accepted")?;
+        // `>` does not move the command off the console double-quote form, so
+        // on Windows the cmd.exe label stays correct; only the PowerShell
+        // twin withholds (a `>` artifact path has no Windows translation).
         let withheld_label = if cfg!(windows) {
             "cmd.exe only:"
         } else {

@@ -889,8 +889,10 @@ fn shell_words(command: &str) -> Option<Vec<String>> {
 /// Pure host-parameterised core of [`shell_words`], so both hosts' parse
 /// semantics are testable on any machine. The recovery parser must agree with
 /// the renderer (`loop_commands::shell_arg`) on the host ripr runs on, or a
-/// rendered token cannot round-trip (#3231, #7729).
-fn shell_words_for(command: &str, windows: bool) -> Option<Vec<String>> {
+/// rendered token cannot round-trip (#3231, #7729). `pub(crate)` so test
+/// helpers measuring rendered commands against the same contract do not fork
+/// a third parser (#8152 review).
+pub(crate) fn shell_words_for(command: &str, windows: bool) -> Option<Vec<String>> {
     let mut words = Vec::new();
     let mut current = String::new();
     let mut quote = None;
@@ -913,8 +915,26 @@ fn shell_words_for(command: &str, windows: bool) -> Option<Vec<String>> {
             // #7729: on Windows the renderer quotes with double quotes, in
             // which cmd.exe and PowerShell keep a backslash literal; the
             // parser must agree or a rendered `C:\...` token loses its
-            // separators to escape consumption.
-            (Some('"'), '\\') if windows => current.push(character),
+            // separators to escape consumption. #8152 review: the renderer
+            // doubles a trailing backslash run before the closing quote
+            // (the native argv parser would else read `\"` as an escaped
+            // quote), so an even run immediately before a quote decodes to
+            // half as many literal separators and the quote closes; any
+            // other backslash stays literal.
+            (Some('"'), '\\') if windows => {
+                let mut run = 1;
+                while chars.peek() == Some(&'\\') {
+                    let _ = chars.next();
+                    run += 1;
+                }
+                if chars.peek() == Some(&'"') && run % 2 == 0 {
+                    current.push_str(&"\\".repeat(run / 2));
+                    quote = None;
+                    let _ = chars.next();
+                } else {
+                    current.push_str(&"\\".repeat(run));
+                }
+            }
             // #7729: cmd.exe escapes an interior double quote by doubling
             // it; the pair is one literal quote in the argument, not a
             // close-then-reopen of the quoting region.
@@ -1338,11 +1358,16 @@ mod tests {
     /// rebuild exactly the original bytes — the spaced drive-letter root that
     /// motivates the fix, plus an interior-quote value exercising the `""`
     /// escape pair. Pure-core assertions so both directions run on any host.
+    /// #8152 review adds the routine case the original review flagged: a root
+    /// ending in a separator, where the renderer doubles the trailing run
+    /// before the closing quote.
     #[test]
     fn windows_double_quoted_tokens_round_trip_through_recovery() -> Result<(), String> {
         for value in [
             r"C:\tmp\probe win space".to_string(),
             "with\"quote".to_string(),
+            r"C:\repo\".to_string(),
+            "folder space\\".to_string(),
         ] {
             let rendered_token = crate::agent::loop_commands::shell_arg_for(&value, true);
             let command = format!("ripr check --root {rendered_token} --base main");
@@ -1354,6 +1379,22 @@ mod tests {
             {
                 return Err(format!(
                     "Windows-quoted token did not round-trip: rendered {rendered_token:?}, parsed {words:?}"
+                ));
+            }
+        }
+        // #8152 review: a value carrying `$` or backtick keeps the
+        // single-quote form on Windows (both console shells expand it inside
+        // double quotes). The recovery parser fails closed on expansion
+        // characters in every quote context — pre-existing policy that this
+        // rendering now reaches on Windows too — so recovery is withheld for
+        // these values rather than mistrusted; pasting stays safe in Git Bash
+        // and PowerShell either way.
+        for value in ["$(whoami)".to_string(), "price `$100".to_string()] {
+            let rendered_token = crate::agent::loop_commands::shell_arg_for(&value, true);
+            let command = format!("ripr check --root {rendered_token} --base main");
+            if shell_words_for(&command, true).is_some() {
+                return Err(format!(
+                    "expansion-bearing value must stay unrecoverable: rendered {rendered_token:?}"
                 ));
             }
         }

@@ -1358,21 +1358,16 @@ mod tests {
             Some("repo-root")
         );
         // Every form `shell_arg` renders round-trips as the same word, including
-        // metacharacters and the `$(printf ...)` escape for control characters.
-        // On Windows a `$`/backtick value is the exception (#7729): no Windows
-        // quoting form protects it from PowerShell expansion, so extraction
-        // refuses rather than round-trip a value that would expand in one of
-        // the target consoles — the same fail-closed shape the expansion
-        // guards below pin.
+        // metacharacters, the `$(printf ...)` escape for control characters,
+        // and a `$`/backtick value (#8152 review): the renderer keeps the
+        // single-quote form for it on Windows, which no console expands, so
+        // extraction round-trips it on both hosts — the handcrafted
+        // expansion forms below still refuse.
         for root in ["/w/a&b", "/w/$HOME", "/w/it's", "/w/a\u{1}b", "/w/a b;c"] {
             let quoted = crate::agent::loop_commands::shell_arg(root);
             let command = format!("ripr agent start --root {quoted} --seam-id s");
             let extracted = root_from_agent_command(&command);
-            if cfg!(windows) && root.contains(['$', '`']) {
-                assert_eq!(extracted, None, "{command}");
-            } else {
-                assert_eq!(extracted.as_deref(), Some(quoted.as_str()), "{command}");
-            }
+            assert_eq!(extracted.as_deref(), Some(quoted.as_str()), "{command}");
         }
         assert_eq!(
             root_from_agent_command("ripr agent start --seam-id s"),
@@ -1388,6 +1383,21 @@ mod tests {
             "ripr agent start --root '/w'\"$(printf 'x')\" --seam-id s",
         ] {
             assert_eq!(root_from_agent_command(hostile), None, "{hostile}");
+        }
+        // #8152 review: the Windows renderer's double-quoted form decodes
+        // exactly as well — a backslash is a literal separator for every
+        // character that can follow it in a real path, and the doubled
+        // trailing separator run the renderer adds before the closing quote
+        // collapses back to one. The fail-closed `.` fallback stays
+        // unreachable for every path shape this form exists to quote.
+        for root in [r"C:\my repo\work", r"C:\my repo\work\", r"D:\a b\c d\e.json"] {
+            let quoted = crate::agent::loop_commands::shell_arg(root);
+            let command = format!("ripr agent start --root {quoted} --seam-id s");
+            assert_eq!(
+                root_from_agent_command(&command).as_deref(),
+                Some(quoted.as_str()),
+                "{command}"
+            );
         }
         // An unbalanced quote is not a root to repeat.
         assert_eq!(

@@ -7,11 +7,20 @@ use serde_json::{Value, json};
 
 /// Shell that every `command` string in this packet is written for.
 ///
-/// The command strings are built with POSIX single-quote escaping and `>`
-/// redirection (`agent::loop_commands::shell_arg`), so they are bash source,
-/// not shell-neutral text. Naming the shell keeps the packet honest on Windows,
-/// where cmd.exe treats `'` as a literal character and PowerShell rejects the
-/// `'\''` escape. Emitting an argv form for other shells is out of scope here.
+/// The command strings are quoted for the running host's shell family
+/// (#7729), so the manifest names that family in `command_shell`:
+///
+/// - `"bash"` off Windows: the commands are POSIX single-quote bash source
+///   with `>` redirection, built by `agent::loop_commands::shell_arg`.
+/// - `"windows-console"` on Windows: the same builders emit the double-quote
+///   console form, which cmd.exe, PowerShell, and Git Bash all honor for
+///   spaced paths.
+///
+/// Naming the family keeps the packet honest: cmd.exe treats `'` as a
+/// literal character and PowerShell rejects the `'\''` escape, so a
+/// bash-labelled packet on Windows would mislead, and a console-labelled
+/// packet off Windows would too. Emitting an argv form for other shells is
+/// out of scope here.
 const COMMAND_SHELL: &str = "bash";
 /// Host shell label for the workflow manifest (#7729): the command strings
 /// are quoted for the running host's shell family — bash source off Windows,
@@ -148,7 +157,7 @@ mod markdown {
         // running host's shell family, so the header names the shells the
         // printed forms actually parse in.
         if cfg!(windows) {
-            lines.push("Each step includes command forms for the Windows console and, where supported, PowerShell forms; unavailable variants are disclosed. The command form uses double-quote quoting and `>` redirection, which cmd.exe, PowerShell, and Git Bash all honor for spaced paths (Git Bash expands `$` and backtick inside double quotes). The PowerShell form, where one follows a command, uses the `&` call operator before a quoted program path and a guarded BOM-free UTF-8 write in place of `>`. Values containing control characters keep an explicit bash escape form; paste those in Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths here keep their Windows drive-letter prefix, which WSL resolves as a relative path, so running them there requires rewriting each path under `/mnt/` and having ripr available inside WSL.".to_string());
+            lines.push("Each step includes command forms for the Windows console and, where supported, PowerShell forms; unavailable variants are disclosed. The command form uses double-quote quoting and `>` redirection, which cmd.exe, PowerShell, and Git Bash all honor for spaced paths; a value carrying `$` or backtick keeps the single-quote form instead (both Git Bash and PowerShell expand it inside double quotes), and cmd.exe passes those quotes through, so paste that value in Git Bash or PowerShell. The PowerShell form, where one follows a command, uses the `&` call operator before a quoted program path and a guarded BOM-free UTF-8 write in place of `>`. Values containing control characters keep an explicit bash escape form; paste those in Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths here keep their Windows drive-letter prefix, which WSL resolves as a relative path, so running them there requires rewriting each path under `/mnt/` and having ripr available inside WSL.".to_string());
         } else {
             lines.push("Each step includes Bash command forms and, where supported, PowerShell forms; unavailable variants are disclosed. The Bash form uses POSIX single-quote quoting and `>` redirection; the PowerShell form uses PowerShell's doubled-quote equivalent, the `&` call operator before a quoted program path, and a guarded BOM-free UTF-8 write in place of `>`. cmd.exe is not supported. On Windows, use either Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths here keep their Windows drive-letter prefix, which WSL resolves as a relative path, so running them there requires rewriting each path under `/mnt/` and having ripr available inside WSL.".to_string());
         }

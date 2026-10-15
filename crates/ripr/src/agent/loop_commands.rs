@@ -499,16 +499,22 @@ pub(crate) fn shell_path(path: &Path) -> String {
 ///   shell, so escaping `!` that way corrupts the value instead of protecting
 ///   it; and a bare `\` cannot be left unquoted, because bash consumes it as an
 ///   escape.
-/// - Windows: double-quoted, with an embedded `"` doubled (`""`), the cmd.exe
-///   escape form. Double quotes are the only quoting form honored by every
-///   Windows console shell: cmd.exe, PowerShell, and Git Bash all keep a
-///   double-quoted spaced path as one argument (Git Bash expands `$` and
-///   backtick inside them, so values carrying those characters paste into
-///   PowerShell/cmd.exe but need the single-quote form in Git Bash — the same
-///   unavoidable ambiguity bash double quotes have with `$`; there is no
-///   Windows form that protects them everywhere). PowerShell would escape an
-///   interior quote with a backtick instead of doubling; an interior `"` in a
-///   real path is rare enough that the cmd form is the conservative choice.
+/// - Windows: double-quoted, with an embedded `"` doubled (`""`) and a
+///   trailing backslash run doubled before the closing quote
+///   (`windows_console_quote`). Double quotes are the only quoting form
+///   honored by every Windows console shell: cmd.exe, PowerShell, and Git
+///   Bash all keep a double-quoted spaced path as one argument. Values
+///   carrying `$` or backtick keep the single-quote form instead: Git Bash
+///   expands `$VAR`, `$(cmd)`, and `` `cmd` `` inside double quotes, and so
+///   does PowerShell — pasting `"$(...)"` into either executes the embedded
+///   expression (#8152 review, security), while single quotes stay literal
+///   in both. cmd.exe passes single quotes through as literal characters
+///   (the argument arrives quoted and fails closed), so those values paste
+///   in Git Bash or PowerShell, not cmd.exe. PowerShell would escape an
+///   interior quote with a backtick instead of doubling, and Git Bash drops
+///   an interior quote in the `""` form; an interior `"` cannot occur in a
+///   Windows filename, so the `""` doubling is the conservative choice for
+///   the paths this form exists to quote.
 ///
 /// The empty string must be quoted (`''` or `""`), or the argument disappears
 /// from the command line entirely.
@@ -535,10 +541,65 @@ pub(crate) fn shell_arg_for(value: &str, windows: bool) -> String {
     if value.chars().any(needs_terminal_escape) {
         return ansi_c_quote(value);
     }
-    if windows {
-        return format!("\"{}\"", value.replace('"', "\"\""));
+    if windows && !value.chars().any(|ch| matches!(ch, '$' | '`')) {
+        return windows_console_quote(value);
     }
     format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// Quote one argument in the Windows console form: double quotes, interior
+/// `"` doubled (`""`), and a trailing backslash run doubled before the
+/// closing quote. Verified against the native argv parser, cmd.exe, Git
+/// Bash, and Windows PowerShell (#8152 review):
+///
+/// - Interior doubling: `"a""b"` parses as `a"b` in cmd (native argv), in
+///   PowerShell, and — losing the quote — in Git Bash; `\"` would be the
+///   argv/Git Bash form but closes the string early in PowerShell, so `""`
+///   is the conservative choice. Interior `"` cannot occur in a Windows
+///   filename, so this diverges only for exotic non-path arguments.
+/// - Trailing separator: `"C:\repo\"` corrupts under the native argv rules
+///   (`\"` escapes the closing quote, swallowing the rest of the line), in
+///   Git Bash, and in PowerShell 5.1; doubling the run (`"C:\repo\\"`)
+///   round-trips in all four. A path ending in a separator is routine, so
+///   this is encoder policy, not a documented limitation.
+///
+/// Values containing `$` or backtick never reach this form: both PowerShell
+/// and Git Bash expand them inside double quotes, so they keep the
+/// single-quote form (`shell_arg_for`).
+fn windows_console_quote(value: &str) -> String {
+    let mut body = value.replace('"', "\"\"");
+    let trailing_backslashes = value.chars().rev().take_while(|ch| *ch == '\\').count();
+    body.push_str(&"\\".repeat(trailing_backslashes));
+    format!("\"{body}\"")
+}
+
+/// True when a rendered command stays in the Windows console double-quote
+/// form throughout — no single-quoted segments — so it pastes into cmd.exe
+/// as well as PowerShell and Git Bash (#8152 review). Single-quoted segments
+/// arise for values carrying `$` or backtick (literal in Git Bash and
+/// PowerShell; cmd.exe passes the quotes through) and for the
+/// `"$(printf '\ooo')"` escape segments of control-character values (bash
+/// source), and both must not be advertised as a cmd.exe form.
+pub(crate) fn is_windows_console_form(command: &str) -> bool {
+    let mut chars = command.chars().peekable();
+    let mut in_double = false;
+    while let Some(ch) = chars.next() {
+        if in_double {
+            match ch {
+                // `""` is one literal quote; the region stays open.
+                '"' if chars.peek() == Some(&'"') => {
+                    let _ = chars.next();
+                }
+                '"' => in_double = false,
+                _ => {}
+            }
+        } else if ch == '\'' {
+            return false;
+        } else if ch == '"' {
+            in_double = true;
+        }
+    }
+    !in_double
 }
 
 /// Which characters must not reach a terminal raw: every control character
@@ -1233,7 +1294,13 @@ mod tests {
         assert_eq!(shell_arg_for("a\\b", false), "'a\\b'");
         assert_eq!(shell_arg_for("a\\b", true), "\"a\\b\"");
         assert_eq!(shell_arg_for("$(whoami)", false), "'$(whoami)'");
-        assert_eq!(shell_arg_for("$(whoami)", true), "\"$(whoami)\"");
+        // #8152 review (security): PowerShell evaluates `$(...)` and `$var`
+        // inside double quotes, and Git Bash expands them too, so a value
+        // carrying `$` keeps the single-quote form on Windows — literal in
+        // both shells (cmd.exe passes the quotes through and fails closed).
+        assert_eq!(shell_arg_for("$(whoami)", true), "'$(whoami)'");
+        assert_eq!(shell_arg_for("price `$100", false), "'price `$100'");
+        assert_eq!(shell_arg_for("price `$100", true), "'price `$100'");
         assert_eq!(shell_arg_for("it's", false), r"'it'\''s'");
         assert_eq!(shell_arg_for("it's", true), "\"it's\"");
         assert_eq!(shell_arg_for("a\"b", false), r#"'a"b'"#);
@@ -1246,6 +1313,44 @@ mod tests {
             shell_arg_for("gap > /tmp/ripr-clobbered", true),
             "\"gap > /tmp/ripr-clobbered\""
         );
+    }
+
+    /// #8152 review: recovery labels must name the shell family the rendered
+    /// command actually parses in. The pure double-quote form is cmd.exe
+    /// paste-able; a single-quoted segment (a `$`/backtick value, or a
+    /// printf escape run) is not.
+    #[test]
+    fn is_windows_console_form_classifies_rendered_commands() {
+        assert!(is_windows_console_form(
+            "ripr check --root \"C:\\work space\" --mode draft"
+        ));
+        // An interior apostrophe inside double quotes is data, not a quote.
+        assert!(is_windows_console_form("ripr check --root \"it's here\""));
+        // A doubled interior quote stays inside the region.
+        assert!(is_windows_console_form("ripr check --root \"a\"\"b\""));
+        // Single-quoted segments: `$`/backtick fallback and printf escapes.
+        assert!(!is_windows_console_form("ripr check --root '$(whoami)'"));
+        assert!(!is_windows_console_form(
+            "ripr check --root \"$(printf '\\033')\"'run'\"$(printf '\\033')\""
+        ));
+        // An unbalanced region is not any paste-able form.
+        assert!(!is_windows_console_form("ripr check --root \"unbalanced"));
+    }
+
+    /// #8152 review: a trailing backslash run inside the closing double quote
+    /// is read by the native argv parser as escaping that quote (`"C:\repo\"`
+    /// → `C:\repo"` plus a swallowed remainder), in Git Bash, and in
+    /// PowerShell 5.1. Doubling the run before the closing quote round-trips
+    /// in all four consoles; interior separators stay single.
+    #[test]
+    fn shell_arg_windows_form_doubles_trailing_backslash_before_closing_quote() {
+        assert_eq!(shell_arg_for("C:\\repo\\", true), "\"C:\\repo\\\\\"");
+        assert_eq!(shell_arg_for("folder space\\", true), "\"folder space\\\\\"");
+        assert_eq!(shell_arg_for("C:\\tmp\\probe win space", true), "\"C:\\tmp\\probe win space\"");
+        assert_eq!(shell_arg_for("a\\b\\", true), "\"a\\b\\\\\"");
+        // A value ending in a quote is not a backslash case: quote doubling
+        // owns the final position and the closing quote still follows.
+        assert_eq!(shell_arg_for("ends with quote\"", true), "\"ends with quote\"\"\"");
     }
 
     /// Prove the encoding against a real bash, not against an assumed shape.
