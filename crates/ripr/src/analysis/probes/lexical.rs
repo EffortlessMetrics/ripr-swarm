@@ -618,9 +618,51 @@ fn is_local_accumulator_assignment(masked: &str) -> bool {
 /// accumulator (`total += compute(x);`). It replaces a removed
 /// `call_deletion` line (`total = compute(x);`) without leaving that call
 /// deletable, so diff pairing treats the two as the same edit.
-pub(crate) fn is_accumulator_call_update(text: &str) -> bool {
+fn is_accumulator_call_update(text: &str) -> bool {
     let text = text.trim_start();
     has_call_shape(text) && is_local_accumulator_assignment(&mask_comments_and_strings(text))
+}
+
+/// Names called on a line, `compute` in `compute(x)`, `push_str` in
+/// `out.push_str(..)`, `format!` in `format!(..)`; strings and comments are
+/// masked first so their text names nothing.
+fn called_names(text: &str) -> Vec<String> {
+    let masked = mask_comments_and_strings(text);
+    let mut names = Vec::new();
+    for (open, _) in masked.match_indices('(') {
+        let before = masked[..open].trim_end();
+        let (before, bang) = match before.strip_suffix('!') {
+            Some(rest) => (rest, "!"),
+            None => (before, ""),
+        };
+        let name: String = before
+            .chars()
+            .rev()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        if !name.is_empty() && !name.starts_with(|ch: char| ch.is_ascii_digit()) {
+            names.push(format!("{name}{bang}"));
+        }
+    }
+    names
+}
+
+/// Whether `added` rewrites the removed call line `removed` as an
+/// accumulator update of the same call (`total = compute(x);` to
+/// `total += compute(x);`). A different callee (`notify(total);` to
+/// `total += compute(x);`) is a real deletion of the removed call and does
+/// not pair (#8027).
+pub(crate) fn is_accumulator_rewrite_of(removed: &str, added: &str) -> bool {
+    if !is_accumulator_call_update(added) {
+        return false;
+    }
+    let removed_names = called_names(removed);
+    called_names(added)
+        .iter()
+        .any(|name| removed_names.contains(name))
 }
 
 fn starts_with_binding_or_control(text: &str) -> bool {

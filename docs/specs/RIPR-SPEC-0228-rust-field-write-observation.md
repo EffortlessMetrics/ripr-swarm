@@ -94,11 +94,16 @@ call is not a mutant of the line; the lexical fallback no longer reads them as
 `grid-loop-table`). Only a line holding one statement qualifies
 (`count += 1; notify(x);` keeps its `call_deletion`). Diff pairing treats a
 removed `call_deletion` line rewritten as such an update (`total =
-compute(x);` to `total += compute(x);`) as the same edit, so the removed line
-mints no base-side `call_deletion` (`analysis/probes/diff.rs`,
-`has_matching_added_line`). Field, deref and index targets (`self.total += f(x)`,
-`*out += f(x)`, `v[i] += f(x)`) and a non-self-referential `total =
-compute(x)` keep their current families. Crediting an accumulator observed
+compute(x);` to `total += compute(x);`) as the same edit when both lines call
+the same name, so the removed line mints no base-side `call_deletion`
+(`analysis/probes/diff.rs`, `has_matching_added_line`). A different callee
+(`notify(total);` to `total += compute(x);`) is a real deletion of the removed
+call and keeps its `call_deletion`. Field, deref and index targets
+(`self.total += f(x)`, `*out += f(x)`, `v[i] += f(x)`) and a
+non-self-referential `total = compute(x)` keep their current families; the
+latter also consumes the call's value, but this rule covers only updates that
+accumulate into their target and leaves plain assignments to the existing
+`call_deletion` handling. Crediting an accumulator observed
 through an exact owner-return assertion needs loop-count reasoning
 RIPR-SPEC-0197 leaves out, and stays future work.
 
