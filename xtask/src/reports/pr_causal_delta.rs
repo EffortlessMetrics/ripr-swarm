@@ -30,8 +30,9 @@ pub(crate) fn write_canonical_delta(
     changed_files: &[String],
     root: &str,
     binary: Result<&str, &str>,
+    child_env: &[(&str, &str)],
 ) -> Result<(), String> {
-    let artifact = build_canonical_delta(repo, base, head, changed_files, root, binary);
+    let artifact = build_canonical_delta(repo, base, head, changed_files, root, binary, child_env);
     let rendered = serde_json::to_string_pretty(&artifact)
         .map_err(|err| format!("serialize canonical delta: {err}"))?;
     timed_phase("canonical_write", || {
@@ -52,6 +53,7 @@ fn build_canonical_delta(
     changed_files: &[String],
     root: &str,
     binary: Result<&str, &str>,
+    child_env: &[(&str, &str)],
 ) -> Value {
     let changed_files = changed_files
         .iter()
@@ -60,8 +62,8 @@ fn build_canonical_delta(
 
     let (base_snapshot, head_snapshot) = match binary {
         Ok(binary) => (
-            observed_snapshot(repo, base, "base", binary, root),
-            observed_snapshot(repo, head, "head", binary, root),
+            observed_snapshot(repo, base, "base", binary, root, child_env),
+            observed_snapshot(repo, head, "head", binary, root, child_env),
         ),
         Err(err) => (
             Snapshot::unavailable(format!("RIPR binary unavailable: {err}")),
@@ -84,9 +86,10 @@ fn observed_snapshot(
     label: &str,
     binary: &str,
     root: &str,
+    child_env: &[(&str, &str)],
 ) -> Snapshot {
     let start = std::time::Instant::now();
-    let snapshot = materialize_snapshot(repo, revision, label, binary, root);
+    let snapshot = materialize_snapshot(repo, revision, label, binary, root, child_env);
     eprintln!(
         "{}",
         json!({"pr_evidence_phase": format!("canonical_{label}_snapshot"),
@@ -104,6 +107,7 @@ fn materialize_snapshot(
     label: &str,
     binary: &str,
     root: &str,
+    child_env: &[(&str, &str)],
 ) -> Snapshot {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -142,14 +146,16 @@ fn materialize_snapshot(
             "--timeout-ms".to_string(),
             SNAPSHOT_TIMEOUT.as_millis().to_string(),
         ];
+        let mut snapshot_env = child_env.to_vec();
+        snapshot_env.extend([
+            ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
+            ("RIPR_PILOT_SEAM_BUDGET", "0"),
+        ]);
         timed_phase(&format!("canonical_{label}_analysis"), || {
             let output = capture_output_with_timeout(
                 binary,
                 &args,
-                &[
-                    ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
-                    ("RIPR_PILOT_SEAM_BUDGET", "0"),
-                ],
+                &snapshot_env,
                 SNAPSHOT_TIMEOUT,
                 "canonical repo exposure snapshot",
             )?;
