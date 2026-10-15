@@ -21,7 +21,8 @@ if expected_payload:
 def digest(root):
     # Independent contract formula; never ask run.py to supply its own oracle.
     entries = sorted((p.relative_to(root).as_posix(), sha(p.read_bytes()))
-                     for p in root.rglob('*') if p.is_file())
+                     for p in root.rglob('*') if p.is_file()
+                     and not {'target', '.git'}.intersection(p.parent.relative_to(root).parts))
     return sha('\n'.join(name + '=' + value for name, value in entries).encode())
 
 retained = os.environ.get('RIPR_PORTABILITY_PROOF_ROOT')
