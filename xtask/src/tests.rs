@@ -48763,6 +48763,23 @@ fn write_packaging_test_vsix(
     Ok(())
 }
 
+fn write_symlink_license_txt_vsix(path: &std::path::Path, body: &str) -> Result<(), String> {
+    let file = fs::File::create(path)
+        .map_err(|err| format!("failed to create {}: {err}", path.display()))?;
+    let mut writer = zip::ZipWriter::new(file);
+    writer
+        .add_symlink(
+            "extension/LICENSE.txt",
+            body,
+            zip::write::SimpleFileOptions::default(),
+        )
+        .map_err(|err| format!("failed to stage symlink LICENSE.txt: {err}"))?;
+    writer
+        .finish()
+        .map_err(|err| format!("failed to seal {}: {err}", path.display()))?;
+    Ok(())
+}
+
 fn vsix_entry(name: &str, size: u64) -> super::VsixEntry {
     super::VsixEntry {
         name: name.to_string(),
@@ -49089,6 +49106,24 @@ fn vsix_license_notices_reject_mutated_notice_bytes() -> Result<(), String> {
         };
         assert!(error.contains("extension/LICENSE.txt"), "{error}");
         assert!(error.contains("LICENSE-APACHE"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_symlink_typed_license_txt() -> Result<(), String> {
+    with_temp_cwd("vsix-license-symlink", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("symlink.vsix");
+        let license_txt = packaged_license_txt(COMPLETE_MIT_NOTICE, COMPLETE_APACHE_NOTICE);
+        // Unix symlink member (mode 0120777) whose stored bytes are the
+        // complete notices. Payload match is not a regular-file member.
+        write_symlink_license_txt_vsix(&vsix, &license_txt)?;
+        let Err(error) = super::verify_packaged_vsix_license_notices(&vsix, &notices) else {
+            return Err("a LICENSE.txt member marked Unix symlink must be rejected".to_string());
+        };
+        assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        assert!(error.contains("not a regular file"), "{error}");
         Ok(())
     })
 }

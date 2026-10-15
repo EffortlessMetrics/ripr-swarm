@@ -1756,9 +1756,9 @@ fn read_vsix_license_txt_member(
             vsix_path.display()
         )
     })?;
-    if member.is_dir() {
+    if !member.is_file() {
         return Err(format!(
-            "packaged VSIX {} member {VSIX_LICENSE_TXT_ENTRY} is a directory, not a license notice",
+            "packaged VSIX {} member {VSIX_LICENSE_TXT_ENTRY} is not a regular file",
             vsix_path.display()
         ));
     }
