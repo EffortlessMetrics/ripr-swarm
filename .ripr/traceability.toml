@@ -15073,6 +15073,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_facts_read_field_construction_changes_only",
   "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_refused_readings_keep_their_parsed_subject",
   "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_pin_looks_through_a_test_local_identity_helper",
+  "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_pin_reads_a_test_body_object_const",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",

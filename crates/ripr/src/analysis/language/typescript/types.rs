@@ -490,6 +490,12 @@ pub(crate) struct TypeScriptAssertion {
     /// other `exact_value` matchers stay false: sharing a kind is not
     /// identity. A refused or non-strict custom matcher stays false.
     pub(crate) compares_reference_identity: bool,
+    /// RIPR-SPEC-0250 rule 1 (amended 2026-10-15): the flat literal object a
+    /// `toMatchObject(<name>)` argument stands for, when `<name>` is a
+    /// test-body `const` the body names only in its binding and that
+    /// argument ([`match_object_consts`]). Read only by
+    /// `ts_match_object_facts`; `expected_value_or_variant` stays `None`.
+    pub(crate) expected_object_const: Option<String>,
 }
 
 impl TypeScriptAssertion {
