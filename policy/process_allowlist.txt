@@ -155,7 +155,7 @@ tools/repo-policy/src/python_wheel.rs|Command::new|1|wheel-applicability|#4987: 
 tools/repo-policy/src/python_wheel.rs|use std::process::Command|1|wheel-applicability|#4987: Command and null stdin for the same read-only Git probes.
 tools/repo-policy/tests/python_wheel_workflow.rs|Command::new|1|wheel-applicability-proof|#4987: GNU timeout bounds real Git histories, production policy/selector shell and actual workflow predicates in private fixtures; no wheel builds, network or publication.
 tools/repo-policy/tests/python_wheel_workflow.rs|use std::process::Command|1|wheel-applicability-proof|#4987: imports for the same bounded fixture command helper.
-tools/repo-policy/src/coverage_diagnostics.rs|Command::new|2|coverage/4978|One fixed-argv local tool launch and one fixed kill-by-owned-process-group launch enforce a 30-second absolute group/pipe deadline; capped streams, no shell, network or environment dump.
+tools/repo-policy/src/coverage_diagnostics/linux.rs|Command::new|2|coverage/4978|One fixed-argv local tool launch and one fixed kill-by-owned-process-group launch enforce a 30-second absolute group/pipe deadline; capped streams, no shell, network or environment dump. (#7624: file moved under the Linux-gated submodule, same two spawn sites)
 
 crates/ripr/src/analysis/workspace/assertion_dependency.rs|Command::new|1|bounded-anyhow-identity|#4478: read-only full offline locked Cargo metadata, owned process containment, 120-second deadline and 8-MiB output cap; refuses effective source replacement and performs no build or network operation.
 
