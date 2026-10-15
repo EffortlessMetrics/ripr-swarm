@@ -24,6 +24,10 @@ the integration test itself does not invoke a compiler. Remaining cases check
 syntactic binding hints or refusals, without resolving external attribute macros
 or evaluating `cfg_attr` predicates.
 
+The Rust-only integration target is enabled only with `lang-rust`. Its scratch
+cleanup guard is installed after exclusive root creation; a collision control
+keeps a preexisting sentinel and blocking `src` file intact after refusal.
+
 ## When
 
 ```bash

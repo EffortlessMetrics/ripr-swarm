@@ -1,3 +1,4 @@
+#![cfg(feature = "lang-rust")]
 //! Literal/comment contents cannot create or hide a Rust FFI binding attribute.
 
 use ripr::domain::StaticLimitKind;
@@ -18,14 +19,25 @@ impl Fixture {
     }
 
     fn with_input(source: &str, diff: &str) -> Result<Self, String> {
+        Self::with_root(Self::next_root(), source, diff)
+    }
+
+    fn next_root() -> PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
+        std::env::temp_dir().join(format!(
             "ripr-ffi-attribute-literals-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        ))
+    }
+
+    fn with_root(root: PathBuf, source: &str, diff: &str) -> Result<Self, String> {
+        std::fs::create_dir_all(std::env::temp_dir()).map_err(|error| error.to_string())?;
+        // Only successful exclusive creation grants the cleanup guard ownership.
+        std::fs::create_dir(&root)
+            .map_err(|error| format!("create fixture root {}: {error}", root.display()))?;
         let fixture = Self(root);
-        std::fs::create_dir_all(fixture.0.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir(fixture.0.join("src")).map_err(|e| e.to_string())?;
         std::fs::write(fixture.0.join("Cargo.toml"), MANIFEST).map_err(|e| e.to_string())?;
         std::fs::write(fixture.0.join("src/lib.rs"), source).map_err(|e| e.to_string())?;
         std::fs::write(fixture.0.join("diff.patch"), diff).map_err(|e| e.to_string())?;
@@ -63,6 +75,33 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+
+#[test]
+fn collision_preserves_preexisting_root_and_sentinel() -> Result<(), String> {
+    std::fs::create_dir_all(std::env::temp_dir()).map_err(|error| error.to_string())?;
+    let root = Fixture::next_root();
+    std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+    let owner = Fixture(root);
+    let sentinel = owner.0.join("sentinel");
+    std::fs::write(&sentinel, b"preexisting owner").map_err(|error| error.to_string())?;
+    std::fs::write(owner.0.join("src"), b"preexisting file").map_err(|error| error.to_string())?;
+
+    let attempt = Fixture::with_root(owner.0.clone(), SOURCE, DIFF);
+    assert!(
+        attempt.is_err(),
+        "a collision must refuse the existing root"
+    );
+    assert!(sentinel.exists(), "failed setup deleted a preexisting root");
+    assert_eq!(
+        std::fs::read(&sentinel).map_err(|error| error.to_string())?,
+        b"preexisting owner"
+    );
+    assert_eq!(
+        std::fs::read(owner.0.join("src")).map_err(|error| error.to_string())?,
+        b"preexisting file"
+    );
+    Ok(())
 }
 
 #[test]
