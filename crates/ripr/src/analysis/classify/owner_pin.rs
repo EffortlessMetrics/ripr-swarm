@@ -8019,7 +8019,8 @@ pub(in crate::analysis::classify) fn expected_reaches_owner(
 
 /// RIPR-SPEC-0035, reveal side: whether the expected `operand` of
 /// `assertion` in `test` holds a value the changed `owner` computed, through
-/// a test `let` binding or a workspace constant, in any call shape.
+/// a readable test `let` binding or a workspace constant, in any call
+/// shape. Only positive evidence counts: an unreadable binding keeps credit.
 pub(in crate::analysis) fn expected_operand_holds_owner_value(
     index: &RustIndex,
     test: &TestSummary,
@@ -8027,7 +8028,10 @@ pub(in crate::analysis) fn expected_operand_holds_owner_value(
     operand: &str,
     owner: &FunctionSummary,
 ) -> bool {
-    expected_reaches_owner(test, assertion, operand, &owner.name)
+    let masked = mask_comments_and_strings(operand);
+    contains_as_whole_word(&masked, &owner.name)
+        || (owner_named_outside(test, assertion, &owner.name)
+            && binding_calls_owner(test, operand, &owner.name, false))
         || expected_constant_reaches_owner(index, test, operand, &owner.name, None, &owner.file)
 }
 
@@ -8308,6 +8312,14 @@ fn owner_named_outside(test: &TestSummary, assertion: &str, name: &str) -> bool 
 /// `let a = f(2); let b = a; assert_eq!(f(2), b);` compare the owner with
 /// itself).
 fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) -> bool {
+    binding_calls_owner(test, expected, name, true)
+}
+
+/// [`expected_binding_calls_owner`]; `fail_closed` decides an unreadable
+/// binding (a pattern, a loop variable, a shadowed name). The pin refuses
+/// it; the reveal side, which may only weaken on positive evidence that
+/// the value came from the owner, does not.
+fn binding_calls_owner(test: &TestSummary, expected: &str, name: &str, fail_closed: bool) -> bool {
     let masked_body = mask_comments_and_strings(&test.body);
     let mut seen = BTreeSet::new();
     let mut pending = vec![mask_comments_and_strings(expected)];
@@ -8324,7 +8336,10 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
             // A word the scan refuses only because a `let` annotation
             // names it (`let w: Window = ..`) is a type, not a binding.
             let Some(bindings) = receiver_let_bindings(test, word) else {
-                if binds_outside_let(&masked_body, word) || let_patterns_bind(&masked_body, word) {
+                if fail_closed
+                    && (binds_outside_let(&masked_body, word)
+                        || let_patterns_bind(&masked_body, word))
+                {
                     return true;
                 }
                 continue;
