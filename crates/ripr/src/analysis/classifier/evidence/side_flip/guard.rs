@@ -125,8 +125,8 @@ fn plain_related_tests<'c>(
 /// The expressions of a plain `#[test]`'s top-level expression statements
 /// and tail, when every one of them runs: the same test gates as rule 3b's
 /// `asserts_owner_err` (no `return`, closure, nested item or non-assertion
-/// macro anywhere in the body, no binding of the owner's name, no attribute
-/// on the statement).
+/// macro anywhere in the body, no binding of the owner's name), and no
+/// attribute anywhere in the body.
 fn plain_test_statements(function: &ast::Fn, owner: &str) -> Option<Vec<ast::Expr>> {
     let attributes = function.attrs().collect::<Vec<_>>();
     let [attribute] = attributes.as_slice() else {
@@ -142,7 +142,10 @@ fn plain_test_statements(function: &ast::Fn, owner: &str) -> Option<Vec<ast::Exp
     let body = function.body()?;
     for node in body.syntax().descendants() {
         // A macro call parses as an item too; the check below reads it.
+        // An attribute anywhere (`#[cfg(any())]` on the tail assertion) may
+        // compile an assertion out.
         if ast::ReturnExpr::can_cast(node.kind())
+            || ast::Attr::can_cast(node.kind())
             || ast::ClosureExpr::can_cast(node.kind())
             || (ast::Item::can_cast(node.kind()) && !ast::MacroCall::can_cast(node.kind()))
         {
@@ -752,6 +755,9 @@ mod tests {
             // A nested item can rebind the owner's name.
             "use other::check;\nassert!(check(256).is_err());\nassert!(check(255).is_ok());",
             "return;\nassert!(check(256).is_err());\nassert!(check(255).is_ok());",
+            // An attribute may compile a side out, on a statement or the tail.
+            "assert!(check(256).is_err());\n#[cfg(any())]\nassert!(check(255).is_ok());",
+            "assert!(check(256).is_err());\n#[cfg(any())]\nassert!(check(255).is_ok())",
         ] {
             assert_eq!(both_sides(body)?, None, "{body}");
         }

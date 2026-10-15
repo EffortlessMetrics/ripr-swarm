@@ -175,8 +175,8 @@ edge itself rather than one input on it:
   tail hold no `return`, `?`, `Err`, closure, macro, nested item, labeled
   or `async` block. Every call reaches the guard, and the untaken guard can
   only return `Ok`.
-- One plain `#[test]` (rule 3b decision 4's test gates) holds, as top-level
-  statements or the tail, an `Err`-side oracle on a call whose literal argument for
+- One plain `#[test]` (rule 3b decision 4's test gates, and no attribute
+  anywhere in its body) holds, as top-level statements or the tail, an `Err`-side oracle on a call whose literal argument for
   `<p>` the guard takes and an `Ok`-side oracle on a call whose argument is
   the adjacent integer the guard does not take. `Ok`-side oracles are
   `is_ok()`, `!is_err()`, `matches!(.., Ok(_))` and an uncompared
