@@ -3,10 +3,11 @@
 //! Shared assertion classification lives in `analysis::extract::oracles`.
 //! This module owns only the adapter-local post-classification limitations:
 //! unresolved assertion-like macros, wrapper-error binding, and FFI/cross-
-//! language oracle visibility. It consumes the lexical mask from `probes`
-//! rather than duplicating it.
+//! language oracle visibility. It reuses shared lexical masks rather than
+//! duplicating their scanners.
 
 use super::probes::mask_rust_comments_and_strings;
+use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, RustIndex};
 use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind, StopReason};
 
@@ -51,12 +52,19 @@ const FFI_ATTR_MARKERS: &[&str] = &[
 /// `#[unsafe(no_mangle)]` (Rust 2024) and `#[cfg_attr(pred, attr, ...)]`,
 /// whose predicate is skipped.
 pub(super) fn attr_is_ffi_binding(attr: &str) -> bool {
-    let body = attr.trim();
-    let body = body
-        .strip_prefix("#![")
-        .or_else(|| body.strip_prefix("#["))
-        .and_then(|rest| rest.strip_suffix(']'))
-        .unwrap_or(body);
+    // Mask before reading paths as well as argument boundaries: comment text
+    // can contain a marker or separate real path and wrapper tokens.
+    let masked = mask_comments_and_strings(attr);
+    let body = masked.trim();
+    let body = if let Some(rest) = body.strip_prefix('#') {
+        let rest = rest.trim_start();
+        let rest = rest.strip_prefix('!').unwrap_or(rest).trim_start();
+        rest.strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+            .unwrap_or(body)
+    } else {
+        body
+    };
     attr_body_is_ffi_binding(body)
 }
 
@@ -64,11 +72,11 @@ fn attr_body_is_ffi_binding(body: &str) -> bool {
     let body = body.trim();
     let path_end = body.find(['(', '=', '[', '{']).unwrap_or(body.len());
     let path = body[..path_end].trim();
-    let segments: Vec<&str> = path.split("::").map(str::trim).collect();
-    if segments
-        .iter()
-        .any(|segment| FFI_ATTR_MARKERS.contains(&segment.to_lowercase().as_str()))
-    {
+    if path.split("::").any(|segment| {
+        let segment = segment.trim();
+        let name = segment.strip_prefix("r#").unwrap_or(segment);
+        FFI_ATTR_MARKERS.contains(&name)
+    }) {
         return true;
     }
     let args = body[path_end..]
@@ -79,8 +87,10 @@ fn attr_body_is_ffi_binding(body: &str) -> bool {
         return false;
     };
     match path {
+        // `unsafe` is special attribute syntax. `r#unsafe` instead names an
+        // ordinary attribute and cannot stand in for this keyword wrapper.
         "unsafe" => attr_body_is_ffi_binding(args),
-        "cfg_attr" => split_top_level_args(args)
+        "cfg_attr" | "r#cfg_attr" => split_top_level_args(args)
             .into_iter()
             .skip(1)
             .any(attr_body_is_ffi_binding),
@@ -88,15 +98,13 @@ fn attr_body_is_ffi_binding(body: &str) -> bool {
     }
 }
 
-/// Split attribute arguments on commas outside nested delimiters, comments
-/// and string literals, including raw strings. Masking preserves byte offsets
-/// so each returned argument still contains its original attribute syntax.
+/// Split already-masked attribute arguments on commas outside nested
+/// delimiters. Comments and literals were removed at the attribute entry point.
 fn split_top_level_args(args: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut depth = 0usize;
     let mut start = 0;
-    let masked = mask_rust_comments_and_strings(args);
-    for (index, ch) in masked.char_indices() {
+    for (index, ch) in args.char_indices() {
         match ch {
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth = depth.saturating_sub(1),

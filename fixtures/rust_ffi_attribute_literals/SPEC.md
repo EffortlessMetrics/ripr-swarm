@@ -13,6 +13,15 @@ quote and opening parenthesis in its contents. `commented` has the binding
 name inside a block comment. All three sources compile on Rust 2024 without
 dependencies, and no Rust tests exist.
 
+`attribute-cases.json` adds 33 parser-valid controls for raw strings, predicate
+splitting, nested and line comments, wrapper trivia, raw identifiers and
+case-sensitive marker names. Each case creates one changed predicate and checks
+the public finding's limitation. The `compile` flag marks 26 standalone cases
+whose compiler symbol identities were independently checked with Rust 1.95;
+the integration test itself does not invoke a compiler. Remaining cases check
+syntactic binding hints or refusals, without resolving external attribute macros
+or evaluating `cfg_attr` predicates.
+
 ## When
 
 ```bash
@@ -30,8 +39,16 @@ All three findings remain `no_static_path`. Only `exported` carries
 external-language oracle. The ordinary and commented functions retain
 same-language test guidance.
 
+Every matrix source must parse without errors and produce exactly one
+`no_static_path` finding before its literal expected limitation is checked.
+Raw identifiers keep their case-sensitive Rust identity. `r#cfg_attr` and
+`unsafe(r#no_mangle)` retain the binding, while `r#unsafe` names an ordinary
+attribute rather than the special unsafe-attribute keyword wrapper.
+
 ## Must Not
 
 - Invent a binding from raw-string or comment contents.
 - Lose a real attribute because raw-string contents contain quotes or delimiters.
 - Promote any finding to exposed or infer that an external test exists.
+- Recognize a path segment inside a comment, lowercase an unrelated attribute
+  name, or treat an unknown wrapper's arguments as binding attributes.

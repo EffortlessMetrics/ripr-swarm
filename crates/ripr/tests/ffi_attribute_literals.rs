@@ -14,6 +14,10 @@ struct Fixture(PathBuf);
 
 impl Fixture {
     fn create() -> Result<Self, String> {
+        Self::with_input(SOURCE, DIFF)
+    }
+
+    fn with_input(source: &str, diff: &str) -> Result<Self, String> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-ffi-attribute-literals-{}-{}",
@@ -23,12 +27,16 @@ impl Fixture {
         let fixture = Self(root);
         std::fs::create_dir_all(fixture.0.join("src")).map_err(|e| e.to_string())?;
         std::fs::write(fixture.0.join("Cargo.toml"), MANIFEST).map_err(|e| e.to_string())?;
-        std::fs::write(fixture.0.join("src/lib.rs"), SOURCE).map_err(|e| e.to_string())?;
-        std::fs::write(fixture.0.join("diff.patch"), DIFF).map_err(|e| e.to_string())?;
+        std::fs::write(fixture.0.join("src/lib.rs"), source).map_err(|e| e.to_string())?;
+        std::fs::write(fixture.0.join("diff.patch"), diff).map_err(|e| e.to_string())?;
         Ok(fixture)
     }
 
     fn finding(&self, line: usize) -> Result<Finding, String> {
+        self.finding_among(line, 3)
+    }
+
+    fn finding_among(&self, line: usize, count: usize) -> Result<Finding, String> {
         let output = check_workspace(CheckInput {
             root: self.0.clone(),
             diff_file: Some(self.0.join("diff.patch")),
@@ -36,7 +44,7 @@ impl Fixture {
             format: OutputFormat::Json,
             ..CheckInput::default()
         })?;
-        assert_eq!(output.findings.len(), 3, "three changed predicates");
+        assert_eq!(output.findings.len(), count, "changed predicate count");
         let finding = output
             .findings
             .into_iter()
@@ -92,5 +100,63 @@ fn raw_doc_string_cannot_hide_a_real_binding_attribute() -> Result<(), String> {
 fn comment_cannot_invent_a_binding_attribute() -> Result<(), String> {
     let finding = Fixture::create()?.finding(13)?;
     assert_eq!(finding.static_limit_kind, None);
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct AttributeCase {
+    name: String,
+    attribute: String,
+    ffi: bool,
+}
+
+#[test]
+fn attribute_paths_ignore_trivia_and_normalize_raw_identifiers() -> Result<(), String> {
+    let cases: Vec<AttributeCase> = serde_json::from_str(include_str!(
+        "../../../fixtures/rust_ffi_attribute_literals/attribute-cases.json"
+    ))
+    .map_err(|error| error.to_string())?;
+    assert_eq!(cases.len(), 33, "nonempty retained category matrix");
+    let mut failures = Vec::new();
+    for case in cases {
+        let source = format!(
+            "{}\npub fn analyzed(amount: u64) -> u64 {{\n    if amount >= 100 {{ 5 }} else {{ 0 }}\n}}\n",
+            case.attribute
+        );
+        let parsed = ra_ap_syntax::SourceFile::parse(&source, ra_ap_syntax::Edition::CURRENT);
+        assert!(
+            parsed.errors().is_empty(),
+            "{}: {:?}",
+            case.name,
+            parsed.errors()
+        );
+        let lines = source.lines().count();
+        let line = case.attribute.lines().count() + 2;
+        let mut diff = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{lines} +1,{lines} @@\n"
+        );
+        for text in source.lines() {
+            if text.contains("if amount >= 100") {
+                diff.push_str(&format!("-{}\n+{text}\n", text.replace(">=", ">")));
+            } else {
+                diff.push_str(&format!(" {text}\n"));
+            }
+        }
+        let finding = Fixture::with_input(&source, &diff)?.finding_among(line, 1)?;
+        let expected = case
+            .ffi
+            .then_some(StaticLimitKind::CrossLanguageOracleVisibilityUnresolved);
+        println!(
+            "{}: expected {expected:?}, actual {:?}",
+            case.name, finding.static_limit_kind
+        );
+        if finding.static_limit_kind != expected {
+            failures.push(format!(
+                "{}: expected {expected:?}, got {:?}",
+                case.name, finding.static_limit_kind
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
     Ok(())
 }

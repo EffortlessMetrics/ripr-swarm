@@ -5844,6 +5844,7 @@ tests = [
   "crates/ripr/tests/ffi_attribute_literals.rs::raw_doc_string_cannot_invent_a_binding_attribute",
   "crates/ripr/tests/ffi_attribute_literals.rs::raw_doc_string_cannot_hide_a_real_binding_attribute",
   "crates/ripr/tests/ffi_attribute_literals.rs::comment_cannot_invent_a_binding_attribute",
+  "crates/ripr/tests/ffi_attribute_literals.rs::attribute_paths_ignore_trivia_and_normalize_raw_identifiers",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::changed_rust_blob_boundary_projects_ts_discriminated_cross_language_grip",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::changed_rust_blob_boundary_projects_missing_resizable_cross_language_grip",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::changed_rust_blob_boundary_with_unknown_bridge_stays_limitation",
