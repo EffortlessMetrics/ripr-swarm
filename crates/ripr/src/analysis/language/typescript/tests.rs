@@ -7105,6 +7105,73 @@ fn oracle_metadata_emitted_for_literal_expected_value() {
     );
 }
 
+/// oxc represents `-1` / `+1` as unary operators over a NumericLiteral, not as
+/// a negative NumericLiteral node. Those signed numeric literals are
+/// compile-time constants, so `toBe(-1)` must not be reported as a dynamic
+/// matcher argument (#7647).
+#[test]
+fn oracle_metadata_treats_signed_numeric_literal_as_literal_expected() {
+    for (source, expected) in [
+        ("expect(add(2, 3)).toBe(-1);", "-1"),
+        ("expect(add(2, 3)).toBe(+1);", "+1"),
+    ] {
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(source),
+            None,
+        );
+        assert_eq!(assertions.len(), 1, "{source}");
+        let assertion = &assertions[0];
+        assert_eq!(
+            assertion.expected_value_or_variant.as_deref(),
+            Some(expected),
+            "{source}"
+        );
+        assert!(
+            !assertion.has_dynamic_matcher_arg,
+            "{source}: {assertion:?}"
+        );
+        assert_eq!(
+            assertion.oracle_confidence,
+            OracleConfidence::High,
+            "{source}"
+        );
+    }
+}
+
+/// Unary forms that are not a sign applied directly to a numeric literal stay
+/// dynamic: a negated identifier, a negated call, and boolean not (#7647).
+#[test]
+fn oracle_metadata_keeps_non_literal_unary_matcher_args_dynamic() {
+    for source in [
+        "expect(add(2, 3)).toBe(-x);",
+        "expect(add(2, 3)).toBe(-f());",
+        "expect(flag()).toBe(!true);",
+    ] {
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(source),
+            None,
+        );
+        assert_eq!(assertions.len(), 1, "{source}");
+        let assertion = &assertions[0];
+        assert!(assertion.has_dynamic_matcher_arg, "{source}: {assertion:?}");
+        assert!(
+            assertion.expected_value_or_variant.is_none(),
+            "{source}: {assertion:?}"
+        );
+        assert_eq!(
+            assertion.oracle_confidence,
+            OracleConfidence::Medium,
+            "{source}"
+        );
+    }
+}
+
 /// Oracle metadata: `has_dynamic_matcher_arg = true` and no expected value when
 /// the matcher argument is a variable (non-literal dynamic expression).
 #[test]

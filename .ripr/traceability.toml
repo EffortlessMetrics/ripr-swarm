@@ -6821,6 +6821,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::named_limitation_oracle_based_not_emitted_for_heuristic_only_relation",
   # PR5: oracle metadata hardening
   "crates/ripr/src/analysis/language/typescript/tests.rs::oracle_metadata_emitted_for_literal_expected_value",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::oracle_metadata_treats_signed_numeric_literal_as_literal_expected",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::oracle_metadata_keeps_non_literal_unary_matcher_args_dynamic",
   "crates/ripr/src/analysis/language/typescript/tests.rs::oracle_metadata_has_dynamic_matcher_arg_for_variable_expected",
   "crates/ripr/src/analysis/language/typescript/tests.rs::oracle_metadata_has_dynamic_matcher_arg_for_call_expression",
   "crates/ripr/src/analysis/language/typescript/tests.rs::oracle_metadata_no_dynamic_flag_for_no_arg_matchers",
