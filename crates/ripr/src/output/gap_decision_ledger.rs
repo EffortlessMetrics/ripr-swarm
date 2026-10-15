@@ -1320,7 +1320,7 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
         string_at(card, &["suggested_location", "test_file"]).map(ToString::to_string);
     let suggested_test_name =
         string_at(card, &["suggested_location", "test_name"]).map(ToString::to_string);
-    let related_test_line = first_related_test_line(finding);
+    let related_test_line = python_selected_related_test_line(finding, card);
     let verify_command = string_at(card, &["verify", "command"])
         .filter(|command| command_display_is_nonblank(command))
         .map(ToString::to_string);
@@ -2556,6 +2556,29 @@ fn typescript_route_kind<'a>(repair_kind: &'a str, behavior_kind: &str) -> &'a s
     }
 }
 
+// The card and related rows use canonical check-JSON file/name spellings.
+// Placement may skip an earlier non-runnable candidate; row order is not
+// selected identity. Without one complete, unique match, omit precise location.
+fn python_selected_related_test_line(finding: &Value, card: &Value) -> Option<u64> {
+    let file = string_at(card, &["suggested_location", "test_file"])?;
+    let name = string_at(card, &["suggested_location", "test_name"])?;
+    if file.trim().is_empty() || name.trim().is_empty() {
+        return None;
+    }
+    let mut matches = finding
+        .get("related_tests")?
+        .as_array()?
+        .iter()
+        .filter(|test| {
+            string_at(test, &["file"]) == Some(file) && string_at(test, &["name"]) == Some(name)
+        });
+    let selected = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    u64_at(selected, &["line"]).filter(|line| *line > 0)
+}
+
 fn first_related_test_line(finding: &Value) -> Option<u64> {
     finding
         .get("related_tests")
@@ -3287,6 +3310,9 @@ fn md_inline(value: &str) -> String {
     }
     escaped
 }
+
+#[cfg(all(test, feature = "lang-python"))]
+mod python_identity_tests;
 
 #[cfg(test)]
 mod tests {
