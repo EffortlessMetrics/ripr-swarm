@@ -270,16 +270,6 @@ artifact_families = ["ripr-evidence"]
 description = "Advisory SARIF rendering and optional code-scanning upload."
 
 [[lane]]
-id = "droid-review"
-posture = "advisory"
-workflow = ".github/workflows/droid-review.yml"
-jobs = ["droid-review"]
-commands = []
-estimated_lem = 8
-artifact_families = []
-description = "Automated review and security scan signal."
-
-[[lane]]
 id = "droid-tag-response"
 posture = "advisory"
 workflow = ".github/workflows/droid.yml"

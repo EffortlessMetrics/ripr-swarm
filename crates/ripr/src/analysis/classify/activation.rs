@@ -3259,6 +3259,35 @@ pub(crate) fn signature_parameters(function: &FunctionSummary) -> Vec<String> {
         .collect()
 }
 
+/// The names of `function`'s call parameters in declaration order, the
+/// `self` receiver excluded, so index `i` is the method call's argument
+/// `i`. A parameter whose pattern binds more or fewer than one name
+/// (`(a, b): (u8, u8)`, `_: u8`) is an empty name.
+pub(crate) fn call_parameter_names(function: &FunctionSummary) -> Vec<String> {
+    let body = function.body.as_str();
+    let Some(arguments) =
+        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
+    else {
+        return Vec::new();
+    };
+    split_top_level_args(&arguments)
+        .iter()
+        .filter_map(|argument| {
+            let pattern = top_level_pattern(argument).trim();
+            let receiver = pattern.is_empty()
+                || pattern.strip_prefix("mut ").unwrap_or(pattern).trim() == "self";
+            if receiver {
+                return None;
+            }
+            let mut names = pattern_bindings(pattern);
+            Some(match (names.pop(), names.is_empty()) {
+                (Some(name), true) => name,
+                _ => String::new(),
+            })
+        })
+        .collect()
+}
+
 /// The `(` opening the parameter list: the first one after `fn` that sits
 /// outside the generic parameter list (`fn apply<F: Fn(u8)>(f: F)`).
 fn parameter_list_open(body: &str) -> Option<usize> {
@@ -6156,6 +6185,26 @@ assert_eq!(input.amount, 100);"#
             expected_sinks: Vec::new(),
             required_oracles: Vec::new(),
         }
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: argument `i` of a method call is call
+    /// parameter `i`, receiver excluded.
+    #[test]
+    fn call_parameter_names_follow_argument_positions() {
+        let names = |signature: &str| call_parameter_names(&function(signature));
+        assert_eq!(
+            names("pub fn ship(&mut self, sku: &str, qty: u32) -> u32 { 0 }"),
+            ["sku", "qty"]
+        );
+        assert_eq!(names("fn f(self: Box<Self>, mut a: u8) {}"), ["a"]);
+        assert_eq!(names("fn f(mut self, a: u8) {}"), ["a"]);
+        assert_eq!(names("fn f<F: Fn(u8)>(f: F, b: u8) {}"), ["f", "b"]);
+        // A pattern binding two names or none keeps its position, unnamed.
+        assert_eq!(
+            names("fn f((a, b): (u8, u8), _: u8, c: u8) {}"),
+            ["", "", "c"]
+        );
+        assert_eq!(names("fn f(a: HashMap<String, u8>, c: u8) {}"), ["a", "c"]);
     }
 
     fn function(body: &str) -> FunctionSummary {

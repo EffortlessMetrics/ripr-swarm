@@ -11252,6 +11252,9 @@ tests = [
   "crates/ripr/src/analysis/extract/oracles/scan.rs::asserted_err_arm_tests::mirrored_operands_braced_bodies_and_matches_form_also_pin",
   "crates/ripr/src/analysis/extract/oracles/scan.rs::asserted_err_arm_tests::quiet_or_guarded_ok_arms_never_pin",
   "crates/ripr/src/analysis/extract/oracles/scan.rs::asserted_err_arm_tests::catch_all_guards_and_loose_err_bodies_never_pin",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::accepted_err_arm_tests::quiet_variant_arm_beside_loud_arms_pins_the_variant",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::accepted_err_arm_tests::arm_order_catch_all_and_braced_bodies_also_pin",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::accepted_err_arm_tests::a_second_quiet_arm_or_a_loose_accept_arm_never_pins",
   "crates/ripr/src/analysis/syntax/ra.rs::guard_pipeline_debug_tests::parser_path_credits_guarded_routing_match_in_test_facts",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::guarded_result_match_on_owner_confirms_observation_without_token_overlap",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::guarded_result_match_on_wrong_owner_stays_unverified",
@@ -14435,6 +14438,8 @@ tests = [
   "crates/ripr/src/analysis/probes/lexical.rs::tests::let_binding_type_annotations_are_not_field_construction",
   "crates/ripr/src/analysis/probes/lexical.rs::tests::struct_literal_fields_keep_field_construction_beside_let_bindings",
   "crates/ripr/src/analysis/probes/diff.rs::tests::reordered_replacement_does_not_repeat_the_removed_static_unknown",
+  "crates/ripr/src/analysis/probes/lexical.rs::tests::a_local_accumulator_update_is_not_a_call_deletion",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::an_accumulator_rewrite_of_a_call_leaves_no_removed_call_deletion",
 ]
 fixtures = []
 code = [
