@@ -79,6 +79,22 @@ beyond this status slice raises the SDK migration trigger rather than expanding
 a parallel framework. LSP and MCP remain peers over shared RIPR authority; one
 transport must not invoke or reinterpret the other.
 
+## Alternatives Considered
+
+The Context and migration record describe two stages, rather than one permanent
+choice of transport implementation:
+
+- Adopt the official SDK in the original slice: lockfile regeneration and SDK
+  conformance would have dominated that slice. It initially used existing Tokio
+  and Serde dependencies; the SDK migration below subsequently replaced that wire
+  implementation and owns the successor's dispatch and lifecycle.
+- Keep expanding the handcrafted protocol implementation: the original
+  Consequences set protocol growth as the SDK migration trigger, preserving RIPR's
+  bounded framing and shared authority instead of growing a parallel framework.
+- Move product decisions into MCP or route it through LSP: both transports remain
+  peers over shared producers. The later slices below extend projections without
+  granting source-edit, verification-execution, mutation, or provider authority.
+
 ## SDK migration (#3088)
 
 The status-only successor uses pinned official `rmcp 3.5.0` with default
