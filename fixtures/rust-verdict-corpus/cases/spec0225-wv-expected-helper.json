@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "field_construction_whole_value",
   "test_shape": "expected_value_from_test_helper",
-  "hard_case": "Runtime truth is discriminated while RIPR-SPEC-0225 expects weakly_exposed. The spec withholds static credit for this shape, so ripr reads weakly_exposed and the report scores it false_actionable: a wrong actionable gap against discriminated truth.",
+  "hard_case": "Runtime truth is discriminated, but the expected value comes from a test helper rather than a literal in the assertion. Before RIPR-SPEC-0225 decision 7 ripr read weakly_exposed, a wrong actionable gap; decision 7 reads the helper's bare literal and credits retries.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

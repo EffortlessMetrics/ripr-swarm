@@ -372,7 +372,7 @@ fn committed_labels_are_valid_and_the_expected_report_meets_the_gate() -> Result
         .iter()
         .filter(|c| c.case_id.starts_with("spec0231-"))
         .collect();
-    assert_eq!(spec0231.len(), 35);
+    assert_eq!(spec0231.len(), 38);
     for case in &spec0231 {
         assert!(
             case.expected_oracle.is_some(),

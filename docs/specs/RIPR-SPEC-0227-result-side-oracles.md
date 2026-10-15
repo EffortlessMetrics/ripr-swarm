@@ -106,9 +106,12 @@ or `Err` (or `Some` or `None`):
   read directly off the call's result: only adapters that keep an `Ok` an
   `Ok` (`map_err`, `map`, `as_ref`, `.await`) may sit between them, so
   `check(x).and(Err(E::Other)).unwrap_err()` or `x.ok_or(E).unwrap_err()`
-  reads nothing. The statement must start with that call: a parenthesized
-  receiver such as `(check(x).and(Err(E::Other))).unwrap_err()` also reads
-  nothing;
+  reads nothing. A parenthesized group is read through, not skipped:
+  `(check(x)).unwrap_err()` and `(check(x).map_err(f)).unwrap_err()` read
+  the call, while `(check(x).and(Err(E::Other))).unwrap_err()` reads
+  nothing. The call is on a plain path (raw identifiers such as `r#check`
+  and a `::<..>` turbofish included); a group around a comparison, range,
+  jump or tuple, or nested more than eight deep, reads nothing;
 - `r.unwrap()` or `r.expect(..)` whose value is never compared;
 - `#[should_panic]` without `expected`, only when unwrapping the owner result
   with `unwrap()` or `expect()` is the sole possible panic source on the
@@ -263,6 +266,48 @@ rejected alternative. Any can be reversed later without touching the rest.
    std-library and user-code interpreter ripr does not have) or withhold
    these findings as `static_unknown` (rule 1 keeps the gap for a weak
    oracle ripr did read).
+5. **`.ok()` compared with `None`, table rows and check helpers (#7999).**
+   Adopted (2026-10-14). `assert_eq!(owner(..).ok(), None)`, in either
+   operand order and with or without a message, asserts the `Err` side
+   as `is_err()` does: `.ok()` is `None` exactly when the call returned
+   `Err`. Decision 4's other conditions are unchanged. No item other
+   than a `fn` (a `const`, `static`, `struct`, `as` rename, binding) in
+   the test file may carry the owner's name, the test body may not
+   import it, and the body's top-level statements and tail expression
+   are read. Assertion-macro operands in the test or helper may not hold
+   `return`, `break` or `continue` (in a helper, `?` either), since
+   `assert!({ return; true })` leaves before a later comparison. A
+   parameter or local binding in another function does not count as
+   rebinding the owner. A diverging call before the assertion
+   (`std::process::exit`) is not yet refused (#8015).
+   The `None` may also come from two places.
+   - A constant-row table, as #5328 defines it: a top-level unlabeled
+     `for` of the test whose own pattern binds `want`, whose body holds
+     `assert_eq!(owner(..).ok(), want)` as a direct statement with no
+     `break`, `continue` or block item (`use`, `const`, ..), and where
+     `want` is a column with a `None` cell. The loop runs that row, so its
+     call returned `Err`.
+   - A check helper: a top-level test call `helper(.., None, ..)` whose
+     arguments hold no call, macro, closure or block, to a unique free
+     function declared beside the test in the same module, without
+     attributes, generics, `async` or `self`. No other item, import,
+     rename or binding in the test file carries the helper's name. Every
+     helper parameter is a plain identifier, none is named like the
+     owner, and the call fills each one. The helper's body holds that
+     assertion as a direct statement, `want` is the parameter the call
+     fills with `None`, and the body has no `return`, `?`, `break`,
+     `continue`, closure, attribute, block item or non-assertion macro,
+     and binds neither the owner's name nor a parameter's.
+
+   All three forms read the text `None`, so a test file that can rebind
+   that name (a `const`, `static`, variant or other item named `None`, a
+   `use` ending in `None`, an `as None` rename, or a bare `None` pattern,
+   which fails closed) gets none of them.
+
+   `Some(..)` expectations, `assert_ne!`, a table with no `None` row, a
+   helper never called with `None` and any other shape keep decision 4's
+   reading. Rejected: read only literal `None` written in the test, which
+   leaves table-driven and helper-wrapped parse tests unproven.
 
 ## Required Evidence
 
@@ -336,6 +381,12 @@ Source: `check` as in Problem.
   `?` line, a wrapped or unexecuted assertion and a file-local `assert!`
   macro do not). Corpus:
   `spec0227-total-question-mark-is-err` and `grid-try-exact`.
+- Decision 5: `side_flip.rs::tests::ok_compared_with_none_observes_the_flip`
+  and `ok_compared_with_some_or_unrun_does_not_observe_the_flip`, and
+  `crates/ripr/tests/question_mark_side_flip.rs`
+  `ok_compared_with_none_exposes_a_sole_source_question_mark` and
+  `ok_compared_with_some_keeps_the_gap`. Corpus: `grid-try-table` and
+  `grid-try-helper`.
 - Decision 2, bare `unwrap_err()`:
   `classify.rs::tests::spec_0227_uncompared_unwrap_err_is_a_weak_broad_error_oracle`
   (the line scanner and the parser path read a discarded, `_`-bound or
@@ -343,14 +394,20 @@ Source: `check` as in Problem.
   assertion compares adds nothing, and a method on the error is not
   admitted). Corpus: `spec0227-check-variant-bare-unwrap-err` (example 7)
   reads `weakly_exposed` with that oracle.
-- Planned: oracle-scan unit tests for `should_panic`. A bare
-  `expect_err(..)` keeps its older `expect_` admission, which reads it as
-  `mock_expectation` / medium; #7604 tracks reading it as decision 2 does.
+- Decision 2, bare `expect_err(..)`:
+  `classify.rs::tests::spec_0227_uncompared_expect_err_reads_like_unwrap_err`
+  (both adapters read it exactly as `unwrap_err()`; `.expect_err(<message>)`
+  and `expect_` text inside strings or comments no longer satisfy the
+  `expect_` mock-expectation name sniff, while a mock's own `expect_*` call,
+  including mockall's zero-argument `expect_err()`, still does) (#7604).
+  A multi-line statement reads only on the parser path (#7955).
+- Planned: oracle-scan unit tests for `should_panic`.
 
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/extract/oracles/scan.rs` and `classify.rs`: read
-  bare `unwrap_err()` and `should_panic` as result-side oracles.
+  bare `unwrap_err()`, `expect_err(..)` and `should_panic` as result-side
+  oracles.
   `scan.rs::uncompared_unwrap_err` decides which `unwrap_err()` statements
   are uncompared; the line scanner and the parser path's method-call scan
   (`syntax/ra.rs`, beside `unwrap()` / `expect()` as `smoke_only`) both admit

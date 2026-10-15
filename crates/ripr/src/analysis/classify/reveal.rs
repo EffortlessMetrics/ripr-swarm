@@ -17,7 +17,7 @@ use super::reach::{invokes_opaque_macro, is_proximity_only};
 use super::rust_string_literals;
 use super::text::changed_error_variant;
 use crate::analysis::classifier::oracle_binds_sink_identity;
-use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::extract::{group_end, mask_comments_and_strings};
 use crate::domain::*;
 
 /// Shared oracle provenance at the reveal admission boundary. The same
@@ -58,6 +58,9 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// field (`builder_override::setter_plainly_writes`). Only a verified
     /// setter defeats a changed default.
     pub(in crate::analysis) setter_writes_field: &'a dyn Fn(&str, &str, &str) -> bool,
+    /// Exact projected mutable argument read through the shared collection observer.
+    pub(in crate::analysis) collection_argument_observed:
+        &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// RIPR-SPEC-0228 getter credit: whether the owner type's method
     /// `(type, getter, field)` returns that field path itself
     /// (`builder_override::getter_plainly_reads`). Only a verified getter
@@ -109,6 +112,7 @@ fn reveal_evidence(
             expected_reaches_owner: &|_, _| false,
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
+            collection_argument_observed: &|_, _| false,
             getter_reads_field: &|_, _, _| false,
             getter_reads_key: &|_, _, _| None,
             owner_argument_names: &[],
@@ -1402,6 +1406,7 @@ fn analyze_related_assertions(
         arm_selector: arm_selector.filter(|_| matches!(probe.family, ProbeFamily::MatchArm)),
         arm_inputs_readable: false,
         arm_pattern_pinned: false,
+        arm_lent_selected: false,
         owner_scoped_tokens: &owner_scoped_tokens,
         owner_shadowed: false,
         sibling_excluded: false,
@@ -1585,6 +1590,7 @@ fn analyze_related_assertions(
         // expected side, so such a test confirms nothing either. A test that
         // never names the owner (it reaches it only through a wrapper) passes
         // no input to read, so its tokens confirm as before selection (#6297).
+        let unfiltered_arm_selector = match_context.arm_selector;
         let arm_selector = match_context
             .arm_selector
             .filter(|selector| selector.mentioned_by(test));
@@ -1679,6 +1685,12 @@ fn analyze_related_assertions(
                 arm_pattern_pinned: match_context
                     .arm_selector
                     .is_some_and(|selector| selector.pattern_pin_selects(test, assertion)),
+                // A helper-lending test may never name the owner, so the
+                // selector the mention filter dropped still reads its loan;
+                // a table test names it and keeps the filtered selector's
+                // readability gate in `has_token_match`.
+                arm_lent_selected: unfiltered_arm_selector
+                    .is_some_and(|selector| selector.lent_selects(test, assertion)),
                 sibling_excluded,
                 ..match_context
             };
@@ -1722,7 +1734,9 @@ fn analyze_related_assertions(
                     )
                 });
             let field_collection_read = field_collection_read || keyed_read;
-            let matched = matched || field_collection_read;
+            let collection_argument_read =
+                (return_admission.collection_argument_observed)(test, assertion);
+            let matched = matched || field_collection_read || collection_argument_read;
             // RIPR-SPEC-0040 builder override (#6613): drop the field tokens
             // the test overwrote before this assertion reads them, and ask
             // again whether anything else confirms.
@@ -1800,6 +1814,7 @@ fn analyze_related_assertions(
                         || (confirms_observation
                             && (collection_observer_confirms(&probe.expression, assertion)
                                 || field_collection_read
+                                || collection_argument_read
                                 || (direct_collection_mutation_receiver(&probe.expression)
                                     .is_none()
                                     && ((has_token_match && field_write.is_none())
@@ -2029,7 +2044,7 @@ fn excludes_only_sibling_variant(
 /// when `rest` is not exactly one balanced group.
 fn macro_arguments(rest: &str) -> Vec<&str> {
     let rest = rest.trim();
-    if !rest.starts_with('(') || group_end(rest) != Some(rest.len() - 1) {
+    if !rest.starts_with('(') || group_end(rest, 0) != Some(rest.len() - 1) {
         return Vec::new();
     }
     let inner = &rest[1..rest.len() - 1];
@@ -2054,30 +2069,12 @@ fn macro_arguments(rest: &str) -> Vec<&str> {
     parts
 }
 
-/// The byte index of the delimiter closing the group `text` opens with.
-fn group_end(text: &str) -> Option<usize> {
-    let mut depth = 0_usize;
-    for (at, byte) in text.bytes().enumerate() {
-        match byte {
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(at);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
 /// Whether `operand` is exactly one bare call `owner(..)`: not a path
 /// segment, method, nested argument or larger expression.
 fn is_whole_owner_call(operand: &str, owner: &str) -> bool {
     operand.strip_prefix(owner).is_some_and(|rest| {
         let rest = rest.trim_start();
-        rest.starts_with('(') && group_end(rest) == Some(rest.len() - 1)
+        rest.starts_with('(') && group_end(rest, 0) == Some(rest.len() - 1)
     })
 }
 
@@ -2175,6 +2172,11 @@ struct RevealMatchContext<'a> {
     /// pattern pin (a verified local `assert_matches!`) whose value
     /// operand is a direct owner call selecting the arm.
     arm_pattern_pinned: bool,
+    /// RIPR-SPEC-0229 decisions 5 and 7: an input lent to the owner call in
+    /// the current assertion selects the arm, either from an eager call of
+    /// the check helper (#6482) it is borrowed from or from a row of the
+    /// constant-row table (#5328) it loops over.
+    arm_lent_selected: bool,
     /// Probe tokens that name a binding only the owner holds (a parameter
     /// or `let` local) on a value probe. They confirm observation only in
     /// an assertion that calls the owner; anywhere else the shared name is
@@ -3066,8 +3068,9 @@ fn assertion_matches_probe_detail_with_literals(
         arm_selector,
         arm_inputs_readable,
         arm_pattern_pinned,
+        arm_lent_selected,
         owner_scoped_tokens,
-        owner_shadowed: _,
+        owner_shadowed,
         sibling_excluded,
     } = *context;
     // #4748: use the same operand boundary as extraction, including token and
@@ -3180,7 +3183,18 @@ fn assertion_matches_probe_detail_with_literals(
     // (parameter names, the callee name, `Into::into`, a message string) is
     // token coincidence by construction, so observation stays unverified and
     // the seam cannot read `exposed` from lexical heuristics.
-    let has_token_match = if let Some(selector) = arm_selector
+    let has_token_match = if arm_lent_selected && matches!(family, ProbeFamily::MatchArm) {
+        // RIPR-SPEC-0229 decisions 5 and 7: the owner call receives a lent
+        // input (a helper's literal or a table row's cell) that selects the
+        // arm, under the same owner defeats. A test that names the owner
+        // (every table test) must also read as the direct path requires:
+        // each mention a readable call, no owner result bound with `let`
+        // that may stand on the expected side, and no local shadow.
+        !import_defeats_owner
+            && !cross_package_defeats_owner
+            && !owner_shadowed
+            && (arm_selector.is_none() || arm_inputs_readable)
+    } else if let Some(selector) = arm_selector
         && matches!(family, ProbeFamily::MatchArm)
     {
         // RIPR-SPEC-0229 selection outranks tokens: once the arm's
@@ -3325,6 +3339,7 @@ fn assertion_matches_probe_detail(
             arm_selector: None,
             arm_inputs_readable: false,
             arm_pattern_pinned: false,
+            arm_lent_selected: false,
             owner_scoped_tokens: &[],
             owner_shadowed: false,
             sibling_excluded: false,
@@ -4512,6 +4527,7 @@ mod tests {
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| false,
             getter_reads_field: &|_, _, _| false,
+            collection_argument_observed: &|_, _| false,
             getter_reads_key: &|_, getter, field| {
                 (getter == "on_hand" && field == "stock")
                     .then(|| KeyedFallback::Literal("0".to_string()))
@@ -5145,6 +5161,7 @@ mod tests {
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
+                    collection_argument_observed: &|_, _| false,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
@@ -5246,6 +5263,7 @@ mod tests {
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
+                    collection_argument_observed: &|_, _| false,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
@@ -5604,6 +5622,7 @@ mod tests {
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -5681,6 +5700,7 @@ mod tests {
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -5964,6 +5984,7 @@ mod tests {
                 arm_selector: None,
                 arm_inputs_readable: false,
                 arm_pattern_pinned: false,
+                arm_lent_selected: false,
                 owner_scoped_tokens: &empty,
                 owner_shadowed: false,
                 sibling_excluded: false,
@@ -7330,6 +7351,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -7392,6 +7414,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -7425,6 +7448,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -7477,6 +7501,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -7531,6 +7556,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -7710,6 +7736,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -7746,6 +7773,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -8141,6 +8169,7 @@ return Err(\"typed pin\".into());
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &carried,
                     setter_writes_field: &|_, _, _| true,
+                    collection_argument_observed: &|_, _| false,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
@@ -8423,6 +8452,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -8520,6 +8550,7 @@ return Err(\"typed pin\".into());
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
+                    collection_argument_observed: &|_, _| false,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
@@ -8560,6 +8591,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -8918,6 +8950,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -9223,6 +9256,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: reaches,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],

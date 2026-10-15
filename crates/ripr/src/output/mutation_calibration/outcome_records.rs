@@ -17,15 +17,17 @@ const NESTED_FILE_KEYS: &[&str] = &[
 ];
 const LINE_KEYS: &[&str] = &["line", "line_start", "start_line", "startLine"];
 const COLUMN_KEYS: &[&str] = &["column", "col"];
-const OPERATOR_KEYS: &[&str] = &[
-    "operator",
-    "mutation_operator",
-    "mutator",
-    "mutation",
-    "description",
-    "replacement",
-    "name",
-];
+/// Labels already supplied as an operator, searched across the envelope,
+/// nested `mutant`, and nested `mutation` before cargo-mutants `genre`.
+/// A mixed record with envelope `genre` and nested `operator` must keep
+/// the operator; a single key list would let envelope `genre` win.
+const EXPLICIT_OPERATOR_KEYS: &[&str] = &["operator", "mutation_operator", "mutator", "mutation"];
+/// cargo-mutants records have no `operator` field; their `genre`
+/// (`FnValue`, `BinaryOperator`, …) is the mutation class.
+const GENRE_KEYS: &[&str] = &["genre"];
+/// Last-resort text. An empty `replacement` (delete mutants) is skipped
+/// so it cannot swallow `genre` and render as `unknown`.
+const FALLBACK_OPERATOR_KEYS: &[&str] = &["description", "replacement", "name"];
 const RUNTIME_OUTCOME_KEYS: &[&str] = &["outcome", "status", "result", "summary", "state"];
 const DURATION_KEYS: &[&str] = &[
     "duration_ms",
@@ -298,16 +300,22 @@ impl<'a> OutcomeObjectContext<'a> {
     }
 
     fn mutation_operator(&self) -> String {
-        string_field_any(self.object, OPERATOR_KEYS)
+        self.string_from_record(EXPLICIT_OPERATOR_KEYS)
+            .or_else(|| self.string_from_record(GENRE_KEYS))
+            .or_else(|| self.string_from_record(FALLBACK_OPERATOR_KEYS))
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+
+    fn string_from_record(&self, keys: &[&str]) -> Option<String> {
+        string_field_any(self.object, keys)
             .or_else(|| {
                 self.mutant
-                    .and_then(|nested| string_field_any(nested, OPERATOR_KEYS))
+                    .and_then(|nested| string_field_any(nested, keys))
             })
             .or_else(|| {
                 self.mutation
-                    .and_then(|nested| string_field_any(nested, OPERATOR_KEYS))
+                    .and_then(|nested| string_field_any(nested, keys))
             })
-            .unwrap_or_else(|| "unknown".to_string())
     }
 }
 
@@ -648,13 +656,13 @@ mod tests {
             .ok_or_else(|| "line 101 mutant should be imported".to_string())?;
         assert_eq!(caught.file.as_deref(), Some("src/lib.rs"));
         assert_eq!(caught.runtime_outcome, "caught");
-        assert_eq!(caught.mutation_operator, "None");
+        assert_eq!(caught.mutation_operator, "FnValue");
         let missed = records
             .iter()
             .find(|record| record.line == Some(104))
             .ok_or_else(|| "line 104 mutant should be imported".to_string())?;
         assert_eq!(missed.runtime_outcome, "missed");
-        assert_eq!(missed.mutation_operator, "<<");
+        assert_eq!(missed.mutation_operator, "BinaryOperator");
         assert_eq!(
             missed.mutant_id.as_deref(),
             Some("src/lib.rs:104:43: replace >> with << in next")
@@ -702,6 +710,127 @@ mod tests {
             .find(|record| record.line == Some(2))
             .ok_or_else(|| "unviable mutant should be imported".to_string())?;
         assert_eq!(unviable.runtime_outcome, "unviable");
+        Ok(())
+    }
+
+    #[test]
+    fn cargo_mutants_genre_wins_over_replacement_including_empty_delete() -> Result<(), String> {
+        let records = parse_mutation_outcomes_json(
+            r#"[
+  {
+    "name": "src/lib.rs:101:9: replace next -> Option<Self::Item> with None",
+    "file": "src/lib.rs",
+    "span": {"start": {"line": 101, "column": 9}, "end": {"line": 108, "column": 10}},
+    "replacement": "None",
+    "genre": "FnValue",
+    "summary": "MissedMutant"
+  },
+  {
+    "name": "src/lib.rs:78:79: delete ! in f",
+    "file": "src/lib.rs",
+    "span": {"start": {"line": 78, "column": 79}, "end": {"line": 78, "column": 80}},
+    "replacement": "",
+    "genre": "UnaryOperator",
+    "summary": "MissedMutant"
+  }
+]"#,
+        )?;
+
+        assert_eq!(records.len(), 2, "{records:?}");
+        let replace_with_none = records
+            .iter()
+            .find(|record| record.line == Some(101))
+            .ok_or_else(|| "replace-with-None mutant should be imported".to_string())?;
+        assert_eq!(replace_with_none.mutation_operator, "FnValue");
+        assert_ne!(
+            replace_with_none.mutation_operator, "None",
+            "replacement must not be the operator when genre is present"
+        );
+        let delete = records
+            .iter()
+            .find(|record| record.line == Some(78))
+            .ok_or_else(|| "delete mutant should be imported".to_string())?;
+        assert_eq!(delete.mutation_operator, "UnaryOperator");
+        assert_ne!(
+            delete.mutation_operator, "unknown",
+            "empty replacement must not swallow genre"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_operator_still_wins_over_genre_and_replacement() -> Result<(), String> {
+        let records = parse_mutation_outcomes_json(
+            r#"[
+  {
+    "id": "explicit-operator",
+    "file": "src/lib.rs",
+    "line": 3,
+    "operator": "replace >= with >",
+    "genre": "BinaryOperator",
+    "replacement": ">",
+    "outcome": "missed"
+  },
+  {
+    "id": "mutator-only",
+    "file": "src/lib.rs",
+    "line": 4,
+    "mutator": "replace literal",
+    "genre": "FnValue",
+    "replacement": "None",
+    "outcome": "caught"
+  },
+  {
+    "id": "replacement-only",
+    "file": "src/lib.rs",
+    "line": 5,
+    "replacement": "()",
+    "outcome": "timeout"
+  }
+]"#,
+        )?;
+
+        assert_eq!(records.len(), 3, "{records:?}");
+        let operator = records
+            .iter()
+            .find(|record| record.mutant_id.as_deref() == Some("explicit-operator"))
+            .ok_or_else(|| "explicit operator record should be imported".to_string())?;
+        assert_eq!(operator.mutation_operator, "replace >= with >");
+        let mutator = records
+            .iter()
+            .find(|record| record.mutant_id.as_deref() == Some("mutator-only"))
+            .ok_or_else(|| "mutator record should be imported".to_string())?;
+        assert_eq!(mutator.mutation_operator, "replace literal");
+        let replacement_only = records
+            .iter()
+            .find(|record| record.mutant_id.as_deref() == Some("replacement-only"))
+            .ok_or_else(|| "replacement-only record should be imported".to_string())?;
+        assert_eq!(replacement_only.mutation_operator, "()");
+        Ok(())
+    }
+
+    #[test]
+    fn nested_operator_wins_over_envelope_genre() -> Result<(), String> {
+        let records = parse_mutation_outcomes_json(
+            r#"{
+  "genre": "FnValue",
+  "mutant": {
+    "id": "m1",
+    "file": "src/lib.rs",
+    "line": 3,
+    "operator": "replace >= with >"
+  },
+  "outcome": "missed"
+}"#,
+        )?;
+
+        assert_eq!(records.len(), 1, "{records:?}");
+        assert_eq!(records[0].mutant_id.as_deref(), Some("m1"));
+        assert_eq!(records[0].mutation_operator, "replace >= with >");
+        assert_ne!(
+            records[0].mutation_operator, "FnValue",
+            "envelope genre must not outrank a nested operator"
+        );
         Ok(())
     }
 }

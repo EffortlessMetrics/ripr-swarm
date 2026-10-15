@@ -54,6 +54,7 @@ mod policy;
 #[cfg(test)]
 mod portable_consumer;
 mod product_gate_plan;
+mod provider_review_observations;
 mod public_api_surface;
 mod python_judged_panel;
 mod python_judged_panel_feedback;
@@ -271,9 +272,10 @@ use no_panic::{
 use policy::{
     check_allow_attributes, check_changelog_fragments, check_ci_lane_whitelist, check_covered_by,
     check_doc_roles, check_droid_review_config, check_executable_files, check_file_policy,
-    check_local_context, check_network_policy, check_no_panic_family, check_positioning_language,
-    check_process_policy, check_product_copy, check_proof_packs, check_release_targets,
-    check_static_language, check_text_encoding, check_workflows, qualify_python_wheelhouse,
+    check_local_context, check_network_policy, check_no_panic_family, check_packaged_readme,
+    check_positioning_language, check_process_policy, check_product_copy, check_proof_packs,
+    check_release_targets, check_static_language, check_text_encoding, check_workflows,
+    qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -3170,19 +3172,28 @@ fn parse_positive_u64(value: &str, label: &str) -> Result<u64, String> {
 }
 
 fn collect_gh_pr_status(number: u64) -> Result<GhPrStatusPullRequest, String> {
+    collect_gh_pr_status_with(number, run_output_owned)
+}
+
+fn collect_gh_pr_status_with(
+    number: u64,
+    run: impl FnOnce(&str, &[String]) -> Result<String, String>,
+) -> Result<GhPrStatusPullRequest, String> {
     let fields = [
         "number",
         "title",
         "isDraft",
         "mergeStateStatus",
         "headRefName",
+        "headRefOid",
         "baseRefName",
         "reviewDecision",
         "latestReviews",
+        "comments",
         "statusCheckRollup",
     ]
     .join(",");
-    let output = run_output_owned(
+    let output = run(
         "gh",
         &[
             "pr".to_string(),
@@ -3254,6 +3265,8 @@ fn parse_gh_pr_status_pull_request(text: &str) -> Result<GhPrStatusPullRequest, 
         review_decision: json_value_string(&item, "reviewDecision"),
         checks,
         reviews,
+        provider_review_observations:
+            provider_review_observations::ProviderReviewObservations::from_gh_value(&item),
     })
 }
 
@@ -3442,6 +3455,8 @@ fn gh_pr_status_markdown(
         }
     }
 
+    body.push_str(&pr.provider_review_observations.markdown());
+
     body.push_str("\n## Droid Status\n\n");
     append_markdown_list(
         &mut body,
@@ -3503,6 +3518,10 @@ fn gh_pr_status_json(
     body.push_str(&format!(
         "  \"review_decision\": \"{}\",\n",
         json_escape(&pr.review_decision)
+    ));
+    body.push_str(&format!(
+        "  \"provider_review_observations\": {},\n",
+        pr.provider_review_observations.json_value()
     ));
     body.push_str("  \"reviews\": [\n");
     for (index, review) in pr.reviews.iter().enumerate() {

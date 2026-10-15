@@ -295,6 +295,27 @@ fn repair_single_item_matches_advanced_card() -> Result<(), String> {
     let manifest = read_manifest(root, &ids[0])?;
     assert_eq!(manifest["seam_id"], FIXTURE_SEAM);
     assert_eq!(manifest["state"], "awaiting_edit");
+    let persisted = manifest["next_command"]
+        .as_str()
+        .ok_or("manifest next_command missing")?;
+    assert!(
+        persisted.contains("ripr agent repair") && persisted.contains("--phase after"),
+        "persisted next_command stays the advanced after spelling:\n{persisted}"
+    );
+    let stderr = stderr_text(&repair);
+    let printed = stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
+        .ok_or_else(|| format!("before phase printed no attempt command:\n{stderr}"))?;
+    assert!(
+        printed.starts_with("ripr continue --root ")
+            && printed.contains(&format!("--attempt {}", ids[0])),
+        "human next command must name `ripr continue`:\n{printed}"
+    );
+    assert!(
+        !printed.contains("--phase after"),
+        "human next command must not teach `--phase after`:\n{printed}"
+    );
     // The compact RepairCard renders on stdout after the start, and every
     // line of the canonical `agent card` rendering appears in order.
     let card = run_ripr(
@@ -310,6 +331,10 @@ fn repair_single_item_matches_advanced_card() -> Result<(), String> {
     )?;
     assert_exit(&card, 0, "agent card for the started seam");
     let facade_stdout = stdout_text(&repair);
+    assert!(
+        facade_stdout.contains(&format!("Next, after the test edit: {printed}")),
+        "stdout trailer must name the same ordinary continue route:\n{facade_stdout}"
+    );
     let facade_lines: Vec<&str> = facade_stdout.lines().collect();
     let card_stdout = stdout_text(&card);
     let mut cursor = 0usize;
@@ -339,6 +364,14 @@ fn repair_single_item_matches_advanced_card() -> Result<(), String> {
         serde_json::from_slice(&status.stdout).map_err(|error| format!("status JSON: {error}"))?;
     assert_eq!(report["attempt"]["attempt_id"], ids[0].as_str());
     assert_eq!(report["attempt"]["status_class"], "awaiting_edit");
+    let status_command = report
+        .pointer("/next_action/command")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("status JSON missing next_action.command:\n{report:#}"))?;
+    assert_eq!(
+        status_command, printed,
+        "status must name the same ordinary continue route the before phase printed"
+    );
     Ok(())
 }
 
@@ -451,6 +484,185 @@ fn continue_single_attempt_advances_it() -> Result<(), String> {
         report["attempt"]["receipt"].is_object(),
         "a finished attempt must carry its receipt:\n{report:#}"
     );
+    Ok(())
+}
+
+fn compatibility_packet_target(root: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(root.join("target/ripr/workflow/agent-packet.json"))
+        .map_err(|error| format!("read prepared packet: {error}"))?;
+    let packet: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("decode prepared packet: {error}"))?;
+    packet["packets"]
+        .as_array()
+        .and_then(|packets| {
+            packets
+                .iter()
+                .find(|packet| packet["seam_id"] == FIXTURE_SEAM)
+        })
+        .and_then(|packet| packet["allowed_edit_surface"][0].as_str())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            format!("prepared packet has no focused target for {FIXTURE_SEAM}: {packet}")
+        })
+}
+
+/// #7881: recovery belongs to the selected retained attempt, even when a
+/// genuine later packet replaces the repository-global compatibility file.
+#[test]
+fn continue_no_movement_uses_retained_target_and_recovers_after_edit() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-no-movement")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let before = run_ripr(root, &["repair", "--root", &root_arg])?;
+    assert_exit(&before, 0, "prepare pricing attempt");
+    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    assert_eq!(compatibility_packet_target(root)?, "tests/pricing.rs");
+
+    // Independently prepare a valid packet with the same production seam
+    // but a different test target. Only the compatibility projection in the
+    // original root is replaced; its source and retained artifacts stay put.
+    let decoy = Fixture::boundary("facade-decoy")?;
+    std::fs::rename(
+        decoy.root.join("tests/pricing.rs"),
+        decoy.root.join("tests/decoy.rs"),
+    )
+    .map_err(|error| format!("rename decoy test: {error}"))?;
+    run_git(&decoy.root, &["add", "tests"])?;
+    git_commit(&decoy.root, "decoy test target")?;
+    let decoy_before = run_ripr(&decoy.root, &["repair"])?;
+    assert_exit(&decoy_before, 0, "prepare genuine decoy packet");
+    assert_eq!(compatibility_packet_target(&decoy.root)?, "tests/decoy.rs");
+    std::fs::copy(
+        decoy.root.join("target/ripr/workflow/agent-packet.json"),
+        root.join("target/ripr/workflow/agent-packet.json"),
+    )
+    .map_err(|error| format!("replace compatibility packet: {error}"))?;
+    assert_eq!(compatibility_packet_target(root)?, "tests/decoy.rs");
+    assert!(run_git(root, &["status", "--porcelain"])?.is_empty());
+
+    let refused = run_ripr(
+        root,
+        &["continue", "--root", &root_arg, "--attempt", &attempt_id],
+    )?;
+    assert_exit(&refused, 3, "continue before focused edit");
+    assert!(
+        refused.stdout.is_empty(),
+        "facade refusal stdout must stay empty"
+    );
+    let stderr = stderr_text(&refused);
+    assert!(stderr.contains("no repository movement"), "{stderr}");
+    assert!(stderr.contains("awaiting_edit"), "{stderr}");
+    assert!(stderr.contains("tests/pricing.rs"), "{stderr}");
+    assert!(!stderr.contains("tests/decoy.rs"), "{stderr}");
+    assert!(stderr.contains("then rerun"), "{stderr}");
+    let inspection = stderr
+        .lines()
+        .find(|line| line.contains("ripr agent status --root"))
+        .ok_or_else(|| format!("missing bound status command: {stderr}"))?;
+    let expected_root = if cfg!(windows) {
+        root_arg.replace('\\', "/")
+    } else {
+        root_arg.clone()
+    };
+    assert!(inspection.contains(&expected_root), "{inspection}");
+    assert!(
+        inspection.contains(&format!("--attempt {attempt_id}")),
+        "{inspection}"
+    );
+    assert!(
+        stderr.contains(&format!("--attempt {attempt_id}")),
+        "{stderr}"
+    );
+    let manifest = read_manifest(root, &attempt_id)?;
+    assert_eq!(manifest["state"], "awaiting_edit");
+    let reason = manifest["last_after_refusal"]["reason"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        reason.starts_with("agent verify no repository movement"),
+        "{reason}"
+    );
+    assert!(reason.contains("tests/pricing.rs"), "{reason}");
+    assert!(!reason.contains("tests/decoy.rs"), "{reason}");
+    assert!(!root.join("target/ripr/reports/agent-receipt.json").exists());
+
+    // Copy the named inspection route's arguments independently; it must
+    // select the same awaiting attempt and expose no receipt.
+    let status = run_ripr(
+        root,
+        &[
+            "agent",
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--json",
+        ],
+    )?;
+    assert_exit(&status, 0, "inspect refused attempt");
+    let report: serde_json::Value = serde_json::from_slice(&status.stdout)
+        .map_err(|error| format!("refused status JSON: {error}"))?;
+    assert_eq!(report["attempt"]["attempt_id"], attempt_id);
+    assert_eq!(report["attempt"]["status_class"], "awaiting_edit");
+    assert!(report["attempt"]["receipt"].is_null(), "{report}");
+
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{FIXTURE_WEAK_TEST}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write focused edit: {error}"))?;
+    let continued = run_ripr(
+        root,
+        &["continue", "--root", &root_arg, "--attempt", &attempt_id],
+    )?;
+    assert_exit(
+        &continued,
+        0,
+        "retry after focused edit with decoy projection still present",
+    );
+    let manifest = read_manifest(root, &attempt_id)?;
+    assert_eq!(manifest["state"], "ready_to_finish");
+    assert!(manifest.get("last_after_refusal").is_none(), "{manifest}");
+    assert!(
+        root.join("target/ripr/reports/agent-receipt.json")
+            .is_file()
+    );
+    Ok(())
+}
+
+#[test]
+fn continue_no_movement_keeps_inline_test_module_restrictions() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-inline-no-movement")?;
+    let root = &fixture.root;
+    std::fs::remove_file(root.join("tests/pricing.rs")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        format!("{FIXTURE_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::discounted_total;\n    #[test]\n    fn below() {{ assert_eq!(discounted_total(50, 100), 50); }}\n}}\n"),
+    ).map_err(|error| error.to_string())?;
+    run_git(root, &["add", "src", "tests"])?;
+    git_commit(root, "inline test target")?;
+    let before = run_ripr(root, &["repair"])?;
+    assert_exit(&before, 0, "prepare inline attempt");
+    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    assert_eq!(compatibility_packet_target(root)?, "src/lib.rs");
+    let refused = run_ripr(root, &["continue", "--attempt", &attempt_id])?;
+    assert_exit(&refused, 3, "continue before inline edit");
+    assert!(refused.stdout.is_empty());
+    let stderr = stderr_text(&refused);
+    for expected in [
+        "awaiting_edit",
+        "src/lib.rs",
+        "existing `#[cfg(test)]` module",
+        "new test functions",
+        "production code",
+        "module declaration",
+        "existing tests",
+    ] {
+        assert!(stderr.contains(expected), "missing {expected}: {stderr}");
+    }
+    assert_eq!(read_manifest(root, &attempt_id)?["state"], "awaiting_edit");
+    assert!(!root.join("target/ripr/reports/agent-receipt.json").exists());
     Ok(())
 }
 

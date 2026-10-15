@@ -698,13 +698,13 @@ fn oracle_committed_rates_keep_labeled_and_unlabeled_cases() -> Result<(), Strin
         .map(|case| case.case_id)
         .collect();
     assert!(
-        expected_ids.len() > 41,
+        expected_ids.len() > 44,
         "control needs unlabeled source cases"
     );
     let records = population::Records::load(&dir)?;
-    for (rate, numerator) in [("oracle_accuracy", 40), ("oracle_overclaim_rate", 0)] {
+    for (rate, numerator) in [("oracle_accuracy", 44), ("oracle_overclaim_rate", 0)] {
         let population = records.population(&format!("oracle_accuracy.{rate}"))?;
-        assert_eq!(population.totals()?, (numerator, 41));
+        assert_eq!(population.totals()?, (numerator, 44));
         assert_eq!(
             population
                 .cases
@@ -719,7 +719,7 @@ fn oracle_committed_rates_keep_labeled_and_unlabeled_cases() -> Result<(), Strin
                 .iter()
                 .filter(|case| case.denominator == 0)
                 .count(),
-            expected_ids.len() - 41
+            expected_ids.len() - 44
         );
         assert_eq!(
             population
@@ -727,7 +727,7 @@ fn oracle_committed_rates_keep_labeled_and_unlabeled_cases() -> Result<(), Strin
                 .iter()
                 .filter(|c| c.denominator == 1)
                 .count(),
-            41
+            44
         );
         assert!(
             population

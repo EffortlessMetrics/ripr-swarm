@@ -304,11 +304,40 @@ pub(crate) fn ts_changed_value_is_observed(
                 // Rule 6: whole-identifier occurrences only. Owner names are
                 // identifiers, so a string literal or comment that spells one
                 // (`expect('p').toBe('p')`) is not a reference.
+                // #7507: for bare-call owners (functions, not methods) a
+                // member segment (`helper.cost(150)`) is not a reference to
+                // the owner value — it reads another receiver's member, so it
+                // cannot witness the changed sink. Only a BARE occurrence
+                // (not preceded by `.`/`?.`/`!.`) confirms, plus a call
+                // through a namespace receiver bound to the owner's own
+                // module (`ns.price(150)` via `import * as ns`). Method
+                // owners keep the legacy member-segment reading: their honest
+                // needle IS `receiver.method(...)`.
                 let observed_code = ts_mask_literals_and_comments(observed);
-                if owner_names
-                    .iter()
-                    .any(|name| ts_references_identifier(&observed_code, name))
-                {
+                // #7507: `expect(typeof cost)` observes the type string, not
+                // the changed value — never a value witness.
+                if ts_observed_is_typeof_name(&observed_code, &owner_names) {
+                    continue;
+                }
+                let owner_is_method =
+                    matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod);
+                // Method owners keep the legacy member-segment reading: their
+                // honest needle IS `receiver.method(...)`.
+                let observes_owner = if owner_is_method {
+                    owner_names
+                        .iter()
+                        .any(|name| ts_references_identifier(&observed_code, name))
+                } else {
+                    let receivers =
+                        owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+                    owner_names
+                        .iter()
+                        .any(|name| ts_observed_bare_reference(&observed_code, name))
+                        || owner_names.iter().any(|name| {
+                            ts_observed_namespaced_owner_call(&observed_code, name, &receivers)
+                        })
+                };
+                if observes_owner {
                     return true;
                 }
                 if changed_tokens
@@ -520,6 +549,117 @@ pub(crate) fn ts_references_identifier(text: &str, ident: &str) -> bool {
     })
 }
 
+/// `true` when `text` contains `ident` as a BARE identifier reference:
+/// whole-identifier boundaries (as in [`ts_references_identifier`]) AND not
+/// a member segment (`helper.cost` does not reference the owner `cost`;
+/// #7507). The member check skips optional-chain (`?.`) and non-null
+/// (`!.`) punctuation as well as plain `.`, with optional whitespace
+/// between the punctuation and the name.
+pub(crate) fn ts_observed_bare_reference(text: &str, ident: &str) -> bool {
+    fn is_ident_char(c: char) -> bool {
+        c.is_alphanumeric() || c == '_' || c == '$'
+    }
+    if ident.is_empty() {
+        return false;
+    }
+    text.match_indices(ident).any(|(at, _)| {
+        let before_ok = text
+            .get(..at)
+            .and_then(|before| before.chars().next_back())
+            .is_none_or(|c| !is_ident_char(c));
+        let after_ok = text
+            .get(at + ident.len()..)
+            .and_then(|after| after.chars().next())
+            .is_none_or(|c| !is_ident_char(c));
+        if !(before_ok && after_ok) {
+            return false;
+        }
+        // Member segment: the name is preceded (after trimming spaces) by
+        // `.`, `?.`, or `!.`.
+        let before = text.get(..at).unwrap_or_default().trim_end();
+        let member = before.ends_with('.') && !before.ends_with("...")
+            || before.ends_with("?.")
+            || before.ends_with("!.");
+        !member
+    })
+}
+
+/// `true` when the masked observed expression calls the owner through a
+/// namespace receiver bound to the owner's own module (`ns.price(`,
+/// `ns?.price(`, `ns!.price(`; #7507). Any other receiver's same-named member
+/// is a different function and never confirms.
+fn ts_observed_namespaced_owner_call(
+    masked_observed: &str,
+    owner_name: &str,
+    receivers: &[String],
+) -> bool {
+    if owner_name.is_empty() || receivers.is_empty() {
+        return false;
+    }
+    receivers.iter().any(|receiver| {
+        [".", "?.", "!."].iter().any(|punct| {
+            let needle = format!("{receiver}{punct}{owner_name}(");
+            masked_observed
+                .match_indices(needle.as_str())
+                .any(|(at, _)| {
+                    // Only a member dot reaching the receiver across
+                    // optional whitespace disqualifies (`other.ns(`,
+                    // `other. ns(`): keywords and values before a gap
+                    // (`await ns.price(150)`, `return ns.price(...)`)
+                    // still leave genuine namespace calls, since only dots
+                    // continue member access.
+                    let mut back = masked_observed[..at].chars().rev();
+                    match back.next() {
+                        None => true,
+                        Some('.') => false,
+                        Some(c) if c.is_alphanumeric() || c == '_' || c == '$' => false,
+                        Some(c) if !c.is_whitespace() => true,
+                        Some(_) => !matches!(back.find(|c| !c.is_whitespace()), Some('.')),
+                    }
+                })
+        })
+    })
+}
+/// `true` when the masked observed expression observes an owner name only
+/// through `typeof` (`typeof cost`, `typeof(cost)`; #7507). A type string is
+/// not the changed value, so such an assertion never witnesses a
+/// ReturnValue / FieldConstruction sink.
+fn ts_observed_is_typeof_name(masked_observed: &str, owner_names: &[&str]) -> bool {
+    owner_names.iter().any(|name| {
+        let mut from = 0usize;
+        while let Some(rel) = masked_observed[from..].find("typeof") {
+            let at = from + rel;
+            let before_ok = masked_observed[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '$'));
+            // The keyword must also end on a word boundary: without this, an
+            // identifier that merely starts with `typeof` (such as
+            // `typeofprice`) reads as a `typeof` operator observation.
+            let after_ok = masked_observed[at + "typeof".len()..]
+                .chars()
+                .next()
+                .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '$'));
+            if !before_ok || !after_ok {
+                from = at + "typeof".len();
+                continue;
+            }
+            let rest = masked_observed[at + "typeof".len()..].trim_start();
+            let rest = rest
+                .strip_prefix('(')
+                .map_or(rest, |inner| inner.trim_start());
+            if rest.strip_prefix(name).is_some_and(|tail| {
+                tail.chars()
+                    .next()
+                    .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '$'))
+            }) {
+                return true;
+            }
+            from = at + "typeof".len();
+        }
+        false
+    })
+}
 /// `text` with string-literal contents, template-literal text, regular
 /// expression literals and comments replaced by spaces, so an identifier
 /// search sees only code. Template `${...}` interpolations stay code. Quotes,
@@ -2554,30 +2694,205 @@ pub(crate) fn owner_namespace_receivers(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> Vec<String> {
-    test.imports_in_file
+    let mut receivers: Vec<String> = test
+        .imports_in_file
         .iter()
         .filter(|import| {
             import.namespace
                 && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
         })
         .map(|import| import.local.clone())
-        .collect()
+        .collect();
+    // A dynamic import binds the same module namespace a static
+    // `import * as` would, but as a local declaration, so it never reaches
+    // `imports_in_file`. Without it the member-call gate below would
+    // silently no-op for `jest_dynamic_import_member_tobe` shapes
+    // (RIPR-SPEC-0243 import_path_affinity; verdict corpus
+    // `jest-spec0234-ex27`).
+    for name in dynamic_import_namespace_bindings(&test.body_text) {
+        let import = TypeScriptImport {
+            source: name.source,
+            imported: None,
+            local: name.binding,
+            namespace: true,
+        };
+        if !receivers.contains(&import.local)
+            && import_source_matches_owner(&import, &test.file, owner, alias_map, workspace_root)
+        {
+            receivers.push(import.local);
+        }
+    }
+    receivers
+}
+
+/// A test-body dynamic import binding: the local name and the imported
+/// module's literal source.
+struct DynamicImportBinding {
+    binding: String,
+    source: String,
+}
+
+/// `const|let|var <name> = [await] import("<module>")` bindings in a test
+/// body. Located on the string/comment-masked body so text inside literals
+/// cannot fabricate a binding; the module source is then read from the same
+/// character range of the original body (the masker preserves character
+/// offsets and keeps quote delimiters). Only a plain string-literal module
+/// resolves: a non-literal `import()` argument stays an honest miss.
+fn dynamic_import_namespace_bindings(body_text: &str) -> Vec<DynamicImportBinding> {
+    fn is_ident_char(c: char) -> bool {
+        c.is_alphanumeric() || c == '_' || c == '$'
+    }
+    fn skip_spaces(chars: &[char], mut at: usize) -> usize {
+        while at < chars.len() && chars[at].is_whitespace() {
+            at += 1;
+        }
+        at
+    }
+    fn word_at(chars: &[char], at: usize, word: &str) -> bool {
+        let n = word.chars().count();
+        at + n <= chars.len()
+            && chars[at..at + n].iter().collect::<String>() == word
+            && chars.get(at + n).is_none_or(|c| !is_ident_char(*c))
+    }
+    let masked = ts_mask_literals_and_comments(body_text);
+    // The receiver extraction reads original characters at masked character
+    // offsets; a length divergence would mean an offset-mismatched masker,
+    // so refuse to guess.
+    if masked.chars().count() != body_text.chars().count() {
+        return Vec::new();
+    }
+    let original: Vec<char> = body_text.chars().collect();
+    let masked_chars: Vec<char> = masked.chars().collect();
+    let find_char = |haystack: &[char], needle: &str, from: usize| -> Option<usize> {
+        let needle_chars: Vec<char> = needle.chars().collect();
+        // A needle longer than the remaining haystack matches nowhere; the
+        // saturating range below would still visit `from` and slice past the
+        // end on a short body (e.g. `{}`), so refuse early.
+        if from > haystack.len() || haystack.len() - from < needle_chars.len() {
+            return None;
+        }
+        (from..=haystack.len() - needle_chars.len()).find(|&at| {
+            haystack[at..at + needle_chars.len()]
+                .iter()
+                .collect::<String>()
+                == needle
+        })
+    };
+    let mut bindings = Vec::new();
+    for keyword in ["const", "let", "var"] {
+        let mut from = 0usize;
+        while let Some(at) = find_char(&masked_chars, keyword, from) {
+            from = at + keyword.len();
+            let before_ok = at == 0 || !is_ident_char(masked_chars[at - 1]);
+            if !before_ok {
+                continue;
+            }
+            // Binding name: the identifier run after the keyword.
+            let mut cursor = at + keyword.len();
+            while cursor < masked_chars.len() && masked_chars[cursor].is_whitespace() {
+                cursor += 1;
+            }
+            let name_start = cursor;
+            while cursor < masked_chars.len() && is_ident_char(masked_chars[cursor]) {
+                cursor += 1;
+            }
+            if cursor == name_start {
+                continue;
+            }
+            let binding: String = masked_chars[name_start..cursor].iter().collect();
+            // `=` (not `==`), then an optional `await`, then `import(`.
+            while cursor < masked_chars.len() && masked_chars[cursor].is_whitespace() {
+                cursor += 1;
+            }
+            if masked_chars.get(cursor) != Some(&'=') || masked_chars.get(cursor + 1) == Some(&'=')
+            {
+                continue;
+            }
+            cursor += 1;
+            while cursor < masked_chars.len() && masked_chars[cursor].is_whitespace() {
+                cursor += 1;
+            }
+            // Optional `await`, then the `import` callee.
+            if word_at(&masked_chars, cursor, "await") {
+                cursor += "await".len();
+                cursor = skip_spaces(&masked_chars, cursor);
+            }
+            if !word_at(&masked_chars, cursor, "import") {
+                continue;
+            }
+            cursor += "import".len();
+            cursor = skip_spaces(&masked_chars, cursor);
+            if masked_chars.get(cursor) != Some(&'(') {
+                continue;
+            }
+            cursor += 1;
+            while cursor < masked_chars.len() && masked_chars[cursor].is_whitespace() {
+                cursor += 1;
+            }
+            // The masked argument must be a complete quoted literal whose
+            // interior the masker blanked; anything else stays unresolved.
+            let Some(&open) = masked_chars.get(cursor) else {
+                continue;
+            };
+            if open != '"' && open != '\'' {
+                continue;
+            }
+            let mut module = String::new();
+            let mut closed = false;
+            cursor += 1;
+            while cursor < masked_chars.len() {
+                let c = masked_chars[cursor];
+                if c == open {
+                    closed = true;
+                    break;
+                }
+                // Interior is blanked by the masker; read the original.
+                module.push(original.get(cursor).copied().unwrap_or(' '));
+                cursor += 1;
+            }
+            if !closed {
+                continue;
+            }
+            bindings.push(DynamicImportBinding {
+                binding,
+                source: module,
+            });
+        }
+    }
+    bindings
 }
 
 /// The trailing identifier segment immediately before the final `.` of
 /// `before_match` — the receiver of a member call (`expect(pricing.` →
-/// `pricing`).
+/// `pricing`). A receiver spelled after another member dot (`other. ns`)
+/// is a member of that outer receiver, never a bare namespace receiver, so
+/// this returns an empty string (which no receiver list contains). Anything
+/// else before an optional gap (keywords like `await`, values, `?`/`!`
+/// operators) leaves the receiver intact: only dots continue member access.
 fn receiver_before_dot(before_match: &str) -> String {
     let trimmed = before_match.trim_end();
     let without_dot = trimmed.strip_suffix('.').unwrap_or(trimmed);
-    without_dot
+    let without_dot = without_dot.trim_end();
+    let receiver: String = without_dot
         .chars()
         .rev()
         .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
         .collect::<Vec<_>>()
         .into_iter()
         .rev()
-        .collect()
+        .collect();
+    if receiver.is_empty() {
+        return receiver;
+    }
+    let head = without_dot.len() - receiver.len();
+    match without_dot[..head]
+        .chars()
+        .rev()
+        .find(|c: &char| !c.is_whitespace())
+    {
+        Some('.') => String::new(),
+        _ => receiver,
+    }
 }
 
 /// Return the argument lists (one per call) of every `<owner_name>(...)` call
@@ -4459,6 +4774,10 @@ struct TsPostLadderContext<'a> {
 /// - RIPR-SPEC-0243 rule 8: an `exposed` result whose exposing test files all
 ///   mock a module the changed line calls reads `static_unknown`, because the
 ///   mock can replace the changed value before any assertion sees it.
+/// - RIPR-SPEC-0246 rule 3: an `exposed` value-seam result whose change
+///   only sets or drops one literal field after spreading a parameter reads
+///   `weakly_exposed` when observed owner calls exist and none passes an
+///   input shown to lack the field or hold another value there.
 /// - RIPR-SPEC-0248 rule 1: an `exposed` value-seam result whose change
 ///   only adds or drops one additive term reads `weakly_exposed` unless an
 ///   observed owner call folds the term to a non-zero number.
@@ -4515,6 +4834,30 @@ fn ts_apply_post_ladder_rules(
     ) {
         return;
     }
+    if let Some(change) = context
+        .old_line_text
+        .and_then(|old| SpreadOverride::read(old, context.line_text))
+        && let Some(reason) = ts_spread_override_unseen(
+            &change,
+            context.owner,
+            context.candidates,
+            context.alias_map,
+            context.workspace_root,
+        )
+    {
+        verdict.class = ExposureClass::WeaklyExposed;
+        verdict.discriminate_state = StageState::Weak;
+        verdict.missing = vec![format!(
+            "The change to `{}` only sets or drops `{}: {}` after spreading `{}`, and {reason}. Add a case whose `{}` lacks `{}` or holds another value there.",
+            context.owner.name,
+            change.key,
+            change.literal,
+            change.subject,
+            change.subject,
+            change.key
+        )];
+        return;
+    }
     let Some(term) = context
         .old_line_text
         .and_then(|old| ts_dropped_additive_term(old, context.line_text))
@@ -4542,6 +4885,111 @@ fn ts_apply_post_ladder_rules(
         "The change to `{}` only adds or drops the additive term `{term}`, which {reason}. Add a case whose input makes `{term}` non-zero.",
         context.owner.name
     )];
+}
+
+/// RIPR-SPEC-0246 rule 3: why no observed owner call can see the spread
+/// override, or `None` when one can, or when no call is observed at all (the
+/// ladder's reading stands). A call can see it when its argument for the
+/// spread parameter is an object literal, inline or bound once by `const`
+/// in the test, that lacks the key or holds another literal there.
+pub(crate) fn ts_spread_override_unseen(
+    change: &SpreadOverride,
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Option<&'static str> {
+    let index = owner.params.iter().position(|p| p == &change.subject)?;
+    if !owner.source_text.as_deref().is_some_and(|source| {
+        ts_parameter_is_stable(source, &change.subject)
+            && masked_owner_body(source)
+                .is_some_and(|body| !ts_members_written(&body, &change.subject, true))
+    }) {
+        return None;
+    }
+    let (mut carries, mut unknown) = (false, false);
+    for candidate in candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+    {
+        if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
+            continue;
+        }
+        let receivers = owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+        let names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
+        let qualified: Vec<String> = receivers
+            .iter()
+            .map(|receiver| format!("{receiver}.{}", owner.name))
+            .collect();
+        let callees: Vec<&str> = names
+            .iter()
+            .copied()
+            .chain(qualified.iter().map(String::as_str))
+            .collect();
+        for assertion in &candidate.test.assertions {
+            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() {
+                continue;
+            }
+            let whole = matches!(
+                assertion.oracle_kind,
+                OracleKind::ExactValue | OracleKind::WholeObjectEquality | OracleKind::Snapshot
+            )
+            .then(|| {
+                ts_observed_owner_call_arguments(
+                    candidate.test,
+                    assertion,
+                    &names,
+                    owner,
+                    &receivers,
+                )
+            })
+            .flatten();
+            // A strong pin on the key itself (`owner(cfg).ok`) also tells the
+            // versions apart when its input lacks the field; on any other
+            // input it neither witnesses nor observes the whole result.
+            let (arguments, member) = match whole {
+                Some(arguments) => (arguments, false),
+                None => match assertion
+                    .observed_expression
+                    .as_deref()
+                    .and_then(|observed| {
+                        ts_owner_call_member_arguments(
+                            observed,
+                            &names,
+                            owner,
+                            &receivers,
+                            &change.key,
+                        )
+                    }) {
+                    Some(arguments) => (arguments, true),
+                    None => continue,
+                },
+            };
+            let object = arguments.get(index).and_then(|argument| {
+                let argument = argument.trim();
+                if argument.starts_with('{') {
+                    Some(argument.to_string())
+                } else {
+                    ts_test_local_object(&candidate.test.body_text, argument, &callees)
+                }
+            });
+            match object.map_or(OverrideInput::Unknown, |object| change.input(&object)) {
+                OverrideInput::Differs => return None,
+                _ if member => {}
+                OverrideInput::Carries => carries = true,
+                OverrideInput::Unknown => unknown = true,
+            }
+        }
+    }
+    match (carries, unknown) {
+        (true, false) => {
+            Some("every tested input already carries it, so both versions return the same value")
+        }
+        (_, true) => Some(
+            "no tested input is shown to lack it, so no test is shown to tell the versions apart",
+        ),
+        (false, false) => None,
+    }
 }
 
 /// What the observed owner calls show about the RIPR-SPEC-0248 rule 1 term.
@@ -4728,6 +5176,93 @@ fn ts_whole_owner_call_arguments(
         .map(str::trim_start)
         .find(|rest| ts_is_one_argument_list(rest))
         .and_then(|rest| balanced_call_arguments(&rest[1..]))
+}
+
+/// RIPR-SPEC-0246 rule 3: the arguments of the owner call (named as
+/// `ts_whole_owner_call_arguments` names it) when `observed` is exactly its
+/// member `key`: `owner(...).key`, `owner(...)?.key` or `owner(...)["key"]`,
+/// with nothing after it. `None` for anything else, including an operator
+/// after the member (`.key ?? true` passes on both versions) and an awaited
+/// form (`await owner(x).key` awaits the member, not the call).
+fn ts_owner_call_member_arguments(
+    observed: &str,
+    names: &[&str],
+    owner: &TypeScriptOwner,
+    receivers: &[String],
+    key: &str,
+) -> Option<Vec<String>> {
+    let observed = observed.trim();
+    let qualified = receivers
+        .iter()
+        .filter_map(|receiver| observed.strip_prefix(receiver.as_str()))
+        .filter_map(|rest| rest.trim_start().strip_prefix('.'))
+        .filter_map(|rest| rest.trim_start().strip_prefix(owner.name.as_str()));
+    let bare = names.iter().filter_map(|name| observed.strip_prefix(name));
+    for rest in bare.chain(qualified).map(str::trim_start) {
+        let Some(arguments) = rest.strip_prefix('(').and_then(balanced_call_arguments) else {
+            continue;
+        };
+        let Some(end) = call_list_end(rest) else {
+            continue;
+        };
+        let tail = rest[end..].trim_start();
+        let optional = tail.strip_prefix("?.").map(str::trim_start);
+        let dotted = optional
+            .filter(|tail| !tail.starts_with('['))
+            .or_else(|| tail.strip_prefix('.').map(str::trim_start))
+            .and_then(|tail| tail.strip_prefix(key))
+            .is_some_and(|after| after.trim().is_empty());
+        let bracketed = optional
+            .unwrap_or(tail)
+            .strip_prefix('[')
+            .map(str::trim_start)
+            .and_then(|inner| {
+                ['"', '\''].into_iter().find_map(|quote| {
+                    inner
+                        .strip_prefix(quote)?
+                        .strip_prefix(key)?
+                        .strip_prefix(quote)
+                })
+            })
+            .and_then(|after| after.trim_start().strip_prefix(']'))
+            .is_some_and(|after| after.trim().is_empty());
+        if dotted || bracketed {
+            return Some(arguments);
+        }
+    }
+    None
+}
+
+/// The byte offset just past the `)` that closes the argument list opening
+/// `rest`, skipping brackets and quoted text, or `None` when it never closes.
+fn call_list_end(rest: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (index, ch) in rest.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return (ch == ')').then_some(index + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// RIPR-SPEC-0246 rule 1: the identifier whose returned object the change

@@ -27,6 +27,9 @@ mod closed_stderr;
 #[path = "common/mod.rs"]
 mod common;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/diff_absolute_root.rs"]
+mod diff_absolute_root;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/diff_pairing.rs"]
 mod diff_pairing;
 #[cfg(all(unix, feature = "lang-rust"))]
@@ -8671,6 +8674,47 @@ fn agent_repair_before_inline_only_seam(ambiguous: bool) -> Result<(), Box<dyn s
             "Repair scope, including the inline-test boundary, is in `ripr agent repair --help`"
         ),
         "the refusal must point at the repair scope boundary:\n{stderr}"
+    );
+    // #7735: the pick-another-seam advice is a dead end when no seam can
+    // start a repair (e.g. ambiguous inline-only crates), so the refusal
+    // must name the stub forward route `check` already advertises — pinned
+    // to the repair root, because this harness runs repair from outside the
+    // workspace and an unpinned route would resolve in the wrong directory,
+    // and with the probe family, so a line holding several gap families
+    // cannot stub another seam. The root renders through `shell_arg` (so it
+    // is quoted when the path needs it, with embedded quotes POSIX-escaped)
+    // and with `/` separators on Windows (`root_path_display`), so compare
+    // the quote-stripped, separator-normalized form on both sides.
+    let normalized_stderr = stderr.replace('\'', "").replace('\\', "/");
+    let normalized_root = root_arg.replace('\'', "").replace('\\', "/");
+    assert!(
+        normalized_stderr.contains(&format!("ripr agent stub --root {normalized_root}")),
+        "the refusal must pin the stub route to the repair root:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--at FILE:LINE --kind KIND"),
+        "the refusal must name the location-and-family stub route:\n{stderr}"
+    );
+    // The refusal states the inline boundary accurately: an ambiguous
+    // multi-module inline layout proposes no target, while one governed
+    // inline module would qualify (#5210 — demonstrated by this test's
+    // other arm, whose repair starts confined to that module).
+    assert!(
+        stderr
+            .contains("a crate whose inline tests are spread over several `#[cfg(test)]` modules"),
+        "the refusal must name the ambiguous inline layout:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("one governed inline module would qualify"),
+        "the refusal must state the single-module boundary accurately:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("never qualify as a repair target"),
+        "the refusal must not declare inline tests categorically ineligible:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("add a `tests/`-surface test file"),
+        "the refusal must name the add-a-tests-file remedy:\n{stderr}"
     );
     // The packet-field claim covers both states: not_applicable when no
     // target was proposed, the production file with an empty surface for
@@ -23533,8 +23577,8 @@ fn repair_route_status(root: &Path) -> Result<serde_json::Value, Box<dyn std::er
     Ok(serde_json::from_slice(&status.stdout)?)
 }
 
-/// Runs the before phase and returns the `--attempt ... --phase after`
-/// command it printed.
+/// Runs the before phase and returns the human next-step command it printed
+/// (`ripr continue --root … --attempt …` for an ordinary attempt).
 fn repair_route_before(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let root_arg = root.to_string_lossy().into_owned();
     let before = run_ripr(&[
@@ -24017,6 +24061,42 @@ fn agent_status_names_a_refused_after_phase_before_repeating_it()
         .unwrap_or_default()
         .to_string();
     assert!(recorded.contains("no repository movement"), "{manifest:#}");
+    assert_eq!(refused_document["attempt_id"], attempt_id);
+    let error = refused_document["error"]
+        .as_str()
+        .ok_or("missing original typed error")?;
+    assert!(recorded.starts_with(error), "{recorded}");
+    assert!(
+        refused_stderr.contains(&format!("ripr: {error}")),
+        "{refused_stderr}"
+    );
+    let narration = refused_document["narration"]
+        .as_array()
+        .ok_or("missing refusal narration")?;
+    assert!(!narration.is_empty(), "{refused_document}");
+    for line in narration {
+        let line = line.as_str().ok_or("non-string refusal narration")?;
+        assert!(
+            refused_stderr.contains(&format!("ripr: {line}")),
+            "{refused_stderr}"
+        );
+        assert!(
+            recorded
+                .to_lowercase()
+                .contains(&line.trim_end_matches('.').to_lowercase()),
+            "{recorded}"
+        );
+    }
+    for expected in [
+        "awaiting_edit",
+        "tests/pricing.rs",
+        "then rerun",
+        "ripr agent status --root",
+        &format!("--attempt {attempt_id}"),
+    ] {
+        assert!(recorded.contains(expected), "{recorded}");
+    }
+    assert!(!root.join("target/ripr/reports/agent-receipt.json").exists());
 
     let report = repair_route_status(&root)?;
     let (step, command) = repair_route_next(&report);
@@ -24694,7 +24774,8 @@ fn agent_status_reports_the_after_phase_recovery_for_rewritten_history()
     for needle in [
         "does not descend from",
         reset_sentence.as_str(),
-        printed.trim_start_matches("ripr "),
+        attempt_id.as_str(),
+        "--phase after",
     ] {
         assert!(reason.contains(needle), "lacks `{needle}`: {reason}");
     }

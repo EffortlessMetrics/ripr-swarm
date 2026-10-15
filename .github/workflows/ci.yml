@@ -190,3 +190,14 @@ jobs:
       - run: npm run package
       - run: sudo apt-get update && sudo apt-get install -y xvfb
       - run: xvfb-run -a npm run test:e2e
+      # Failure-only host logs. Size is capped by
+      # editors/vscode/test/hostDiagnostics.ts (5 MiB total, 256 KiB per file).
+      # Collection cannot change the original test exit status.
+      - name: Upload VS Code test host diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vscode-test-host-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/ripr/vscode-test-host-diagnostics/
+          if-no-files-found: ignore
+          retention-days: 5

@@ -29440,6 +29440,7 @@ fn gh_pr_status_pr(checks: Vec<PrTriageCheck>) -> GhPrStatusPullRequest {
             author: "droid".to_string(),
             state: "APPROVED".to_string(),
         }],
+        provider_review_observations: Default::default(),
     }
 }
 
@@ -48984,6 +48985,188 @@ fn vscode_e2e_preserves_installed_server_selection() -> Result<(), String> {
     Ok(())
 }
 
+fn vscode_job_block(workflow: &str) -> Result<&str, String> {
+    const HEADER: &str = "\n  vscode:\n";
+    let start = workflow
+        .find(HEADER)
+        .ok_or_else(|| "ci.yml is missing the vscode job".to_string())?;
+    let mut offset = start + HEADER.len();
+    while offset < workflow.len() {
+        let rest = &workflow[offset..];
+        let (line, line_end) = match rest.find('\n') {
+            Some(idx) => (&rest[..idx], offset + idx + 1),
+            None => (rest, workflow.len()),
+        };
+        if let Some(key) = line.strip_prefix("  ")
+            && !key.starts_with([' ', '-', '#'])
+            && key.contains(':')
+            && key.starts_with(char::is_alphabetic)
+        {
+            return Ok(&workflow[start..offset]);
+        }
+        offset = line_end;
+    }
+    Ok(&workflow[start..])
+}
+
+fn vscode_diagnostics_upload_step(job: &str) -> Option<&str> {
+    const MARKER: &str = "- name: Upload VS Code test host diagnostics";
+    let start = job.find(MARKER)?;
+    let rest = &job[start..];
+    let end = rest.find("\n      - ").unwrap_or(rest.len());
+    Some(&rest[..end])
+}
+
+fn vscode_host_diagnostics_contract_violations(job: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    if !job.contains("xvfb-run -a npm run test:e2e") {
+        violations.push("vscode job is missing the e2e host step".to_string());
+    }
+    if job.contains("continue-on-error") {
+        violations.push(
+            "continue-on-error would launder the original VS Code test exit status".to_string(),
+        );
+    }
+    let Some(upload) = vscode_diagnostics_upload_step(job) else {
+        violations.push("vscode job is missing the failure-only diagnostics upload".to_string());
+        return violations;
+    };
+    let conditions: Vec<&str> = upload
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("if:"))
+        .collect();
+    if conditions.as_slice() != ["if: failure()"] {
+        violations.push(format!(
+            "diagnostics upload if must be exactly failure(), got {conditions:?}"
+        ));
+    }
+    if upload.contains("if: always()") || upload.contains("if: success()") {
+        violations.push("diagnostics upload must not run on success".to_string());
+    }
+    if !upload.contains("actions/upload-artifact@v7") {
+        violations.push("diagnostics upload must use actions/upload-artifact@v7".to_string());
+    }
+    if !upload.contains("target/ripr/vscode-test-host-diagnostics/") {
+        violations
+            .push("diagnostics upload must use the pinned host diagnostics folder".to_string());
+    }
+    if !upload.contains("retention-days: 5") {
+        violations.push("diagnostics upload must cap retention at 5 days".to_string());
+    }
+    if !upload.contains("if-no-files-found: ignore") {
+        violations
+            .push("missing diagnostics must not replace the original test failure".to_string());
+    }
+    violations
+}
+
+#[test]
+fn vscode_host_diagnostics_contract_rejects_success_uploads_and_exit_laundering() {
+    let success_upload = r#"
+  vscode:
+    steps:
+      - run: xvfb-run -a npm run test:e2e
+      - name: Upload VS Code test host diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          path: target/ripr/vscode-test-host-diagnostics/
+          retention-days: 5
+          if-no-files-found: ignore
+"#;
+    assert!(
+        vscode_host_diagnostics_contract_violations(success_upload)
+            .iter()
+            .any(|violation| violation.contains("must not run on success")),
+        "success uploads must fail the contract"
+    );
+
+    let laundered_exit = r#"
+  vscode:
+    steps:
+      - run: xvfb-run -a npm run test:e2e
+        continue-on-error: true
+      - name: Upload VS Code test host diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          path: target/ripr/vscode-test-host-diagnostics/
+          retention-days: 5
+          if-no-files-found: ignore
+"#;
+    assert!(
+        vscode_host_diagnostics_contract_violations(laundered_exit)
+            .iter()
+            .any(|violation| violation.contains("launder")),
+        "continue-on-error must fail the contract"
+    );
+
+    let success_upload_before_later_failure = r#"
+  vscode:
+    steps:
+      - run: xvfb-run -a npm run test:e2e
+      - name: Upload VS Code test host diagnostics
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          path: target/ripr/vscode-test-host-diagnostics/
+          retention-days: 5
+          if-no-files-found: ignore
+      - name: later summary
+        if: failure()
+        run: echo later
+"#;
+    let success_before_later =
+        vscode_host_diagnostics_contract_violations(success_upload_before_later_failure);
+    assert!(
+        success_before_later
+            .iter()
+            .any(|violation| violation.contains("exactly failure()")),
+        "a later failure() step must not credit a success() upload: {success_before_later:?}"
+    );
+}
+
+#[test]
+fn vscode_host_diagnostics_ci_job_retains_failure_only() -> Result<(), String> {
+    let root = repo_root()?;
+    let workflow = fs::read_to_string(root.join(".github/workflows/ci.yml"))
+        .map_err(|err| format!("read ci.yml: {err}"))?;
+    let job = vscode_job_block(&workflow)?;
+    let violations = vscode_host_diagnostics_contract_violations(job);
+    assert!(
+        violations.is_empty(),
+        "vscode host diagnostics contract: {violations:?}"
+    );
+
+    let runner = fs::read_to_string(root.join("editors/vscode/test/runTest.ts"))
+        .map_err(|err| format!("read runTest.ts: {err}"))?;
+    assert!(
+        runner.contains("resolveUserDataDir"),
+        "runTest.ts must pin user-data through resolveUserDataDir"
+    );
+    assert!(
+        runner.contains("finalizeHostRun"),
+        "runTest.ts must preserve the original host exit through finalizeHostRun"
+    );
+    assert!(
+        runner.contains("resetHostLogDir(userDataPath)"),
+        "runTest.ts must call resetHostLogDir(userDataPath) before setup"
+    );
+    assert!(
+        !runner.contains("vscode-test-user-data', runId"),
+        "user-data must be a known folder, not a pid-suffixed path"
+    );
+
+    let collector = fs::read_to_string(root.join("editors/vscode/test/hostDiagnostics.ts"))
+        .map_err(|err| format!("read hostDiagnostics.ts: {err}"))?;
+    assert!(collector.contains("HOST_DIAGNOSTICS_RETENTION_DAYS = 5"));
+    assert!(collector.contains("MAX_HOST_DIAGNOSTICS_BYTES = 5 * 1024 * 1024"));
+    assert!(collector.contains("USER_DATA_DIR_NAME = 'vscode-test-user-data'"));
+    assert!(collector.contains("HOST_DIAGNOSTICS_DIR_NAME = 'vscode-test-host-diagnostics'"));
+    Ok(())
+}
+
 #[test]
 fn lsp_cockpit_report_reads_boundary_gap_fixture_expectations() -> Result<(), String> {
     let report = with_repo_cwd(build_lsp_cockpit_report)?;
@@ -51094,7 +51277,7 @@ fn mutation_calibration_imports_cargo_mutants_27_1_scenario_mutant_summaries() -
         .ok_or_else(|| "line 101 mutant should be imported".to_string())?;
     assert_eq!(caught.file.as_deref(), Some("src/lib.rs"));
     assert_eq!(caught.runtime_outcome, "caught");
-    assert_eq!(caught.mutation_operator, "None");
+    assert_eq!(caught.mutation_operator, "FnValue");
     assert_eq!(
         caught.mutant_id.as_deref(),
         Some("src/lib.rs:101:9: replace next -> Option<Self::Item> with None")
@@ -51105,7 +51288,7 @@ fn mutation_calibration_imports_cargo_mutants_27_1_scenario_mutant_summaries() -
         .find(|record| record.line == Some(104))
         .ok_or_else(|| "line 104 mutant should be imported".to_string())?;
     assert_eq!(missed.runtime_outcome, "missed");
-    assert_eq!(missed.mutation_operator, "<<");
+    assert_eq!(missed.mutation_operator, "BinaryOperator");
 
     let timeout = mutants
         .iter()
@@ -53755,4 +53938,84 @@ fn ci_policy_publication_preserves_local_report_and_local_io_failures() -> Resul
         assert!(super::publish_precommit_policy_report(false).is_err());
         Ok(())
     })
+}
+
+#[test]
+fn gh_pr_status_provider_quota_observations_preserve_evidence() -> Result<(), String> {
+    let sourcery = "Sorry @EffortlessSteven, you have reached your weekly rate limit of 500000 diff characters.\n\nRetry later.";
+    let gemini = "> [!WARNING]\r\n> You have reached your daily quota limit. Please wait up to 24 hours and I will start processing your requests again!";
+    let codex = "You have reached your Codex usage limits for code reviews.\nSee `settings` — no review ran.";
+    let rabbit = "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\n<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->\n\n> ## Review details\n> Commits: aaa to bbb\n> Files selected: 6";
+    let fixture = serde_json::json!({
+        "number": 42, "title": "provider notices", "isDraft": false,
+        "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "headRefName": "candidate", "baseRefName": "main",
+        "mergeStateStatus": "CLEAN", "reviewDecision": "APPROVED",
+        "latestReviews": [{"author": {"login": "sourcery-ai[bot]"}, "state": "COMMENTED", "body": sourcery,
+            "submittedAt": "2026-10-14T01:00:00Z"},
+            {"author": {"login": "independent-reviewer"}, "state": "APPROVED", "submittedAt": "2026-10-14T02:00:00Z", "body": "Reviewed exact candidate."}],
+        "reviews": [{"author": {"login": "independent-reviewer"}, "state": "APPROVED", "submittedAt": "2026-10-14T02:00:00Z", "commit": {"oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}],
+        "comments": [
+            {"author": {"login": "gemini-code-assist[bot]"}, "body": gemini, "url": "https://github.com/example/repo/pull/42#issuecomment-2", "createdAt": "2026-10-13T01:00:00Z"},
+            {"author": {"login": "chatgpt-codex-connector[bot]"}, "body": codex, "url": "https://github.com/example/repo/pull/42#issuecomment-3", "createdAt": "2026-10-14T01:00:00Z"},
+            {"author": {"login": "coderabbitai[bot]"}, "body": rabbit, "url": "https://github.com/example/repo/pull/42#issuecomment-4", "createdAt": "2026-10-14T01:00:00Z"},
+            {"author": {"login": "human"}, "body": "The provider hit quota. I reviewed the code."}
+        ],
+        "statusCheckRollup": [{"__typename":"CheckRun", "name":"rust", "status":"COMPLETED", "conclusion":"SUCCESS"}]
+    });
+    let pr = super::collect_gh_pr_status_with(42, |program, args| {
+        assert_eq!(program, "gh");
+        assert_eq!(args.len(), 5);
+        assert_eq!(&args[..4], &["pr", "view", "42", "--json"]);
+        let fields: std::collections::BTreeSet<_> = args[4].split(',').collect();
+        for required in ["comments", "headRefOid", "latestReviews"] {
+            assert!(fields.contains(required), "collector omitted {required}");
+        }
+        Ok(fixture.to_string())
+    })?;
+    assert_eq!(pr.reviews.len(), 2);
+    let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
+    let report: Value = serde_json::from_str(&gh_pr_status_json(&pr, &[], &readiness))
+        .map_err(|e| e.to_string())?;
+    let observations = &report["provider_review_observations"];
+    assert_eq!(
+        observations["snapshot_head"],
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    );
+    assert_eq!(observations["quota_notice_count"], 4);
+    let responses = observations["responses"]
+        .as_array()
+        .ok_or("missing response observations")?;
+    assert_eq!(
+        responses.len(),
+        4,
+        "three issue comments and one review must survive collection"
+    );
+    for (response, original) in responses.iter().zip([sourcery, gemini, codex, rabbit]) {
+        assert_eq!(response["disposition"], "quota_exhausted");
+        assert_eq!(response["body"], original);
+        assert_eq!(response["subject_attribution"], "not_established");
+    }
+    assert_eq!(responses[0]["source_kind"], "review");
+    assert_eq!(
+        responses[0]["url"], "",
+        "latestReviews does not supply a review URL"
+    );
+    assert_eq!(responses[0]["timestamp"], "2026-10-14T01:00:00Z");
+    assert_eq!(responses[1]["source_kind"], "issue_comment");
+    assert_eq!(responses[1]["timestamp"], "2026-10-13T01:00:00Z");
+    assert_eq!(
+        responses[1]["url"],
+        "https://github.com/example/repo/pull/42#issuecomment-2"
+    );
+    assert!(observations.get("completed_review_count").is_none());
+    let markdown = gh_pr_status_markdown(&pr, &[], &readiness);
+    assert!(markdown.contains("Quota notices: 4 of 4 observed provider responses"));
+    assert!(markdown.contains("not evidence of review completion"));
+    assert!(markdown.contains("not attributed to the current head"));
+    assert_eq!(
+        readiness.safe_next_action, "merge",
+        "advisory provider disclosure must not silently become a new gate"
+    );
+    Ok(())
 }
