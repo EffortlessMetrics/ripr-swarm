@@ -486,12 +486,19 @@ then pilot names each detected language and its diff-first ripr check route,
 or says the language is not available from this ripr binary, and does not
 report the empty ranking as a clean result.
 
-Given a workspace whose code is a supported language (Python, TypeScript, or
-JavaScript) with a runnable ripr check route, no Rust seams, and no Python
+Given a workspace whose code is an enabled supported language (Python on a
+detected Python project, or TypeScript/JavaScript listed in `[languages]
+enabled`) with a runnable ripr check route, no Rust seams, and no Python
 repair card,
 when a user runs ripr pilot,
 then the Top recommendation names that language's check route rather than
 "none", and still says that pilot ranks Rust seams and found none.
+
+Given a workspace with TypeScript or JavaScript files, no Rust seams, and
+that language not listed in `[languages] enabled`,
+when a user runs ripr pilot,
+then the Top recommendation stays "none" while the languages section still
+names the check route.
 
 Given a workspace with Rust seams and other-language files,
 when a user runs ripr pilot,
