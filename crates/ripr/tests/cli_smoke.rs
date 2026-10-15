@@ -17225,10 +17225,6 @@ fn assert_pilot_does_not_read_as_clean(stdout: &str, md: &str) {
         "no-Rust-seam pilot must not print the plain no-recommendation line:\n{stdout}"
     );
     assert!(
-        stdout.contains("none: pilot ranks Rust seams and found none here"),
-        "{stdout}"
-    );
-    assert!(
         stdout.contains("Languages outside pilot's Rust seam scan:"),
         "{stdout}"
     );
@@ -17242,6 +17238,34 @@ fn assert_pilot_does_not_read_as_clean(stdout: &str, md: &str) {
     );
     assert!(md.contains("This is not a clean result"), "{md}");
     assert!(!md.contains("ripr outcome --before"), "{md}");
+}
+
+/// #7665: when an enabled supported language has a check route, that route
+/// is the headline, not a Rust-framed "none".
+fn assert_pilot_headline_names_supported_check_route(
+    stdout: &str,
+    md: &str,
+    language_display: &str,
+    command: &str,
+) {
+    let headline = format!("analyze the {language_display} diff: {command}");
+    assert!(
+        stdout.contains(&format!("Top recommendation:\n  {headline}\n")),
+        "headline must name the supported-language check route:\n{stdout}"
+    );
+    assert!(
+        !stdout
+            .contains("none: pilot ranks Rust seams and found none here; see the languages below"),
+        "headline must not read as an empty recommendation:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("(pilot ranks Rust seams and found none here; see the languages below)"),
+        "{stdout}"
+    );
+    assert!(
+        md.contains(&format!("Analyze the {language_display} diff: `{command}`")),
+        "{md}"
+    );
 }
 
 #[test]
@@ -17288,6 +17312,19 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
         "{route}"
     );
     assert_pilot_does_not_read_as_clean(&stdout, &md);
+    // Default config leaves TypeScript disabled: `ripr check` will not
+    // analyze it, so the headline stays none while the languages section
+    // still names the route (#7665).
+    assert!(
+        stdout
+            .contains("none: pilot ranks Rust seams and found none here; see the languages below"),
+        "disabled TypeScript must not headline the check route:\n{stdout}"
+    );
+    assert!(!stdout.contains("analyze the TypeScript diff:"), "{stdout}");
+    assert!(
+        summary.get("top_recommendation").is_none(),
+        "schema must not grow a top_recommendation field: {summary}"
+    );
     assert!(
         stdout.contains(
             "typescript: 2 files (preview, diff-first; not enabled in ripr.toml [languages])"
@@ -17314,7 +17351,8 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
         "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
     )
     .map_err(|err| format!("write ripr.toml: {err}"))?;
-    let (enabled_stdout, _, enabled_summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    let (enabled_stdout, enabled_md, enabled_summary, _) =
+        run_pilot_language_fixture(&root, &out_dir)?;
     assert_eq!(
         required_language_route(&enabled_summary, "typescript")?["enabled"],
         true
@@ -17322,6 +17360,12 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
     assert!(
         enabled_stdout.contains("typescript: 2 files (preview, diff-first)\n"),
         "{enabled_stdout}"
+    );
+    assert_pilot_headline_names_supported_check_route(
+        &enabled_stdout,
+        &enabled_md,
+        "TypeScript",
+        &command,
     );
 
     ignore_remove_dir_all(&root);
@@ -17404,6 +17448,15 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
         "{stdout}"
     );
     assert!(
+        !stdout
+            .contains("none: pilot ranks Rust seams and found none here; see the languages below"),
+        "a Python repair card remains the top recommendation:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("analyze the Python diff:"),
+        "a Python repair card outranks the language-route headline:\n{stdout}"
+    );
+    assert!(
         !stdout.contains("Next, analyze the changed code in these languages:"),
         "{stdout}"
     );
@@ -17453,11 +17506,24 @@ fn pilot_says_perl_is_unavailable_when_repo_has_no_rust_seams() -> Result<(), St
     assert_pilot_does_not_read_as_clean(&stdout, &md);
     if cfg!(feature = "lang-perl") {
         assert_eq!(route["language_status"], "preview");
-        assert_eq!(
-            route["command"],
-            serde_json::json!(format!("ripr check --root {}", root.display()))
+        let command = format!("ripr check --root {}", root.display());
+        assert_eq!(route["command"], serde_json::json!(command));
+        // Perl is compiled in but not in the default enabled set, so the
+        // headline stays none (same as disabled TypeScript).
+        assert!(
+            stdout.contains(
+                "none: pilot ranks Rust seams and found none here; see the languages below"
+            ),
+            "disabled Perl keeps the none headline:\n{stdout}"
         );
+        assert!(!stdout.contains("analyze the Perl diff:"), "{stdout}");
     } else {
+        assert!(
+            stdout.contains(
+                "none: pilot ranks Rust seams and found none here; see the languages below"
+            ),
+            "unavailable Perl keeps the none headline:\n{stdout}"
+        );
         let notice = "Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`perl-ripr-facts`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it.";
         assert_eq!(route["language_status"], "unavailable");
         assert_eq!(route["route"], "unavailable_in_this_binary");
