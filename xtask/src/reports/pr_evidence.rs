@@ -167,7 +167,12 @@ fn reject_error_packet(repo: &Path) -> Result<(), String> {
 fn write_pr_evidence_with_runner(
     repo: &Path,
     options: &PrEvidenceOptions,
-    run_check: impl FnOnce(&Path, &PrEvidenceOptions, Result<&str, &str>) -> Result<String, String>,
+    run_check: impl FnOnce(
+        &Path,
+        &PrEvidenceOptions,
+        Result<&str, &str>,
+        &[(&str, &str)],
+    ) -> Result<String, String>,
 ) -> Result<(), String> {
     write_pr_evidence_with_preparer(repo, options, resolve_ripr_binary, run_check)
 }
@@ -176,13 +181,27 @@ fn write_pr_evidence_with_preparer(
     repo: &Path,
     options: &PrEvidenceOptions,
     prepare: impl FnOnce(&Path) -> Result<String, String>,
-    run_check: impl FnOnce(&Path, &PrEvidenceOptions, Result<&str, &str>) -> Result<String, String>,
+    run_check: impl FnOnce(
+        &Path,
+        &PrEvidenceOptions,
+        Result<&str, &str>,
+        &[(&str, &str)],
+    ) -> Result<String, String>,
 ) -> Result<(), String> {
     remove_stale_check_artifact(repo)?;
     verify_revision(repo, &options.base)?;
     verify_revision(repo, &options.head)?;
     let changed_files = changed_files(repo, options)?;
     write_diff(repo, options)?;
+    let default_cache = default_pr_cache_dir(
+        repo,
+        &options.root,
+        env::var("RIPR_CACHE_DIR").ok().as_deref(),
+    );
+    let child_env = default_cache
+        .as_deref()
+        .map(|path| vec![("RIPR_CACHE_DIR", path)])
+        .unwrap_or_default();
     let binary = timed_phase("binary_build_or_select", || prepare(repo));
     eprintln!(
         "{}",
@@ -196,9 +215,15 @@ fn write_pr_evidence_with_preparer(
         &changed_files,
         &options.root,
         binary.as_deref().map_err(String::as_str),
+        &child_env,
     )?;
     let result = match timed_phase("scoped_check", || {
-        run_check(repo, options, binary.as_deref().map_err(String::as_str))
+        run_check(
+            repo,
+            options,
+            binary.as_deref().map_err(String::as_str),
+            &child_env,
+        )
     }) {
         Ok(check_json) => {
             match timed_phase("packet_write_and_validate", || {
@@ -425,6 +450,7 @@ fn run_ripr_check(
     repo: &Path,
     options: &PrEvidenceOptions,
     binary: Result<&str, &str>,
+    child_env: &[(&str, &str)],
 ) -> Result<String, String> {
     let diff_path = repo.join(PR_DIFF);
     let diff_arg = diff_path.display().to_string();
@@ -442,7 +468,7 @@ fn run_ripr_check(
     ];
     let binary = binary.map_err(str::to_string)?;
     let timeout = Duration::from_secs(pr_evidence_timeout_secs()?);
-    run_ripr_check_binary(binary, ripr_args, options, timeout)
+    run_ripr_check_binary_with_env(binary, ripr_args, options, timeout, child_env)
 }
 
 fn resolve_ripr_binary(repo: &Path) -> Result<String, String> {
@@ -473,16 +499,27 @@ fn resolve_ripr_binary(repo: &Path) -> Result<String, String> {
     }
 }
 
+#[cfg(test)]
 fn run_ripr_check_binary(
     binary: &str,
     ripr_args: Vec<String>,
     options: &PrEvidenceOptions,
     timeout: Duration,
 ) -> Result<String, String> {
+    run_ripr_check_binary_with_env(binary, ripr_args, options, timeout, &[])
+}
+
+fn run_ripr_check_binary_with_env(
+    binary: &str,
+    ripr_args: Vec<String>,
+    options: &PrEvidenceOptions,
+    timeout: Duration,
+    child_env: &[(&str, &str)],
+) -> Result<String, String> {
     let output = capture_output_with_timeout(
         binary,
         &ripr_args,
-        &[],
+        child_env,
         timeout,
         "ripr check for PR evidence",
     )?;
@@ -744,6 +781,21 @@ fn target_dir_from_value(repo: &Path, cwd: &Path, value: &Path) -> PathBuf {
     } else {
         repo.join(value)
     }
+}
+
+// Match the analyzer's effective override semantics. Preserve any nonempty operator
+// value in the inherited environment, including relative paths interpreted at cwd.
+// Default children share the invoking analysis root, outside disposable snapshots.
+fn default_pr_cache_dir(repo: &Path, root: &str, configured: Option<&str>) -> Option<String> {
+    if configured.is_some_and(|value| !value.trim().is_empty()) {
+        return None;
+    }
+    Some(
+        Path::new(&command_root_arg(repo, root))
+            .join("target/ripr/cache")
+            .display()
+            .to_string(),
+    )
 }
 
 fn command_root_arg(repo: &Path, root: &str) -> String {
@@ -1971,10 +2023,13 @@ mod tests {
                 fake_ripr_invocation(&repo, "fake-ripr-packet-timeout", "", "", 0, Some(30))?;
             (fake.binary, fake.args)
         };
-        let producer_result =
-            write_pr_evidence_with_runner(&repo, &options, |_repo, options, _binary| {
+        let producer_result = write_pr_evidence_with_runner(
+            &repo,
+            &options,
+            |_repo, options, _binary, _child_env| {
                 run_ripr_check_binary(&binary, args, options, Duration::from_secs(1))
-            });
+            },
+        );
         let producer_error = producer_result
             .err()
             .ok_or_else(|| "producer error packet unexpectedly passed generation".to_string())?;
@@ -2234,15 +2289,18 @@ mod tests {
         )?;
         let binary = fake.binary;
         let args = fake.args;
-        let producer_error =
-            match write_pr_evidence_with_runner(&repo, &options, |_repo, options, _binary| {
+        let producer_error = match write_pr_evidence_with_runner(
+            &repo,
+            &options,
+            |_repo, options, _binary, _child_env| {
                 run_ripr_check_binary(&binary, args, options, Duration::from_secs(30))
-            }) {
-                Ok(()) => {
-                    return Err("oversized-diff child unexpectedly produced evidence".to_string());
-                }
-                Err(err) => err,
-            };
+            },
+        ) {
+            Ok(()) => {
+                return Err("oversized-diff child unexpectedly produced evidence".to_string());
+            }
+            Err(err) => err,
+        };
         assert!(producer_error.contains("review-comments must not run"));
         assert!(producer_error.contains("diff_scope_oversized:"));
         assert!(producer_error.contains("native status: exit 2"));
@@ -2575,10 +2633,14 @@ mod tests {
         };
 
         let mut runner_called = false;
-        let _error = write_pr_evidence_with_runner(&repo, &options, |_repo, _options, _binary| {
-            runner_called = true;
-            Err("runner must not execute after revision setup failure".to_string())
-        })
+        let _error = write_pr_evidence_with_runner(
+            &repo,
+            &options,
+            |_repo, _options, _binary, _child_env| {
+                runner_called = true;
+                Err("runner must not execute after revision setup failure".to_string())
+            },
+        )
         .err()
         .ok_or_else(|| "invalid revision should fail before the runner".to_string())?;
 
@@ -2639,9 +2701,9 @@ mod tests {
                 preparations += 1;
                 Ok(fake.clone())
             },
-            |repo, options, binary| {
+            |repo, options, binary, child_env| {
                 assert_eq!(binary, Ok(fake.as_str()));
-                run_ripr_check(repo, options, binary)
+                run_ripr_check(repo, options, binary, child_env)
             },
         )?;
         assert_eq!(preparations, 1);
@@ -2668,12 +2730,40 @@ mod tests {
             &repo,
             &options,
             |_| Err("unavailable test binary".to_string()),
-            |_, _, _| Ok(MINIMAL_CHECK_JSON.to_string()),
+            |_, _, _, _| Ok(MINIMAL_CHECK_JSON.to_string()),
         )
         .err()
         .ok_or("unwritable packet unexpectedly passed")?;
         assert!(error.contains(PR_EVIDENCE_MD));
         fs::remove_dir_all(repo).map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn default_child_cache_uses_effective_invoking_root_and_preserves_overrides() {
+        let repo = std::env::temp_dir().join("invoking repository");
+        let external = std::env::temp_dir()
+            .join("external root")
+            .display()
+            .to_string();
+        for configured in [None, Some(""), Some(" \t ")] {
+            for root in [".", "nested root", external.as_str()] {
+                let expected = if Path::new(root).is_absolute() {
+                    Path::new(root).to_path_buf()
+                } else {
+                    repo.join(root)
+                };
+                assert_eq!(
+                    default_pr_cache_dir(&repo, root, configured),
+                    Some(expected.join("target/ripr/cache").display().to_string())
+                );
+            }
+        }
+        for configured in ["relative cache", "/explicit cache", "  relative cache  "] {
+            assert_eq!(
+                default_pr_cache_dir(&repo, "nested root", Some(configured)),
+                None
+            );
+        }
     }
 
     #[test]
