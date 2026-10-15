@@ -76,7 +76,14 @@ impl Scratch {
             .env_remove("ENV")
             .output()
             .map_err(|e| e.to_string())?;
-        Ok(output.status.success())
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            code => Err(format!(
+                "Bash replay did not reach a contract verdict: exit {code:?}; stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )),
+        }
     }
 }
 impl Drop for Scratch {
