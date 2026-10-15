@@ -47,7 +47,10 @@ unresolved candidate path, in this order:
 
 1. A bounded transitive witness (RIPR-SPEC-0114/0118): a test calls an
    in-crate entry point whose name-matched call chain reaches the owner's
-   name within `MAX_TRANSITIVE_DEPTH` hops.
+   name within `MAX_TRANSITIVE_DEPTH` hops, or, when no test enters a chain
+   that short, through the walk past the bound (RIPR-SPEC-0114 step 5,
+   #8047). A seam whose owner a test reaches only past five hops therefore
+   reads `opaque`, not `ungripped`.
 2. A macro-reach witness (the existing `no_static_path` macro check).
 3. Trait dispatch. The owner is a trait-impl method (`impl Trait for T`),
    a test body, or production code a test may run, names `T`, and the trait
@@ -231,6 +234,7 @@ stay `ungripped`. humantime moves 8 of 8 (trait dispatch).
 
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::seam_reached_by_no_test_path_stays_ungripped`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::seam_behind_an_unresolved_transitive_path_is_opaque_not_ungripped`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::seam_behind_a_helper_chain_past_five_hops_is_opaque_not_ungripped`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::trait_method_of_a_type_tests_use_is_opaque_not_ungripped`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::trait_method_of_a_type_no_test_reaches_stays_ungripped`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::helper_run_only_through_trait_dispatch_is_opaque_not_ungripped`

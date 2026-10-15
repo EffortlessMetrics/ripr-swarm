@@ -8,10 +8,12 @@
 //! ## Fail-closed design (RIPR-SPEC-0114)
 //!
 //! - The walk is pure NAME matching over lexical call facts - no AST resolution.
-//! - Depth is bounded at 5 hops (`MAX_TRANSITIVE_DEPTH`).
-//! - The walk stops (and NAMES the limitation) at any boundary:
-//!   macro invocations (`name!`), callee names not found in the production
-//!   function set, or depth > 5.
+//! - The witness walk is bounded at 5 hops (`MAX_TRANSITIVE_DEPTH`). Only when
+//!   it names no witness does the same walk continue past the bound, level by
+//!   level, to a level a test enters (#8047); a chain no test enters names
+//!   nothing.
+//! - The walk stops at macro invocations (`name!`) and callee names not found
+//!   in the production function set.
 //! - Finding classification NEVER changes: `no_static_path` stays `no_static_path`
 //!   (and a proximity-only `weakly_exposed` finding stays `weakly_exposed`, #7071).
 //!   This check only sets `static_limit_kind` to name the limitation.
@@ -106,9 +108,10 @@ pub(in crate::analysis) const MACRO_WITNESS_TEST_GENERATOR_HOST: &str = "test ge
 /// to a function named `owner_name`, via a bounded BFS over lexical call facts.
 ///
 /// Returns `Some(witness)` when at least one test reaches the owner (test ->
-/// ... -> owner) within `MAX_TRANSITIVE_DEPTH` hops using same-crate production
-/// functions only; the named witness is selected deterministically (see below).
-/// Returns `None` when no such candidate path exists.
+/// ... -> owner) using same-crate production functions only: within
+/// `MAX_TRANSITIVE_DEPTH` hops when such a test exists, else through the walk
+/// past the bound (#8047). The named witness is selected deterministically
+/// (see below). Returns `None` when no such candidate path exists.
 ///
 /// The caller is responsible for wiring the result into `static_limit_kind`
 /// ONLY when the finding's class is `no_static_path` and `related_tests` is
@@ -169,6 +172,8 @@ struct ReachGraph<'a> {
     /// Call name to the indexes of the tests that call it, ascending; built
     /// on first use. See [`Self::tests_calling_any`].
     tests_by_call: OnceLock<HashMap<&'a str, Vec<usize>>>,
+    /// Built on first use; see [`Self::test_entered_names`].
+    test_entered: OnceLock<HashSet<&'a str>>,
     /// Built on the first macro sweep; see [`Self::macro_invocations`].
     macro_invocations: OnceLock<MacroInvocations<'a>>,
     /// Per macro name: one entry per `macro_rules!` definition of that name,
@@ -399,6 +404,7 @@ impl<'a> ReachGraph<'a> {
             macro_bodies,
             unique_macro_identifiers,
             tests_by_call: OnceLock::new(),
+            test_entered: OnceLock::new(),
             name_graph: OnceLock::new(),
             macro_invocations: OnceLock::new(),
             macro_definitions,
@@ -589,14 +595,21 @@ impl<'a> ReachGraph<'a> {
         reaching
     }
 
-    /// The reaching names past the bounded walk (RIPR-SPEC-0114 example 5,
-    /// #8047): the same reverse sweep continues level by level beyond
-    /// `MAX_TRANSITIVE_DEPTH` and stops at the first deeper level a test
-    /// calls into, returning every name reached so far. `None` when no
-    /// chain of any length reaches a name a test calls. Only consulted when
-    /// the bounded walk names no witness, so a chain within the bound keeps
-    /// its witness.
-    fn names_reaching_past_walk(&self, owner_name: &str) -> Option<HashSet<&'a str>> {
+    /// The walk past the bound (RIPR-SPEC-0114 step 5, #8047): the same
+    /// reverse sweep continues level by level beyond `MAX_TRANSITIVE_DEPTH`.
+    /// At each deeper level a test may enter (a test calls one of its names,
+    /// or a derive entry exists), `try_level` sees every name reached so far;
+    /// the first `Some` it returns ends the walk. A level whose only callers
+    /// are test declarations yields `None` there and the walk goes on. An
+    /// owner no test-entered name calls skips the walk entirely.
+    fn walk_past_bound<T>(
+        &self,
+        owner_name: &str,
+        mut try_level: impl FnMut(&HashSet<&'a str>) -> Option<T>,
+    ) -> Option<T> {
+        if !self.test_entered_names().contains(owner_name) {
+            return None;
+        }
         let mut reaching: HashSet<&'a str> = HashSet::new();
         let mut frontier: Vec<&str> = vec![owner_name];
         let mut seen: HashSet<&str> = HashSet::from([owner_name]);
@@ -614,13 +627,61 @@ impl<'a> ReachGraph<'a> {
             }
             if depth > MAX_TRANSITIVE_DEPTH {
                 let level: HashSet<&str> = next.iter().copied().collect();
-                if !self.tests_calling_any(&level).is_empty() {
-                    return Some(reaching);
+                let enterable =
+                    !self.derive_entries.is_empty() || !self.tests_calling_any(&level).is_empty();
+                if enterable && let Some(found) = try_level(&reaching) {
+                    return Some(found);
                 }
             }
             frontier = next;
         }
         None
+    }
+
+    /// Every name some test may run at any depth: the production functions
+    /// tests call (their own declarations aside) and every derive entry,
+    /// closed over non-macro calls, plus every name those functions call.
+    /// The walk past the bound only runs for an owner in this set.
+    fn test_entered_names(&self) -> &HashSet<&'a str> {
+        self.test_entered.get_or_init(|| {
+            let mut entered: HashSet<&'a str> = HashSet::new();
+            let mut stack: Vec<&'a str> = Vec::new();
+            let starts = self
+                .all_tests
+                .iter()
+                .flat_map(|test| test_calls(test))
+                .map(|call| call.name.as_str())
+                .chain(
+                    self.derive_entries
+                        .values()
+                        .flatten()
+                        .map(|function| function.name.as_str()),
+                );
+            for name in starts {
+                if let Some((&key, _)) = self.by_name.get_key_value(name)
+                    && entered.insert(key)
+                {
+                    stack.push(key);
+                }
+            }
+            while let Some(name) = stack.pop() {
+                for function in self.by_name.get(name).into_iter().flatten() {
+                    for call in calls_of(function) {
+                        if is_macro_call(&call.name) {
+                            continue;
+                        }
+                        // The callee counts even when it is not indexed
+                        // by name (the owner may not be); only indexed
+                        // names lead further.
+                        let callee = call.name.as_str();
+                        if entered.insert(callee) && self.by_name.contains_key(callee) {
+                            stack.push(callee);
+                        }
+                    }
+                }
+            }
+            entered
+        })
     }
 
     /// Whether a test gives a name-only reason to believe its call to
@@ -874,8 +935,9 @@ impl<'a> TransitiveReachIndex<'a> {
         // A chain longer than the walk is still a path ripr does not trace:
         // name the same limit rather than leave a bare gap (#8047).
         self.witness_through(owner_name, &reaching).or_else(|| {
-            let deeper = graph.names_reaching_past_walk(owner_name)?;
-            self.witness_through(owner_name, &deeper)
+            graph.walk_past_bound(owner_name, |deeper| {
+                self.witness_through(owner_name, deeper)
+            })
         })
     }
 
@@ -3308,6 +3370,57 @@ mod tests {
             vec![make_test("test_elsewhere", vec!["fn_unrelated"])],
         );
         assert!(find_transitive_witness("inner", &unrelated).is_none());
+    }
+
+    /// `g1 -> inner`, `g2 -> g1`, ... `g{len} -> g{len-1}`.
+    fn hop_chain(len: usize) -> Vec<FunctionSummary> {
+        let names: Vec<String> = (1..=len).map(|hop| format!("g{hop}")).collect();
+        (0..len)
+            .map(|at| {
+                let callee = if at == 0 {
+                    "inner"
+                } else {
+                    names[at - 1].as_str()
+                };
+                make_fn(&names[at], vec![callee])
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_walk_past_the_bound_skips_levels_no_test_enters() {
+        // Eight hops, entered only at the top: levels 6 and 7 hold no
+        // called name, so a walk that stopped one level past the bound
+        // would miss it.
+        let index = index_with(hop_chain(8), vec![make_test("test_top", vec!["g8"])]);
+        assert_eq!(
+            find_transitive_witness("inner", &index).map(|w| w.entry_symbol),
+            Some("g8".to_string())
+        );
+        // A back edge (`g3` also calls `g9`, which calls `g3`) neither loops
+        // nor invents a witness.
+        let mut cyclic = hop_chain(9);
+        cyclic[2].calls.push(CallFact {
+            line: 2,
+            name: "g9".to_string(),
+            text: "g9()".to_string(),
+        });
+        let looped = index_with(cyclic, vec![make_test("test_none", vec!["unrelated"])]);
+        assert!(find_transitive_witness("inner", &looped).is_none());
+    }
+
+    #[test]
+    fn a_test_declaration_on_a_deep_level_does_not_end_the_walk() {
+        // A test named `g6` records its own `fn g6()` line as a call fact.
+        // That level is not entered, so the walk goes on to `real`.
+        let mut declared = make_test_at("g6", "tests/it.rs", 1, vec!["g6"]);
+        declared.calls[0].text = "fn g6() {".to_string();
+        let real = make_test_at("real", "tests/it.rs", 10, vec!["g7"]);
+        let index = index_with(hop_chain(7), vec![declared, real]);
+        assert_eq!(
+            find_transitive_witness("inner", &index).map(|w| w.test_name),
+            Some("real".to_string())
+        );
     }
 
     #[test]

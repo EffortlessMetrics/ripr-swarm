@@ -68,10 +68,16 @@ the Rust adapter runs a bounded BFS walk over the lexical call facts in the Rust
    - Stop when depth > 5.
 4. If the owner's name is reached within depth ≤ 5: a candidate path was found.
 5. Only when step 4 names no witness, the same walk continues past depth 5,
-   level by level, and stops at the first deeper level whose names a test
-   calls (#8047). A chain of any length that a test enters is still a path
-   ripr does not trace, so it names the same limitation; a chain no test
-   enters still finds nothing. A witness within depth 5 always wins, so the
+   level by level (#8047). At each deeper level a test may enter (a test
+   calls one of its names, or a derive entry exists), the witness selection
+   of step 4 runs over every name reached so far; the first witness ends
+   the walk, and a level whose only "callers" are test declarations
+   (`fn name()` facts) yields none, so the walk goes on. A chain of any
+   length that a test enters is still a path ripr does not trace, so it
+   names the same limitation; a chain no test enters still finds nothing.
+   The walk runs only for an owner some test-entered function calls at any
+   depth (one forward closure per index), so an owner in code no test
+   enters costs nothing. A witness within depth 5 always wins, so the
    deeper walk never changes the named witness of a shallower path.
 
 ### When found
@@ -193,6 +199,14 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
   chain name still finds nothing (#8047)
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_witness_within_the_bound_wins_over_a_deeper_one`
   — a witness within 5 hops is named before the deeper walk runs (#8047)
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::the_walk_past_the_bound_skips_levels_no_test_enters`
+  — an 8-hop chain entered only at the top is found; a back-edge cycle neither loops nor
+  invents a witness (#8047)
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_test_declaration_on_a_deep_level_does_not_end_the_walk`
+  — a test named like a deep chain function does not stop the walk short of a real
+  caller (#8047)
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::seam_behind_a_helper_chain_past_five_hops_is_opaque_not_ungripped`
+  — the same witness keeps a repo seam `opaque` (RIPR-SPEC-0230 rule 1, #8047)
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_macro_call_in_test_calls_then_macro_is_skipped`
   — macro invocations skipped
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_callee_not_in_crate_then_walk_stops_fail_closed`
