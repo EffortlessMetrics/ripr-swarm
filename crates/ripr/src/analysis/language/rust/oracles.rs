@@ -88,26 +88,16 @@ fn attr_body_is_ffi_binding(body: &str) -> bool {
     }
 }
 
-/// Split attribute arguments on commas outside nested delimiters and string
-/// literals.
+/// Split attribute arguments on commas outside nested delimiters, comments
+/// and string literals, including raw strings. Masking preserves byte offsets
+/// so each returned argument still contains its original attribute syntax.
 fn split_top_level_args(args: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut depth = 0usize;
-    let mut in_string = false;
-    let mut escaped = false;
     let mut start = 0;
-    for (index, ch) in args.char_indices() {
-        if in_string {
-            match ch {
-                _ if escaped => escaped = false,
-                '\\' => escaped = true,
-                '"' => in_string = false,
-                _ => {}
-            }
-            continue;
-        }
+    let masked = mask_rust_comments_and_strings(args);
+    for (index, ch) in masked.char_indices() {
         match ch {
-            '"' => in_string = true,
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth = depth.saturating_sub(1),
             ',' if depth == 0 => {
