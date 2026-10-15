@@ -7,4 +7,4 @@
   must match exactly once with no second entry, and a test whose title the
   hinted key extends refuses. Vitest hints keep the medium reading. On the
   TypeScript verdict corpus `jest-spec0258-ex04-hint` moves from `gap` to
-  `credited` (#NNNN).
+  `credited` (RIPR-SPEC-0258 rule 2, #8022).
