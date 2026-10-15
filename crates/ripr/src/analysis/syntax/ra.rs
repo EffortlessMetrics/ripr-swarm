@@ -1512,6 +1512,15 @@ fn extract_parser_probe_shapes(
                 token.text_range().start(),
                 token.text_range().end(),
                 link_shape_text(source, token.text_range().start(), snippet),
+                Some((
+                    line_index.line(token.text_range().start()),
+                    line_index.line_for_range_end(
+                        match_expr
+                            .expr()
+                            .map(|expr| expr.syntax().text_range().end())
+                            .unwrap_or(token.text_range().end()),
+                    ),
+                )),
             );
         }
     }
@@ -1534,6 +1543,14 @@ fn extract_parser_probe_shapes(
                 token.text_range().start(),
                 token.text_range().end(),
                 link_shape_text(source, token.text_range().start(), snippet),
+                Some((
+                    line_index.line(
+                        arm.pat()
+                            .map(|pat| pat.syntax().text_range().start())
+                            .unwrap_or(token.text_range().start()),
+                    ),
+                    line_index.line_for_range_end(token.text_range().end()),
+                )),
             );
         }
     }
@@ -1576,6 +1593,7 @@ fn push_unsafe_boundary_probe_shapes(
                 unsafe_token.text_range().start(),
                 format!("unsafe fn {name}"),
             ),
+            None,
         );
     }
 
@@ -1598,6 +1616,7 @@ fn push_unsafe_boundary_probe_shapes(
                 unsafe_token.text_range().start(),
                 "unsafe block".to_string(),
             ),
+            None,
         );
     }
 }
@@ -1623,7 +1642,7 @@ fn push_probe_shape(
     let leading = raw.len() - raw.trim_start().len();
     let link_start = (u32::from(start) as usize).saturating_add(leading);
     let text = SourceText::shared_or_owned(source, link_start, &snippet);
-    push_probe_shape_with_text(shapes, line_index, kind, start, end, text);
+    push_probe_shape_with_text(shapes, line_index, kind, start, end, text, None);
 }
 
 fn push_probe_shape_with_text(
@@ -1633,6 +1652,7 @@ fn push_probe_shape_with_text(
     start: TextSize,
     end: TextSize,
     text: SourceText,
+    source_lines: Option<(usize, usize)>,
 ) {
     if text.is_empty() {
         return;
@@ -1645,6 +1665,7 @@ fn push_probe_shape_with_text(
         kind,
         text,
         value_consumed: false,
+        source_lines,
     });
 }
 

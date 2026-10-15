@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_side_flip",
   "test_shape": "same_test_is_err_and_is_ok_at_edge",
-  "hard_case": "Spec expects predicate exposed (rule 3, proposed). ripr reads all three findings weakly_exposed ('Only broad error oracle found') against a discriminated truth: the false gap the spec describes.",
+  "hard_case": "Rule 3 side flip: pair_boundary asserts is_err() on the guard's edge input and is_ok() on the input below it, so either edge shift flips a side it observes. Before the 2026-10-15 rule 3 producer (side_flip/guard.rs) ripr read the predicate and error_path findings weakly_exposed ('Only broad error oracle found') against a discriminated truth.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

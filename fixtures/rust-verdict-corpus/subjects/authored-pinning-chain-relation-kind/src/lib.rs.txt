@@ -1,0 +1,29 @@
+pub fn score(x: u32) -> u32 {
+    x * 2
+}
+
+#[derive(Debug, PartialEq)]
+pub enum E {
+    Bad,
+    Other,
+}
+
+pub fn check(x: u32) -> Result<u32, E> {
+    if x > 10 {
+        Err(E::Bad)
+    } else if x == 0 {
+        Err(E::Other)
+    } else {
+        Ok(x)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn score_pins_and_check_is_not_bad() {
+        assert_eq!(score(2) == 4 && check(2) != Err(E::Bad), true);
+    }
+}

@@ -936,6 +936,8 @@ tests = [
   "crates/ripr/src/config.rs::tests::config_discovery_stops_at_unresolvable_git_entries",
   "crates/ripr/src/config.rs::tests::config_mode_applies_when_cli_mode_is_not_explicit",
   "crates/ripr/src/config.rs::tests::malformed_or_unknown_config_is_actionable",
+  "crates/ripr/src/config.rs::tests::config_load_parse_error_strips_windows_verbatim_prefix",
+  "crates/ripr/src/config.rs::tests::load_for_root_parse_error_uses_the_human_path_and_keeps_canonical_source_path",
   "crates/ripr/src/config.rs::tests::config_rejects_unsafe_suppression_paths",
   "crates/ripr/src/config.rs::tests::oracle_policy_rewrites_configurable_oracle_strengths",
   "crates/ripr/src/lsp/config.rs::tests::repo_config_sets_defaults_when_initialization_options_are_missing",
@@ -1105,6 +1107,11 @@ id = "RIPR-SPEC-0009"
 name = "defaults-first adoption"
 spec = "docs/specs/RIPR-SPEC-0009-defaults-first-adoption.md"
 tests = [
+  "crates/ripr/src/output/pilot/tests.rs::multiline_match_heads_follow_changed_lines_without_moving_seam_identity",
+  "crates/ripr/src/output/pilot/tests.rs::multiline_match_guard_lines_exclude_the_arm_body",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_match_source_lines_preserve_identity_and_refuse_invalid_ranges",
+  "crates/ripr/tests/cli_smoke.rs::pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps",
+
   "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_sparse_missing_changed_file_and_recovers_same_head",
   "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_mixed_missing_changed_file_even_with_changed_recommendation",
   "crates/ripr/src/output/pilot/tests.rs::pilot_current_change_preserves_absent_file_coverage_through_empty_and_mixed_supplements",
@@ -14377,6 +14384,14 @@ tests = [
   "crates/ripr/src/analysis/classifier/evidence/side_flip.rs::tests::macro_definitions_and_inner_cfg_make_a_test_file_unreadable",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0227_uncompared_unwrap_err_is_a_weak_broad_error_oracle",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0227_uncompared_expect_err_reads_like_unwrap_err",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/guard.rs::tests::a_first_statement_integer_guard_over_an_ok_tail_is_read",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/guard.rs::tests::a_guard_the_rule_cannot_establish_is_not_read",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/guard.rs::tests::err_on_the_edge_and_ok_beside_it_observe_both_sides",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/guard.rs::tests::one_side_far_inputs_and_disagreeing_assertions_do_not",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/guard.rs::tests::the_old_guard_must_return_the_same_error",
+  "crates/ripr/tests/guard_side_flip.rs::err_and_ok_on_both_sides_of_the_edge_expose_the_guard",
+  "crates/ripr/tests/guard_side_flip.rs::an_oracle_short_of_both_sides_keeps_the_gap",
+  "crates/ripr/tests/guard_side_flip.rs::a_changed_error_or_an_unreadable_guard_keeps_the_gap",
 ]
 fixtures = []
 code = [
@@ -14386,6 +14401,8 @@ code = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/syntax/ra.rs",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/guard.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0227-result-side-oracles.md",
@@ -14866,6 +14883,9 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::committed_snapshot_keys_join_describe_titles_per_runner",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_without_its_committed_entry_stays_medium",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_whose_counter_cannot_be_named_stays_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::committed_jest_hint_entry_reads_strong",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::hinted_snapshot_without_its_exact_entry_stays_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::hinted_snapshot_sharing_its_counter_stays_medium",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_location_or_update_override_stays_medium",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_input_differing_from_head_stays_medium",
   "crates/ripr/src/analysis/committed_source/tests.rs::porcelain_parser_records_unrouted_snapshot_inputs",
