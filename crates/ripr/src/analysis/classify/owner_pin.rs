@@ -8036,13 +8036,12 @@ pub(in crate::analysis) fn expected_operand_value(
     let mut value = None;
     while is_plain_identifier(&current) && current != owner.name && seen.insert(current.clone()) {
         let next = match receiver_let_bindings(test, &current) {
-            Some(bindings) if bindings.len() == 1 => {
-                assigned_value(&mask_comments_and_strings(bindings[0])).map(str::to_string)
-            }
-            Some(bindings) if bindings.is_empty() => {
-                single_constant_value(index, &current, &in_scope)
-            }
-            _ => None,
+            Some(bindings) => match bindings.as_slice() {
+                [binding] => immutable_let_value(test, binding),
+                [] => single_constant_value(index, &current, &in_scope),
+                _ => None,
+            },
+            None => None,
         };
         let Some(next) = next else {
             break;
@@ -8051,6 +8050,22 @@ pub(in crate::analysis) fn expected_operand_value(
         value = Some(current.clone());
     }
     value
+}
+
+/// The value of the test's one `let` binding `binding` (its text after the
+/// name), unless the `let` is `mut`, so a later assignment or `push` may
+/// change it, or carries an attribute (`#[cfg(..)] let`) that may compile
+/// it away (#7066 review), as [`let_bound_owner_call`] refuses.
+fn immutable_let_value(test: &TestSummary, binding: &str) -> Option<String> {
+    let masked = mask_comments_and_strings(&test.body);
+    let binding_at = (binding.as_ptr() as usize).checked_sub(test.body.as_ptr() as usize)?;
+    let let_at = *whole_word_offsets(masked.get(..binding_at)?, "let").last()?;
+    if contains_as_whole_word(masked.get(let_at..binding_at)?, "mut")
+        || masked.get(..let_at)?.trim_end().ends_with(']')
+    {
+        return None;
+    }
+    assigned_value(&mask_comments_and_strings(binding)).map(str::to_string)
 }
 
 /// The initializer of the one in-scope workspace constant named `name`.
@@ -8071,7 +8086,8 @@ fn single_constant_value(
     if matches.next().is_some() {
         return None;
     }
-    if initializer.trim_start().starts_with(':') {
+    let initializer_text = initializer.trim_start();
+    if initializer_text.starts_with(':') && !initializer_text.starts_with("::") {
         assigned_value(initializer).map(str::to_string)
     } else {
         Some(initializer.clone())

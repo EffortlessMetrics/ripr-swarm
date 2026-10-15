@@ -1732,6 +1732,7 @@ fn a_constant_initialized_through_the_owner_is_not_an_independent_expected_value
         "static EXPECTED: u32 = weight(4);",
         "pub(crate) static mut EXPECTED: u32 = weight(4);",
         "const BASE: u32 = weight(2);\nconst EXPECTED: u32 = BASE * 2;",
+        "const BASE: u32 = weight(2);\nconst MID: u32 = BASE + 1;\nconst EXPECTED: u32 = MID * 2;",
     ] {
         let tests = test(items);
         assert!(weight_admitted(&tests).is_empty(), "{tests}");
@@ -2008,6 +2009,14 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
     );
     assert_eq!(
         value(
+            "const EXPECTED: u32 = ::demo::weight(4);",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("::demo::weight(4)".to_string())
+    );
+    assert_eq!(
+        value(
             "thread_local! { static EXPECTED: u32 = weight(4); }",
             "assert_eq!(weight(4), EXPECTED);",
             "EXPECTED"
@@ -2040,6 +2049,23 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
             "weight",
         ),
         ("", "assert_eq!(weight(2), EXPECTED);", "EXPECTED"),
+        // A `mut` binding may change after its `let`; an attribute may
+        // compile the `let` away; two same-named constants are ambiguous.
+        (
+            "",
+            "let mut e = weight(2);\ne = 6;\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        (
+            "",
+            "#[cfg(any())]\nlet e = weight(2);\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        (
+            "const EXPECTED: u32 = weight(4);\nmod other { pub const EXPECTED: u32 = 12; }",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
+        ),
     ] {
         assert_eq!(value(items, body, operand), None, "{body}");
     }
