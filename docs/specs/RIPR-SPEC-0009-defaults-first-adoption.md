@@ -664,8 +664,8 @@ Current tests and reports that support the contract:
 - `crates/ripr/tests/cli_smoke.rs::pilot_withholds_static_limitations_and_keeps_a_true_gap`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_excludes_solved_governed_classes`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_puts_seams_in_the_current_change_first`
-- `crates/ripr/src/analysis/seam_inventory.rs::multiline_match_heads_follow_changed_lines_without_moving_seam_identity`
-- `crates/ripr/src/analysis/seam_inventory.rs::multiline_match_guard_lines_exclude_the_arm_body`
+- `crates/ripr/src/output/pilot/tests.rs::multiline_match_heads_follow_changed_lines_without_moving_seam_identity`
+- `crates/ripr/src/output/pilot/tests.rs::multiline_match_guard_lines_exclude_the_arm_body`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_match_source_lines_preserve_identity_and_refuse_invalid_ranges`
 - `crates/ripr/tests/cli_smoke.rs::pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_current_change_matches_the_seam_span_and_new_side_lines`

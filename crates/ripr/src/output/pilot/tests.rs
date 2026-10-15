@@ -5,7 +5,10 @@ use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, Seam
 use crate::analysis::test_grip_evidence::{
     RelatedTestGrip, RelationConfidence, RelationReason, TestGripEvidence,
 };
-use crate::analysis::{ClassifiedChangeReport, ClassifiedSeam};
+use crate::analysis::{
+    ClassifiedChangeReport, ClassifiedSeam, FileFacts, RaRustSyntaxAdapter, RustIndex,
+    RustSyntaxAdapter, inventory_seams_from_index,
+};
 use crate::analysis_outcome::{
     AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
     AnalysisStage,
@@ -2604,6 +2607,95 @@ fn pilot_ranking_puts_seams_in_the_current_change_first() {
             "{change:?}"
         );
     }
+}
+
+/// #5604: display snippets normalize whitespace and match origins stay
+/// at `match` / `=>`; neither is the changed-line coverage range.
+#[test]
+fn multiline_match_heads_follow_changed_lines_without_moving_seam_identity() -> Result<(), String> {
+    let path = PathBuf::from("src/classify.rs");
+    let source = "pub fn classify(value: (bool, bool)) -> u8 {\n    match (\n        value.0,\n        value.1,\n    ) {\n        (\n            true,\n            false,\n        ) =>\n            7,\n        _ => 9,\n    }\n}\n";
+    for source in [source.to_owned(), source.replace('\n', "\r\n")] {
+        for cached in [false, true] {
+            let facts = RaRustSyntaxAdapter.summarize_file(&path, &source)?;
+            let facts: FileFacts = if cached {
+                // The file-fact cache uses this wire boundary. Normalized
+                // text must not lose its independent parser-owned range.
+                serde_json::from_slice(&serde_json::to_vec(&facts).map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?
+            } else {
+                facts
+            };
+            let mut index = RustIndex::default();
+            index.extend_functions(facts.functions.clone());
+            index.insert_file_only(path.clone(), facts);
+            let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
+            let heads: Vec<_> = seams
+                .iter()
+                .filter(|seam| seam.kind() == SeamKind::MatchArm)
+                .collect();
+            // Literal pins from the pre-fix token anchors and documented
+            // FNV identity contract; no expected value uses the selector.
+            assert_eq!(
+                heads
+                    .iter()
+                    .map(|seam| (seam.display_line(), seam.id().as_str()))
+                    .collect::<Vec<_>>(),
+                [
+                    (2, "e940643c461ff034"),
+                    (9, "4ce9196b0fa03e6d"),
+                    (11, "4d0e996b0fc0342a"),
+                ]
+            );
+            for (head, expected_lines) in
+                heads
+                    .iter()
+                    .zip([&[2, 3, 4, 5][..], &[6, 7, 8, 9][..], &[11][..]])
+            {
+                assert!(head.span().is_none(), "calibration remains line-only");
+                for line in 1..=14 {
+                    let diff = format!(
+                        "diff --git a/src/classify.rs b/src/classify.rs\n--- a/src/classify.rs\n+++ b/src/classify.rs\n@@ -{line} +{line} @@\n-old\n+new\n"
+                    );
+                    let change = PilotCurrentChange::from_diff_text(Path::new("."), None, &diff);
+                    assert_eq!(
+                        change.touches_seam(head),
+                        expected_lines.contains(&line),
+                        "head at {}, changed line {line}, cached={cached}",
+                        head.display_line()
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn multiline_match_guard_lines_exclude_the_arm_body() -> Result<(), String> {
+    let path = PathBuf::from("src/guard.rs");
+    let source = "pub fn choose(value: u8) -> &'static str {\n    match value {\n        1\n            if value\n                > 0 =>\n        {\n            \" => }\"\n        },\n        _ => \"other\",\n    }\n}\n";
+    let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+    let mut index = RustIndex::default();
+    index.extend_functions(facts.functions.clone());
+    index.insert_file_only(path.clone(), facts);
+    let seams = inventory_seams_from_index(&[path], &index);
+    let arm = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::MatchArm && seam.display_line() == 5)
+        .ok_or("missing guarded match arm")?;
+    for line in 1..=11 {
+        let diff = format!(
+            "diff --git a/src/guard.rs b/src/guard.rs\n--- a/src/guard.rs\n+++ b/src/guard.rs\n@@ -{line} +{line} @@\n-old\n+new\n"
+        );
+        let change = PilotCurrentChange::from_diff_text(Path::new("."), None, &diff);
+        assert_eq!(
+            change.touches_seam(arm),
+            [3, 4, 5].contains(&line),
+            "changed line {line}"
+        );
+    }
+    Ok(())
 }
 
 #[test]
