@@ -85,10 +85,11 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// owner (`s.place("A", 0);`) may have returned before its insert, so
     /// only a call whose result is consumed confirms a keyed read.
     pub(in crate::analysis) owner_returns_value: bool,
-    /// #8051: whether the owner body before the changed line may leave
-    /// early (`if self.locked { return; }`, `?`, a panicking call). Only
-    /// then can a test that expects the written collection empty have
-    /// skipped the changed push.
+    /// #8051: whether the owner body before the changed expression may
+    /// leave early (`if self.locked { return; }`, `?`, a panicking call),
+    /// including a guard sharing the changed line. Only then can a test
+    /// that expects the written collection empty have skipped the changed
+    /// push.
     pub(in crate::analysis) owner_may_exit_before_probe: bool,
     /// RIPR-SPEC-0228 keyed reads: whether `(type, ctor, field)`, the
     /// constructor a test builds its binding with, leaves that map field
@@ -136,6 +137,48 @@ fn reveal_evidence(
         None,
     );
     (observe, discriminate, related)
+}
+
+/// [`reveal_evidence`] with the #8051 early-exit flag under the test's
+/// control, reporting the first related row's oracle strength.
+#[cfg(test)]
+fn reveal_evidence_with_exit(
+    probe: &Probe,
+    test: &TestSummary,
+    owner_may_exit_before_probe: bool,
+) -> (StageEvidence, OracleStrength) {
+    let (_, discriminate, related, _) = reveal_evidence_with_expression(
+        probe,
+        &probe.expression,
+        &[(test, RelationReason::DirectOwnerCall)],
+        &[],
+        &|_, _| false,
+        &|_, _| false,
+        &ReturnOracleAdmission {
+            owner_return_pin: &|_, _| false,
+            assertion_admitted: &|_, _| true,
+            sibling_exclusion_admitted: &|_, _| true,
+            proximity_may_reach_owner: &|_| false,
+            owner_parameters: &[],
+            expected_reaches_owner: &|_, _| false,
+            expected_operand_value: &|_, _| None,
+            effect_state_carried: &|_, _| true,
+            setter_writes_field: &|_, _, _| true,
+            collection_argument_observed: &|_, _| false,
+            getter_reads_field: &|_, _, _| false,
+            getter_reads_key: &|_, _, _| None,
+            owner_argument_names: &[],
+            owner_returns_value: true,
+            owner_may_exit_before_probe,
+            constructor_starts_empty: &|_, _, _| false,
+            call_cannot_store: &|_, _, _, _| None,
+        },
+        None,
+    );
+    let strength = related
+        .first()
+        .map_or(OracleStrength::None, |row| row.oracle_strength.clone());
+    (discriminate, strength)
 }
 
 #[cfg(test)]
@@ -9204,6 +9247,93 @@ return Err(\"typed pin\".into());
                 discriminate.summary.contains("observation_unverified"),
                 "{name} must not confirm a different observer: got `{}`",
                 discriminate.summary
+            );
+        }
+    }
+
+    /// #8051 / #8141 review: in every recognized form, an assertion
+    /// expecting the written collection empty caps both effect families at
+    /// weak and leaves the observation unconfirmed when the owner may
+    /// leave before the changed push. Without an earlier exit the push
+    /// ran, so the canonical form keeps its strength, and a non-empty
+    /// expectation is never capped. The owner-wide flag is the accepted
+    /// boundary: the cap cannot read which path one test took, so a test
+    /// that bypasses the exit and empties the collection again is capped
+    /// with it (recorded in RIPR-SPEC-0228).
+    #[test]
+    fn empty_collection_expectations_cap_effect_families_only_after_an_early_exit() {
+        let forms = [
+            "assert_eq!(items, vec![]);",
+            "assert_eq!(vec![], items);",
+            "assert_eq!(items, Vec::new());",
+            "assert_eq!(items, Vec::<Entry>::new());",
+            "assert_eq!(&items, &[]);",
+            "assert_eq!(items.len(), 0);",
+            "assert_eq!(0, items.len());",
+            "assert!(items.is_empty());",
+        ];
+        for family in [ProbeFamily::SideEffect, ProbeFamily::CallDeletion] {
+            for text in forms {
+                let probe = probe(family.clone(), "items.push(5)");
+                // The harness labels the assertion strong whole-object
+                // evidence, so only a cap can move the result to weak.
+                let test = test_with_assertions(
+                    "leaves_items_empty",
+                    vec![oracle(
+                        text,
+                        OracleKind::WholeObjectEquality,
+                        OracleStrength::Strong,
+                    )],
+                );
+                let (discriminate, strength) = reveal_evidence_with_exit(&probe, &test, true);
+                assert_eq!(
+                    discriminate.state,
+                    StageState::Weak,
+                    "{text} against {family:?} must not read exposed after a skippable push"
+                );
+                assert_eq!(strength, OracleStrength::Weak, "{text} against {family:?}");
+                assert!(
+                    discriminate.summary.contains("observation_unverified"),
+                    "{text} against {family:?} must not confirm a skipped push: got `{}`",
+                    discriminate.summary
+                );
+                // Without an earlier exit the push ran, and the canonical
+                // form keeps its strength.
+                if text == "assert_eq!(items, vec![]);" {
+                    let (discriminate, strength) = reveal_evidence_with_exit(&probe, &test, false);
+                    assert_eq!(
+                        discriminate.state,
+                        StageState::Yes,
+                        "{text} against {family:?} must stay exposed when the push cannot be skipped"
+                    );
+                    assert_eq!(
+                        strength,
+                        OracleStrength::Strong,
+                        "{text} against {family:?}"
+                    );
+                }
+            }
+            // The cap is about the empty expectation, not about the
+            // early-exit owner: a non-empty equality is never capped.
+            let probe = probe(family.clone(), "items.push(5)");
+            let seeded = test_with_assertions(
+                "logs_the_beat",
+                vec![oracle(
+                    "assert_eq!(items, vec![5]);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            let (discriminate, strength) = reveal_evidence_with_exit(&probe, &seeded, true);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "a non-empty expectation against {family:?} must stay exposed"
+            );
+            assert_eq!(
+                strength,
+                OracleStrength::Strong,
+                "a non-empty expectation against {family:?}"
             );
         }
     }

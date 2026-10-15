@@ -653,6 +653,7 @@ impl ClassifiedProbeEvidence {
                         function.body.as_str(),
                         function.start_line,
                         context.probe.location.line,
+                        &context.probe.expression,
                     )
                 }),
                 constructor_starts_empty: &|impl_type, ctor, field| {

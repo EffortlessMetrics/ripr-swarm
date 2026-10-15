@@ -1385,12 +1385,16 @@ fn is_empty_collection_literal(operand: &str) -> bool {
 }
 
 /// #8051: whether the owner whose source text `owner_body` starts at file
-/// line `owner_start_line` may leave before file line `line` (see
-/// [`may_exit_early`]).
+/// line `owner_start_line` may leave before the changed `expression` on file
+/// line `line` (see [`may_exit_early`]). The scan runs to the expression's
+/// first occurrence on that line, so a guard sharing the line
+/// (`if self.locked { return; } self.log.push(1);`) still counts; when the
+/// expression does not appear on the line, only the lines before it do.
 pub(in crate::analysis) fn owner_may_exit_before_line(
     owner_body: &str,
     owner_start_line: usize,
     line: usize,
+    expression: &str,
 ) -> bool {
     let masked = crate::analysis::extract::mask_comments_and_strings(owner_body);
     let Some(lines_before) = line.checked_sub(owner_start_line) else {
@@ -1401,10 +1405,20 @@ pub(in crate::analysis) fn owner_may_exit_before_line(
         .take(lines_before)
         .map(str::len)
         .sum();
+    let line_end = masked[line_at..]
+        .find('\n')
+        .map_or(masked.len(), |nl| line_at + nl);
+    // #8141 review: a guard on the changed line but before the changed
+    // expression still lets the owner skip it. A string literal inside the
+    // expression is blanked in the masked body, so an expression that does
+    // not appear verbatim keeps the line-start scan.
+    let at = masked[line_at..line_end]
+        .find(expression)
+        .map_or(line_at, |at| line_at + at);
     masked
         .find('{')
-        .filter(|open| *open < line_at)
-        .is_some_and(|open| may_exit_early(&masked[open..line_at]))
+        .filter(|open| *open < at)
+        .is_some_and(|open| may_exit_early(&masked[open..at]))
 }
 
 fn is_default_like(operand: &str) -> bool {
@@ -3290,17 +3304,63 @@ mod tests {
     }
 
     #[test]
-    fn owner_may_exit_before_line_reads_only_the_body_before_the_line() {
+    fn owner_may_exit_before_line_reads_everything_before_the_changed_expression() {
         let owner = "fn beat(&mut self) {\n    if self.locked {\n        return;\n    }\n    self.log.push(1);\n}";
-        assert!(owner_may_exit_before_line(owner, 10, 14));
+        assert!(owner_may_exit_before_line(
+            owner,
+            10,
+            14,
+            "self.log.push(1)"
+        ));
         // The guard sits after line 11, so the first statement cannot skip.
-        assert!(!owner_may_exit_before_line(owner, 10, 11));
+        assert!(!owner_may_exit_before_line(owner, 10, 11, "self.locked"));
         let plain = "fn add(&mut self, x: u32) {\n    self.items.push(x);\n}";
-        assert!(!owner_may_exit_before_line(plain, 10, 11));
+        assert!(!owner_may_exit_before_line(
+            plain,
+            10,
+            11,
+            "self.items.push(x)"
+        ));
         let fallible = "fn ship(&mut self) -> Result<(), E> {\n    let n = self.next()?;\n    self.log.push(n);\n    Ok(())\n}";
-        assert!(owner_may_exit_before_line(fallible, 10, 12));
+        assert!(owner_may_exit_before_line(
+            fallible,
+            10,
+            12,
+            "self.log.push(n)"
+        ));
         // A line before the owner starts reads nothing.
-        assert!(!owner_may_exit_before_line(plain, 10, 9));
+        assert!(!owner_may_exit_before_line(
+            plain,
+            10,
+            9,
+            "self.items.push(x)"
+        ));
+        // #8141 review: a guard sharing the changed line still lets the
+        // owner skip the push, so the prefix before the expression counts.
+        let inline = "fn beat(&mut self) { if self.locked { return; } self.log.push(1); }";
+        assert!(owner_may_exit_before_line(
+            inline,
+            10,
+            10,
+            "self.log.push(1)"
+        ));
+        // A guard after the push on the same line cannot skip it.
+        let guarded_after = "fn beat(&mut self) { self.log.push(1); if self.locked { return; } }";
+        assert!(!owner_may_exit_before_line(
+            guarded_after,
+            10,
+            10,
+            "self.log.push(1)"
+        ));
+        // A string literal inside the expression is blanked in the masked
+        // body, so the unmatched expression keeps the line-start scan.
+        let quoted = "fn tag(&mut self) {\n    self.log.push(\"x\");\n}";
+        assert!(!owner_may_exit_before_line(
+            quoted,
+            10,
+            11,
+            "self.log.push(\"x\")"
+        ));
     }
 
     #[test]
