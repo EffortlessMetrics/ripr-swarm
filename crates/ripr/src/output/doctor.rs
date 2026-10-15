@@ -1483,7 +1483,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
             "cargo_toml",
             DoctorStatus::Fail,
             Some(format!(
-                "no Cargo.toml found at {}; pass `--root <dir>` to target a crate or run `cargo init` in the selected root to create a workspace",
+                "no Cargo.toml found at {}; pass `--root <dir>` to target a crate or run `cargo init` in the selected root to create a package",
                 human_path(root)
             )),
         );
@@ -4589,7 +4589,7 @@ mod tests {
             "a path that happens to contain an actionable verb is still state-only"
         );
         assert!(fail_evidence_names_its_fix(
-            "no Cargo.toml found at .; pass `--root <dir>` to target a crate or run `cargo init` in the selected root to create a workspace"
+            "no Cargo.toml found at .; pass `--root <dir>` to target a crate or run `cargo init` in the selected root to create a package"
         ));
         assert!(fail_evidence_names_its_fix(
             "root directory does not exist at /tmp/absent; create the directory or pass an existing path with `--root`"
