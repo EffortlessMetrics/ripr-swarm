@@ -1665,6 +1665,16 @@ pub(crate) fn field_assignment_path(bin_expr: &ast::BinExpr) -> Option<String> {
                     | ast::Expr::IfExpr(_)
                     | ast::Expr::MatchExpr(_)
                     | ast::Expr::ClosureExpr(_)
+                    // A block or loop can leave the owner before the write
+                    // (`self.n = { let Some(n) = x else { return }; n };`).
+                    | ast::Expr::BlockExpr(_)
+                    | ast::Expr::ReturnExpr(_)
+                    | ast::Expr::BreakExpr(_)
+                    | ast::Expr::ContinueExpr(_)
+                    | ast::Expr::LetExpr(_)
+                    | ast::Expr::LoopExpr(_)
+                    | ast::Expr::WhileExpr(_)
+                    | ast::Expr::ForExpr(_)
             )
         ) || ast::BinExpr::cast(node).is_some_and(|inner| {
             inner
@@ -1672,7 +1682,14 @@ pub(crate) fn field_assignment_path(bin_expr: &ast::BinExpr) -> Option<String> {
                 .is_some_and(|op| matches!(op, ast::BinaryOp::CmpOp(_) | ast::BinaryOp::LogicOp(_)))
         })
     });
-    if bin_expr.syntax().text().contains_char('\n') || keeps_other_probe {
+    // A comment inside the assignment hides it from the textual
+    // `field_assignment_target` reader, which the evidence guard and the
+    // seam skip rely on, so such writes keep no probe.
+    let has_comment = bin_expr
+        .syntax()
+        .descendants_with_tokens()
+        .any(|element| element.kind() == ra_ap_syntax::SyntaxKind::COMMENT);
+    if bin_expr.syntax().text().contains_char('\n') || keeps_other_probe || has_comment {
         return None;
     }
     let mut place = bin_expr.lhs()?;
@@ -4689,6 +4706,8 @@ mod shadow_fact_equivalence_tests {
             ("self.child.count = 0;", "child.count"),
             ("self.state = State::Done;", "state"),
             ("self.total <<= 1;", "total"),
+            // A trailing comment is trivia outside the assignment node.
+            ("self.total += 1 /* c */;", "total"),
         ] {
             assert_eq!(path(statement).as_deref(), Some(expected), "{statement}");
         }
@@ -4712,6 +4731,13 @@ mod shadow_fact_equivalence_tests {
             "self.ok = self.a && self.b;",
             "self.count = if self.locked { 2 } else { 5 };",
             "self.count = match self.locked { true => 1, false => 2 };",
+            // #8061 review: a block can leave the owner before the write,
+            // and a comment hides the write from the textual reader.
+            "self.count = { let Some(n) = self.next else { return }; n };",
+            "self.count = { 1 };",
+            "self.count = loop { break 2 };",
+            "self.count /* c */ += 1;",
+            "self.count += /* c */ 1;",
         ] {
             assert_eq!(path(statement), None, "{statement}");
         }

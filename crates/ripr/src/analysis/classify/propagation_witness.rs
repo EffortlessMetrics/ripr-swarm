@@ -1135,10 +1135,17 @@ fn rhs_may_branch(expression: &str) -> bool {
     let Some(at) = expression.find('=') else {
         return true;
     };
-    let rhs = &expression[at + 1..];
+    // Mask strings and comments so `self.label = "if"` keeps its credit.
+    let masked = crate::analysis::extract::mask_comments_and_strings(&expression[at + 1..]);
+    let rhs = masked.as_str();
     let words = rhs
         .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-        .any(|word| matches!(word, "if" | "match" | "loop" | "while" | "for"));
+        .any(|word| {
+            matches!(
+                word,
+                "if" | "match" | "loop" | "while" | "for" | "return" | "break" | "continue"
+            )
+        });
     words
         || ["==", "!=", "<", ">", "&&", "||", "?"]
             .iter()
@@ -2940,11 +2947,29 @@ mod tests {
             "self.ok = self.a == self.b",
             "self.ok = self.a != self.b",
             "self.ok = self.a < self.b",
+            "self.count = { let Some(n) = self.next else { return }; n }",
         ] {
             let body = format!("fn tick(&mut self) {{\n{changed};\n}}");
             assert_eq!(
                 assigned_field_path(&body, 1, 2, changed, &none),
                 None,
+                "{changed}"
+            );
+        }
+    }
+
+    #[test]
+    fn assigned_field_path_reads_branch_words_inside_strings_as_text() {
+        let none = |_: &str| None;
+        // #8061 review: a quoted `if` or `==` is a value, not a branch.
+        for (changed, field) in [
+            ("self.label = \"if\"", "label"),
+            ("self.label = \"a == b\"", "label"),
+        ] {
+            let body = format!("fn tick(&mut self) {{\n{changed};\n}}");
+            assert_eq!(
+                assigned_field_path(&body, 1, 2, changed, &none).as_deref(),
+                Some(field),
                 "{changed}"
             );
         }
