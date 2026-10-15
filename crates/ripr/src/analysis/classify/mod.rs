@@ -25,6 +25,7 @@ mod targeted_calls;
 mod text;
 mod transitive_reach;
 mod value_transfer;
+mod variant_field_pattern;
 
 pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_and_boundary_input, call_parameter_names,
