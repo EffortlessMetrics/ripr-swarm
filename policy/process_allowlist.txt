@@ -164,3 +164,5 @@ xtask/tests/policy_all.rs|use std::process::Command|1|policy-all-driver-proof|#5
 
 xtask/tests/common/help_capture_io.rs|Command::new|1|package-help-diagnostic-proof|Test-only command description control names program/args/cwd/scratch without environment disclosure; it never spawns. Shared std-only I/O owner preserves operation/path/kind/raw errno through scratch/capture failures (#7545).
 xtask/tests/common/help_capture_io.rs|use std::process::Command|1|package-help-diagnostic-proof|Command metadata only, shared by the bounded help adapter and its cheap diagnostic controls; no additional spawn authority (#7545).
+
+tools/repo-policy/tests/ci_leaf_contract.rs|Command::new|1|ci-leaf-contract|#4987: GNU timeout bounds literal workflow Bash predicates, source/result guards and stubbed payload commands; no product build, network, publication or production spawn.

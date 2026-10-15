@@ -1,6 +1,41 @@
 name: CI
 
 on:
+  workflow_call:
+    inputs:
+      proof_profile:
+        type: string
+        required: true
+      request_id:
+        type: string
+        required: true
+      head_sha:
+        type: string
+        required: true
+      base_sha:
+        type: string
+        required: true
+      subject_sha:
+        type: string
+        required: true
+      subject_tree:
+        type: string
+        required: true
+      workflow_generation:
+        type: string
+        required: true
+      run_rust_only:
+        type: boolean
+        required: true
+      run_release_proof:
+        type: boolean
+        required: true
+      run_msrv:
+        type: boolean
+        required: true
+      run_vscode:
+        type: boolean
+        required: true
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
@@ -15,18 +50,68 @@ permissions:
 # label-event cancellation bug described in docs/CI.md caused in-progress runs
 # to be cancelled on label toggling.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
+  group: ${{ github.workflow }}-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha }}
+  cancel-in-progress: ${{ !contains(toJSON(inputs), '"subject_sha"') && github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
 
+# Staged #4987 leaf: the trusted caller owns fresh review/admission and selection.
+# Production triggers remain until caller/result integration is qualified.
+# full-ci/release-check are legacy guards only; callable runs consume frozen intent.
 jobs:
-  release-proof:
-    name: Perl and release proof
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
+  source-identity:
+    if: contains(toJSON(inputs), '"subject_sha"')
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 2
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.subject_sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify exact admitted source
+        env:
+          PROFILE: ${{ inputs.proof_profile }}
+          REQUEST: ${{ inputs.request_id }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          SUBJECT: ${{ inputs.subject_sha }}
+          TREE: ${{ inputs.subject_tree }}
+          GENERATION: ${{ inputs.workflow_generation }}
+          SELECT_RUST: ${{ inputs.run_rust_only }}
+          SELECT_RELEASE: ${{ inputs.run_release_proof }}
+          SELECT_MSRV: ${{ inputs.run_msrv }}
+          SELECT_VSCODE: ${{ inputs.run_vscode }}
+        run: |
+          set -euo pipefail
+          fail() { echo "$1" >&2; exit 1; }
+          [[ "$PROFILE" == qualification ]] || fail 'Unknown admitted profile'
+          [[ "$REQUEST" =~ ^[0-9]+-[0-9]+$ ]] || fail 'Malformed request identity'
+          for value in "$HEAD_SHA" "$BASE_SHA" "$SUBJECT" "$TREE" "$GENERATION"; do
+            [[ "$value" =~ ^[0-9a-f]{40}$ ]] || fail 'Malformed admission identity'
+          done
+          selected=false
+          for value in "$SELECT_RUST" "$SELECT_RELEASE" "$SELECT_MSRV" "$SELECT_VSCODE"; do
+            case "$value" in true) selected=true ;; false) ;; *) fail 'Incomplete selection' ;; esac
+          done
+          [[ "$selected" == true ]] || fail 'Empty CI selection'
+          [[ "$GITHUB_WORKFLOW_SHA" == "$GENERATION" ]] || fail 'Wrong workflow generation'
+          [[ "$(git rev-parse HEAD)" == "$SUBJECT" ]] || fail 'Wrong source checkout'
+          [[ "$(git rev-parse 'HEAD^{tree}')" == "$TREE" ]] || fail 'Wrong integration tree'
+          [[ "$(git show -s --format=%P HEAD)" == "$BASE_SHA $HEAD_SHA" ]] || fail 'Wrong integration parents'
+
+  release-proof:
+    name: Perl and release proof
+    needs: source-identity
+    if: >-
+      always() && !cancelled() &&
+      ((contains(toJSON(inputs), '"subject_sha"') && needs.source-identity.result == 'success' && inputs.run_release_proof) ||
+      (!contains(toJSON(inputs), '"subject_sha"') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci'))))
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ contains(toJSON(inputs), '"subject_sha"') && 20 || 45 }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.subject_sha || github.sha }}
+          persist-credentials: false
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
@@ -42,27 +127,31 @@ jobs:
         run: cargo test -p ripr --features lang-perl --lib analysis::language::perl
 
       - name: Package list (release surface)
-        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
+        if: contains(toJSON(inputs), '"subject_sha"') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
         run: cargo package -p ripr --list
       - name: Publish dry-run (release surface)
-        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
+        if: contains(toJSON(inputs), '"subject_sha"') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
         run: cargo publish -p ripr --dry-run
       # `cargo install ripr` without `--locked` ignores Cargo.lock and resolves
       # fresh, so a lock-only pin never reaches it (#3787). Build the packaged
       # crate the way that command does: drop its lockfile and re-resolve.
       - name: Unlocked install resolution (release surface)
-        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
+        if: contains(toJSON(inputs), '"subject_sha"') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
         run: |
-          cargo package -p ripr --no-verify && tar xzf "target/package/ripr-$(cargo pkgid -p ripr | sed 's/.*#//').crate" -C "$RUNNER_TEMP"
-          cd "$RUNNER_TEMP/ripr-$(cargo pkgid -p ripr | sed 's/.*#//')" && rm Cargo.lock && cargo generate-lockfile
+          cargo package -p ripr --no-verify
+          package_version="$(cargo pkgid -p ripr | sed 's/.*#//')"
+          tar xzf "target/package/ripr-$package_version.crate" -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/ripr-$package_version"
+          rm Cargo.lock
+          cargo generate-lockfile
           cargo check --target-dir "$RUNNER_TEMP/unlocked-target"
       - name: Release readiness (release surface)
-        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
+        if: contains(toJSON(inputs), '"subject_sha"') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
         run: |
           release_version="$(cargo pkgid -p ripr | sed 's/.*#//')"
           cargo xtask release-readiness --version "$release_version"
       - name: Upload release-readiness receipts
-        if: always() && ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
+        if: always() && (contains(toJSON(inputs), '"subject_sha"') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
         uses: actions/upload-artifact@v7
         with:
           name: release-readiness-${{ github.run_id }}
@@ -87,22 +176,30 @@ jobs:
     # fixtures, or Cargo manifests, and on every push to main; label events
     # and docs-only PRs skip the compile, matching the routed lane's posture.
     name: Rust-only feature lane
-    if: github.event_name != 'pull_request' || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)
+    needs: source-identity
+    if: >-
+      always() && !cancelled() &&
+      ((contains(toJSON(inputs), '"subject_sha"') && needs.source-identity.result == 'success' && inputs.run_rust_only) ||
+      (!contains(toJSON(inputs), '"subject_sha"') && (github.event_name != 'pull_request' || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action))))
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: ${{ contains(toJSON(inputs), '"subject_sha"') && 20 || 45 }}
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.subject_sha || github.sha }}
+          persist-credentials: false
           fetch-depth: 0
       - name: Detect Rust surface change
         id: surface
         env:
           EVENT_NAME: ${{ github.event_name }}
+          CALLED: ${{ contains(toJSON(inputs), '"subject_sha"') }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           rust=true reason=not_pull_request
           classify() {
+            [ "${CALLED:-false}" != true ] || return 0
             [ "$EVENT_NAME" = "pull_request" ] || return 0
             reason=missing_identity
             [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ] || return 0
@@ -158,11 +255,18 @@ jobs:
     # Routed Rust already runs the declared 1.95.0 toolchain on every ordinary
     # PR and main push. Keep the duplicate named proof only for explicit full
     # CI and manual investigation.
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    needs: source-identity
+    if: >-
+      always() && !cancelled() &&
+      ((contains(toJSON(inputs), '"subject_sha"') && needs.source-identity.result == 'success' && inputs.run_msrv) ||
+      (!contains(toJSON(inputs), '"subject_sha"') && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci')))))
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: ${{ contains(toJSON(inputs), '"subject_sha"') && 20 || 30 }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.subject_sha || github.sha }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
@@ -171,14 +275,21 @@ jobs:
       - run: cargo check --workspace --all-targets
 
   vscode:
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    needs: source-identity
+    if: >-
+      always() && !cancelled() &&
+      ((contains(toJSON(inputs), '"subject_sha"') && needs.source-identity.result == 'success' && inputs.run_vscode) ||
+      (!contains(toJSON(inputs), '"subject_sha"') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci'))))
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: ${{ contains(toJSON(inputs), '"subject_sha"') && 20 || 30 }}
     defaults:
       run:
         working-directory: editors/vscode
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.subject_sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -201,3 +312,34 @@ jobs:
           path: target/ripr/vscode-test-host-diagnostics/
           if-no-files-found: ignore
           retention-days: 5
+
+  ci-result:
+    if: always() && contains(toJSON(inputs), '"subject_sha"')
+    needs: [source-identity, rust-only-features, release-proof, msrv, vscode]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every selected child
+        env:
+          IDENTITY_RESULT: ${{ needs.source-identity.result }}
+          SELECT_RUST: ${{ inputs.run_rust_only }}
+          SELECT_RELEASE: ${{ inputs.run_release_proof }}
+          SELECT_MSRV: ${{ inputs.run_msrv }}
+          SELECT_VSCODE: ${{ inputs.run_vscode }}
+          RUST_RESULT: ${{ needs.rust-only-features.result }}
+          RELEASE_RESULT: ${{ needs.release-proof.result }}
+          MSRV_RESULT: ${{ needs.msrv.result }}
+          VSCODE_RESULT: ${{ needs.vscode.result }}
+        run: |
+          set -euo pipefail
+          [[ "$IDENTITY_RESULT" == success ]] || exit 1
+          require() {
+            case "$1:$2" in true:success|false:skipped) ;; *) echo 'Missing/failed or unexpected CI child' >&2; exit 1 ;; esac
+          }
+          require "$SELECT_RUST" "$RUST_RESULT"
+          require "$SELECT_RELEASE" "$RELEASE_RESULT"
+          require "$SELECT_MSRV" "$MSRV_RESULT"
+          require "$SELECT_VSCODE" "$VSCODE_RESULT"
+      - name: Reject workflow cancellation
+        if: always() && cancelled()
+        run: exit 1
