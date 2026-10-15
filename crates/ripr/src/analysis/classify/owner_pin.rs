@@ -2424,7 +2424,7 @@ impl OwnerReturnPin {
                 test,
                 expected,
                 &self.name,
-                Some(&self.call),
+                &self.call,
                 &self.owner_file,
             )
         {
@@ -8017,22 +8017,124 @@ pub(in crate::analysis::classify) fn expected_reaches_owner(
             && expected_binding_calls_owner(test, expected, name))
 }
 
-/// RIPR-SPEC-0035, reveal side: whether the expected `operand` of
-/// `assertion` in `test` holds a value the changed `owner` computed, through
-/// a readable test `let` binding or a workspace constant, in any call
-/// shape. Only positive evidence counts: an unreadable binding keeps credit.
-pub(in crate::analysis) fn expected_operand_holds_owner_value(
+/// RIPR-SPEC-0035, reveal side: the value the expected `operand` stands
+/// for when it is a plain identifier the test binds once with a readable
+/// `let`, or that names exactly one in-scope workspace constant, followed
+/// through further such names (`let e = tax(2); let f = e;`). The reveal
+/// side reads that value in place of the operand, so a name weakens an
+/// assertion only where writing its initializer inline would. `None` when
+/// the operand is no such name; a name the scan cannot read keeps credit.
+pub(in crate::analysis) fn expected_operand_value(
     index: &RustIndex,
     test: &TestSummary,
-    assertion: &str,
     operand: &str,
     owner: &FunctionSummary,
-) -> bool {
-    let masked = mask_comments_and_strings(operand);
-    contains_as_whole_word(&masked, &owner.name)
-        || (owner_named_outside(test, assertion, &owner.name)
-            && binding_calls_owner(test, operand, &owner.name, false))
-        || expected_constant_reaches_owner(index, test, operand, &owner.name, None, &owner.file)
+) -> Option<String> {
+    let in_scope = constant_scope(index, test, &owner.file);
+    let mut seen = BTreeSet::new();
+    let mut current = mask_comments_and_strings(operand).trim().to_string();
+    let mut value = None;
+    while is_plain_identifier(&current) && current != owner.name && seen.insert(current.clone()) {
+        let next = match receiver_let_bindings(test, &current) {
+            Some(bindings) if bindings.len() == 1 => {
+                assigned_value(&mask_comments_and_strings(bindings[0])).map(str::to_string)
+            }
+            Some(bindings) if bindings.is_empty() => {
+                single_constant_value(index, &current, &in_scope)
+            }
+            _ => None,
+        };
+        let Some(next) = next else {
+            break;
+        };
+        current = next.trim().to_string();
+        value = Some(current.clone());
+    }
+    value
+}
+
+/// The initializer of the one in-scope workspace constant named `name`.
+/// An item read from text (`: T = init`) yields the text after its `=`.
+fn single_constant_value(
+    index: &RustIndex,
+    name: &str,
+    in_scope: &dyn Fn(&Path) -> bool,
+) -> Option<String> {
+    let constants = index
+        .call_identity_memos
+        .workspace_constants(|| workspace_constant_table(index));
+    let mut matches = constants
+        .get(name)?
+        .iter()
+        .filter(|(file, _)| in_scope(file));
+    let (_, initializer) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    if initializer.trim_start().starts_with(':') {
+        assigned_value(initializer).map(str::to_string)
+    } else {
+        Some(initializer.clone())
+    }
+}
+
+/// The text after the assignment `=` of `[: T] = value`: the first `=`
+/// outside angle brackets that is not part of `==`, `=>`, `<=`, `>=` or `!=`.
+fn assigned_value(text: &str) -> Option<&str> {
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    for (position, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'<' => depth += 1,
+            b'>' if bytes.get(position.wrapping_sub(1)) != Some(&b'-') => {
+                depth = depth.saturating_sub(1);
+            }
+            b'=' if depth == 0
+                && !matches!(bytes.get(position + 1), Some(b'=' | b'>'))
+                && !matches!(
+                    bytes.get(position.wrapping_sub(1)),
+                    Some(b'=' | b'!' | b'<' | b'>')
+                ) =>
+            {
+                return text.get(position + 1..);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// A constant from a package the test neither belongs to, tests, nor names
+/// (`test_kit::EXPECTED` from `crates/test-kit/`) cannot be the one the
+/// test reads; unscopable paths keep every match.
+fn constant_scope(
+    index: &RustIndex,
+    test: &TestSummary,
+    owner_file: &Path,
+) -> impl Fn(&Path) -> bool {
+    let test_package = super::related_tests::package_prefix(&test.file);
+    let owner_package = super::related_tests::package_prefix(owner_file);
+    let test_source = index
+        .files()
+        .get(&test.file)
+        .map(|facts| facts.source.clone());
+    move |file: &Path| match (&test_package, &owner_package) {
+        (Some(test_package), Some(owner_package)) => super::related_tests::package_prefix(file)
+            .is_none_or(|package| {
+                &package == test_package
+                    || &package == owner_package
+                    || package
+                        .trim_end_matches('/')
+                        .rsplit('/')
+                        .next()
+                        .is_some_and(|crate_dir| {
+                            test_source.as_deref().is_none_or(|source| {
+                                contains_as_whole_word(source, &crate_dir.replace('-', "_"))
+                            })
+                        })
+            }),
+        _ => true,
+    }
 }
 
 /// RIPR-SPEC-0035: whether an identifier in the expected operand names a
@@ -8053,7 +8155,7 @@ fn expected_constant_reaches_owner(
     test: &TestSummary,
     expected: &str,
     name: &str,
-    call: Option<&PinCall>,
+    call: &PinCall,
     owner_file: &Path,
 ) -> bool {
     let constants = index
@@ -8062,32 +8164,7 @@ fn expected_constant_reaches_owner(
     if constants.is_empty() {
         return false;
     }
-    // A constant from a package the test neither belongs to, tests, nor
-    // names (`test_kit::EXPECTED` from `crates/test-kit/`) cannot be the one
-    // the test reads; unscopable paths keep every match.
-    let test_package = super::related_tests::package_prefix(&test.file);
-    let owner_package = super::related_tests::package_prefix(owner_file);
-    let test_source = index
-        .files()
-        .get(&test.file)
-        .map(|facts| facts.source.clone());
-    let in_scope = |file: &Path| match (&test_package, &owner_package) {
-        (Some(test_package), Some(owner_package)) => super::related_tests::package_prefix(file)
-            .is_none_or(|package| {
-                &package == test_package
-                    || &package == owner_package
-                    || package
-                        .trim_end_matches('/')
-                        .rsplit('/')
-                        .next()
-                        .is_some_and(|crate_dir| {
-                            test_source.as_deref().is_none_or(|source| {
-                                contains_as_whole_word(source, &crate_dir.replace('-', "_"))
-                            })
-                        })
-            }),
-        _ => true,
-    };
+    let in_scope = constant_scope(index, test, owner_file);
     // `use .. as` renames of the file a text was read from: the test file
     // for the expected operand, the constant's own file for an initializer.
     let renames = |file: &Path| -> Vec<UsePath> {
@@ -8154,12 +8231,11 @@ fn owner_aliases(index: &RustIndex, file: &Path, name: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Whether the masked `initializer` calls `name` in the pin's call shape,
-/// or in any shape when there is no pin (`None`, the reveal-side check).
+/// Whether the masked `initializer` calls `name` in the pin's call shape.
 /// A free function also counts when named as a value (`apply(quota, 2)`,
 /// `let f = quota;`), and a `<..>::name` qualifier the scan cannot read
 /// counts for every shape.
-fn initializer_calls_owner(initializer: &str, name: &str, call: Option<&PinCall>) -> bool {
+fn initializer_calls_owner(initializer: &str, name: &str, call: &PinCall) -> bool {
     whole_word_offsets(initializer, name).into_iter().any(|offset| {
         let after = initializer[offset + name.len()..].trim_start();
         let called = after.starts_with('(') || after.starts_with("::<");
@@ -8181,9 +8257,6 @@ fn initializer_calls_owner(initializer: &str, name: &str, call: Option<&PinCall>
             return true;
         }
         let type_like = |segment: &str| segment.starts_with(char::is_uppercase);
-        let Some(call) = call else {
-            return called || !before.ends_with('.');
-        };
         match call {
             PinCall::Bare => !before.ends_with('.') && !qualifier.is_some_and(type_like),
             PinCall::Associated { type_name } => {
@@ -8312,14 +8385,6 @@ fn owner_named_outside(test: &TestSummary, assertion: &str, name: &str) -> bool 
 /// `let a = f(2); let b = a; assert_eq!(f(2), b);` compare the owner with
 /// itself).
 fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) -> bool {
-    binding_calls_owner(test, expected, name, true)
-}
-
-/// [`expected_binding_calls_owner`]; `fail_closed` decides an unreadable
-/// binding (a pattern, a loop variable, a shadowed name). The pin refuses
-/// it; the reveal side, which may only weaken on positive evidence that
-/// the value came from the owner, does not.
-fn binding_calls_owner(test: &TestSummary, expected: &str, name: &str, fail_closed: bool) -> bool {
     let masked_body = mask_comments_and_strings(&test.body);
     let mut seen = BTreeSet::new();
     let mut pending = vec![mask_comments_and_strings(expected)];
@@ -8336,10 +8401,7 @@ fn binding_calls_owner(test: &TestSummary, expected: &str, name: &str, fail_clos
             // A word the scan refuses only because a `let` annotation
             // names it (`let w: Window = ..`) is a type, not a binding.
             let Some(bindings) = receiver_let_bindings(test, word) else {
-                if fail_closed
-                    && (binds_outside_let(&masked_body, word)
-                        || let_patterns_bind(&masked_body, word))
-                {
+                if binds_outside_let(&masked_body, word) || let_patterns_bind(&masked_body, word) {
                     return true;
                 }
                 continue;

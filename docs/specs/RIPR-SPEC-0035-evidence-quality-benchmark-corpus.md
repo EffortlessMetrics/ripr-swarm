@@ -414,8 +414,12 @@ directly or through another constant, is self-computed in the same way as a
 package, the owner's package and any workspace crate the test file names, so a
 same-named constant there also withholds the pin; a
 constant computed through a helper that calls the owner is not followed. The
-reveal-side oracle strength reads the same `let` bindings and constants, in any
-call shape.
+reveal-side oracle strength reads an expected operand that is a plain name bound
+once by a readable `let`, or naming exactly one in-scope constant, as if its
+value were written in place: it weakens only where the inline value would (it
+calls the owner and differs from the owner side at most in owner-call
+arguments, order or grouping). A same-named local, a field, a struct literal or
+a value built by another receiver keeps its credit.
 
 Given a changed presentation text constant, the benchmark expects one
 evidence-quality item for the declaration and literal, records visibility and

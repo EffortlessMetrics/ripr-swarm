@@ -1854,7 +1854,7 @@ fn a_constant_initializer_reaches_the_owner_only_in_the_pins_call_shape() {
         ("weight(1)", &method, false),
     ] {
         assert_eq!(
-            initializer_calls_owner(initializer, "weight", Some(shape)),
+            initializer_calls_owner(initializer, "weight", shape),
             calls,
             "{initializer}"
         );
@@ -1967,6 +1967,82 @@ fn a_constant_counts_only_from_a_package_the_test_belongs_to_tests_or_names() {
         ),
         1
     );
+}
+
+#[test]
+fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_constant() {
+    let value = |items: &str, body: &str, operand: &str| -> Option<String> {
+        let tests = format!("use demo::weight;\n{items}\n#[test]\nfn weighs() {{\n{body}\n}}\n");
+        let index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        assert_eq!(index.tests().len(), 1, "fixture must hold exactly one test");
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "weight");
+        assert!(owner.is_some(), "the owner must be indexed");
+        let owner = owner?;
+        expected_operand_value(&index, index.tests().at(0), operand, owner)
+            .map(|value| value.trim().to_string())
+    };
+    // RIPR-SPEC-0035: a readable `let`, a chain of them, or one constant
+    // yields its value.
+    assert_eq!(
+        value("", "let e = weight(2);\nassert_eq!(weight(2), e);", "e"),
+        Some("weight(2)".to_string())
+    );
+    assert_eq!(
+        value(
+            "",
+            "let a = weight(2);\nlet b: u32 = a;\nassert_eq!(weight(2), b);",
+            "b"
+        ),
+        Some("weight(2)".to_string())
+    );
+    assert_eq!(
+        value(
+            "const EXPECTED: u32 = weight(4);",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("weight(4)".to_string())
+    );
+    assert_eq!(
+        value(
+            "thread_local! { static EXPECTED: u32 = weight(4); }",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("weight(4)".to_string())
+    );
+    // An operand that is not a plain name, a name the test binds twice or
+    // outside a `let` (a loop variable), the owner's own name, and a name
+    // nothing binds yield nothing to read.
+    for (items, body, operand) in [
+        (
+            "",
+            "let e = weight(2);\nassert_eq!(weight(2), e + 1);",
+            "e + 1",
+        ),
+        (
+            "",
+            "let e = weight(2);\nassert_eq!(weight(2), fixture.e);",
+            "fixture.e",
+        ),
+        (
+            "",
+            "let e = weight(2);\nlet e = 6;\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        ("", "for e in [6] {\n    assert_eq!(weight(2), e);\n}", "e"),
+        (
+            "",
+            "let weight = 6;\nassert_eq!(super::weight(2), weight);",
+            "weight",
+        ),
+        ("", "assert_eq!(weight(2), EXPECTED);", "EXPECTED"),
+    ] {
+        assert_eq!(value(items, body, operand), None, "{body}");
+    }
 }
 
 #[test]

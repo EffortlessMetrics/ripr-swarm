@@ -49,12 +49,12 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// type a call names (`Money` in `Money::new(8)`), when it names one:
     /// such a call reaches the owner only through that type's function.
     pub(in crate::analysis) expected_reaches_owner: &'a dyn Fn(Option<&str>, &str) -> bool,
-    /// RIPR-SPEC-0035: whether an expected operand `(test, assertion,
-    /// operand)` names a test `let` binding or a workspace `const`/`static`
-    /// whose value comes from the changed owner, so the equality compares
-    /// the owner with itself even when no call in the operand reaches it.
-    pub(in crate::analysis) expected_operand_reaches_owner:
-        &'a dyn Fn(&TestSummary, &str, &str) -> bool,
+    /// RIPR-SPEC-0035: the value an expected operand `(test, operand)`
+    /// stands for when it names a test `let` binding or a workspace
+    /// `const`/`static` the scan can read, so the equality is judged as if
+    /// that value were written in place of the name.
+    pub(in crate::analysis) expected_operand_value:
+        &'a dyn Fn(&TestSummary, &str) -> Option<String>,
     /// RIPR-SPEC-0094 Part D: whether an effect observer can carry the state
     /// the changed effect writes (`EffectStateCarrier::admits`). Consulted
     /// only for effect families after `effect_observer_confirms`.
@@ -116,7 +116,7 @@ fn reveal_evidence(
             proximity_may_reach_owner: &|_| false,
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
-            expected_operand_reaches_owner: &|_, _, _| false,
+            expected_operand_value: &|_, _| None,
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
@@ -1785,11 +1785,7 @@ fn analyze_related_assertions(
                         owner,
                         return_admission.expected_reaches_owner,
                     ) || expected_operand_bound_to_owner(&assertion.text, owner, &|operand| {
-                        (return_admission.expected_operand_reaches_owner)(
-                            test,
-                            &assertion.text,
-                            operand,
-                        )
+                        (return_admission.expected_operand_value)(test, operand)
                     })
                 });
             // #6692: the owner pin is credited only through an assertion
@@ -2300,14 +2296,6 @@ fn self_computed_cap(strength: OracleStrength, self_computed: bool) -> OracleStr
     }
 }
 
-/// RIPR-SPEC-0035 self-computed expected value (#5830): an `assert_eq!`
-/// with one operand calling `owner` and the other calling a function that
-/// transitively reaches `owner`. Both sides then carry the changed
-/// behavior, so a wrong owner value moves them together and the equality
-/// still holds: `assert_eq!(invoice(3, 100), sub + tax(sub))` for a
-/// changed `tax` that `invoice` calls. An operand that computes its
-/// value without the owner (a literal, or a call that never reaches it)
-/// keeps the assertion's strength.
 /// The two compared operands of an equality assertion. RIPR-SPEC-0197:
 /// `assert!(a == b)` and its Err-return guard twin compare the same
 /// operands an `assert_eq!` would. Selected the way the pin selects (#7094
@@ -2326,22 +2314,38 @@ fn equality_operands(text: &str) -> Option<[String; 2]> {
 
 /// RIPR-SPEC-0035: an equality whose one side calls the owner and whose
 /// other side names a binding or constant holding an owner value
-/// (`const EXPECTED: u32 = quota(2); assert_eq!(quota(2), EXPECTED)`).
+/// (`const EXPECTED: u32 = quota(2); assert_eq!(quota(2), EXPECTED)`). The
+/// name's value is judged as if written in place, by the rule
+/// [`expected_computed_through_owner`] applies when both sides call the
+/// owner: a value that differs outside its owner calls (`let want =
+/// v.len();` against `my_vec.len()`) still pins the owner.
 fn expected_operand_bound_to_owner(
     text: &str,
     owner: &str,
-    operand_reaches: &dyn Fn(&str) -> bool,
+    operand_value: &dyn Fn(&str) -> Option<String>,
 ) -> bool {
     let Some([left, right]) = equality_operands(text) else {
         return false;
     };
-    match (text_calls(&left, owner), text_calls(&right, owner)) {
-        (true, false) => operand_reaches(&right),
-        (false, true) => operand_reaches(&left),
-        _ => false,
-    }
+    let (actual, expected) = match (text_calls(&left, owner), text_calls(&right, owner)) {
+        (true, false) => (left, right),
+        (false, true) => (right, left),
+        _ => return false,
+    };
+    operand_value(&expected).is_some_and(|value| {
+        text_calls(&value, owner)
+            && terms_outside_owner_calls(&actual, owner) == terms_outside_owner_calls(&value, owner)
+    })
 }
 
+/// RIPR-SPEC-0035 self-computed expected value (#5830): an `assert_eq!`
+/// with one operand calling `owner` and the other calling a function that
+/// transitively reaches `owner`. Both sides then carry the changed
+/// behavior, so a wrong owner value moves them together and the equality
+/// still holds: `assert_eq!(invoice(3, 100), sub + tax(sub))` for a
+/// changed `tax` that `invoice` calls. An operand that computes its
+/// value without the owner (a literal, or a call that never reaches it)
+/// keeps the assertion's strength.
 fn expected_computed_through_owner(
     text: &str,
     owner: &str,
@@ -4555,7 +4559,7 @@ mod tests {
             proximity_may_reach_owner: &|_| false,
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
-            expected_operand_reaches_owner: &|_, _, _| false,
+            expected_operand_value: &|_, _| None,
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| false,
             getter_reads_field: &|_, _, _| false,
@@ -5191,7 +5195,7 @@ mod tests {
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
-                    expected_operand_reaches_owner: &|_, _, _| false,
+                    expected_operand_value: &|_, _| None,
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
@@ -5294,7 +5298,7 @@ mod tests {
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
-                    expected_operand_reaches_owner: &|_, _, _| false,
+                    expected_operand_value: &|_, _| None,
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
@@ -5654,7 +5658,7 @@ mod tests {
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
-                expected_operand_reaches_owner: &|_, _, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
@@ -5733,7 +5737,7 @@ mod tests {
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
-                expected_operand_reaches_owner: &|_, _, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
@@ -7385,7 +7389,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
-                expected_operand_reaches_owner: &|_, _, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
@@ -7449,7 +7453,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
-                expected_operand_reaches_owner: &|_, _, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
@@ -7484,7 +7488,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
-                expected_operand_reaches_owner: &|_, _, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
@@ -7538,7 +7542,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
-                expected_operand_reaches_owner: &|_, _, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
@@ -7594,7 +7598,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
-                expected_operand_reaches_owner: &|_, _, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
@@ -7775,7 +7779,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
-                expected_operand_reaches_owner: &|_, _, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
@@ -7813,7 +7817,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
-                expected_operand_reaches_owner: &|_, _, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
@@ -8210,7 +8214,7 @@ return Err(\"typed pin\".into());
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
-                    expected_operand_reaches_owner: &|_, _, _| false,
+                    expected_operand_value: &|_, _| None,
                     effect_state_carried: &carried,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
@@ -8494,7 +8498,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|test| test.name == "from_str_fortnight",
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
-                expected_operand_reaches_owner: &|_, _, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
@@ -8593,7 +8597,7 @@ return Err(\"typed pin\".into());
                     proximity_may_reach_owner: &|test| test.name == "a_large_refund_hits_the_limit",
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
-                    expected_operand_reaches_owner: &|_, _, _| false,
+                    expected_operand_value: &|_, _| None,
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
@@ -8635,7 +8639,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
-                expected_operand_reaches_owner: &|_, _, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
@@ -8995,7 +8999,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
-                expected_operand_reaches_owner: &|_, _, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
@@ -9287,9 +9291,7 @@ return Err(\"typed pin\".into());
         owner_parameters: &[String],
         reaches: &dyn Fn(Option<&str>, &str) -> bool,
     ) -> (StageEvidence, OracleStrength) {
-        tax_reveal_with_operand(expression, test, owner_parameters, reaches, &|_, _, _| {
-            false
-        })
+        tax_reveal_with_operand(expression, test, owner_parameters, reaches, &|_, _| None)
     }
 
     /// [`tax_reveal`] with an expected-operand binding/constant answer.
@@ -9298,7 +9300,7 @@ return Err(\"typed pin\".into());
         test: &TestSummary,
         owner_parameters: &[String],
         reaches: &dyn Fn(Option<&str>, &str) -> bool,
-        operand_reaches: &dyn Fn(&TestSummary, &str, &str) -> bool,
+        operand_value: &dyn Fn(&TestSummary, &str) -> Option<String>,
     ) -> (StageEvidence, OracleStrength) {
         let probe = owned_probe(ProbeFamily::ReturnValue, expression, "tax");
         let (_, discriminate, related, _) = reveal_evidence_with_expression(
@@ -9315,7 +9317,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters,
                 expected_reaches_owner: reaches,
-                expected_operand_reaches_owner: operand_reaches,
+                expected_operand_value: operand_value,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
@@ -9468,9 +9470,11 @@ return Err(\"typed pin\".into());
             "tax_matches_the_table",
             vec![exact("assert_eq!(tax(RATE), EXPECTED);")],
         );
-        let holds = |_: &TestSummary, _: &str, operand: &str| operand.trim() == "EXPECTED";
+        let value = |_: &TestSummary, operand: &str| {
+            (operand.trim() == "EXPECTED").then(|| "tax(RATE)".to_string())
+        };
         let (discriminate, strength) =
-            tax_reveal_with_operand("subtotal * RATE", &test, &params, &|_, _| false, &holds);
+            tax_reveal_with_operand("subtotal * RATE", &test, &params, &|_, _| false, &value);
         assert_eq!(strength, OracleStrength::Weak);
         assert_eq!(
             discriminate.state,
@@ -9487,22 +9491,56 @@ return Err(\"typed pin\".into());
             "{}",
             discriminate.summary
         );
+        let held = |value: &'static str| {
+            move |operand: &str| (operand.trim() == "EXPECTED").then(|| value.to_string())
+        };
         // Only the side that does not call the owner is asked about, and
         // both sides calling the owner is the existing rule's.
         assert!(expected_operand_bound_to_owner(
             "assert!(EXPECTED == tax(RATE));",
             "tax",
-            &|operand| operand.trim() == "EXPECTED"
+            &held("tax(RATE)")
+        ));
+        assert!(expected_operand_bound_to_owner(
+            "assert_eq!(tax(4), EXPECTED);",
+            "tax",
+            &held("crate::tax(2)")
         ));
         assert!(!expected_operand_bound_to_owner(
             "assert_eq!(tax(RATE), tax(RATE));",
             "tax",
-            &|_| true
+            &|_| Some("tax(RATE)".to_string())
         ));
         assert!(!expected_operand_bound_to_owner(
             "assert_eq!(EXPECTED, OTHER);",
             "tax",
-            &|_| true
+            &|_| Some("tax(RATE)".to_string())
+        ));
+        // A value that differs outside its owner calls, or never calls the
+        // owner (a struct literal, a macro, a field), still pins the owner,
+        // as the same value written in place would.
+        for value in [
+            "tax(RATE) * 2",
+            "v.tax()",
+            "Other::tax(RATE)",
+            "Expected { tax: 3 }",
+            "tax!(RATE)",
+            "fixture.tax",
+            "12",
+        ] {
+            assert!(
+                !expected_operand_bound_to_owner(
+                    "assert_eq!(cart.tax(), EXPECTED);",
+                    "tax",
+                    &held(value)
+                ),
+                "{value}"
+            );
+        }
+        assert!(!expected_operand_bound_to_owner(
+            "assert_eq!(tax(RATE), EXPECTED);",
+            "tax",
+            &|_| None
         ));
     }
 
