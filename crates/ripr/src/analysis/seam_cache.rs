@@ -1531,6 +1531,54 @@ pub(crate) fn corpus_fingerprint(root: &Path, files: &[PathBuf]) -> Option<Strin
     }
 }
 
+/// One Unix stat observation. Keeping extraction and encoding separate lets
+/// recorded tuples exercise replacement identity without racing live ctimes.
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+struct StatWitness {
+    modified: std::time::Duration,
+    len: u64,
+    ctime: i64,
+    ctime_nsec: i64,
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(unix)]
+impl StatWitness {
+    fn from_metadata(metadata: &std::fs::Metadata) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
+        Some(Self {
+            modified: metadata
+                .modified()
+                .ok()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?,
+            len: metadata.len(),
+            ctime: metadata.ctime(),
+            ctime_nsec: metadata.ctime_nsec(),
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+
+    fn entry(self, path: &Path) -> String {
+        // Preserve the schema 0.4 tuple bytes. ctime witnesses writes to one
+        // inode; device and inode also bind replacement-file identity.
+        format!(
+            "{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
+            path.to_string_lossy().replace('\\', "/"),
+            self.modified.as_secs(),
+            self.modified.subsec_nanos(),
+            self.len,
+            self.ctime,
+            self.ctime_nsec,
+            self.device,
+            self.inode
+        )
+    }
+}
+
 /// The stat-only signature itself. Compiled only where the ctime witness
 /// that makes it sound exists (issue #3848).
 #[cfg(unix)]
@@ -1538,44 +1586,20 @@ fn stat_signature(root: &Path, files: &[PathBuf]) -> Option<String> {
     let mut entries: Vec<String> = Vec::with_capacity(files.len());
     for path in files {
         let metadata = std::fs::metadata(root.join(path)).ok()?;
-        let modified = metadata.modified().ok()?;
-        let since_epoch = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
-        let entry = format!(
-            "{}\0{}\0{}\0{}",
-            path.to_string_lossy().replace('\\', "/"),
-            since_epoch.as_secs(),
-            since_epoch.subsec_nanos(),
-            metadata.len()
-        );
-        // Unix hardening: ctime (inode change time) cannot be preserved by
-        // mtime-restoring tools, so mixing it in closes the
-        // preserved-mtime rewrite residual (see the doc comment). This is
-        // the witness the whole signature rests on, not an extra field.
-        let entry = {
-            use std::os::unix::fs::MetadataExt;
-            let mut entry = entry;
-            entry.push('\0');
-            entry.push_str(&metadata.ctime().to_string());
-            entry.push('\0');
-            entry.push_str(&metadata.ctime_nsec().to_string());
-            // A replacement directory can bring a different file with the
-            // same timestamps and size. ctime describes changes to one inode,
-            // so bind its filesystem identity too; inode numbers are device-local.
-            entry.push('\0');
-            entry.push_str(&metadata.dev().to_string());
-            entry.push('\0');
-            entry.push_str(&metadata.ino().to_string());
-            entry
-        };
-        entries.push(entry);
+        entries.push(StatWitness::from_metadata(&metadata)?.entry(path));
     }
+    Some(hash_stat_entries(entries))
+}
+
+#[cfg(unix)]
+fn hash_stat_entries(mut entries: Vec<String>) -> String {
     entries.sort();
     let mut buf = String::new();
     for entry in &entries {
         buf.push_str(entry);
         buf.push('\n');
     }
-    Some(hash_str(&buf))
+    hash_str(&buf)
 }
 
 /// On-disk shape for the corpus fingerprint mapping. One file per
@@ -8159,6 +8183,146 @@ mod tests {
         }
         std::fs::write(&path, content).map_err(|err| format!("write {relative}: {err}"))?;
         Ok(PathBuf::from(relative))
+    }
+
+    #[cfg(unix)]
+    fn recorded_stat_witness() -> StatWitness {
+        StatWitness {
+            modified: std::time::Duration::new(1_700_000_000, 123),
+            len: 38,
+            ctime: 1_700_000_001,
+            ctime_nsec: 456,
+            device: 7,
+            inode: 11,
+        }
+    }
+
+    #[cfg(unix)]
+    fn assert_recorded_stat_identity_misses_cache(
+        label: &str,
+        replacement: StatWitness,
+    ) -> Result<(), String> {
+        let before = recorded_stat_witness();
+        let path = Path::new("src/lib.rs");
+        assert_eq!(
+            before.entry(path),
+            concat!(
+                "src/lib.rs\0",
+                "1700000000\0",
+                "123\0",
+                "38\0",
+                "1700000001\0",
+                "456\0",
+                "7\0",
+                "11"
+            ),
+            "the schema 0.4 tuple encoding must remain byte-identical"
+        );
+        assert_eq!(
+            (before.modified, before.len, before.ctime, before.ctime_nsec),
+            (
+                replacement.modified,
+                replacement.len,
+                replacement.ctime,
+                replacement.ctime_nsec
+            ),
+            "recorded replacement must preserve every legacy stat field"
+        );
+        let original = hash_stat_entries(vec![before.entry(path)]);
+        let replaced = hash_stat_entries(vec![replacement.entry(path)]);
+        let dir = isolated_dir(label);
+        ignore_remove_dir_all(&dir);
+        let cache = RepoCorpusFingerprintCache::at_dir(dir.join("cache"));
+        cache.store(&dir, &original, "original-content-hash")?;
+        assert_eq!(
+            cache.lookup(&dir, &original).as_deref(),
+            Some("original-content-hash"),
+            "the real cache producer must first admit the original mapping"
+        );
+        assert_eq!(
+            cache.lookup(&dir, &replaced),
+            None,
+            "replacement identity must not select the prior content hash"
+        );
+        assert_ne!(original, replaced);
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_identity_recorded_device_change_misses_prior_cache() -> Result<(), String> {
+        assert_recorded_stat_identity_misses_cache(
+            "fingerprint-recorded-device",
+            StatWitness {
+                device: 8,
+                ..recorded_stat_witness()
+            },
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_identity_recorded_inode_change_misses_prior_cache() -> Result<(), String> {
+        assert_recorded_stat_identity_misses_cache(
+            "fingerprint-recorded-inode",
+            StatWitness {
+                inode: 12,
+                ..recorded_stat_witness()
+            },
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_identity_live_extraction_and_corpus_route_match_raw_metadata() -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = isolated_dir("fingerprint-raw-stat-route");
+        ignore_remove_dir_all(&dir);
+        let files = [
+            write_corpus_file(&dir, "src/b.rs", "pub fn b() {}\n")?,
+            write_corpus_file(&dir, "src/a.rs", "pub fn a() {}\n")?,
+        ];
+        let mut raw_entries = Vec::new();
+        let mut identities = Vec::new();
+        for path in &files {
+            let metadata = std::fs::metadata(dir.join(path)).map_err(|err| err.to_string())?;
+            let extracted = StatWitness::from_metadata(&metadata).ok_or("extract stat witness")?;
+            let identity = (metadata.dev(), metadata.ino());
+            assert_eq!((extracted.device, extracted.inode), identity);
+            identities.push(identity);
+            // Independent expectation: do not use StatWitness extraction,
+            // entry encoding or hash_stat_entries to construct these bytes.
+            let modified = metadata
+                .modified()
+                .map_err(|err| err.to_string())?
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|err| err.to_string())?;
+            raw_entries.push(format!(
+                "{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\n",
+                path.to_string_lossy().replace('\\', "/"),
+                modified.as_secs(),
+                modified.subsec_nanos(),
+                metadata.len(),
+                metadata.ctime(),
+                metadata.ctime_nsec(),
+                metadata.dev(),
+                metadata.ino()
+            ));
+        }
+        assert_ne!(
+            identities[0], identities[1],
+            "two real files must have distinct identities"
+        );
+        raw_entries.sort();
+        assert_eq!(
+            corpus_fingerprint(&dir, &files),
+            Some(hash_str(&raw_entries.concat())),
+            "the production corpus route must consume the raw stat tuple"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
     }
 
     /// Rewrite `path` with identical content until the inode change time
