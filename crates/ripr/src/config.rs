@@ -217,11 +217,38 @@ pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
         return default_config_for_root(root);
     };
     let text = crate::bounded_input::read_to_string(&path)
-        .map_err(|err| format!("read {} failed: {err}", path.display()))?;
-    let mut config = parse_config(&text).map_err(|err| format!("{}: {err}", path.display()))?;
+        .map_err(|err| config_load_read_error_for_host(&path, &err, cfg!(windows)))?;
+    let mut config = parse_config(&text)
+        .map_err(|err| config_load_parse_error_for_host(&path, &err, cfg!(windows)))?;
+    // Identity stays the discovered canonical path: symlink equality and
+    // `source_path` consumers compare filesystem identity, not the display
+    // spelling (#7652).
     config.source_path = Some(path);
     config.source_text = Some(text);
     Ok(config)
+}
+
+/// User-facing config path for load errors (#7652). Discovery and
+/// `source_path` keep the canonical form; only the diagnostic interpolates
+/// through the shared renderer so a Windows drive-letter verbatim prefix
+/// does not leak into stderr or the JSON refusal `message`.
+fn config_load_error_path_for_host(path: &Path, windows: bool) -> String {
+    crate::output::path::human_path_text(&path.to_string_lossy(), windows)
+}
+
+fn config_load_parse_error_for_host(path: &Path, err: &str, windows: bool) -> String {
+    format!("{}: {err}", config_load_error_path_for_host(path, windows))
+}
+
+fn config_load_read_error_for_host(
+    path: &Path,
+    err: &impl std::fmt::Display,
+    windows: bool,
+) -> String {
+    format!(
+        "read {} failed: {err}",
+        config_load_error_path_for_host(path, windows)
+    )
 }
 
 /// Whether config discovery would find a `ripr.toml` entry for this root

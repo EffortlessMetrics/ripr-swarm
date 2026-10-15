@@ -534,3 +534,64 @@ fn a_helper_that_names_the_owner_twice_lends_nothing() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// #7969: a short-circuit tail reads a helper's calls as runs, mapping
+/// each owner argument through the helper's own parameter order.
+fn short_circuit_helper_admitted(helper: &str, body: &str) -> Result<bool, String> {
+    let source = format!(
+        "pub fn both_zero(x: i32, y: i32) -> bool {{\n    x == 0 && 0 == y\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{helper}\n    #[test]\n    fn tip_is_added() {{\n        {body}\n    }}\n}}\n"
+    );
+    let index = index(&[(LIB, source.as_str())]);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.name == "tip_is_added")
+        .ok_or("premise: the test is indexed")?;
+    let helper = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "check")
+        .ok_or("premise: `check` is indexed")?;
+    let assertion = parser_oracles_for_function(&helper.body, helper.start_line)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|oracle| oracle.text.starts_with("assert_eq!(both_zero("))
+        .ok_or("premise: the helper's assert_eq! parses")?;
+    let owner = owner(&index, "both_zero");
+    let probe = return_probe(owner, "x == 0 && 0 == y");
+    let pin = OwnerReturnPin::establish(&probe, owner, &index)
+        .ok_or("premise: the chain establishes a pin")?;
+    Ok(pin.admits(
+        test,
+        &assertion,
+        &index,
+        &|_, _| false,
+        &OwnerPinSyntax::default(),
+    ))
+}
+
+#[test]
+fn a_short_circuit_tail_reads_helper_calls_by_parameter() -> Result<(), String> {
+    const IN_ORDER: &str = "    fn check(x: i32, y: i32, want: bool) {\n        assert_eq!(both_zero(x, y), want);\n    }\n";
+    const SWAPPED: &str = "    fn check(y: i32, x: i32, want: bool) {\n        assert_eq!(both_zero(x, y), want);\n    }\n";
+    for (helper, body, admitted) in [
+        // `(1, 0)` stops at `x == 0`; `(0, 0)` runs the changed `0 == y`.
+        (IN_ORDER, "check(1, 0, false);", false),
+        (
+            IN_ORDER,
+            "check(1, 0, false);\n        check(0, 0, true);",
+            true,
+        ),
+        // The helper's first parameter is `y`: `check(0, 1, ..)` passes
+        // `x = 1`, and `check(1, 0, ..)` passes `x = 0`.
+        (SWAPPED, "check(0, 1, false);", false),
+        (SWAPPED, "check(1, 0, false);", true),
+    ] {
+        assert_eq!(
+            short_circuit_helper_admitted(helper, body)?,
+            admitted,
+            "{helper}{body}"
+        );
+    }
+    Ok(())
+}

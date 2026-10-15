@@ -181,7 +181,11 @@ official SDK transport:
   narrowed set exactly once. Pages are sized so the complete double-carry
   envelope measures under the response bound: a paged success always
   carries `structuredContent`, as the tool's advertised `outputSchema`
-  requires. The generated `next_page` route pins the snapshot identity,
+  requires. Empty pages obey the same structured-envelope bound: echoed
+  filters can exceed it even when the raw document fits. Such a page fails
+  closed with the existing typed `result_too_large` refusal and current
+  snapshot identity instead of a text-only success. The generated `next_page`
+  route pins the snapshot identity,
   filters, and explicit limit, so
   a refresh between pages fails closed with `stale_snapshot` instead of
   mixing snapshots. Only a listing that cannot fit even one page — for
@@ -383,6 +387,11 @@ is not evidence that a resource with a particular identity exists.
   — direct stored-fact narrowing/readiness and continuation controls.
 - `crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_filters_at_the_dispatch_edge`
   — argument admission before refresh; this is not successful narrowing proof.
+- `crates/ripr/tests/mcp_stdio.rs::empty_gap_pages_keep_structured_outcomes_at_the_response_bound`
+  — real committed analysis with nonempty subjects before filtering, fitting
+  empty pages, independently sized structured-envelope overflow below the
+  raw-document ceiling, raw-document overflow, all three string filters,
+  typed refusals bound to the current snapshot, and same-session recovery.
 
 - `crates/ripr/src/mcp/workspace.rs::tests` — session lifecycle, typed
   failures, identity portability, boundedness, last-known-good retention;

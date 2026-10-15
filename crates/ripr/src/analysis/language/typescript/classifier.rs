@@ -2680,6 +2680,22 @@ pub(crate) fn numeric_literal_value(token: &str) -> Option<String> {
     })
 }
 
+/// Matcher expected text that is a plain decimal, optionally with a leading
+/// `+` or `-` (`-1`, `+1.5`). Nested or non-numeric unaries (`--1`, `-x`)
+/// stay unparsed so they cannot borrow numeric liveness.
+fn signed_numeric_expected_value(token: &str) -> Option<f64> {
+    let token = token.trim();
+    let (negative, rest) = if let Some(rest) = token.strip_prefix('-') {
+        (true, rest)
+    } else if let Some(rest) = token.strip_prefix('+') {
+        (false, rest)
+    } else {
+        (false, token)
+    };
+    let value = numeric_literal_value(rest)?.parse::<f64>().ok()?;
+    Some(if negative { -value } else { value })
+}
+
 /// Return the argument lists (one per call) of every `<owner_name>(...)` call
 /// inside `observed`, split at top-level commas.
 /// Receiver names in `test` that bind to the owner's own module through a
@@ -3296,7 +3312,7 @@ pub(crate) fn expected_side_is_live(
     expected: &str,
 ) -> Option<bool> {
     let source = owner.source_text.as_deref()?;
-    let expected_value = numeric_literal_value(expected).and_then(|v| v.parse::<f64>().ok())?;
+    let expected_value = signed_numeric_expected_value(expected)?;
     let operator = changed_comparison_operator(line_text)?;
     let lines: Vec<&str> = source.lines().collect();
     // Locate the changed line inside the owner body. Uniqueness runs before
@@ -3326,6 +3342,14 @@ pub(crate) fn expected_side_is_live(
     };
     let new_value = fold_numeric_expression(new_expr, &bindings)?;
     let old_value = fold_numeric_expression(old_expr, &bindings)?;
+    // Jest `toBe` uses `Object.is`, which distinguishes `+0` from `-0`.
+    // Epsilon equality would credit `toBe(-0)` against a `return 0` branch.
+    if expected_value == 0.0 || new_value == 0.0 || old_value == 0.0 {
+        return Some(
+            new_value.to_bits() == expected_value.to_bits()
+                && old_value.to_bits() != expected_value.to_bits(),
+        );
+    }
     let new_epsilon = 1e-9 * new_value.abs().max(1.0);
     let old_epsilon = 1e-9 * old_value.abs().max(1.0);
     Some(
