@@ -367,3 +367,61 @@ fn match_object_facts_read_field_construction_changes_only() -> Result<(), Strin
     assert_eq!(predicate, 0);
     Ok(())
 }
+
+/// RIPR-SPEC-0250 example 4 (amended 2026-10-15): a pin on
+/// `normalize(buildProfile(...))` reads as a pin on the owner call when
+/// `normalize` is a test-local identity helper, and stays weak when the
+/// helper rebuilds its argument.
+#[test]
+fn match_object_pin_looks_through_a_test_local_identity_helper() -> Result<(), String> {
+    let pins = "test(\"profile records adulthood\", () => {\n  expect(normalize(buildProfile(\"ana\", 17))).toMatchObject({ name: \"ana\", adult: false });\n  expect(normalize(buildProfile(\"bo\", 18))).toMatchObject({ name: \"bo\", adult: true });\n});\n";
+    let with_helper = |helper: &str| {
+        format!("import {{ buildProfile }} from \"../src/profile\";\n{helper}\n{pins}")
+    };
+    let identity = with_helper("function normalize<T>(value: T): T {\n  return value;\n}");
+    let tests = extract_tests(Path::new("tests/profile.test.ts"), &identity);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].assertions.len(), 2);
+    assert_eq!(
+        tests[0].identity_helpers_in_file,
+        vec!["normalize".to_string()]
+    );
+    let finding = profile_finding("match-object-identity", &identity)?;
+    assert_eq!(finding.probe.family, ProbeFamily::FieldConstruction);
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    let row = finding
+        .related_tests
+        .first()
+        .ok_or("expected a related test row")?;
+    assert_eq!(row.oracle_kind, OracleKind::ExactValue);
+    assert_eq!(row.oracle_strength, OracleStrength::Strong);
+
+    for (label, helper) in [
+        (
+            "match-object-rebuilding-helper",
+            "function normalize<T>(value: T): T {\n  return { ...value, adult: true };\n}",
+        ),
+        (
+            "match-object-reassigned-helper",
+            "let normalize = <T>(value: T): T => value;",
+        ),
+    ] {
+        let finding = profile_finding(label, &with_helper(helper))?;
+        let row = finding
+            .related_tests
+            .first()
+            .ok_or_else(|| format!("{label}: expected a related test row"))?;
+        assert_ne!(
+            (row.oracle_kind.clone(), row.oracle_strength.clone()),
+            (OracleKind::ExactValue, OracleStrength::Strong),
+            "{label}"
+        );
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
+    Ok(())
+}

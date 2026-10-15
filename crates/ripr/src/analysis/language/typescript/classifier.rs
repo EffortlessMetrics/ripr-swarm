@@ -3935,16 +3935,60 @@ pub(crate) fn ts_observes_whole_owner_result(
     let observed = observed
         .strip_prefix("await ")
         .map_or(observed, str::trim_start);
-    let bare = std::iter::once(String::new())
+    ts_is_bare_owner_call(observed, owner, receivers)
+        || ts_observed_local_owner_call_arguments(test, assertion, &owner.name, receivers).is_some()
+}
+
+/// `true` when `observed` is exactly one call `owner(...)` or
+/// `ns.owner(...)` for a receiver `ns`.
+fn ts_is_bare_owner_call(observed: &str, owner: &TypeScriptOwner, receivers: &[String]) -> bool {
+    std::iter::once(String::new())
         .chain(receivers.iter().map(|receiver| format!("{receiver}.")))
         .any(|prefix| {
             observed
                 .strip_prefix(prefix.as_str())
                 .and_then(|rest| rest.strip_prefix(owner.name.as_str()))
                 .is_some_and(ts_is_one_argument_list)
-        });
-    bare || ts_observed_local_owner_call_arguments(test, assertion, &owner.name, receivers)
-        .is_some()
+        })
+}
+
+/// RIPR-SPEC-0249 rule 1 / RIPR-SPEC-0250 rule 1 (amended 2026-10-15):
+/// [`ts_observes_whole_owner_result`], or a pin on `f(owner(...))` where
+/// `f` is a test-local identity helper of the test file
+/// (`TypeScriptTest::identity_helpers_in_file`) and its one argument is the
+/// owner call itself (`owner(...)` or `ns.owner(...)`, not awaited, not a
+/// local, a member or a second argument). `f` returns its argument, so the
+/// pin observes the same value as `expect(owner(...))`.
+pub(crate) fn ts_observes_whole_owner_result_through_identity(
+    test: &TypeScriptTest,
+    assertion: &TypeScriptAssertion,
+    owner: &TypeScriptOwner,
+    receivers: &[String],
+) -> bool {
+    ts_observes_whole_owner_result(test, assertion, owner, receivers)
+        || ts_observes_identity_wrapped_owner_call(test, assertion, owner, receivers)
+}
+
+fn ts_observes_identity_wrapped_owner_call(
+    test: &TypeScriptTest,
+    assertion: &TypeScriptAssertion,
+    owner: &TypeScriptOwner,
+    receivers: &[String],
+) -> bool {
+    let Some(observed) = assertion.observed_expression.as_deref() else {
+        return false;
+    };
+    let observed = observed.trim();
+    let observed = observed
+        .strip_prefix("await ")
+        .map_or(observed, str::trim_start);
+    test.identity_helpers_in_file.iter().any(|helper| {
+        observed
+            .strip_prefix(helper.as_str())
+            .filter(|rest| ts_is_one_argument_list(rest))
+            .and_then(|rest| rest.get(1..rest.len() - 1))
+            .is_some_and(|inner| ts_is_bare_owner_call(inner.trim(), owner, receivers))
+    })
 }
 
 /// Classify a changed TypeScript/JavaScript line and return a finding.

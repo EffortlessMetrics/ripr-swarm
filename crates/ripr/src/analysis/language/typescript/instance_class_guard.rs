@@ -920,7 +920,12 @@ pub(crate) fn ts_instance_class_facts(
                     alias_map,
                     workspace_root,
                 )
-                && ts_observes_whole_owner_result(candidate.test, assertion, owner, &receivers)
+                && ts_observes_whole_owner_result_through_identity(
+                    candidate.test,
+                    assertion,
+                    owner,
+                    &receivers,
+                )
             {
                 facts.credit(&candidate.test.file, assertion);
             }

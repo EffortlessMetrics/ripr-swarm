@@ -181,6 +181,35 @@ inherit its credit. The predicate boundary witness (RIPR-SPEC-0027) then
 runs as for any strong assertion: the pin must observe an owner call at
 the changed boundary.
 
+Amended 2026-10-15 (#6654, identity helper): a pin on `f(owner(...))`
+also observes the whole result of the owner call when `f` is a test-local
+identity helper, since `f` hands the matcher the owner's own value. `f`
+qualifies only when all of these hold:
+
+- it is declared at the top level of the same test file, unexported, as
+  `function f(p) { return p; }` or `const f = (p) => p;` (a block body
+  `{ return p; }` too), with type annotations and type parameters allowed;
+- it has exactly one parameter, a plain identifier with no default, rest,
+  destructuring, decorator or `this` parameter, and is not `async`, a
+  generator, a `declare` or an overload signature;
+- the body is exactly `return p;` (or the arrow's expression `p`), with no
+  directive, parentheses, type assertion or other statement;
+- with comments, module specifiers and test names blanked, the name `f`
+  occurs nowhere else in the file except as a direct call `f(`: a second
+  declaration or overload, a reassignment, a shadowing local or parameter,
+  an export clause, a member `x.f` (`globalThis.f = ...`), a value use or
+  the word inside a string withholds the helper;
+- the file holds no `eval`, no `with (` statement and no `\u` escape;
+- the call has exactly one argument, and that argument is itself the owner
+  call (`owner(...)` or `ns.owner(...)`): `f(owner(...), x)`,
+  `f(local)`, `f(owner(...).field)`, `f(await owner(...))` and
+  `f(f(owner(...)))` keep the wrapped pin uncredited.
+
+Any helper that transforms its argument (`return new X(...)`,
+`return { ...p }`, `return p.cause`) is not an identity and keeps the
+weak reading. The rest of rule 1 and the predicate boundary witness apply
+unchanged; the witness already reads the owner call inside the wrapper.
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable
@@ -251,7 +280,13 @@ documented decisions and proceed"). Recorded on #6654.
 5. Pins on `new NotFound("x")`, on `wrap(errorFor(404))`, through
    `.rejects`, or through a test-local `errorFor`: not credited; on the
    same line as a credited pin, a wrapped pin is still not credited;
-   `.resolves.toBeInstanceOf` is credited.
+   `.resolves.toBeInstanceOf` is credited. Amended 2026-10-15: a pin on
+   `wrap(errorFor(404))` is credited when `wrap` is a test-local identity
+   helper (`function wrap(err: Error): Error { return err; }` or
+   `const wrap = (err: Error) => err;` at the file's top level); a helper
+   that returns anything else, is reassigned, shadowed or exported, or a
+   call with a second argument, a local or a member argument stays not
+   credited.
 6. As example 1 where the false branch falls through to
    `if (status >= 400) { return new NotFound("client"); }`: not credited.
 7. A branch returning `cached`, `new Forbidden("denied").asNotFound()`,
@@ -268,9 +303,15 @@ documented decisions and proceed"). Recorded on #6654.
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs`
-  pins examples 1 to 9 and the owner-side conditions.
+  pins examples 1 to 9 and the owner-side conditions;
+  `instance_pin_looks_through_a_test_local_identity_helper` pins the
+  amended example 5.
+- `crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs`:
+  `identity_helpers_read_only_unrebound_top_level_identity_functions`
+  pins each identity-helper condition.
 - `fixtures/typescript-verdict-corpus` pins example 1:
-  `jest-mined-tobeinstanceof` reads `credited`.
+  `jest-mined-tobeinstanceof` reads `credited`; the amended example 5:
+  `jest-spec0249-ex05-wrapped-pin` reads `credited`.
 
 ## Implementation Mapping
 
@@ -284,6 +325,13 @@ documented decisions and proceed"). Recorded on #6654.
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`:
   `strongest_family_matching_oracle`, `ts_predicate_boundary_row_activation`,
   `project_credited_instance_rows`, `ts_observes_whole_owner_result`.
+- Amended 2026-10-15 (identity helper):
+  `crates/ripr/src/analysis/language/typescript/tests_extract.rs`:
+  `identity_helpers`, `identity_helper_declaration` fill
+  `TypeScriptTest::identity_helpers_in_file`;
+  `crates/ripr/src/analysis/language/typescript/classifier.rs`:
+  `ts_observes_whole_owner_result_through_identity`, called by
+  `ts_instance_class_facts`.
 
 ## Metrics
 

@@ -664,3 +664,124 @@ describe("suite", { skip: false, concurrency: 1 }, () => {
     assert_eq!(names, vec!["suite runs", "suite focused"]);
     assert!(detect_partial_test_extraction(file, source, &tests).is_none());
 }
+
+/// RIPR-SPEC-0249 / RIPR-SPEC-0250 (amended 2026-10-15): a test file's
+/// identity helpers are the top-level, unexported one-parameter functions
+/// whose body is exactly `return p;` (or an arrow `p => p`) and whose name
+/// is used nowhere else but as a direct call. Each negative breaks one guard
+/// of an otherwise accepted helper.
+#[test]
+fn identity_helpers_read_only_unrebound_top_level_identity_functions() {
+    let pin = "test(\"t\", () => {\n  expect(wrap(make(1))).toBe(1);\n});\n";
+    let helpers = |prelude: &str| {
+        let source = format!("import {{ make }} from \"../src/make\";\n{prelude}\n{pin}");
+        let tests = extract_tests(Path::new("tests/make.test.ts"), &source);
+        assert_eq!(tests.len(), 1, "{prelude}");
+        assert_eq!(tests[0].assertions.len(), 1, "{prelude}");
+        tests[0].identity_helpers_in_file.clone()
+    };
+    for prelude in [
+        "function wrap(err: Error): Error {\n  return err;\n}",
+        "function wrap<T>(value: T): T {\n  return value;\n}",
+        "function wrap(value?: number) {\n  return value;\n}",
+        "const wrap = (value: number) => value;",
+        "const wrap = value => value;",
+        "const wrap = (value: number) => {\n  return value;\n};",
+        // A second call and a comment naming the helper are still calls.
+        "// wrap returns its argument\nfunction wrap(e) {\n  return e;\n}\nconst twice = wrap(wrap(2));",
+    ] {
+        assert_eq!(helpers(prelude), vec!["wrap".to_string()], "{prelude}");
+    }
+    for (guard, prelude) in [
+        ("exported", "export function wrap(e) {\n  return e;\n}"),
+        (
+            "export clause",
+            "function wrap(e) {\n  return e;\n}\nexport { wrap };",
+        ),
+        ("two parameters", "function wrap(e, f) {\n  return e;\n}"),
+        ("no parameter", "function wrap() {\n  return undefined;\n}"),
+        ("default", "function wrap(e = 1) {\n  return e;\n}"),
+        ("rest", "function wrap(...e) {\n  return e;\n}"),
+        ("trailing rest", "function wrap(e, ...r) {\n  return e;\n}"),
+        ("destructured", "function wrap({ e }) {\n  return e;\n}"),
+        (
+            "this parameter",
+            "function wrap(this: unknown, e: number) {\n  return e;\n}",
+        ),
+        ("member result", "function wrap(e) {\n  return e.cause;\n}"),
+        ("other result", "function wrap(e) {\n  return make(2);\n}"),
+        (
+            "extra statement",
+            "function wrap(e) {\n  e.seen = true;\n  return e;\n}",
+        ),
+        (
+            "asserted result",
+            "function wrap(e) {\n  return e as number;\n}",
+        ),
+        ("async", "async function wrap(e) {\n  return e;\n}"),
+        ("generator", "function* wrap(e) {\n  return e;\n}"),
+        (
+            "directive",
+            "function wrap(e) {\n  \"use strict\";\n  return e;\n}",
+        ),
+        ("arrow transform", "const wrap = (e) => e.cause;"),
+        ("let arrow", "let wrap = (e) => e;"),
+        ("async arrow", "const wrap = async (e) => e;"),
+        (
+            "two declarators",
+            "const wrap = (e) => e, other = (e) => e;",
+        ),
+        (
+            "reassigned",
+            "function wrap(e) {\n  return e;\n}\nwrap = (e) => 0;",
+        ),
+        (
+            "overloaded",
+            "function wrap(e: number): number;\nfunction wrap(e) {\n  return e;\n}",
+        ),
+        (
+            "shadowed",
+            "function wrap(e) {\n  return e;\n}\ndescribe(\"d\", () => {\n  const wrap = (e) => 0;\n});",
+        ),
+        (
+            "shadowing parameter",
+            "function wrap(e) {\n  return e;\n}\nconst use = (wrap) => wrap(1);",
+        ),
+        (
+            "nested declaration",
+            "function wrap(e) {\n  return e;\n}\nfunction outer() {\n  function wrap(e) {\n    return 0;\n  }\n}",
+        ),
+        (
+            "member write",
+            "function wrap(e) {\n  return e;\n}\nglobalThis.wrap = (e) => 0;",
+        ),
+        (
+            "member call",
+            "function wrap(e) {\n  return e;\n}\nglobalThis.wrap(1);",
+        ),
+        (
+            "string key",
+            "function wrap(e) {\n  return e;\n}\nglobalThis[\"wrap\"] = (e) => 0;",
+        ),
+        ("eval", "function wrap(e) {\n  return e;\n}\neval(\"x\");"),
+        (
+            "unicode escape",
+            "function wrap(e) {\n  return e;\n}\nconst s = \"\\u0041\";",
+        ),
+        (
+            "not top level",
+            "{\n  function wrap(e) {\n    return e;\n  }\n}",
+        ),
+    ] {
+        assert_eq!(helpers(prelude), Vec::<String>::new(), "{guard}");
+    }
+    // A sloppy-mode script can resolve `wrap` through a `with` object.
+    let script = |inner: &str| {
+        let source = format!("function wrap(e) {{\n  return e;\n}}\n{inner}\n{pin}");
+        let tests = extract_tests(Path::new("tests/make.test.cjs"), &source);
+        assert_eq!(tests.len(), 1, "{inner}");
+        tests[0].identity_helpers_in_file.clone()
+    };
+    assert_eq!(script("const o = {};"), vec!["wrap".to_string()]);
+    assert_eq!(script("const o = {};\nwith (o) {\n}"), Vec::<String>::new());
+}

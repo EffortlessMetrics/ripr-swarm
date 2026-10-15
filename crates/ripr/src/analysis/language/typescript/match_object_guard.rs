@@ -298,7 +298,12 @@ pub(crate) fn ts_match_object_facts(
                 .and_then(flat_object_keys)
                 .is_some_and(|keys| keys.contains(&key));
             if lists_key
-                && ts_observes_whole_owner_result(candidate.test, assertion, owner, &receivers)
+                && ts_observes_whole_owner_result_through_identity(
+                    candidate.test,
+                    assertion,
+                    owner,
+                    &receivers,
+                )
             {
                 facts.credit(&candidate.test.file, assertion);
             }

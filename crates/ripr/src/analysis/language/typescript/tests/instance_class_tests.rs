@@ -728,3 +728,168 @@ fn instance_facts_read_predicate_changes_only() -> Result<(), String> {
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
 }
+
+fn errors_test_with(prelude: &str, body: &str) -> String {
+    format!(
+        "import {{ errorFor, Forbidden, NotFound }} from \"../src/errors\";\n{prelude}\ntest(\"status codes\", async () => {{\n{body}\n}});\n"
+    )
+}
+
+const IDENTITY_WRAP: &str = "function wrap(err: Error): Error {\n  return err;\n}";
+
+/// RIPR-SPEC-0249 example 5 (amended 2026-10-15): a pin on
+/// `wrap(errorFor(404))` reads as a pin on `errorFor(404)` when `wrap` is a
+/// test-local identity helper; any other helper, call shape or binding keeps
+/// the wrapped pin uncredited.
+#[test]
+fn instance_pin_looks_through_a_test_local_identity_helper() -> Result<(), String> {
+    let wrapped = errors_test_with(
+        IDENTITY_WRAP,
+        "  expect(wrap(errorFor(404))).toBeInstanceOf(NotFound);\n  expect(errorFor(403)).toBeInstanceOf(Forbidden);",
+    );
+    let tests = extract_tests(Path::new("tests/errors.test.ts"), &wrapped);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].identity_helpers_in_file, vec!["wrap".to_string()]);
+    assert_eq!(
+        tests[0].assertions[0].observed_expression.as_deref(),
+        Some("wrap(errorFor(404))")
+    );
+    let finding = errors_finding(
+        "instance-identity-wrap",
+        ERRORS,
+        &wrapped,
+        PREDICATE_OLD,
+        PREDICATE_NEW,
+        5,
+    )?;
+    assert_eq!(finding.probe.family, ProbeFamily::Predicate);
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    let row = finding
+        .related_tests
+        .first()
+        .ok_or("expected a related test row")?;
+    assert_eq!(row.oracle_kind, OracleKind::ExactValue);
+    assert_eq!(row.oracle_strength, OracleStrength::Strong);
+
+    // The same file with a helper that replaces its argument: the boundary
+    // pin is not credited and the finding stays below `exposed`.
+    let transforming = errors_test_with(
+        "function wrap(err: Error): Error {\n  return new NotFound(\"x\");\n}",
+        "  expect(wrap(errorFor(404))).toBeInstanceOf(NotFound);\n  expect(errorFor(403)).toBeInstanceOf(Forbidden);",
+    );
+    let finding = errors_finding(
+        "instance-transforming-wrap",
+        ERRORS,
+        &transforming,
+        PREDICATE_OLD,
+        PREDICATE_NEW,
+        5,
+    )?;
+    assert_eq!(finding.probe.family, ProbeFamily::Predicate);
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        finding.missing
+    );
+
+    let root = ts_unique_tempdir("instance-identity-facts")?;
+    ts_write_file(&root.join("src/errors.ts"), ERRORS)?;
+    let owner = extract_owners(Path::new("src/errors.ts"), ERRORS)
+        .into_iter()
+        .find(|owner| owner.name == "errorFor")
+        .ok_or("owner errorFor not extracted")?;
+    let pin = "  expect(wrap(errorFor(404))).toBeInstanceOf(NotFound);";
+    for (label, prelude, body, credited) in [
+        ("identity-function", IDENTITY_WRAP, pin, 1),
+        (
+            "identity-arrow",
+            "const wrap = (err: Error) => err;",
+            pin,
+            1,
+        ),
+        (
+            "awaited-identity",
+            IDENTITY_WRAP,
+            "  expect(await wrap(errorFor(404))).toBeInstanceOf(NotFound);",
+            1,
+        ),
+        (
+            "transforming-helper",
+            "function wrap(err: Error): Error {\n  return new NotFound(\"x\");\n}",
+            pin,
+            0,
+        ),
+        (
+            "reassigned-helper",
+            "function wrap(err: Error): Error {\n  return err;\n}\nwrap = (err: Error) => new NotFound(\"x\");",
+            pin,
+            0,
+        ),
+        (
+            "shadowed-helper",
+            IDENTITY_WRAP,
+            "  const wrap = (err: Error) => new NotFound(\"x\");\n  expect(wrap(errorFor(404))).toBeInstanceOf(NotFound);",
+            0,
+        ),
+        (
+            "exported-helper",
+            "export function wrap(err: Error): Error {\n  return err;\n}",
+            pin,
+            0,
+        ),
+        (
+            "two-arguments",
+            IDENTITY_WRAP,
+            "  expect(wrap(errorFor(404), 1)).toBeInstanceOf(NotFound);",
+            0,
+        ),
+        (
+            "wrapped-local",
+            IDENTITY_WRAP,
+            "  const missing = errorFor(404);\n  expect(wrap(missing)).toBeInstanceOf(NotFound);",
+            0,
+        ),
+        (
+            "wrapped-member",
+            IDENTITY_WRAP,
+            "  expect(wrap(errorFor(404).cause)).toBeInstanceOf(NotFound);",
+            0,
+        ),
+        (
+            "nested-wrap",
+            IDENTITY_WRAP,
+            "  expect(wrap(wrap(errorFor(404)))).toBeInstanceOf(NotFound);",
+            0,
+        ),
+        ("undeclared-wrap", "", pin, 0),
+    ] {
+        let test = errors_test_with(prelude, body);
+        let tests = extract_tests(Path::new("tests/errors.test.ts"), &test);
+        assert_eq!(tests.len(), 1, "{label}");
+        assert_eq!(tests[0].assertions.len(), 1, "{label}");
+        let candidates =
+            related_test_candidates(&owner, &tests, Some(&root), &ReExportIndex::empty(), None);
+        let facts = ts_instance_class_facts(
+            &ProbeFamily::Predicate,
+            CHANGED,
+            &owner,
+            &candidates,
+            None,
+            Some(&root),
+        );
+        let count = tests[0]
+            .assertions
+            .iter()
+            .filter(|assertion| facts.credits(&tests[0].file, assertion))
+            .count();
+        assert_eq!(count, credited, "{label}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
