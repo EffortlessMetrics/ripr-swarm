@@ -27,8 +27,25 @@ impl JsonValue {{
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = env::args().collect();
     let home = PathBuf::from(&args[2]);
+    if args[1] == "build" {
+        let variant = &args[3];
+        let label = args.get(4).map(String::as_str).unwrap_or("release");
+        let stdout = fs::File::create(home.join(format!("evidence/build-{variant}-{label}.log")))?;
+        let stderr = stdout.try_clone()?;
+        let start = Instant::now();
+        let target = env::var_os("BENCH_TARGET_DIR").map(PathBuf::from).unwrap_or_else(|| home.join("target-base"));
+        let status = Command::new(home.join("toolchain/cargo/bin/cargo"))
+            .current_dir(home.join(variant))
+            .env("CARGO_HOME", home.join("toolchain/cargo"))
+            .env("RUSTUP_HOME", home.join("toolchain/rustup"))
+            .args(["build", "--locked", "--release", "-p", "ripr", "--bin", "ripr", "--target-dir", target.to_str().unwrap(), "-j", "4"])
+            .stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr)).status()?;
+        fs::write(home.join(format!("evidence/build-{variant}-{label}.status")), format!("exit_code={}\nelapsed_s={:.9}\n", status.code().unwrap_or(-1), start.elapsed().as_secs_f64()))?;
+        if !status.success() { return Err(format!("build failed: {status}").into()); }
+        return Ok(());
+    }
     if args[1] == "generate" {
-        for kind in ["sync", "async", "direct"] {
+        for kind in ["sync", "unique", "async", "direct"] {
             for n in [4, 16, 64] {
                 for split in [false, true] {
                     if split && n != 64 { continue; }
@@ -40,6 +57,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     for i in 0..n {
                         let body = if kind == "direct" {
                             format!("mod unit_{i} {{ pub(crate) fn calculate(x: u32) -> u32 {{ x + 1 }}\n#[cfg(test)] mod tests {{ use super::*; #[test] fn subject() {{ assert_eq!(calculate(6), 7); }} }} }}\n")
+                        } else if kind == "unique" {
+                            module(i, false).replace("as_object", &format!("as_object_{i}"))
                         } else { module(i, kind == "async") };
                         if split {
                             lib.push_str(&format!("mod file_{i};\n"));
@@ -75,6 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let stdout = fs::File::create(raw.join(format!("{id}.json")))?;
                         let stderr = fs::File::create(raw.join(format!("{id}.stderr")))?;
                         let binary = home.join(format!("bin/{variant}"));
+                        let unix_ns = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
                         let start = Instant::now();
                         let status = Command::new("timeout").args(["120s", binary.to_str().unwrap(), "check", "--root", root.to_str().unwrap(), "--format", format])
                             .env("RIPR_CACHE_DIR", &cache)
@@ -82,7 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .env("RAYON_NUM_THREADS", "4")
                             .stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr)).status()?;
                         let seconds = start.elapsed().as_secs_f64();
-                        writeln!(table, "{label}\t{workload}\t{mode}\t{round}\t{variant}\t{path}\t{seconds:.9}\t{}\t{}", status.code().unwrap_or(-1), fs::metadata(raw.join(format!("{id}.json")))?.len())?;
+                        writeln!(table, "{label}\t{workload}\t{mode}\t{round}\t{variant}\t{path}\t{seconds:.9}\t{}\t{}\t{unix_ns}", status.code().unwrap_or(-1), fs::metadata(raw.join(format!("{id}.json")))?.len())?;
                         table.flush()?;
                         println!("{id} {seconds:.4}s {status}");
                         if !status.success() { return Err(format!("run failed; retained {id}").into()); }

@@ -12,8 +12,12 @@ No candidate edits, instrumentation or competing repair.
 ## Build and machine
 
 Rust 1.95.0, locked default features, `cargo build --locked --release -p ripr
---bin ripr --target-dir /workspace/perf8004/target-base -j 4` in each detached
-checkout sequentially. Copy the base executable before rebuilding candidate.
+--bin ripr --target-dir /workspace/perf8004/target-<variant> -j 4` in each detached
+checkout. Base starts first. After the base library and dependencies complete,
+copy completed dependency artifacts to a separate candidate target directory;
+candidate recompiles its own sources and records its own build stamp. The two
+final builds may overlap before timing, with separate target locks and enough
+memory headroom. No builds overlap any timing samples.
 Release manifest: opt-level=3 (Cargo default), lto=true, codegen-units=1,
 strip=true, debug-assertions=false, overflow-checks=false, panic=unwind;
 default features lang-rust/lang-typescript/lang-python. No RUSTFLAGS override.
@@ -22,13 +26,17 @@ source/tree identities, machine and cgroup resources retained separately.
 
 ## Workloads
 
-`bench.rs generate /workspace/perf8004` generates three families at 4/16/64
+`bench.rs generate /workspace/perf8004` generates four families at 4/16/64
 independent inline modules, plus split-file 64-module versions. Sync chains use
 the retained named synchronous three-helper shape; async chains call and drop
 an unpolled async entry. Each chain has three helpers and an inherent receiver
 method. Repeated `as_object` names model common accessors and exercise candidate
 fanout and identity filtering. The `direct` family has no receiver or helper
 chain and is the unchanged-semantics control. Each module has one test.
+The `unique` family retains synchronous helper chains but makes each method
+and corresponding helpers' owner-name tokens unique per module; this separates
+common-name candidate fanout from repeated containing-file parsing and supplies
+an intended-equal-output control through the changed helper route.
 
 `fixture-mix-16` wraps the exact candidate async-function input and all 15
 controls in distinct modules, preserving each case's local source and semantics.
