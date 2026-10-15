@@ -96,6 +96,8 @@ fn accepted_empty_placeholder_fenced_and_unrelated_plans_remain_failures() -> Re
         "Planned tests:\n- !!!\n",
         "Planned tests:\n- [ ]\n",
         "Planned tests:\n- [x]\n",
+        "Planned tests:\n- **[x]**\n",
+        "Planned tests:\n- `[x]`\n",
         "Planned tests:\n- ***\n",
         "Planned tests:\n- [ ] **TODO**\n",
         "Planned tests:\n- None yet\n",
@@ -141,6 +143,22 @@ fn real_planned_mapping_after_closed_example_remains_valid() -> Result<(), Strin
         fixture(root, "accepted", &mapping, "[]", "[]")?;
         check_traceability()
     })
+}
+
+#[test]
+fn visible_named_obligations_after_comments_and_task_markers_remain_valid() -> Result<(), String> {
+    for mapping in [
+        "Visible prose <!-- hidden -->\nPlanned tests:\n- boundary_obligation\n",
+        "Visible prose <!--\n```\n-->\nPlanned tests:\n- boundary_obligation\n",
+        "Planned tests:\n- [ ] **boundary_obligation**\n",
+        "Planned tests:\n- [x] `boundary_obligation`\n",
+    ] {
+        with_temp_cwd("trace-visible-named-obligation", |root| {
+            fixture(root, "accepted", mapping, "[]", "[]")?;
+            check_traceability()
+        })?;
+    }
+    Ok(())
 }
 
 #[test]
