@@ -185,6 +185,10 @@ edge itself rather than one input on it:
   for `<p>` with as many arguments as the owner takes; one that disagrees,
   or whose input ripr cannot read, refuses the test. Statements that are
   not recognized side oracles (`let`, an exact `assert_eq!`) are skipped.
+  An assertion whose tokens hold `return`, `break`, `continue`, `loop`,
+  `?`, a closure, `async` or a nested block refuses the test: a message
+  argument runs only when the condition fails and could leave the test
+  before it panics.
 - Both sides are required. An `Err` oracle on the edge alone cannot tell
   the guard from one that also takes the input below it (example 2: the
   verdict corpus shows `len >= 255` surviving `check(256).is_err()`).
@@ -196,6 +200,9 @@ edge itself rather than one input on it:
   predicate only when the edit kept the returned payload (rule 1): the old
   guard returns the same `Err(..)`, or the edit was confined to the
   condition.
+- An old condition written with `==` or `!=` confirms nothing: it can agree
+  with the new ordering guard on the edge pair and differ only away from it
+  (`len == 256` to `len >= 256` changes `257..`), where no oracle reads.
 
 Any other shape keeps rule 2's reading. Residuals shared with rule 3b:
 a top-level call that ends the process before the assertions

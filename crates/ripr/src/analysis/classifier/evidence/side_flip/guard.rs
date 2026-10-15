@@ -152,9 +152,11 @@ fn plain_test_statements(function: &ast::Fn, owner: &str) -> Option<Vec<ast::Exp
             return None;
         }
         if let Some(call) = ast::MacroCall::cast(node.clone())
-            && !call.path().is_some_and(|path| {
+            && (!call.path().is_some_and(|path| {
                 ASSERTION_MACROS.contains(&path.syntax().text().to_string().as_str())
-            })
+            }) || call
+                .token_tree()
+                .is_some_and(|tree| may_leave(tree.syntax())))
         {
             return None;
         }
@@ -185,6 +187,22 @@ fn plain_test_statements(function: &ast::Fn, owner: &str) -> Option<Vec<ast::Exp
             .chain(statements.tail_expr())
             .collect(),
     )
+}
+
+/// Whether a macro's tokens hold a way out of the test or a block that
+/// could hold one: an assertion message is evaluated only when the
+/// condition fails, so `assert!(c, "{}", { return; })` passes a test whose
+/// condition is false. The tokens are not parsed as expressions, so the
+/// body scan cannot see them.
+fn may_leave(tree: &SyntaxNode) -> bool {
+    tree.descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .any(|token| {
+            matches!(
+                token.text(),
+                "return" | "break" | "continue" | "loop" | "?" | "|" | "||" | "async"
+            ) || (token.text() == "{" && token.parent().is_some_and(|parent| parent != *tree))
+        })
 }
 
 /// `if <param> <op> <literal> { return Err(<payload>); }` as the owner's
@@ -325,8 +343,8 @@ impl Guard {
     /// smaller subject the edit was confined to: the old condition for the
     /// predicate probe, the same `return` for the error probe.
     fn keeps_error(&self, before: &str) -> bool {
-        if let Some(old_payload) = guard_payload(before) {
-            return old_payload == self.payload;
+        if let Some((old_condition, old_payload)) = guard_parts(before) {
+            return old_payload == self.payload && !is_equality(&old_condition);
         }
         let Some(old) = parse_expression(before.trim().trim_end_matches(';')) else {
             return false;
@@ -334,6 +352,7 @@ impl Guard {
         match old {
             ast::Expr::BinExpr(comparison) => {
                 matches!(comparison.op_kind(), Some(ast::BinaryOp::CmpOp(_)))
+                    && !is_equality(&ast::Expr::BinExpr(comparison.clone()))
                     && comparison.syntax().descendants().all(|node| {
                         !ast::MacroCall::can_cast(node.kind())
                             && !ast::BlockExpr::can_cast(node.kind())
@@ -515,8 +534,21 @@ fn line_of(source: &str, node: &SyntaxNode) -> Option<usize> {
     )
 }
 
-/// The canonical payload of an old guard line `if .. { return Err(<payload>); }`.
-fn guard_payload(line: &str) -> Option<String> {
+/// An `==` or `!=` comparison. An old guard written that way agrees with
+/// the new ordering guard at the edge pair while differing elsewhere
+/// (`len == 256` to `len >= 256` changes only `257..`), so the edge
+/// oracles do not observe what changed.
+fn is_equality(condition: &ast::Expr) -> bool {
+    matches!(
+        unwrap_parens(condition.clone()),
+        ast::Expr::BinExpr(comparison)
+            if matches!(comparison.op_kind(), Some(ast::BinaryOp::CmpOp(ast::CmpOp::Eq { .. })))
+    )
+}
+
+/// The condition and canonical payload of an old guard line
+/// `if <condition> { return Err(<payload>); }`.
+fn guard_parts(line: &str) -> Option<(ast::Expr, String)> {
     let source = format!("fn __guard() {{ {} }}", line.trim());
     let root = parsed(&source)?;
     let function = root.syntax().children().find_map(ast::Fn::cast)?;
@@ -545,7 +577,7 @@ fn guard_payload(line: &str) -> Option<String> {
     let [payload] = arguments.as_slice() else {
         return None;
     };
-    Some(canonical_tokens(payload.syntax(), None))
+    Some((guard.condition()?, canonical_tokens(payload.syntax(), None)))
 }
 
 /// The direct owner call an assertion statement observes, and the side it
@@ -717,6 +749,8 @@ mod tests {
             // A far assertion that agrees with the guard adds nothing and
             // takes nothing away.
             "assert!(check(300).is_err());\nassert!(check(256).is_err());\nassert!(check(255).is_ok());",
+            // A message that cannot leave is fine.
+            "assert!(check(256).is_err(), \"edge {}\", 256);\nassert!(check(255).is_ok());",
             // A tail assertion is read too.
             "assert!(check(256).is_err());\nassert!(check(255).is_ok())",
         ] {
@@ -758,6 +792,9 @@ mod tests {
             // An attribute may compile a side out, on a statement or the tail.
             "assert!(check(256).is_err());\n#[cfg(any())]\nassert!(check(255).is_ok());",
             "assert!(check(256).is_err());\n#[cfg(any())]\nassert!(check(255).is_ok())",
+            // A message runs only when the condition fails, and may leave.
+            "assert!(check(256).is_err(), \"{}\", { if true { return; } 0 });\nassert!(check(255).is_ok());",
+            "assert!(check(256).is_err(), \"{}\", f()?);\nassert!(check(255).is_ok());",
         ] {
             assert_eq!(both_sides(body)?, None, "{body}");
         }
@@ -773,6 +810,11 @@ mod tests {
         assert!(!read.keeps_error("    if len > 256 { return Err(E::Bad); }"));
         assert!(!read.keeps_error("return Err(E::Bad)"));
         assert!(!read.keeps_error("Ok(len)"));
+        // An old equality guard differs from the new one away from the edge.
+        assert!(!read.keeps_error("    if len == 256 { return Err(E::TooLong); }"));
+        assert!(!read.keeps_error("len == 256"));
+        assert!(!read.keeps_error("len != 256"));
+
         Ok(())
     }
 }

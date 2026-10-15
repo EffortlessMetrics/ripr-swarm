@@ -226,6 +226,25 @@ fn a_changed_error_or_an_unreadable_guard_keeps_the_gap() -> Result<(), String> 
         &[ProbeFamily::ErrorPath],
         "changed error",
     )?;
+    // An old equality guard agrees with the new one at 255 and 256 and
+    // differs only above the edge, which no oracle reads.
+    keeps_gap(
+        &source(GUARD, BOTH_SIDES),
+        &diff("if len == 256 { return Err(E::TooLong); }", GUARD),
+        &[ProbeFamily::Predicate],
+        "old equality guard",
+    )?;
+    // An assertion message runs only when the condition fails and may
+    // leave the test.
+    keeps_gap(
+        &source(
+            GUARD,
+            "    #[test]\n    fn edge() {\n        assert!(check(256).is_err(), \"{}\", { if true { return; } 0 });\n        assert!(check(255).is_ok());\n    }",
+        ),
+        &diff("if len > 256 { return Err(E::TooLong); }", GUARD),
+        &[ProbeFamily::Predicate, ProbeFamily::ErrorPath],
+        "leaving message",
+    )?;
     // The edge and the error both changed: the predicate probe's old text
     // is the whole guard, whose payload differs.
     keeps_gap(
