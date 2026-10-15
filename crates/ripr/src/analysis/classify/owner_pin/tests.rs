@@ -1868,6 +1868,15 @@ fn text_declared_constants_read_macro_items_and_skip_non_declarations() {
             ("M".to_string(), " 1".to_string()),
         ]
     );
+    assert_eq!(
+        text_declared_constants(
+            "extern { static X: u32; } static A: [u32; 2] = [quota(1); 2]; const Y: u8 = 1;"
+        ),
+        vec![
+            ("Y".to_string(), " 1".to_string()),
+            ("A".to_string(), " [quota(1); 2]".to_string()),
+        ]
+    );
     for text in [
         "extern { static X: u32; } const fn f() -> u32 { 1 }",
         "fn f(p: *const u8, s: &'static str) -> u8 { 0 }",
@@ -1896,6 +1905,57 @@ fn a_method_owner_is_reached_only_through_a_method_shaped_constant() {
     assert_eq!(
         admitted("pub static EXPECTED: usize = crate::Counter::new().tally();\n"),
         0
+    );
+}
+
+#[test]
+fn a_constant_counts_only_from_a_package_the_test_belongs_to_tests_or_names() {
+    let lib = "crates/core/src/lib.rs";
+    let admitted = |import: &str, constant_file: &str, initializer: &str| {
+        let tests = format!(
+            "use demo::weight;\n{import}\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), EXPECTED);\n}}\n"
+        );
+        let constant = format!("pub const EXPECTED: u32 = {initializer};\n");
+        let index = index(&[
+            (lib, WEIGHT_LIB),
+            ("crates/app/tests/weighs.rs", &tests),
+            (constant_file, &constant),
+        ]);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "weight" && function.file == Path::new(lib));
+        assert!(owner.is_some(), "the owner must be indexed");
+        let Some(owner) = owner else { return 0 };
+        let pin = OwnerReturnPin::establish(&return_probe(owner, "x * 3"), owner, &index);
+        assert!(pin.is_some(), "the free owner must establish a pin");
+        pin.map(|pin| admitted_texts(&index, &pin).len())
+            .unwrap_or_default()
+    };
+    for (import, constant_file) in [
+        // The owner's package, the test's own package, and a named
+        // test-support crate.
+        ("use demo::EXPECTED;", "crates/core/src/expected.rs"),
+        ("use common::EXPECTED;", "crates/app/tests/common.rs"),
+        ("use test_kit::EXPECTED;", "crates/test-kit/src/lib.rs"),
+    ] {
+        // A literal constant there pins; one built by the owner does not.
+        assert_eq!(admitted(import, constant_file, "12"), 1, "{constant_file}");
+        assert_eq!(
+            admitted(import, constant_file, "demo::weight(4)"),
+            0,
+            "{constant_file}"
+        );
+    }
+    // A same-named constant in a package the test never names does not
+    // withhold the pin from the test's own literal constant.
+    assert_eq!(
+        admitted(
+            "const EXPECTED: u32 = 12;",
+            "crates/other/src/lib.rs",
+            "demo::weight(4)"
+        ),
+        1
     );
 }
 

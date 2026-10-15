@@ -8044,13 +8044,30 @@ fn expected_constant_reaches_owner(
     if constants.is_empty() {
         return false;
     }
-    // A constant from outside both the test's and the owner's package
-    // cannot be the one the test names; unscopable paths keep every match.
+    // A constant from a package the test neither belongs to, tests, nor
+    // names (`test_kit::EXPECTED` from `crates/test-kit/`) cannot be the one
+    // the test reads; unscopable paths keep every match.
     let test_package = super::related_tests::package_prefix(&test.file);
     let owner_package = super::related_tests::package_prefix(owner_file);
+    let test_source = index
+        .files()
+        .get(&test.file)
+        .map(|facts| facts.source.clone());
     let in_scope = |file: &Path| match (&test_package, &owner_package) {
         (Some(test_package), Some(owner_package)) => super::related_tests::package_prefix(file)
-            .is_none_or(|package| &package == test_package || &package == owner_package),
+            .is_none_or(|package| {
+                &package == test_package
+                    || &package == owner_package
+                    || package
+                        .trim_end_matches('/')
+                        .rsplit('/')
+                        .next()
+                        .is_some_and(|crate_dir| {
+                            test_source.as_deref().is_none_or(|source| {
+                                contains_as_whole_word(source, &crate_dir.replace('-', "_"))
+                            })
+                        })
+            }),
         _ => true,
     };
     let test_renames: Vec<UsePath> = index
@@ -8239,15 +8256,13 @@ fn text_declared_constants(text: &str) -> Vec<(String, String)> {
             let Some(equals) = body[length..].find('=') else {
                 continue;
             };
-            // `extern { static X: u32; }` has no initializer.
-            if body[length..]
-                .find(';')
-                .is_some_and(|semicolon| semicolon < equals)
-            {
+            // `extern { static X: u32; }` has no initializer; an array type
+            // (`[u32; 4]`) holds its `;` inside brackets.
+            if top_level_semicolon(&body[length..]).is_some_and(|semicolon| semicolon < equals) {
                 continue;
             }
             let initializer = &body[length + equals + 1..];
-            let end = initializer.find(';').unwrap_or(initializer.len());
+            let end = top_level_semicolon(initializer).unwrap_or(initializer.len());
             found.push((name.to_string(), initializer[..end].to_string()));
         }
     }
