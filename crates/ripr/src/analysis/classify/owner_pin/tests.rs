@@ -3869,6 +3869,19 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         refusal(&format!("mod tests {{\n{definition}{call}}}\n")),
         None
     );
+    // A doc comment is not an attribute node, so it changes nothing.
+    assert_eq!(
+        refusal(&format!("/// Runs one case.\n{definition}{call}")),
+        None
+    );
+    // A unary `!`, a trusted macro between the definition and the call, and
+    // a built-in test attribute in the arguments bind nothing either.
+    assert_eq!(
+        refusal(&format!(
+            "{definition}fn build() -> Vec<u32> {{ vec![1] }}\ncase!(one, |v| {{ #[allow(unused)] let w = 1; assert!(!(v == 2)); assert_eq!(v, 1); }});\n"
+        )),
+        None
+    );
 
     // Each way the wrapper may still bind a name keeps the argument
     // ambiguous.
@@ -3894,8 +3907,28 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         // The arguments carry a binding word.
         format!("{definition}case!(one, |v| {{ macro_rules! assert_eq {{ () => {{}} }} }});\n"),
         format!("{definition}case!(one, |v| {{ use other::assert_eq; assert_eq!(v, 1); }});\n"),
-        // The call sits outside the definition's inline module.
+        // The call sits outside the definition's inline module, or the
+        // module's scope cannot be bounded, or the definition sits in a
+        // function body.
         format!("mod tests {{\n{definition}}}\n{call}"),
+        format!("mod tests {{\nmod child;\n{definition}{call}}}\n"),
+        format!("#[macro_use]\nmod tests {{\n{definition}{call}}}\n"),
+        format!("fn setup() {{\n{definition}{call}}}\n"),
+        // The arguments invoke another macro, a trusted name by path, or an
+        // attribute that may emit items.
+        format!("{definition}case!(one, |v| {{ define!(assert_eq); }});\n"),
+        format!("{definition}case!(one, |v| {{ other::assert_eq!(v, 1); }});\n"),
+        format!(
+            "{definition}case!(one, |v| {{ #[derive(Clone)] struct S; assert_eq!(v, 1); }});\n"
+        ),
+        format!(
+            "{}{call}",
+            definition.replace("#[test]", "#[test]\n#[derive(Clone)]")
+        ),
+        // A macro expanded between the definition and the call may emit a
+        // shadowing `macro_rules! case`.
+        format!("{definition}generate!();\n{call}"),
+        format!("{definition}case!(two, |v| {{ generate!(); }});\n{call}"),
     ] {
         assert!(
             matches!(

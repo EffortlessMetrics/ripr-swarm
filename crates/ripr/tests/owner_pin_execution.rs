@@ -1467,8 +1467,10 @@ fn macro_use_module_admission_matches_runtime() -> Result<(), String> {
 /// expansion, compiles against the shadow (no E0659). So any mention in a
 /// macro's arguments keeps the name ambiguous, and `no_implicit_prelude` or
 /// `macro_use` hidden in macro arguments counts as written. Each row records
-/// whether the compiled test catches the wrong library; the pass-through row
-/// stays refused although it would, which is the conservative direction.
+/// whether the compiled test catches the wrong library. The pass-through row
+/// is the one exception: `wrap!` is defined once in this file, before its
+/// call, and its expansion can bind nothing, so it is admitted (#6648) and
+/// the compiled test catches the wrong library.
 #[test]
 fn wrapper_argument_admission_matches_runtime() -> Result<(), String> {
     let fixture =
@@ -1484,7 +1486,7 @@ fn wrapper_argument_admission_matches_runtime() -> Result<(), String> {
             "pass_through",
             format!("{wrap}\nfn _uses() {{ wrap!(assert_eq!(1, 1)); }}\n{inline_tests}"),
             None,
-            false,
+            true,
             true,
         ),
         (

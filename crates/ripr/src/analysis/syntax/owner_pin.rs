@@ -726,7 +726,7 @@ fn macro_binding_ambiguities(
             // tests then use it. The one exception is a wrapper whose only
             // definition this file shows and whose expansion cannot bind a
             // name at all (#6648).
-            if binding_free_local_wrapper(parse.tree().syntax(), &call, &tokens) {
+            if binding_free_local_wrapper(parse.tree().syntax(), &call, &tokens, trusted) {
                 continue;
             }
             for token in &tokens {
@@ -871,11 +871,6 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
     )
 }
 
-/// The inline module or function body that bounds a `macro_rules!`
-/// definition's textual scope, when nothing can carry it further: no
-/// `#[macro_use]` on that module or any enclosing one in the file, and no
-/// out-of-line `mod name;` inside it (whose file would inherit the scope).
-/// `None` for a file-level definition or a `macro` 2.0 item.
 /// Words that let tokens bind or import a name, or pull in unseen items,
 /// once a macro expansion parses them as items.
 const BINDING_WORDS: &[&str] = &[
@@ -890,37 +885,42 @@ const BINDING_WORDS: &[&str] = &[
     "no_implicit_prelude",
 ];
 
+/// Attributes a binding-free wrapper may carry through its tokens: built-in
+/// test and lint attributes, none of which can emit an item.
+const INERT_ATTRIBUTES: &[&str] = &[
+    "test",
+    "ignore",
+    "should_panic",
+    "allow",
+    "warn",
+    "deny",
+    "expect",
+    "cfg",
+    "doc",
+];
+
 /// Whether `call` invokes a `macro_rules!` this file defines once, in
 /// textual scope before the call, whose expansion cannot bind a macro name
-/// (#6648). The definition and the call arguments both hold no binding word
-/// ([`BINDING_WORDS`]), and the definition invokes no macro of its own, so
-/// nothing it emits from its own tokens or the arguments can define, import
-/// or export `assert_eq`. A wrapper reached by path (`a::wrap!`), named by a
-/// `use` in this file, defined twice, under an attribute other than a doc
-/// comment, or used before its definition fails closed: it may be a macro
-/// ripr cannot see.
+/// (#6648). The definition and the call arguments hold no binding word
+/// ([`BINDING_WORDS`]) and no attribute outside [`INERT_ATTRIBUTES`]; the
+/// definition invokes no bang macro, and the arguments invoke only trusted
+/// names by their bare name. No macro call between the definition and this
+/// call may shadow it: each one is a bare trusted name or another inert
+/// call of the same wrapper. A wrapper reached by path (`a::wrap!`), named
+/// by a `use` in this file, defined twice, under an attribute other than a
+/// doc comment, inside a function or block, or used before or outside its
+/// definition's scope fails closed: it may be a macro ripr cannot see.
+/// Attribute proc macros stay invisible here as everywhere else.
 fn binding_free_local_wrapper(
     root: &SyntaxNode,
     call: &ast::MacroCall,
     argument_tokens: &[ra_ap_syntax::SyntaxToken],
+    trusted: &[&str],
 ) -> bool {
-    let Some(path) = call.path() else {
+    let Some(name) = bare_macro_name(call) else {
         return false;
     };
-    if path.qualifier().is_some() {
-        return false;
-    }
-    let Some(name) = path
-        .segment()
-        .and_then(|segment| segment.name_ref())
-        .map(|name| name.text().trim_start_matches("r#").to_string())
-    else {
-        return false;
-    };
-    let binding_word = |token: &ra_ap_syntax::SyntaxToken| {
-        BINDING_WORDS.contains(&token.text().trim_start_matches("r#"))
-    };
-    if argument_tokens.iter().any(binding_word) {
+    if !inert_tokens(argument_tokens, trusted, false) {
         return false;
     }
     let named = |candidate: Option<ast::Name>| {
@@ -950,25 +950,117 @@ fn binding_free_local_wrapper(
     if definition.attrs().next().is_some() {
         return false;
     }
+    let definition_end = definition.syntax().text_range().end();
     let call_start = call.syntax().text_range().start();
-    if definition.syntax().text_range().end() > call_start {
+    if definition_end > call_start {
         return false;
     }
-    if let Some(scope) = textual_scope(definition.syntax())
-        && !scope.text_range().contains(call_start)
-    {
+    // A file-level definition reaches the rest of the file. One in an
+    // inline module reaches the call only when `textual_scope` can bound
+    // it and the call sits inside; `None` there means the scope cannot be
+    // bounded, not that it covers everything. Function and block bodies
+    // fail closed.
+    let in_scope = match definition.syntax().parent().map(|parent| parent.kind()) {
+        Some(ra_ap_syntax::SyntaxKind::SOURCE_FILE) => true,
+        Some(ra_ap_syntax::SyntaxKind::ITEM_LIST) => textual_scope(definition.syntax())
+            .is_some_and(|scope| scope.text_range().contains(call_start)),
+        _ => false,
+    };
+    if !in_scope {
         return false;
     }
     let Some(body) = definition.token_tree() else {
         return false;
     };
-    !body
-        .syntax()
-        .descendants_with_tokens()
-        .filter_map(|element| element.into_token())
-        .any(|token| binding_word(&token) || token.kind() == ra_ap_syntax::SyntaxKind::BANG)
+    let body_tokens = non_trivia_tokens(body.syntax());
+    if !inert_tokens(&body_tokens, trusted, true) {
+        return false;
+    }
+    // A macro expanded between the definition and the call could emit a
+    // second `macro_rules!` of the same name, which this file never shows
+    // but which shadows the first at the call. Trusted macros only build
+    // expressions, so anything they could expand to stays block-local.
+    root.descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter(|other| {
+            let start = other.syntax().text_range().start();
+            start >= definition_end && start < call_start
+        })
+        .all(|other| match bare_macro_name(&other) {
+            Some(other_name) if trusted.contains(&other_name.as_str()) => true,
+            Some(other_name) if other_name == name => other.token_tree().is_some_and(|tree| {
+                inert_tokens(&non_trivia_tokens(tree.syntax()), trusted, false)
+            }),
+            _ => false,
+        })
 }
 
+/// The name of a macro call reached by a bare, unqualified path.
+fn bare_macro_name(call: &ast::MacroCall) -> Option<String> {
+    let path = call.path()?;
+    if path.qualifier().is_some() {
+        return None;
+    }
+    path.segment()
+        .and_then(|segment| segment.name_ref())
+        .map(|name| name.text().trim_start_matches("r#").to_string())
+}
+
+fn non_trivia_tokens(node: &SyntaxNode) -> Vec<ra_ap_syntax::SyntaxToken> {
+    node.descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect()
+}
+
+/// Whether macro tokens can bind nothing once expanded: no binding word, no
+/// attribute outside [`INERT_ATTRIBUTES`], and no bang macro other than a
+/// bare trusted name (none at all in a definition body, whose `$name!`
+/// could be anything).
+fn inert_tokens(tokens: &[ra_ap_syntax::SyntaxToken], trusted: &[&str], definition: bool) -> bool {
+    use ra_ap_syntax::SyntaxKind::{BANG, COLON, COLON2, IDENT, L_BRACK, POUND};
+    let word =
+        |token: &ra_ap_syntax::SyntaxToken| token.text().trim_start_matches("r#").to_string();
+    tokens.iter().enumerate().all(|(index, token)| {
+        if BINDING_WORDS.contains(&word(token).as_str()) {
+            return false;
+        }
+        match token.kind() {
+            BANG => {
+                let previous = index.checked_sub(1).and_then(|before| tokens.get(before));
+                let Some(previous) = previous.filter(|previous| previous.kind() == IDENT) else {
+                    // A unary `!` follows an operator, a keyword or an
+                    // opening delimiter, never a name.
+                    return true;
+                };
+                let qualified = index
+                    .checked_sub(2)
+                    .and_then(|before| tokens.get(before))
+                    .is_some_and(|before| matches!(before.kind(), COLON | COLON2));
+                !definition && !qualified && trusted.contains(&word(previous).as_str())
+            }
+            POUND => {
+                tokens
+                    .get(index + 1)
+                    .is_some_and(|open| open.kind() == L_BRACK)
+                    && tokens.get(index + 2).is_some_and(|attribute| {
+                        attribute.kind() == IDENT
+                            && INERT_ATTRIBUTES.contains(&word(attribute).as_str())
+                    })
+                    && tokens
+                        .get(index + 3)
+                        .is_some_and(|next| !matches!(next.kind(), COLON | COLON2))
+            }
+            _ => true,
+        }
+    })
+}
+
+/// The inline module or function body that bounds a `macro_rules!`
+/// definition's textual scope, when nothing can carry it further: no
+/// `#[macro_use]` on that module or any enclosing one in the file, and no
+/// out-of-line `mod name;` inside it (whose file would inherit the scope).
+/// `None` for a file-level definition or a `macro` 2.0 item.
 fn textual_scope(definition: &SyntaxNode) -> Option<SyntaxNode> {
     ast::MacroRules::cast(definition.clone())?;
     // `#[macro_export]` (also under `cfg_attr`) puts the macro at crate-root

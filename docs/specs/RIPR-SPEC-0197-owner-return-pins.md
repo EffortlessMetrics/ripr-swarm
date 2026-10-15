@@ -1598,12 +1598,18 @@ reaches the ordinary token rule and reads `weakly_exposed`, still a gap.
   together with the module whose tests then compile against it. The one
   exception is a call to a wrapper that cannot bind a name at all (#6648):
   an unqualified call to a `macro_rules!` this file defines exactly once,
-  before the call and in textual scope, with no attribute, no `use` of that
-  name in the file, no binding word (`macro_rules`, `macro`, `use`,
-  `extern`, `mod`, `include`, `macro_use`, `macro_export`,
-  `no_implicit_prelude`) in the definition or the call's arguments, and no
-  macro invocation in the definition. Its expansion only rearranges the
-  call's tokens, so a trusted name in them keeps its prelude meaning.
+  without an attribute and never names in a `use`. The definition sits at
+  file level, or in an inline module whose textual scope can be bounded
+  and contains the call, and ends before the call. Neither the definition
+  nor the call's arguments hold a binding word (`macro_rules`, `macro`,
+  `use`, `extern`, `mod`, `include`, `macro_use`, `macro_export`,
+  `no_implicit_prelude`) or an attribute other than a built-in test or lint
+  attribute. The definition invokes no bang macro, and the arguments invoke
+  only trusted names by their bare name. Every macro call between the
+  definition and the call is a bare trusted name or another such call of
+  the same wrapper, so nothing can emit a shadowing definition. Attribute
+  proc macros elsewhere in the file stay invisible, as for every other
+  site.
   `macro_use` or `no_implicit_prelude` anywhere in a non-trusted macro's
   arguments makes every trusted name ambiguous (stricter than the same
   attribute written on an item, which a resolved module can admit). A
