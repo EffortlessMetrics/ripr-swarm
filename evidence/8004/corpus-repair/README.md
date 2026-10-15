@@ -52,8 +52,11 @@ matrix. These selected tests are not a full workspace-test result.
 
 ## Terminal local checks
 
-All commands use Rust/Cargo 1.95, default features, one job, incremental off and
-dev/test debug 0. Corpus/scenario batches additionally use Rayon threads 2.
+Rust checks use Rust/Cargo 1.95, default features, one job, incremental off and
+dev/test debug 0. The corpus helper additionally builds `lang-perl` for the
+Perl cases, then restores the default binary. Test invocations use `--locked`;
+xtask's internal builds use the unchanged repository lockfile without forcing
+that flag. Corpus/scenario batches additionally use Rayon threads 2.
 
 | Command | Terminal observation |
 | --- | --- |
