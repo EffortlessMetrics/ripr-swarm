@@ -144,7 +144,7 @@ cargo xtask check-droid-review-config
 
 Run this with `check-workflows` for changes to:
 
-- `.github/workflows/droid-review.yml`, `droid.yml`, or `droid-security-scan.yml`;
+- `.github/workflows/droid.yml` or `droid-security-scan.yml`;
 - `docs/agent-context/review-invariants.md` or `droid-smoke-tests.md`;
 - `.factory/skills/review-guidelines/SKILL.md` or `.factory/rules/droid-review.md`.
 

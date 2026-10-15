@@ -6,20 +6,14 @@ For cross-repository rollout discipline, start with
 [Droid rollout checklist](droid-rollout.md) and the human
 [Roll out Factory Droid review](../how-to/roll-out-droid.md) guide.
 
-Before relying on live smoke tests, run `cargo xtask check-droid-review-config` locally to confirm the automatic review, manual command, and scheduled security-scan workflow invariants still match the checked-in policy.
+Before relying on live smoke tests, run `cargo xtask check-droid-review-config` locally to confirm the manual command and scheduled security-scan workflow invariants still match the checked-in policy.
 
-## Automatic review
+## Automatic review retirement
 
-1. Open a same-repo draft PR.
-2. Confirm Droid Auto Review starts.
-3. Confirm the run initializes with `custom:MiniMax-M3-0` (quoted in YAML as `"custom:MiniMax-M3-0"`).
-4. Confirm output is not naked LGTM.
-5. Confirm clean review includes:
-   - inspected surfaces;
-   - checks performed;
-   - why no comments;
-   - residual risk;
-   - validation signal.
+Automatic PR review was retired under #5086. Opening, synchronizing, or
+reopening a PR must not start a Droid Auto Review run. The trusted `@droid`
+and scheduled security workflows remain separate and retain their existing
+triggers and safeguards.
 
 ## Manual review
 
@@ -89,7 +83,7 @@ confirm:
 ## Rollout smoke sequence
 
 When enabling Droid in a new repository, follow the rollout checklist first.
-After merge, use one same-repo PR to confirm automatic review, `@droid review`,
+After merge, use one same-repo PR to confirm `@droid review`,
 `@droid security`, and manual Droid Security Scan all run with
 `custom:MiniMax-M3-0`. Inspect artifact behavior before expanding beyond the
 pilot batch; normal runs should not upload raw debug artifacts.
