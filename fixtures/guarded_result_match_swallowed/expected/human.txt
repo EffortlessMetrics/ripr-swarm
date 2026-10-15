@@ -34,6 +34,6 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - fixtures/guarded_result_match_swallowed/input/src/lib.rs:9 (reachable_unrevealed)
+    - ./src/lib.rs:9 (reachable_unrevealed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

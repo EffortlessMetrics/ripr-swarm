@@ -816,7 +816,12 @@ pub(crate) fn named_limitations_for_oracle_candidates(
             // dynamic expression (variable, function call, computed value).
             // Real producer: `oracle.rs::extract_matcher_expected_value` sets
             // `has_dynamic_matcher_arg = true` for such cases (RIPR-SPEC-0085 §PR5).
-            if assertion.has_dynamic_matcher_arg && !saw_dynamic_assertion {
+            // A `toMatchObject(<const>)` argument whose test-body literal was
+            // read (RIPR-SPEC-0250 example 5) is resolved, so it is not listed.
+            if assertion.has_dynamic_matcher_arg
+                && assertion.expected_object_const.is_none()
+                && !saw_dynamic_assertion
+            {
                 if table_case_test(candidate.test) && !saw_table_case {
                     let sample = format!(
                         "{}:{}",

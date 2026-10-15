@@ -107,6 +107,19 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
             .chain(scope.names.iter().cloned())
             .collect();
         withhold_rebound_scope_receivers(source, &masked, &scope.sites, &mut tests);
+        let code = blank_ranges(source, &masked);
+        let helpers = identity_helpers(&ret.program.body, &code);
+        if !helpers.is_empty() {
+            for test in &mut tests {
+                test.identity_helpers_in_file = helpers.clone();
+            }
+        }
+        let factories = mock_factories(&ret.program.body, &code);
+        if !factories.is_empty() {
+            for test in &mut tests {
+                test.mock_factories_in_file = factories.clone();
+            }
+        }
         tests
     }) else {
         return Vec::new();
@@ -1212,6 +1225,262 @@ fn withhold_rebound_scope_receivers(
     }
 }
 
+/// RIPR-SPEC-0249 / RIPR-SPEC-0250 (amended 2026-10-15): the test-local
+/// identity helpers a pin may look through, read from the top level of the
+/// test file.
+///
+/// A helper is a top-level, unexported `function f(p) { return p; }` or
+/// `const f = (p) => p;` (block body `{ return p; }` too) with exactly one
+/// plain identifier parameter (no default, rest, destructuring, decorator
+/// or `this` parameter) that is neither `async` nor a generator, nor a
+/// `declare` or overload signature. `code` is the file text with comments,
+/// module specifiers and test names blanked, so every other string,
+/// template and regex stays visible: any occurrence of `f` other than its
+/// own declaration and a direct call `f(` (a second declaration or
+/// overload, a reassignment, a parameter or local that shadows it, an
+/// export clause, a member `x.f`, a value use, a word inside a string)
+/// withholds it. A file holding `eval`, a `with (` statement or a `\u`
+/// escape, any of which can rebind a name without spelling it, has none.
+fn identity_helpers(statements: &[Statement<'_>], code: &str) -> Vec<String> {
+    if file_is_opaque(code) {
+        return Vec::new();
+    }
+    statements
+        .iter()
+        .filter_map(identity_helper_declaration)
+        .filter(|(name, declared_at)| {
+            word_occurrences(code, name)
+                .all(|at| at == *declared_at || is_direct_call(code, at, name))
+        })
+        .map(|(name, _)| name)
+        .collect()
+}
+
+/// Top-level mock factories (`function f() { return { ... }; }` or
+/// `const f = () => ({ ... });`) whose name the file uses only as a direct
+/// call `f(`, each with the source of its returned object literal. A file
+/// that can reach a name without spelling it (`eval`, `with`, a `\u`
+/// escape) has none.
+fn mock_factories(statements: &[Statement<'_>], code: &str) -> Vec<(String, String)> {
+    if file_is_opaque(code) {
+        return Vec::new();
+    }
+    statements
+        .iter()
+        .filter_map(|stmt| mock_factory_declaration(stmt, code))
+        .filter(|(name, declared_at, _)| {
+            word_occurrences(code, name)
+                .all(|at| at == *declared_at || is_direct_call(code, at, name))
+        })
+        .map(|(name, _, literal)| (name, literal))
+        .collect()
+}
+
+/// The name, name offset and returned literal source of one top-level
+/// parameterless factory that returns an object literal and does nothing
+/// else.
+fn mock_factory_declaration(stmt: &Statement<'_>, code: &str) -> Option<(String, usize, String)> {
+    let literal = |object: &oxc_ast::ast::ObjectExpression<'_>| {
+        code.get(object.span.start as usize..object.span.end as usize)
+            .map(str::to_string)
+    };
+    match stmt {
+        Statement::FunctionDeclaration(function)
+            if !function.r#async
+                && !function.generator
+                && function.this_param.is_none()
+                && no_parameters(&function.params) =>
+        {
+            let id = function.id.as_ref()?;
+            let body = function.body.as_ref()?;
+            let object = returned_object(&body.directives, &body.statements)?;
+            Some((
+                id.name.to_string(),
+                id.span.start as usize,
+                literal(object)?,
+            ))
+        }
+        Statement::VariableDeclaration(declaration)
+            if !declaration.declare
+                && declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const
+                && declaration.declarations.len() == 1 =>
+        {
+            let declarator = declaration.declarations.first()?;
+            let BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                return None;
+            };
+            let Some(Expression::ArrowFunctionExpression(arrow)) = &declarator.init else {
+                return None;
+            };
+            if arrow.r#async || !no_parameters(&arrow.params) {
+                return None;
+            }
+            let body = &arrow.body;
+            let object = if arrow.expression {
+                if !body.directives.is_empty() {
+                    return None;
+                }
+                let [Statement::ExpressionStatement(statement)] = body.statements.as_slice() else {
+                    return None;
+                };
+                object_expression(&statement.expression)?
+            } else {
+                returned_object(&body.directives, &body.statements)?
+            };
+            Some((
+                id.name.to_string(),
+                id.span.start as usize,
+                literal(object)?,
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// `true` when a parameter list is empty.
+fn no_parameters(params: &FormalParameters<'_>) -> bool {
+    params.rest.is_none() && params.items.is_empty()
+}
+
+/// The object literal of a body that is exactly `return { ... };`.
+fn returned_object<'b, 'a>(
+    directives: &[oxc_ast::ast::Directive<'a>],
+    statements: &'b [Statement<'a>],
+) -> Option<&'b oxc_ast::ast::ObjectExpression<'a>> {
+    if !directives.is_empty() {
+        return None;
+    }
+    let [Statement::ReturnStatement(statement)] = statements else {
+        return None;
+    };
+    object_expression(statement.argument.as_ref()?)
+}
+
+/// The object literal an expression is, through parentheses only.
+fn object_expression<'b, 'a>(
+    expression: &'b Expression<'a>,
+) -> Option<&'b oxc_ast::ast::ObjectExpression<'a>> {
+    match expression {
+        Expression::ObjectExpression(object) => Some(object),
+        Expression::ParenthesizedExpression(inner) => object_expression(&inner.expression),
+        _ => None,
+    }
+}
+
+/// `true` when the file can reach a name without spelling it: `eval`, a
+/// `with` statement, or a `\u` escape.
+fn file_is_opaque(code: &str) -> bool {
+    identifier_occurrences(code, "eval").next().is_some()
+        || identifier_occurrences(code, "with")
+            .any(|at| code[at + "with".len()..].trim_start().starts_with('('))
+        || code.contains("\\u")
+}
+
+/// The name and name offset of one top-level identity declaration.
+fn identity_helper_declaration(stmt: &Statement<'_>) -> Option<(String, usize)> {
+    match stmt {
+        Statement::FunctionDeclaration(function)
+            if !function.r#async && !function.generator && function.this_param.is_none() =>
+        {
+            let id = function.id.as_ref()?;
+            let parameter = sole_plain_parameter(&function.params)?;
+            let body = function.body.as_ref()?;
+            returns_only(&body.directives, &body.statements, parameter)
+                .then(|| (id.name.to_string(), id.span.start as usize))
+        }
+        Statement::VariableDeclaration(declaration)
+            if !declaration.declare
+                && declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const
+                && declaration.declarations.len() == 1 =>
+        {
+            let declarator = declaration.declarations.first()?;
+            let BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                return None;
+            };
+            let Some(Expression::ArrowFunctionExpression(arrow)) = &declarator.init else {
+                return None;
+            };
+            if arrow.r#async {
+                return None;
+            }
+            let parameter = sole_plain_parameter(&arrow.params)?;
+            let body = &arrow.body;
+            let identity = if arrow.expression {
+                body.directives.is_empty()
+                    && matches!(
+                        body.statements.as_slice(),
+                        [Statement::ExpressionStatement(statement)]
+                            if matches!(&statement.expression,
+                                Expression::Identifier(value) if value.name == parameter)
+                    )
+            } else {
+                returns_only(&body.directives, &body.statements, parameter)
+            };
+            identity.then(|| (id.name.to_string(), id.span.start as usize))
+        }
+        _ => None,
+    }
+}
+
+/// The name of the only parameter when it is a plain identifier.
+fn sole_plain_parameter<'a>(params: &FormalParameters<'a>) -> Option<&'a str> {
+    if params.rest.is_some() {
+        return None;
+    }
+    let [parameter] = params.items.as_slice() else {
+        return None;
+    };
+    if !parameter.decorators.is_empty()
+        || parameter.initializer.is_some()
+        || parameter.accessibility.is_some()
+        || parameter.readonly
+        || parameter.r#override
+    {
+        return None;
+    }
+    match &parameter.pattern {
+        BindingPattern::BindingIdentifier(id) => Some(id.name.as_str()),
+        _ => None,
+    }
+}
+
+/// `true` when a body is exactly `return <parameter>;`.
+fn returns_only(
+    directives: &[oxc_ast::ast::Directive<'_>],
+    statements: &[Statement<'_>],
+    parameter: &str,
+) -> bool {
+    directives.is_empty()
+        && matches!(
+            statements,
+            [Statement::ReturnStatement(statement)]
+                if matches!(&statement.argument,
+                    Some(Expression::Identifier(value)) if value.name == parameter)
+        )
+}
+
+/// Byte offsets of `identifier` as a whole word, member names included.
+fn word_occurrences<'a>(code: &'a str, identifier: &'a str) -> impl Iterator<Item = usize> + 'a {
+    let word =
+        |ch: Option<char>| ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric());
+    code.match_indices(identifier).filter_map(move |(at, _)| {
+        let before = code[..at].chars().next_back();
+        let after = code[at + identifier.len()..].chars().next();
+        (!word(before) && !word(after)).then_some(at)
+    })
+}
+
+/// `true` when the occurrence at `at` is a direct call `name(`: not a
+/// member, a private name, a declaration (`function name(`) or a generator
+/// method (`*name(`).
+fn is_direct_call(code: &str, at: usize, name: &str) -> bool {
+    let before = code[..at].trim_end();
+    let declares = before.strip_suffix("function").is_some_and(|rest| {
+        !rest.ends_with(|ch: char| ch == '_' || ch == '$' || ch.is_alphanumeric())
+    });
+    !before.ends_with(['.', '#', '*']) && !declares && code[at + name.len()..].starts_with('(')
+}
+
 /// Byte offsets of `identifier` as a whole word, not a member name.
 fn identifier_occurrences<'a>(
     code: &'a str,
@@ -1821,6 +2090,8 @@ pub(crate) fn test_from_statement(
         mocks_in_file: Vec::new(),
         imports_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         // Replaced by `collect_tests_from_statements`, which has the file's
         // admission context; fail-closed until then.
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,

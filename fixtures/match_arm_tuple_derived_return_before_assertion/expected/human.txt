@@ -31,6 +31,6 @@ Write a test for it:
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - fixtures/match_arm_tuple_derived_return_before_assertion/input/src/lib.rs:27 (weakly_exposed)
+    - ./src/lib.rs:27 (weakly_exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

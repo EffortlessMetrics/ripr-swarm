@@ -31,8 +31,8 @@ Next: drill into the top finding:
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - fixtures/unsafe_boundary_probe/input/src/lib.rs:5 (no_static_path)
-    - fixtures/unsafe_boundary_probe/input/src/lib.rs:16 (no_static_path)
+    - ./src/lib.rs:5 (no_static_path)
+    - ./src/lib.rs:16 (no_static_path)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

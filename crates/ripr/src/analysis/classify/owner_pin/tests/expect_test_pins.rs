@@ -1,7 +1,9 @@
 //! #6578: an inline expect-test comparison,
 //! `expect![["text"]].assert_eq(&owner(..))`, pins the owner's return as
 //! `assert_eq!(owner(..), "text")` does, behind a manifest-verified
-//! `use expect_test::expect;`. Every other expect-test spelling stays a
+//! `use expect_test::expect;`; a golden-file
+//! `expect_file!["path"].assert_eq(&owner(..))` pins behind a verified
+//! `use expect_test::expect_file;`. Every other expect-test spelling stays a
 //! `snapshot` / medium oracle (RIPR-SPEC-0231 step 6).
 
 use super::*;
@@ -54,10 +56,15 @@ fn an_inline_expect_comparison_pins_behind_a_verified_import() -> Result<(), Str
         "expect![[\"w12\"]].assert_eq(&render(4));",
     );
     let grouped = render_admitted(&grouped, Some(&plain)).len();
-    for body in [
-        "expect![[\"w12\"]].assert_eq(&render(4));",
-        "expect![\"w12\"].assert_eq(&render(4));",
-        "expect![[\"w12\"]].assert_eq(render(4).as_ref());",
+    for (import, body) in [
+        (import, "expect![[\"w12\"]].assert_eq(&render(4));"),
+        (import, "expect![\"w12\"].assert_eq(&render(4));"),
+        (import, "expect![[\"w12\"]].assert_eq(render(4).as_ref());"),
+        // #6578: the golden-file comparison pins the same way.
+        (
+            "use expect_test::expect_file;",
+            "expect_file![\"w.txt\"].assert_eq(&render(4));",
+        ),
     ] {
         let tests = render_test(import, body);
         outcomes.push((
@@ -73,9 +80,36 @@ fn an_inline_expect_comparison_pins_behind_a_verified_import() -> Result<(), Str
         (import, "expect![[\"w12\"]].assert_debug_eq(&render(4));"),
         (
             "use expect_test::expect_file;",
-            "expect_file![\"w.txt\"].assert_eq(&render(4));",
+            "expect_file![\"w.txt\"].assert_debug_eq(&render(4));",
         ),
         ("", "expect_test::expect![[\"w12\"]].assert_eq(&render(4));"),
+        (
+            "",
+            "expect_test::expect_file![\"w.txt\"].assert_eq(&render(4));",
+        ),
+        // A computed or non-literal file path.
+        (
+            "use expect_test::expect_file;",
+            "expect_file![concat!(\"w\", \".txt\")].assert_eq(&render(4));",
+        ),
+        (
+            "use expect_test::expect_file;",
+            "expect_file![[\"w.txt\"]].assert_eq(&render(4));",
+        ),
+        // `expect_file!` imported from somewhere else, renamed onto
+        // `expect!`, or through a glob.
+        (
+            "use other::expect_file;",
+            "expect_file![\"w.txt\"].assert_eq(&render(4));",
+        ),
+        (
+            "use expect_test::expect_file as expect;",
+            "expect![\"w.txt\"].assert_eq(&render(4));",
+        ),
+        (
+            "use expect_test::*;",
+            "expect_file![\"w.txt\"].assert_eq(&render(4));",
+        ),
         // A computed expectation, or none of the owner's value.
         (
             import,
@@ -143,11 +177,21 @@ fn inline_expect_operands_reads_one_literal_and_one_argument() {
         operands("expect![[]].assert_eq(&render(4));"),
         pair("render(4)", "\"\"")
     );
+    // A golden file's operand is its path literal, standing in for the
+    // committed text.
+    assert_eq!(
+        operands("expect_file![\"w.txt\"].assert_eq(&render(4));"),
+        pair("render(4)", "\"w.txt\"")
+    );
     for text in [
         "expect![[\"w12\"]].assert_debug_eq(&render(4));",
         "expect![[\"w12\"]].assert_eq::<str>(&render(4));",
         "expect_test::expect![[\"w12\"]].assert_eq(&render(4));",
-        "expect_file![\"w.txt\"].assert_eq(&render(4));",
+        "expect_test::expect_file![\"w.txt\"].assert_eq(&render(4));",
+        "expect_file![\"w.txt\"].assert_debug_eq(&render(4));",
+        "expect_file![[\"w.txt\"]].assert_eq(&render(4));",
+        "expect_file![w_txt].assert_eq(&render(4));",
+        "expect_file![\"w\", \"txt\"].assert_eq(&render(4));",
         "expect![[w12]].assert_eq(&render(4));",
         "expect![[\"w\", \"12\"]].assert_eq(&render(4));",
         "expect![[\"w12\"]].assert_eq(&mut render(4));",
@@ -191,9 +235,10 @@ fn expect_test_comparisons_extract_as_one_snapshot_oracle() {
     );
 }
 
-/// #6578 review: `expect!` is trusted only where a test's verified
-/// `use expect_test::expect;` binds it. In an owner body it is a crate's
-/// own macro, which may hide a `return` before the changed tail.
+/// #6578 review: `expect!` and `expect_file!` are trusted only where a
+/// test's verified `use expect_test::{expect, expect_file};` binds them. In
+/// an owner body either is a crate's own macro, which may hide a `return`
+/// before the changed tail.
 #[test]
 fn an_owner_body_expect_macro_keeps_its_return_paths_open() {
     let try_style = "macro_rules! {name} {\n    ($e:expr) => {\n        match $e {\n            Some(v) => v,\n            None => return 0,\n        }\n    };\n}\n";
@@ -209,16 +254,25 @@ fn an_owner_body_expect_macro_keeps_its_return_paths_open() {
             .map(|pin| admitted_texts(&index, &pin))
             .unwrap_or_default()
     };
-    let score = |call: &str| {
+    let score = |name: &str, call: &str| {
         format!(
             "{}pub fn score(x: Option<u32>) -> u32 {{\n    let v = {call};\n    v + 1\n}}\n",
-            try_style.replace("{name}", "expect")
+            try_style.replace("{name}", name)
         )
     };
-    // `score(None)` leaves through the macro's hidden `return 0`.
-    assert!(admitted(&score("expect!(x)")).is_empty());
-    // The control: a standard non-returning macro keeps the pin.
-    assert_eq!(admitted(&score("dbg!(x).unwrap_or(0)")).len(), 1);
+    for name in ["expect", "expect_file"] {
+        // `score(None)` leaves through the macro's hidden `return 0`.
+        assert!(
+            admitted(&score(name, &format!("{name}!(x)"))).is_empty(),
+            "{name}"
+        );
+        // The control: a standard non-returning macro keeps the pin.
+        assert_eq!(
+            admitted(&score(name, "dbg!(x).unwrap_or(0)")).len(),
+            1,
+            "{name}"
+        );
+    }
 }
 
 /// #7856 review: the parsed `snapshot` / medium grade is a ceiling. A
@@ -251,5 +305,100 @@ fn a_nested_expect_comparison_is_not_its_own_snapshot() {
             .iter()
             .all(|oracle| !oracle.text.starts_with("expect![[")),
         "{oracles:?}"
+    );
+}
+
+/// #6578 review: a test that may write the golden file lends no
+/// golden-file pin; the inline comparison is unaffected.
+#[test]
+fn a_test_that_may_write_files_lends_no_golden_pin() {
+    for body in [
+        "std::fs::write(\"w.txt\", render(4)).unwrap();",
+        "fs::write (\"w.txt\", x);",
+        "write(\"w.txt\", x).unwrap();",
+        "let f = File::create(\"w.txt\");",
+        "OpenOptions::new().write(true).open(\"w.txt\");",
+        "std::fs::copy(\"a\", \"w.txt\");",
+        "unsafe { std::env::set_var(\"UPDATE_EXPECT\", \"1\") };",
+        "Command :: new(\"cp\").args([\"g.txt\", \"w.txt\"]).status().unwrap();",
+        "std::os::unix::fs::symlink(\"/tmp/g.txt\", \"w.txt\").unwrap();",
+        "<std::fs::File>::create(\"w.txt\")?;",
+        "fs_err::write(\"w.txt\", x).unwrap();",
+        "F::create(\"w.txt\")?;",
+        "write::<_, _>(\"w.txt\", render(4)).unwrap();",
+    ] {
+        assert!(test_may_write_files(body), "{body}");
+    }
+    for body in [
+        "expect_file![\"w.txt\"].assert_eq(&render(4));",
+        "let s = format!(\"{}\", 1); write!(out, \"x\").unwrap();",
+        "buffer.write(&bytes);",
+        "std::io::copy(&mut a, &mut b);",
+        "// fs::write(\"w.txt\", x);",
+        "let note = \"fs::write\";",
+        "rewrite(x);",
+    ] {
+        assert!(!test_may_write_files(body), "{body}");
+    }
+    assert!(is_golden_file_comparison(
+        "expect_file![\"w.txt\"].assert_eq(&render(4));"
+    ));
+    assert!(is_golden_file_comparison(
+        "expect_file! [\"w.txt\"].assert_eq(&render(4));"
+    ));
+    assert!(!is_golden_file_comparison(
+        "expect![[\"w12\"]].assert_eq(&render(4));"
+    ));
+}
+
+/// #6578 review: a golden path must stay under the test's directory, and a
+/// renamed `std::fs` / `std::env` import refuses the golden-file pin.
+#[test]
+fn a_golden_path_stays_in_tree_and_fs_renames_refuse() {
+    for path in [
+        "\"w.txt\"",
+        "\"snapshots/w.txt\"",
+        "r#\"w.txt\"#",
+        "r\"a\\b.txt\"",
+    ] {
+        assert!(is_in_tree_relative_path(path), "{path}");
+    }
+    for path in [
+        "\"/tmp/w.txt\"",
+        "\"~/w.txt\"",
+        "\"C:w.txt\"",
+        "\"\\\\\\\\host\\\\w.txt\"",
+        "\"../w.txt\"",
+        "\"\\u{2e}\\u{2e}/w.txt\"",
+        "\"a\\x2e\\x2e/w.txt\"",
+        "\"a\\\\b.txt\"",
+        "\"a/../../w.txt\"",
+        "\"\"",
+    ] {
+        assert!(!is_in_tree_relative_path(path), "{path}");
+    }
+    for source in [
+        "use std::fs::write as save;",
+        "use std::{env::set_var as on, fs};",
+        "pub use std::fs as files;",
+        "mod tests { use std::fs::write as save; }",
+        "fn a() {}\nuse std::fs::write as save;",
+        "#[cfg(test)] use std::fs::write as save;",
+        "pub(crate) use std::fs::write as save;",
+    ] {
+        assert!(file_renames_fs_or_env_import(source), "{source}");
+    }
+    for source in [
+        "use std::fs;\nuse std::fs::write;",
+        "use crate::offsets as o;",
+        "use expect_test::expect_file as golden;",
+        "// use std::fs::write as save;",
+        "fn reuse() { let used = fs_count as u8; }",
+    ] {
+        assert!(!file_renames_fs_or_env_import(source), "{source}");
+    }
+    assert_eq!(
+        inline_expect_operands("expect_file![\"/tmp/w.txt\"].assert_eq(&render(4));"),
+        None
     );
 }

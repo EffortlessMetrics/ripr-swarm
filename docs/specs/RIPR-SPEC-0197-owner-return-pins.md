@@ -839,7 +839,7 @@ rule only for an assertion whose context was admitted.
      module of the file are refused.
    - The helper runs to its end on every call: no attributes other than
      `#[track_caller]`, no generic parameters or `where` clause, not `async`,
-     `const` or `unsafe`, no `self` parameter, no return type, and no `return`
+     `const` or `unsafe`, no `self` parameter, and no `return`
      or `?` anywhere in its body. It passes the same escape gate as a test
      (only the trusted standard macros, no `break`, `continue` or `yield`) and
      the same item-context and cfg gates, and the macros it invokes join the
@@ -847,6 +847,11 @@ rule only for an assertion whose context was admitted.
      `macro_rules!` or `use` inside the helper's own body) is checked at the
      borrowed assertion's line as well as across the test's span, since the
      helper's scope never overlaps the test's.
+     An explicit return type is allowed (#7818): a synchronous call runs the
+     panic assertion even if the caller discards a returned `Result` or
+     `Option`. This lends only the `assert_eq!`, never the returned value or
+     error. An early exit, including an opaque `ensure!`/`bail!`, still refuses
+     the helper; rule 7a's separate fallible-literal grammar is unchanged.
    - The assertion sits on the helper's own eager path and is uniquely
      identified by its line and text, as rule 1 requires within a test.
    - The assertion must also reach the test's oracle facts through the
@@ -1066,7 +1071,9 @@ Implementation and validation obligations:
 2. Extend the existing owner-pin owner with private bounded extraction and
    composition modules under `syntax/owner_pin/` and `classify/owner_pin/`.
    Reuse cfg/source-role provenance, body identity and call-binding defeats;
-   do not broaden `plain_check_helper` or the existing helper producer.
+   do not broaden `plain_check_helper` for this fallible adapter or the existing
+   helper producer. Rule 7's later explicit-return panic-assertion extension
+   (#7818) does not admit fallible macros here.
 3. Add a lazily memoized dependency-identity query under `analysis/workspace/`,
    bounded to structurally eligible shapes and using the existing deadline,
    output budget and process policy. Failure yields no receipt, without fetching,
@@ -1400,9 +1407,56 @@ call grades as the canonical spelling does. A weaker reading of the compared
 value (a tautology, a broad `is_err()`) is kept.
 The oracle keeps RIPR-SPEC-0231's step-6 `snapshot` kind; as for the
 bool-owner pin, only its probe-relative strength rises once the pin admits
-it. `assert_debug_eq` (which compares the `Debug` text), `expect_file!`, a
-qualified `expect_test::expect!`, and every `insta` macro stay
-`snapshot` / medium.
+it. `assert_debug_eq` (which compares the `Debug` text), a qualified
+`expect_test::expect!` or `expect_test::expect_file!`, and every `insta`
+macro stay `snapshot` / medium.
+
+### Golden-file expect-test comparisons (#6578)
+
+`expect_file!["path"].assert_eq(&owner(..))` pins as the inline comparison
+does. `ExpectFile::assert_eq` reads the committed file (CRLF as LF; a missing
+file as the empty text), compares it with the actual text, and panics on a
+mismatch unless `UPDATE_EXPECT` is set, the same escape the inline form has.
+The rules above apply with four differences:
+
+1. The macro's one argument is a single string literal naming the file. A
+   computed path (`concat!(..)`, a binding) or the inline form's double
+   brackets refuses. `expect_file!` resolves the path against the test
+   source's directory, so the literal must be relative and stay in the
+   tree: an absolute path (`/tmp/x`, a drive-letter path, `\\host\x`), a `~` path or
+   any `..` segment may name text the commit does not fix, and refuses. A
+   non-raw literal with any escape (`"\u{2e}\u{2e}/x"`) refuses too, since
+   its decoded segments are not the source text.
+2. The bare `expect_file!` must be expect-test's under rule 2: its file
+   imports `use expect_test::expect_file;` (alone or grouped) under its own
+   name, verified against the manifest, and nothing else binds
+   `expect_file`. In an owner body it stays an unknown macro.
+3. The file is never read. The pin needs only that the compared text is
+   fixed by the commit; its content does not decide whether a changed
+   return fails. So the expected side is a stand-in that only a return-path
+   gate admitting any value of the owner's type accepts; a gate that checks
+   the expected value (an exact bool, a constructor head, a whole-value
+   field literal) refuses it.
+4. The test must not be able to write the file first. A test body that
+   writes, creates, copies or renames a file (`fs::write`, a bare `write(..)`
+   under `use std::fs::write`, `File::create`, `OpenOptions`, `fs::copy`,
+   `fs::rename`, any path-qualified `write(..)` or `create(..)` such as
+   `<File>::create` or `fs_err::write`), runs a `Command`, makes a symlink,
+   persists a temp file, or calls `set_var` / names `UPDATE_EXPECT`, lends no
+   golden-file pin, and neither does a test whose file renames an import
+   from `std::fs` or `std::env` (`use std::fs::write as save;`), which would
+   hide the write behind another name: it could derive the golden from the owner and compare
+   the owner with itself. Read from the test's masked body text, so it also
+   refuses a test that writes some unrelated file; a write hidden in a
+   helper the test calls is not seen (#8097 tracks the same hole for
+   `assert_eq!` against a file read back).
+
+Rejected: reading the golden file into the expected literal. The seam cache
+keys on Rust sources, so a golden edit would not invalidate the reading, and
+no gate the stand-in passes depends on the text. Rejected: keeping
+`expect_file!` at `snapshot` / medium. It compares the whole value exactly,
+as the inline form does; the corpus row
+`lib-expect-test-expect-file-golden` kills both mutants at runtime.
 
 ### Short-circuit tails (#7969)
 
@@ -1434,14 +1488,24 @@ and only per pinned call:
    included, never counts.
 3. Every other rule holds unchanged. The predicate twin pins through the
    same gate, as for any bool owner's whole tail.
+4. Propagation (#8037). An admitted chain that is the owner's whole body
+   completes a DirectReturn witness on its line (limitation
+   `short_circuit_owner_tail`), as a constant tail and an admitted
+   iterator-adaptor tail (RIPR-SPEC-0265 rule 3) do: its operands are
+   comparisons of parameters with literals and make no calls, so its value
+   is the owner's return. Before this,
+   an `||` chain had no witness, because the closure-syntax guard reads any
+   paired pipes as an opaque closure, so its return-value probe stayed
+   `weakly_exposed` even when the pin held. Whether a pinned run evaluates
+   every operand stays item 2's run check, not this edge's.
 
 The run check reads values, not mutants: it shows the changed chain runs
 to its end on a pinned input, which is what rule 3 asks of any tail.
 Whether those inputs discriminate a boundary stays the infection stage's
-question. `grid-equality-table` (`day % 7 == 6 || day % 7 == 0` over a
-table) stays below `exposed`: its predicate keeps `infection_unknown` for
-computed operands, and its return value still lacks a complete
-owner-bound propagation witness.
+question. In `grid-equality-table` (`day % 7 == 6 || day % 7 == 0` over a
+table) the predicate keeps `infection_unknown` for computed operands; the
+return value, which before item 4 lacked a complete owner-bound
+propagation witness, is now credited through that witness and the pin.
 
 ### Exact projections
 
@@ -1578,7 +1642,24 @@ reaches the ordinary token rule and reads `weakly_exposed`, still a gap.
   mention of a trusted name in another macro's arguments stays ambiguous,
   a plain `assert_eq!(..)` included: to that macro it is only tokens, and
   `define!(assert_eq!(mod tests;))` can emit `macro_rules! assert_eq`
-  together with the module whose tests then compile against it.
+  together with the module whose tests then compile against it. The one
+  exception is a call to a wrapper that cannot bind a name at all (#6648):
+  an unqualified call to a `macro_rules!` this file defines exactly once,
+  without an attribute and never names in a `use`. The definition sits at
+  file level, or in an inline module whose textual scope can be bounded and
+  contains the call, and ends before the call. Neither the definition nor
+  the call's arguments hold a binding word (`macro_rules`, `macro`, `use`,
+  `extern`, `mod`, `include`, `macro_use`, `macro_export`,
+  `no_implicit_prelude`) or an attribute other than a built-in test, lint,
+  `cfg` or `doc` attribute. The definition holds no `!` at all and captures
+  no `tt` fragment (the only fragment that can lift a lone `!` or `#` out of
+  the arguments and splice it after another name), and the arguments hold a
+  `!` only as a bare trusted `name!` (a unary `!` fails closed, since a `tt`
+  fragment or a repetition can splice it after a name). No module item sits
+  between the definition and the call, and every macro call there is another
+  such call of the same wrapper (even a trusted name may be a local macro
+  there), so nothing can bring in a shadowing definition. Attribute proc
+  macros elsewhere in the file stay invisible, as for every other site.
   `macro_use` or `no_implicit_prelude` anywhere in a non-trusted macro's
   arguments makes every trusted name ambiguous (stricter than the same
   attribute written on an item, which a resolved module can admit). A
@@ -1866,6 +1947,10 @@ assertions. This repair shares the existing callback without that larger migrati
   read `exposed` through table boundary pairing; the pin must not undo it), and
   `trap-short-circuit-skipped-operand` (`x == 0 && 0 == y` pinned only
   with `x != 0`) stays a gap. No other row changes.
+- Short-circuit tail propagation (#8037): `grid-equality-table`
+  (`day % 7 == 6 || day % 7 == 0` over a table whose rows 0, 1 and 5 run
+  both operands) moves from a false actionable gap to `credited`. No other
+  row changes.
 
 ## Acceptance Examples
 
@@ -2052,6 +2137,13 @@ assertions. This repair shares the existing callback without that larger migrati
   mutant fails; `raw_path_shadow_module_keeps_the_mutant_green` (#7098
   review) loads a rival `Unit` from a `#[r#path]`-named non-`.rs` module,
   and the mutant passes while the finding refuses.
+- Binding-free local wrappers (#6648): `owner_pin/tests.rs`
+  `a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted`.
+- Short-circuit tail propagation (#8037): `propagation_witness.rs`
+  `short_circuit_owner_tail_completes_only_an_admitted_chain`;
+  `crates/ripr/tests/short_circuit_or_tail.rs`
+  `an_or_tail_run_to_its_end_by_a_table_is_exposed` and
+  `an_or_tail_whose_changed_operand_never_runs_stays_below_exposed`.
 - Short-circuit tails (#7969): `owner_pin/short_circuit.rs` unit tests
   `reads_homogeneous_comparison_chains_over_parameters`,
   `refuses_anything_that_can_call_panic_or_mix_operators`,

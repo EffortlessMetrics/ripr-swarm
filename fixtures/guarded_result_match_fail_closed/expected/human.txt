@@ -32,6 +32,6 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - fixtures/guarded_result_match_fail_closed/input/src/lib.rs:62 (weakly_exposed)
+    - ./src/lib.rs:62 (weakly_exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

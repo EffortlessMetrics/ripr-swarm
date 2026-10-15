@@ -31,6 +31,6 @@ Next: drill into the top finding:
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - fixtures/error_path_diagnostic_typed_message/input/src/lib.rs:5 (static_unknown)
+    - ./src/lib.rs:5 (static_unknown)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

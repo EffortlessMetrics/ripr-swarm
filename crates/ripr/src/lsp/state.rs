@@ -1492,6 +1492,24 @@ impl DocumentStore {
         transition
     }
 
+    /// Whether the just-opened buffer already matches the persisted saved
+    /// bytes the store recorded for it at open. Such an open carries no new
+    /// saved-workspace input: the analysis reads persisted bytes, so the
+    /// open can neither change the analysis input nor advance the saved
+    /// workspace revision. `false` when the saved bytes could not be
+    /// established (virtual or unreadable URI) or the buffer diverges from
+    /// them (a recovered dirty buffer) — those keep today's interactive
+    /// refresh so a genuinely new input still schedules analysis.
+    pub(super) fn open_matches_persisted_saved_content(&self, uri: &Uri) -> bool {
+        self.state_for_uri(uri)
+            .map(|state| {
+                state
+                    .staleness_for_analyzed(state.saved_digest.as_ref())
+                    .is_none()
+            })
+            .unwrap_or(false)
+    }
+
     pub(super) fn change(
         &mut self,
         params: DidChangeTextDocumentParams,

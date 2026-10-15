@@ -44,7 +44,7 @@
 pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
-mod short_circuit;
+pub(super) mod short_circuit;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
 
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -2321,6 +2321,19 @@ impl OwnerReturnPin {
             // a mismatch, as `assert_eq!(render_row("alice", 41), "alice: 42")`
             // does.
             expect_operands = operands;
+            // #6578 review: a golden file the test itself writes (from the
+            // owner, say) before comparing fixes nothing, so a test that
+            // writes, copies or renames a file, or sets `UPDATE_EXPECT`,
+            // lends no golden-file pin.
+            if is_golden_file_comparison(&assertion.text)
+                && (test_may_write_files(&test.body)
+                    || index
+                        .files()
+                        .get(&test.file)
+                        .is_none_or(|facts| file_renames_fs_or_env_import(&facts.source)))
+            {
+                return false;
+            }
             let Some(call) = self.awaited_call_shape(&expect_operands[0], &self.name) else {
                 return false;
             };
@@ -2419,6 +2432,14 @@ impl OwnerReturnPin {
         // `assert_eq!(f(4), f(2) + f(2))` compares the owner with itself.
         if expected_reaches_owner(test, &assertion.text, expected, &self.name)
             || expected_reaches_fixture(test, expected)
+            || expected_constant_reaches_owner(
+                index,
+                test,
+                expected,
+                &self.name,
+                &self.call,
+                &self.owner_file,
+            )
         {
             return false;
         }
@@ -4173,11 +4194,11 @@ fn assertion_context_macros() -> Vec<&'static str> {
 }
 
 /// Trusted names whose trust is the test-side binding scan's alone (#6578).
-/// `expect!` is no `std` macro: outside a test that verifies
-/// `use expect_test::expect;`, a bare `expect!` is a crate's own (a try-style
-/// `expect!(x)` may hide a `return`), so owner bodies and binding reads never
-/// count it as bounded.
-const TEST_SCOPED_TRUSTED_MACROS: &[&str] = &["expect"];
+/// `expect!` and `expect_file!` are no `std` macros: outside a test that
+/// verifies `use expect_test::{expect, expect_file};`, a bare one is a
+/// crate's own (a try-style `expect!(x)` may hide a `return`), so owner
+/// bodies and binding reads never count it as bounded.
+const TEST_SCOPED_TRUSTED_MACROS: &[&str] = &["expect", "expect_file"];
 
 /// Whether a macro named `name` neither returns nor binds a name, whatever
 /// file it sits in.
@@ -5887,8 +5908,16 @@ fn is_admission_gated_assert_eq(text: &str) -> bool {
 /// lines) and panics on a mismatch unless `UPDATE_EXPECT` is set. Only the
 /// bare `expect!` with one string literal (or none, the empty expectation)
 /// and one argument; a single leading `&` borrows the actual value and is
-/// dropped. `assert_debug_eq`, `expect_file!` and a qualified
-/// `expect_test::expect!` stay `snapshot` / medium (RIPR-SPEC-0231 step 6).
+/// dropped. `assert_debug_eq` and a qualified `expect_test::expect!` stay
+/// `snapshot` / medium (RIPR-SPEC-0231 step 6).
+///
+/// `expect_file!["path"].assert_eq(actual)` compares `actual` with the
+/// committed file's whole text (CRLF read as LF; a missing file reads as
+/// "") and panics on a mismatch the same way, so it pins too. Its file is
+/// not read: the second operand is the path literal, standing in for a
+/// fixed text the analyzer does not inspect. Only a path gate that admits
+/// any value of the owner's type (`ReturnPathGate::Any` and the like)
+/// accepts that stand-in; a gate that checks the expected value refuses it.
 pub(in crate::analysis) fn inline_expect_operands(text: &str) -> Option<[String; 2]> {
     let statement = text.trim().trim_end_matches(';').trim_end();
     let parse = parse_clean_source_file(&format!("fn ripr_expect() {{ {statement}; }}"))?;
@@ -5915,9 +5944,15 @@ pub(in crate::analysis) fn inline_expect_operands(text: &str) -> Option<[String;
         return None;
     };
     let receiver = receiver.macro_call()?;
-    if receiver.excl_token().is_none() || receiver.path()?.syntax().text() != "expect" {
+    receiver.excl_token()?;
+    let path = receiver.path()?.syntax().text();
+    let golden_file = if path == "expect" {
+        false
+    } else if path == "expect_file" {
+        true
+    } else {
         return None;
-    }
+    };
     let tokens: Vec<_> = receiver
         .token_tree()?
         .syntax()
@@ -5928,6 +5963,14 @@ pub(in crate::analysis) fn inline_expect_operands(text: &str) -> Option<[String;
         .collect();
     let texts: Vec<&str> = tokens.iter().map(|(_, text)| text.as_str()).collect();
     let literal = match texts.as_slice() {
+        // `expect_file!["path"]`: one string literal naming the file.
+        ["[", path, "]"] if golden_file => {
+            if tokens[1].0 != ra_ap_syntax::SyntaxKind::STRING || !is_in_tree_relative_path(path) {
+                return None;
+            }
+            (*path).to_string()
+        }
+        _ if golden_file => return None,
         ["[", "[", _, "]", "]"] | ["[", _, "]"] => {
             let (kind, text) = &tokens[tokens.len() / 2];
             // expect-test trims a multi-line literal's indentation before
@@ -5955,6 +5998,109 @@ pub(in crate::analysis) fn inline_expect_operands(text: &str) -> Option<[String;
         other => other.syntax().text().to_string(),
     };
     Some([actual, literal])
+}
+
+/// #6578 review: `expect_file!` resolves its path against the test's own
+/// source directory, so a relative path without `..` names a file under the
+/// crate, which the commit fixes. An absolute path (`/tmp/x`, a drive-letter
+/// path, a UNC `\\\\host`), a home-relative `~` or any `..` segment may name text
+/// produced outside the commit, so it lends no pin. `path` is the literal's
+/// source text, quotes and any raw-string hashes included.
+fn is_in_tree_relative_path(path: &str) -> bool {
+    let inner = path
+        .trim_start_matches('r')
+        .trim_matches('#')
+        .trim_matches('"');
+    let absolute = inner.starts_with(['/', '\\', '~']) || inner.as_bytes().get(1) == Some(&b':');
+    // A non-raw literal's escapes (`\u{2e}\u{2e}/w.txt`) decode to segments
+    // this text check cannot see, so any escape refuses.
+    let escaped = !path.starts_with('r') && inner.contains('\\');
+    !inner.is_empty()
+        && !absolute
+        && !escaped
+        && !inner.split(['/', '\\']).any(|segment| segment == "..")
+}
+
+/// #6578 review: whether a test file renames an import from `std::fs` or
+/// `std::env` (`use std::fs::write as save;`), which would let a bare
+/// `save(..)` write the golden or set `UPDATE_EXPECT` unseen by
+/// [`test_may_write_files`]. Fail-closed: any such rename refuses.
+fn file_renames_fs_or_env_import(source: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    // Word tokens rather than a statement prefix: a `use` may follow `{`, an
+    // item's `}`, an attribute or `pub(crate)` inside the same `;` fragment.
+    masked.split(';').any(|statement| {
+        let mut words = statement
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .filter(|word| !word.is_empty())
+            .skip_while(|word| *word != "use");
+        if words.next().is_none() {
+            return false;
+        }
+        let tree: Vec<&str> = words.collect();
+        tree.iter().any(|word| matches!(*word, "fs" | "env")) && tree.contains(&"as")
+    })
+}
+
+/// Whether an expect-test comparison's receiver is `expect_file!`.
+fn is_golden_file_comparison(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    let compact: String = masked.chars().filter(|c| !c.is_whitespace()).collect();
+    compact.starts_with("expect_file!")
+}
+
+/// #6578 review: whether a test body may write the file a golden-file
+/// comparison reads. Comments and strings are masked; anything that may
+/// create, overwrite, copy or rename a file, or turn on expect-test's
+/// `UPDATE_EXPECT` rewrite, counts. A bare `write(..)`/`create(..)` call
+/// counts too, since `use std::fs::write;` makes it the file write.
+/// Fail-closed: a test that writes some other file also lends no pin.
+fn test_may_write_files(body: &str) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let compact: String = masked.chars().filter(|c| !c.is_whitespace()).collect();
+    const WRITERS: &[&str] = &[
+        "fs::write",
+        "fs::copy",
+        "fs::rename",
+        "fs::hard_link",
+        "File::create",
+        "File::options",
+        "OpenOptions",
+        "UPDATE_EXPECT",
+        "set_var",
+        // A subprocess, a symlink or a persisted temp file may also produce it.
+        "Command",
+        "symlink",
+        "soft_link",
+        "persist",
+    ];
+    WRITERS.iter().any(|writer| compact.contains(writer))
+        || [
+            "write(",
+            "create(",
+            "copy(",
+            "rename(",
+            "write::<",
+            "create::<",
+            "copy::<",
+            "rename::<",
+        ]
+        .iter()
+        .any(|call| {
+            // A turbofish (`write::<_, _>(..)`) is the same call.
+            compact.match_indices(call).any(|(at, _)| {
+                let before = &compact[..at];
+                // A bare or path-qualified call (`save::write(`, `<File>::create(`,
+                // `fs_err::write(`) may write; a method call or `io::copy(`
+                // between readers and writers does not.
+                if before.ends_with("::") {
+                    return !before.ends_with("io::");
+                }
+                before.chars().next_back().is_none_or(|previous| {
+                    !(previous.is_alphanumeric() || matches!(previous, '_' | '.' | ':'))
+                })
+            })
+        })
 }
 
 /// RIPR-SPEC-0197: the compared operands of a plain `assert!(lhs == rhs)`
@@ -8007,6 +8153,374 @@ pub(in crate::analysis::classify) fn expected_reaches_owner(
     contains_as_whole_word(&mask_comments_and_strings(expected), name)
         || (owner_named_outside(test, assertion, name)
             && expected_binding_calls_owner(test, expected, name))
+}
+
+/// RIPR-SPEC-0035, reveal side: the value the expected `operand` stands
+/// for when it is a plain identifier the test binds once with a readable
+/// `let`, or that names exactly one in-scope workspace constant, followed
+/// through further such names (`let e = tax(2); let f = e;`). The reveal
+/// side reads that value in place of the operand, so a name weakens an
+/// assertion only where writing its initializer inline would. `None` when
+/// the operand is no such name; a name the scan cannot read keeps credit.
+pub(in crate::analysis) fn expected_operand_value(
+    index: &RustIndex,
+    test: &TestSummary,
+    operand: &str,
+    owner: &FunctionSummary,
+) -> Option<String> {
+    let in_scope = constant_scope(index, test, &owner.file);
+    let mut seen = BTreeSet::new();
+    let mut current = mask_comments_and_strings(operand).trim().to_string();
+    let mut value = None;
+    while is_plain_identifier(&current) && current != owner.name && seen.insert(current.clone()) {
+        let next = match receiver_let_bindings(test, &current) {
+            Some(bindings) => match bindings.as_slice() {
+                [binding] => immutable_let_value(test, binding),
+                [] => single_constant_value(index, &current, &in_scope),
+                _ => None,
+            },
+            None => None,
+        };
+        let Some(next) = next else {
+            break;
+        };
+        current = next.trim().to_string();
+        value = Some(current.clone());
+    }
+    value
+}
+
+/// The value of the test's one `let` binding `binding` (its text after the
+/// name), unless the `let` is `mut`, so a later assignment or `push` may
+/// change it, or carries an attribute (`#[cfg(..)] let`) that may compile
+/// it away (#7066 review), as [`let_bound_owner_call`] refuses.
+fn immutable_let_value(test: &TestSummary, binding: &str) -> Option<String> {
+    let masked = mask_comments_and_strings(&test.body);
+    let binding_at = (binding.as_ptr() as usize).checked_sub(test.body.as_ptr() as usize)?;
+    let let_at = *whole_word_offsets(masked.get(..binding_at)?, "let").last()?;
+    if contains_as_whole_word(masked.get(let_at..binding_at)?, "mut")
+        || masked.get(..let_at)?.trim_end().ends_with(']')
+    {
+        return None;
+    }
+    assigned_value(&mask_comments_and_strings(binding)).map(str::to_string)
+}
+
+/// The initializer of the one in-scope workspace constant named `name`.
+/// An item read from text (`: T = init`) yields the text after its `=`.
+fn single_constant_value(
+    index: &RustIndex,
+    name: &str,
+    in_scope: &dyn Fn(&Path) -> bool,
+) -> Option<String> {
+    let constants = index
+        .call_identity_memos
+        .workspace_constants(|| workspace_constant_table(index));
+    let mut matches = constants
+        .get(name)?
+        .iter()
+        .filter(|(file, _)| in_scope(file));
+    let (_, initializer) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    let initializer_text = initializer.trim_start();
+    if initializer_text.starts_with(':') && !initializer_text.starts_with("::") {
+        assigned_value(initializer).map(str::to_string)
+    } else {
+        Some(initializer.clone())
+    }
+}
+
+/// The text after the assignment `=` of `[: T] = value`: the first `=`
+/// outside angle brackets that is not part of `==`, `=>`, `<=`, `>=` or `!=`.
+fn assigned_value(text: &str) -> Option<&str> {
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    for (position, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'<' => depth += 1,
+            b'>' if bytes.get(position.wrapping_sub(1)) != Some(&b'-') => {
+                depth = depth.saturating_sub(1);
+            }
+            b'=' if depth == 0
+                && !matches!(bytes.get(position + 1), Some(b'=' | b'>'))
+                && !matches!(
+                    bytes.get(position.wrapping_sub(1)),
+                    Some(b'=' | b'!' | b'<' | b'>')
+                ) =>
+            {
+                return text.get(position + 1..);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// A constant from a package the test neither belongs to, tests, nor names
+/// (`test_kit::EXPECTED` from `crates/test-kit/`) cannot be the one the
+/// test reads; unscopable paths keep every match.
+fn constant_scope(
+    index: &RustIndex,
+    test: &TestSummary,
+    owner_file: &Path,
+) -> impl Fn(&Path) -> bool {
+    let test_package = super::related_tests::package_prefix(&test.file);
+    let owner_package = super::related_tests::package_prefix(owner_file);
+    let test_source = index
+        .files()
+        .get(&test.file)
+        .map(|facts| facts.source.clone());
+    move |file: &Path| match (&test_package, &owner_package) {
+        (Some(test_package), Some(owner_package)) => super::related_tests::package_prefix(file)
+            .is_none_or(|package| {
+                &package == test_package
+                    || &package == owner_package
+                    || package
+                        .trim_end_matches('/')
+                        .rsplit('/')
+                        .next()
+                        .is_some_and(|crate_dir| {
+                            test_source.as_deref().is_none_or(|source| {
+                                contains_as_whole_word(source, &crate_dir.replace('-', "_"))
+                            })
+                        })
+            }),
+        _ => true,
+    }
+}
+
+/// RIPR-SPEC-0035: whether an identifier in the expected operand names a
+/// `const` or `static` whose initializer calls the owner, directly or
+/// through further constants (`const EXPECTED: u32 = quota(2);
+/// assert_eq!(quota(2), EXPECTED)` compares the owner with itself, as a
+/// `let` binding would). Constants come from one memoized workspace table
+/// keyed by name; any same-named item in the test's or the owner's package
+/// counts: matching too many only withholds the pin. The call must have the pin's own shape (a bare or
+/// module-path call for a free function, `T::name(..)` for an associated
+/// one, `.name(..)` or `T::name(..)` for a method), so a constant built
+/// with some other type's `new` or `len` keeps the pin. A test-file `use ..
+/// as` rename of a constant and a constant file's rename of the owner are
+/// followed. A constant computed through a helper that calls the owner is
+/// not.
+fn expected_constant_reaches_owner(
+    index: &RustIndex,
+    test: &TestSummary,
+    expected: &str,
+    name: &str,
+    call: &PinCall,
+    owner_file: &Path,
+) -> bool {
+    let constants = index
+        .call_identity_memos
+        .workspace_constants(|| workspace_constant_table(index));
+    if constants.is_empty() {
+        return false;
+    }
+    let in_scope = constant_scope(index, test, owner_file);
+    // `use .. as` renames of the file a text was read from: the test file
+    // for the expected operand, the constant's own file for an initializer.
+    let renames = |file: &Path| -> Vec<UsePath> {
+        index
+            .files()
+            .get(file)
+            .filter(|facts| facts.source.contains(" as "))
+            .map(|facts| flattened_use_paths(&facts.source))
+            .unwrap_or_default()
+    };
+    let mut seen = BTreeSet::new();
+    let mut pending = vec![(mask_comments_and_strings(expected), test.file.clone())];
+    while let Some((text, file)) = pending.pop() {
+        let mut words: Vec<String> = text
+            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .filter(|word| is_plain_identifier(word) && *word != name)
+            .map(str::to_string)
+            .collect();
+        let renamed: Vec<String> = renames(&file)
+            .into_iter()
+            .filter(|import| {
+                import
+                    .alias
+                    .as_deref()
+                    .is_some_and(|alias| words.iter().any(|word| word == alias))
+            })
+            .filter_map(|import| import.path.rsplit("::").next().map(str::to_string))
+            .collect();
+        words.extend(renamed);
+        for word in words {
+            if !seen.insert(word.clone()) {
+                continue;
+            }
+            let Some(initializers) = constants.get(&word) else {
+                continue;
+            };
+            for (file, initializer) in initializers.iter().filter(|(file, _)| in_scope(file)) {
+                if initializer_calls_owner(initializer, name, call)
+                    || owner_aliases(index, file, name)
+                        .iter()
+                        .any(|alias| initializer_calls_owner(initializer, alias, call))
+                {
+                    return true;
+                }
+                pending.push((initializer.clone(), file.clone()));
+            }
+        }
+    }
+    false
+}
+
+/// Names `file` imports the owner `name` under (`use crate::quota as q;`).
+fn owner_aliases(index: &RustIndex, file: &Path, name: &str) -> Vec<String> {
+    index
+        .files()
+        .get(file)
+        .map(|facts| {
+            flattened_use_paths(&facts.source)
+                .into_iter()
+                .filter(|import| import.path.rsplit("::").next() == Some(name))
+                .filter_map(|import| import.alias)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whether the masked `initializer` calls `name` in the pin's call shape.
+/// A free function also counts when named as a value (`apply(quota, 2)`,
+/// `let f = quota;`), and a `<..>::name` qualifier the scan cannot read
+/// counts for every shape.
+fn initializer_calls_owner(initializer: &str, name: &str, call: &PinCall) -> bool {
+    whole_word_offsets(initializer, name).into_iter().any(|offset| {
+        let after = initializer[offset + name.len()..].trim_start();
+        let called = after.starts_with('(') || after.starts_with("::<");
+        // A struct-literal field (`Limits { quota: 2 }`) is not the owner.
+        if after.starts_with(':') && !after.starts_with("::") {
+            return false;
+        }
+        let before = initializer[..offset].trim_end();
+        let qualifier = before.strip_suffix("::").map(|path| {
+            let path = path.trim_end();
+            let start = path
+                .char_indices()
+                .rev()
+                .find(|(_, character)| !(character.is_alphanumeric() || *character == '_'))
+                .map_or(0, |(index, character)| index + character.len_utf8());
+            &path[start..]
+        });
+        if qualifier == Some("") {
+            return true;
+        }
+        let type_like = |segment: &str| segment.starts_with(char::is_uppercase);
+        match call {
+            PinCall::Bare => !before.ends_with('.') && !qualifier.is_some_and(type_like),
+            PinCall::Associated { type_name } => {
+                called && qualifier.is_some_and(|segment| segment == type_name || segment == "Self")
+            }
+            PinCall::Method { receivers, .. } => {
+                called
+                    && (before.ends_with('.')
+                        || qualifier.is_some_and(|segment| {
+                            segment == "Self"
+                                || receivers.iter().any(|receiver| {
+                                    matches!(receiver, ReceiverType::Named(type_name) if type_name == segment)
+                                })
+                        }))
+            }
+        }
+    })
+}
+
+/// Every `const` and `static` of the workspace, by name, with its file and
+/// masked initializer: one parse per file per index. Items a macro call
+/// declares (`thread_local!`, `lazy_static!`) and items of a file that does
+/// not parse cleanly are read from their text.
+fn workspace_constant_table(index: &RustIndex) -> BTreeMap<String, Vec<(PathBuf, String)>> {
+    let mut table: BTreeMap<String, Vec<(PathBuf, String)>> = BTreeMap::new();
+    for (path, facts) in index.files().iter() {
+        let source = &facts.source;
+        if !source.contains("const") && !source.contains("static") {
+            continue;
+        }
+        let mut add = |name: &str, initializer: String| {
+            let name = name.strip_prefix("r#").unwrap_or(name);
+            table
+                .entry(name.to_string())
+                .or_default()
+                .push((path.clone(), initializer));
+        };
+        let Some(parsed) = parse_clean_source_file(source) else {
+            for (name, initializer) in text_declared_constants(&mask_comments_and_strings(source)) {
+                add(&name, initializer);
+            }
+            continue;
+        };
+        for node in parsed.tree().syntax().descendants() {
+            let item = if let Some(item) = ast::Const::cast(node.clone()) {
+                item.name().zip(item.body())
+            } else if let Some(item) = ast::Static::cast(node.clone()) {
+                item.name().zip(item.body())
+            } else {
+                if let Some(macro_call) = ast::MacroCall::cast(node)
+                    && let Some(tokens) = macro_call.token_tree()
+                {
+                    let text = mask_comments_and_strings(&tokens.syntax().to_string());
+                    for (name, initializer) in text_declared_constants(&text) {
+                        add(&name, initializer);
+                    }
+                }
+                None
+            };
+            if let Some((item_name, body)) = item {
+                add(
+                    item_name.text(),
+                    mask_comments_and_strings(&body.syntax().to_string()),
+                );
+            }
+        }
+    }
+    table
+}
+
+/// `const NAME: T = init;` and `static [ref] [mut] NAME: T = init;` read
+/// from masked text as their `: T = init` text, for macro bodies and unparsed files. The type
+/// annotation is required, so `const fn`, `*const u8` and `&'static str`
+/// are not declarations.
+fn text_declared_constants(text: &str) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    for keyword in ["const", "static"] {
+        for offset in whole_word_offsets(text, keyword) {
+            let mut rest = text[offset + keyword.len()..].trim_start();
+            for modifier in ["ref", "mut"] {
+                if let Some(stripped) = rest.strip_prefix(modifier)
+                    && stripped.starts_with(char::is_whitespace)
+                {
+                    rest = stripped.trim_start();
+                }
+            }
+            let raw = rest.strip_prefix("r#");
+            let body = raw.unwrap_or(rest);
+            let length = body
+                .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+                .unwrap_or(body.len());
+            let name = &body[..length];
+            if !is_plain_identifier(name) || !body[length..].trim_start().starts_with(':') {
+                continue;
+            }
+            // The item runs to its first `;` outside brackets, so an array
+            // type (`[u32; 4]`) or a block initializer stays whole. One with
+            // no `=` there (`extern { static X: u32; }`) has no initializer.
+            // The type stays in the text: an `=` inside it (`Item = u32`)
+            // cannot hide the initializer, and its words only withhold.
+            let declaration = &body[length..];
+            let end = top_level_semicolon(declaration).unwrap_or(declaration.len());
+            let item = &declaration[..end];
+            if !item.contains('=') {
+                continue;
+            }
+            found.push((name.to_string(), item.to_string()));
+        }
+    }
+    found
 }
 
 /// #6974 review: whether the test body names the owner anywhere but the

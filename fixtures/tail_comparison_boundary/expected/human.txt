@@ -31,8 +31,8 @@ Write a test for it:
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output.
-    - fixtures/tail_comparison_boundary/input/src/lib.rs:3 (weakly_exposed)
-    - fixtures/tail_comparison_boundary/input/src/lib.rs:17 (exposed)
-    - fixtures/tail_comparison_boundary/input/src/lib.rs:17 (exposed)
+    - ./src/lib.rs:3 (weakly_exposed)
+    - ./src/lib.rs:17 (exposed)
+    - ./src/lib.rs:17 (exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

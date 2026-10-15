@@ -277,13 +277,15 @@ Two pattern terms are used below.
    call (`assert_eq!(!is_valid(x), true)` pins a bool result) and a whole
    `matches!` (the polarity rule above) keep their readings. Spellings that
    keep a comparison or a literal read the same way (#7931): a comparison
-   method on a receiver or its `PartialEq`/`PartialOrd` path call
+   method on a receiver or a two-argument path call to it
    (`r.eq(&Err(E::Bad))`, `score(2).ne(&0)`, `PartialEq::eq(&r, &x)`,
+   `Result::eq(&r, &x)`, `<_ as PartialEq>::eq(&r, &x)`; #7993;
    `.lt`, `.le`, `.gt`, `.ge`) reads like its operator, so only `eq`
    asserted true may pin, and an `eq` or `ne` with a literal side is that
    literal comparison (`(r == Err(E::Bad)).eq(&false)` is `== false`); a
    literal behind `&`, a one-expression block, `as bool` or
-   `bool::from(..)` is that literal; and the operand through a
+   `bool::from(..)` is that literal, and a `!` over such a spelling negates
+   it (`!&true` is `false`; #7993); and the operand through a
    one-expression block, `&`, `as bool` or `bool::from(..)` is the operand
    (`assert_eq!({ r == Err(E::Bad) }, false)`,
    `assert_eq!(bool::from(r == Err(E::Bad)), false)`). Grouping
@@ -293,7 +295,35 @@ Two pattern terms are used below.
    the call. Peeling a spelling can raise a doubled negation to the
    comparison's own reading (`assert_eq!((r == Err(E::Bad)) == false as bool,
    false)` and `assert_eq!(&(r == Err(E::Bad)) == &false, false)` assert
-   `r == Err(E::Bad)`).
+   `r == Err(E::Bad)`). A test (a comparison, `||`, `&&`, comparison call, whole
+   `matches!`, or `^`, `|` or `&` over a comparison or pattern, through the
+   spellings above; a bitwise operator over plain values is no test)
+   compared by an equality macro or a whole `==` or `!=` condition with a
+   side that is no boolean literal caps, because that side may be `false`
+   (`assert_eq!(r == Err(E::Bad), expected)`,
+   `assert_eq!(matches!(r, Err(E::Bad)).eq(&true), expected)`; #8006); a
+   bool value compared with one still pins (`assert_eq!(is_valid(x),
+   expected)`). A cast of a test to an integer type, or `u8::from` and the
+   other integer `From` calls, carries the test, and an integer is no boolean
+   literal, so `0`, `1` or a variable on the other side caps
+   (`assert_eq!((r == Err(E::Bad)) as u8, 0)`,
+   `assert_eq!(u8::from(r == Err(E::Bad)), n)`; #8093), and so do the
+   `From`/`Into` path spellings of that conversion (`From::from(..)`,
+   `<u8 as From<bool>>::from(..)`, `Into::<u8>::into(..)`,
+   `std::primitive::u8::from(..)`; #8101); a cast of a value
+   still pins (`assert_eq!(x as u8, 3)`). Such a comparison asserted by a
+   boolean literal caps the same way (`assert_eq!((r == Err(E::Bad)) as u8
+   == 0, true)`, `assert_eq!((r == Err(E::Bad)) == flag, true)`), and a
+   path call to `not` negates like `!` (`assert_eq!(Not::not(r ==
+   Err(E::Bad)), true)`, `bool::not(..)`; any path, because a function named
+   `not` most likely inverts and the reading only lowers). A negation of a whole boolean
+   assertion condition that holds a `matches!`, through grouping, a
+   one-expression block, `.not()`, a `Not::not(..)` path call or a negating
+   literal call on any wrapper, caps (`!(flag || matches!(..))`,
+   `!{ matches!(..) }`, `Some(matches!(..)).unwrap().not()`,
+   `(matches!(..),).0.eq(&false)`; #8006; `Not::not(flag || matches!(..))`;
+   #8101), and a one-expression block
+   passes a pattern through to `^` or `|` (`flag ^ { matches!(..) }`).
    `^` and a
    single `|` over an operand holding a `matches!` or a comparison, in
    operator or call spelling, with no top-level comparison of their own,
@@ -315,7 +345,11 @@ Two pattern terms are used below.
    condition; asserted false, behind a call or inside a chain it caps), an
    argument at any position of a call that is the whole condition
    (`std::ops::Not::not(matches!(..))`, `check::<bool>(1, matches!(..))`,
-   directly or through nested calls), or inside the condition or
+   directly or through nested calls; a call's own parenthesis, turbofish
+   included, is no grouping, so `foo::<T>(matches!(..)).is_ok()` reads as
+   `foo(matches!(..)).is_ok()` does, and a comparison inside a call's
+   arguments is not the operand's own test, so `flags | compute(|v| v == 1)`
+   still pins; #8101), or inside the condition or
    scrutinee of an `if`, `while` or `match` anywhere in the condition
    (`flag == if ready && matches!(..) { false } else { true }`; a guard
    inside an earlier `matches!(..)` and a raw `r#match` are not such
@@ -555,11 +589,12 @@ rejected alternative. Any can be reversed later without touching the rest.
    its probe-relative strength, because the assert fixes the owner's whole
    two-valued result. `owner_pin` is the authority for that shape and its
    runtime controls (`bool_owner_assert_pin_matched_static_and_runtime_controls`)
-   back it. The same holds for RIPR-SPEC-0197's inline expect-test pin
-   (`expect![["text"]].assert_eq(&owner(..))`, #6578): the oracle keeps
+   back it. The same holds for RIPR-SPEC-0197's inline and golden-file
+   expect-test pins (`expect![["text"]].assert_eq(&owner(..))` and
+   `expect_file!["path"].assert_eq(&owner(..))`, #6578): the oracle keeps
    step 6's `snapshot` / medium kind, and only an owner pin that admits that
-   exact spelling raises its probe-relative strength; `insta`,
-   `expect_file!` and `assert_debug_eq` snapshots never pin
+   exact spelling raises its probe-relative strength; `insta` and
+   `assert_debug_eq` snapshots never pin
    (`pin_strength_gate_keeps_exact_pins_strong_and_defers_bool_pins_to_owner_pin`).
    Rejected: requiring the classifier to read that shape as
    `exact_value` / strong, which would duplicate the owner-identity gates
@@ -620,7 +655,7 @@ rejected alternative. Any can be reversed later without touching the rest.
   assertions).
 - No change to reveal's token or owner-pin confirmation, except that an
   exact owner pin needs a strong oracle, apart from the bool-owner and
-  inline expect-test pins (decision 4).
+  inline and golden-file expect-test pins (decision 4).
 - No change to TypeScript or Python oracle classification.
 
 ## Acceptance Examples

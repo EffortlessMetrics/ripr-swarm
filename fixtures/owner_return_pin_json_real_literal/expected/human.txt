@@ -26,7 +26,7 @@ Next: drill into the top finding:
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - fixtures/owner_return_pin_json_real_literal/input/src/lib.rs:5 (reachable_unrevealed)
-    - fixtures/owner_return_pin_json_real_literal/input/src/lib.rs:5 (weakly_exposed)
+    - ./src/lib.rs:5 (reachable_unrevealed)
+    - ./src/lib.rs:5 (weakly_exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

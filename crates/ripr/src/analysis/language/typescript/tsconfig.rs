@@ -747,10 +747,10 @@ fn strip_jsonc(text: &str) -> Result<String, &'static str> {
                 }
             }
             '/' if chars.peek() == Some(&'/') => {
-                // Line comment: skip to (but keep) the newline.
+                // Line comment: skip to (but keep) either line terminator.
                 for inner in chars.by_ref() {
-                    if inner == '\n' {
-                        out.push('\n');
+                    if matches!(inner, '\n' | '\r') {
+                        out.push(inner);
                         break;
                     }
                 }
@@ -1231,6 +1231,29 @@ mod tests {
     }
 
     // ── JSONC (#4549) ─────────────────────────────────────────────────────
+
+    #[test]
+    fn jsonc_line_comment_endings_preserve_alias_resolution() -> Result<(), String> {
+        for filename in ["tsconfig.json", "jsconfig.json"] {
+            for (label, ending) in [("lf", "\n"), ("crlf", "\r\n"), ("cr", "\r")] {
+                let root = temp_dir(&format!("jsonc-{filename}-{label}"));
+                fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+                let config = "{ // config\n\"compilerOptions\": {\"baseUrl\": \".\",\"paths\": {\"@owner\": [\"src/owner\"]}, // paths\n}, // options\n} // eof".replace('\n', ending);
+                fs::write(root.join(filename), config).map_err(|err| err.to_string())?;
+                fs::write(root.join("src/owner.ts"), "export const owner = 1;")
+                    .map_err(|err| err.to_string())?;
+
+                let (map, error, gap) = load_alias_map_with_read_error(&root);
+                assert!(error.is_none(), "{filename}/{label}: {error:?}");
+                assert!(gap.is_none(), "{filename}/{label}: {gap:?}");
+                let map = map.ok_or_else(|| format!("{filename}/{label} must parse"))?;
+                assert_eq!(map.resolve("@owner"), Some(PathBuf::from("src/owner.ts")));
+                assert!(map.resolve("@other").is_none());
+                fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+            }
+        }
+        Ok(())
+    }
 
     /// `tsc --init`-shaped config: line comments, a block comment, and
     /// trailing commas. The alias must resolve exactly as the strict

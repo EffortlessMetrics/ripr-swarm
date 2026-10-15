@@ -35,6 +35,6 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - fixtures/infect_wildcard_discard/input/src/lib.rs:2 (static_unknown)
+    - ./src/lib.rs:2 (static_unknown)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

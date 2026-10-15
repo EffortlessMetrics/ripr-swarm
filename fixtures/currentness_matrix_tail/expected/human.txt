@@ -13,9 +13,9 @@ Start here:
 
 Hidden:
   All 3 finding(s) are base-side evidence, not candidate edit targets — rerun with --format human-full for the full evidence.
-    - fixtures/currentness_matrix_tail/input/src/lib.rs:13 (no_static_path)
-    - fixtures/currentness_matrix_tail/input/src/lib.rs:13 (no_static_path)
-    - fixtures/currentness_matrix_tail/input/src/lib.rs:13 (no_static_path)
+    - ./src/lib.rs:13 (no_static_path)
+    - ./src/lib.rs:13 (no_static_path)
+    - ./src/lib.rs:13 (no_static_path)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

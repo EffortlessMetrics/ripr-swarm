@@ -31,7 +31,7 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - fixtures/plain_diff_multifile_boundary/input/src/b.rs:6 (no_static_path)
+    - ./src/b.rs:6 (no_static_path)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

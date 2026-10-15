@@ -36,7 +36,7 @@ Write a test for it:
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - fixtures/boundary_named_constant/input/src/lib.rs:12 (exposed)
-    - fixtures/boundary_named_constant/input/src/lib.rs:21 (exposed)
+    - ./src/lib.rs:12 (exposed)
+    - ./src/lib.rs:21 (exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

@@ -85,6 +85,34 @@ receiver (`items.push`) and leaves field-path receivers on its Part C.
 RIPR-SPEC-0001 says labels "should be available for state writes" without
 defining them for assignments.
 
+A bare local accumulator update follows the call-free rule even when its
+right-hand side calls something. `count += line.split_whitespace().count();`
+and `count = count + f(x);` consume the call's value (#6677), so deleting the
+call is not a mutant of the line; the lexical fallback no longer reads them as
+`call_deletion` and the line reads `static_unknown`, like `sum += w;`
+(`analysis/probes/lexical.rs`, `is_local_accumulator_assignment`; corpus row
+`grid-loop-table`). Only a line holding one statement qualifies
+(`count += 1; notify(x);` keeps its `call_deletion`). Diff pairing treats a
+removed `call_deletion` line rewritten as such an update (`total =
+compute(x);` to `total += compute(x);`) as the same edit when the update
+consumes the removed line's outermost call, receiver included, or when the
+removed call appends to the same accumulator (`push_str`, `push`, `extend`,
+`extend_from_slice`, `append`) and the update adds the same argument calls
+(`out.push_str(&format!(..));` to `out += &format!(..);`). The removed line
+then mints no base-side `call_deletion` (`analysis/probes/diff.rs`,
+`has_matching_added_line`). A different outer callee (`notify(total);` or
+`notify(compute(x));` to `total += compute(x);`) or receiver (`a.f(x)` to
+`b.f(x)`) is a real deletion of the removed call and keeps its
+`call_deletion`. Closing braces after the one statement (`total += f(x); }`)
+do not count as a second statement. Field, deref and index targets
+(`self.total += f(x)`, `*out += f(x)`, `v[i] += f(x)`) and a
+non-self-referential `total = compute(x)` keep their current families; the
+latter also consumes the call's value, but this rule covers only updates that
+accumulate into their target and leaves plain assignments to the existing
+`call_deletion` handling. Crediting an accumulator observed
+through an exact owner-return assertion needs loop-count reasoning
+RIPR-SPEC-0197 leaves out, and stays future work.
+
 ## Behavior
 
 ### Probe
@@ -464,8 +492,54 @@ changes `self.count += 2` to `self.count += 1`.
   fact. A custom `PartialEq` on the element that ignores the changed field
   is not detected: whole-value equality is taken to compare every field, as
   for RIPR-SPEC-0225 whole-value credit.
-- Field assignments (`self.f = ..`, `self.f op= ..`) are not implemented:
-  their corpus cases read `static_unknown`.
+- Field assignments (`self.f = ..`, `self.f op= ..`, every compound
+  operator) on a field path rooted at `self` are probed as
+  `field_construction` in diff scope (`field_assignment_path` in `ra.rs`)
+  when the whole assignment sits on one line, every field name is a plain
+  ASCII identifier (not `self.0`, `self.r#type` or a non-ASCII name), and
+  the right-hand side contains, at any depth, no call, method call, macro,
+  closure, `?` or `.await` (those keep `call_deletion` and their other
+  probes, per the Non-Goals) and no choice between values (`if`, `match`, a
+  comparison, `&&`, `||`; those keep their predicate probe). Other
+  assignments read as before. Repo-scope seam inventory skips these shapes
+  (`build_seam_from_shape` in `seam_inventory.rs`): its grading does not
+  apply the read rule below. So a `reachable_unrevealed` finding on one has
+  no repo seam, and `ripr agent stub --at` cannot target it yet.
+- One is credited through the same read rule as a pushed literal
+  (`assigned_field_of` and `pushed_collection_compared_whole` in
+  `activation.rs`): an `assert_eq!` whose one operand is the whole field,
+  read directly or through a getter whose body returns it, from the binding
+  the test called the owner on, after that call. The assignment must occur
+  once on its line and start a top-level statement of the owner body, and
+  nothing later in the body may write the field (`assigned_field_path` in
+  `propagation_witness.rs`). That later-write check is `may_write_field`
+  above, which is narrower than rule 1: it allows later reads of other
+  fields, macro calls and closures that do not name the field, and `self`
+  calls whose bodies do not write it. Nothing earlier in the body may leave
+  before the assignment (`return`, `?`, `let .. else`, `break`,
+  `continue`, any macro call including ones that cannot exit such as
+  `vec!` or `println!`, `assert`, `.unwrap(`, `.expect(`), the
+  right-hand side may not branch, and the asserted value may not be one a
+  field usually holds before any write (`0`, `0 as T`, `T::MIN`,
+  `T::ZERO`, `false`, `None`, `""`, an empty `String` or `Vec`, a
+  `default()`), since deleting the assignment would leave it in place.
+- When no related test holds any assertion, the finding reads
+  `reachable_unrevealed` (Decision 3). Every weaker reading (`assert!(c.f
+  == ..)`, `assert_ne!`, projections, helper assertions, whole-value or
+  `Debug` comparisons of the receiver, a sibling-field read, a later read
+  through another method) reads `static_unknown` with
+  `static_probe_unknown` instead of the `weakly_exposed` that Behavior
+  describes (`ClassifiedProbeEvidence::class` in `classifier/evidence.rs`),
+  failing closed until those reads are established. Writes through `*p`, a
+  local binding or a non-`self` receiver are not probed.
+- Known limits shared with other probe families (#8051, #7638): a test
+  whose only oracle is a manual `if .. { panic!(..) }`, a
+  `debug_assert_eq!` or an unrecognized assertion macro (`assert_that!`,
+  `check!`, `prop_assert_eq!`), or whose owner asserts on the field itself,
+  reads `reachable_unrevealed`; an assertion that only runs in a dead
+  branch, an empty loop or a `#[should_panic]` test still credits; and a
+  non-default pre-call value equal to the asserted one
+  (`self.count = self.count.max(1)` with `count` already 5) still credits.
 
 ## Metrics
 

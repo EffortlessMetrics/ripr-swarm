@@ -59,6 +59,28 @@ pub(super) fn python_card_first_pr_command(root: &Path) -> String {
     )
 }
 
+/// Floor for a printed timeout retry: a 30s default that never
+/// auto-extended still suggests two minutes, not 60s.
+const PILOT_RETRY_MIN_MS: u64 = 120_000;
+
+/// Interactive cap for a printed timeout retry. Doubling stays under
+/// this bound; a spent budget already at or above it is kept (#5443).
+const PILOT_RETRY_INTERACTIVE_CAP_MS: u64 = 300_000;
+
+/// Suggested `--timeout-ms` after a timeout.
+///
+/// Doubles the spent budget, keeps the 120s floor for short runs, and
+/// caps at five minutes. The suggestion is never smaller than the time
+/// already spent (#5443), so a 270s default-plus-extension run suggests
+/// 300s instead of 1080s (#7427).
+pub(super) fn suggested_retry_timeout_ms(spent_ms: u64) -> u64 {
+    spent_ms
+        .saturating_mul(2)
+        .min(PILOT_RETRY_INTERACTIVE_CAP_MS)
+        .max(spent_ms)
+        .max(PILOT_RETRY_MIN_MS)
+}
+
 pub(super) struct PilotCommands {
     pub(super) after_snapshot: String,
     pub(super) outcome: String,
@@ -93,7 +115,7 @@ impl PilotCommands {
             &display_path(&after_path),
             None,
         );
-        let retry_timeout_ms = context.timeout_ms.saturating_mul(4).max(120_000);
+        let retry_timeout_ms = suggested_retry_timeout_ms(context.timeout_ms);
         let retry = format!(
             "ripr pilot --root {} --out {} --mode {} --max-seams {} --timeout-ms {}",
             loop_commands::shell_arg(&command_root),

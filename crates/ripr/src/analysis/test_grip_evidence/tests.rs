@@ -17841,6 +17841,76 @@ fn seam_reached_by_no_test_path_stays_ungripped() -> Result<(), String> {
 }
 
 #[test]
+fn seam_behind_a_helper_chain_past_five_hops_is_opaque_not_ungripped() -> Result<(), String> {
+    // RIPR-SPEC-0230 rule 5 with RIPR-SPEC-0114 step 5 (#8047): the test
+    // enters a chain six helper hops from the owner, past the bounded walk.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub fn checkout(amount: u32) -> u32 { h5(amount) }
+             fn h5(amount: u32) -> u32 { h4(amount) }
+             fn h4(amount: u32) -> u32 { h3(amount) }
+             fn h3(amount: u32) -> u32 { h2(amount) }
+             fn h2(amount: u32) -> u32 { h1(amount) }
+             fn h1(amount: u32) -> u32 { if surcharge(amount) { amount + 5 } else { amount } }
+             fn surcharge(amount: u32) -> bool { amount > 100 }
+",
+        ),
+        (
+            "tests/checkout.rs",
+            "#[test] fn checks_out() { let total = ripr_fixture::checkout(150); assert_eq!(total, 155); }
+",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    // Pin the full seam summary, not a substring of the witness: a wording
+    // or location regression must fail (#8106).
+    assert_eq!(
+        reach.summary,
+        "Reach unresolved (rust_integration_public_api_path_unresolved): `checks_out` (tests/checkout.rs:1) calls `checkout`, which may lead to `surcharge` through a call path ripr does not fully trace; no gap is reported"
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn seam_reach_past_five_hops_does_not_displace_a_macro_witness() -> Result<(), String> {
+    // RIPR-SPEC-0114 step 5 (#8047): the walk past the bound is the last
+    // seam reach witness, so the one-macro-hop path stays named.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "macro_rules! check_surcharge { ($a:expr) => { surcharge($a) }; }
+             pub fn quote(amount: u32) -> bool { check_surcharge!(amount) }
+             pub fn checkout(amount: u32) -> u32 { h5(amount) }
+             fn h5(amount: u32) -> u32 { h4(amount) }
+             fn h4(amount: u32) -> u32 { h3(amount) }
+             fn h3(amount: u32) -> u32 { h2(amount) }
+             fn h2(amount: u32) -> u32 { h1(amount) }
+             fn h1(amount: u32) -> u32 { if surcharge(amount) { amount + 5 } else { amount } }
+             fn surcharge(amount: u32) -> bool { amount > 100 }
+",
+        ),
+        (
+            "tests/checkout.rs",
+            "#[test] fn checks_out() { let total = ripr_fixture::checkout(150); assert_eq!(total, 155); }
+#[test] fn quotes() { assert!(ripr_fixture::quote(150)); }
+",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach.summary.contains("macro `check_surcharge!`")
+            && reach.summary.contains("`quotes`")
+            && !reach.summary.contains("`checks_out`"),
+        "the macro witness stays named: {}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
 fn seam_behind_an_unresolved_transitive_path_is_opaque_not_ungripped() -> Result<(), String> {
     let (reach, class) = unresolved_reach_case(&[
         (

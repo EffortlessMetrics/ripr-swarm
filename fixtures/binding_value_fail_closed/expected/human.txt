@@ -36,7 +36,7 @@ Write a test for it:
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - fixtures/binding_value_fail_closed/input/src/lib.rs:14 (infection_unknown)
-    - fixtures/binding_value_fail_closed/input/src/lib.rs:25 (infection_unknown)
+    - ./src/lib.rs:14 (infection_unknown)
+    - ./src/lib.rs:25 (infection_unknown)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

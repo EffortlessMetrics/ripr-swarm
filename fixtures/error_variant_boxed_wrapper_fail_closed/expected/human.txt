@@ -33,8 +33,8 @@ Write a test for it:
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output.
-    - fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs:29 (weakly_exposed)
-    - fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs:43 (weakly_exposed)
-    - fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs:43 (weakly_exposed)
+    - ./src/lib.rs:29 (weakly_exposed)
+    - ./src/lib.rs:43 (weakly_exposed)
+    - ./src/lib.rs:43 (weakly_exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

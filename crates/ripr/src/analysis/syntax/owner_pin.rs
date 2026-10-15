@@ -381,9 +381,11 @@ pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
     "debug_assert_ne",
     "eprint",
     "eprintln",
-    // expect-test's `expect!` builds a value and cannot return; only its
-    // manifest-verified `use expect_test::expect` import keeps it trusted.
+    // expect-test's `expect!` and `expect_file!` build a value and cannot
+    // return; only a manifest-verified `use expect_test::{expect,
+    // expect_file}` import keeps either trusted.
     "expect",
+    "expect_file",
     "file",
     "format",
     "format_args",
@@ -723,7 +725,12 @@ fn macro_binding_ambiguities(
             // Every mention counts, a plain `assert_eq!(..)` included: to the
             // macro it is only tokens, and `define!(assert_eq!(mod tests;))`
             // can emit `macro_rules! assert_eq` together with the module whose
-            // tests then use it.
+            // tests then use it. The one exception is a wrapper whose only
+            // definition this file shows and whose expansion cannot bind a
+            // name at all (#6648).
+            if binding_free_local_wrapper(parse.tree().syntax(), &call, &tokens, trusted) {
+                continue;
+            }
             for token in &tokens {
                 let name = token.text().trim_start_matches("r#");
                 if trusted.contains(&name) {
@@ -829,15 +836,15 @@ fn macro_binding_ambiguities(
 /// the assertion's meaning. Renaming one onto another trusted name does not.
 const DROP_IN_ASSERTION_CRATES: &[&str] = &["pretty_assertions"];
 
-/// #6578: `expect_test` exports `expect!`, which only builds an `Expect`
-/// value; importing it under its own name is the one binding that makes a
-/// bare `expect!` expect-test's.
+/// #6578: `expect_test` exports `expect!` and `expect_file!`, which only
+/// build an `Expect` / `ExpectFile` value; importing one under its own name
+/// is the one binding that makes the bare macro expect-test's.
 const EXPECT_TEST_CRATES: &[&str] = &["expect_test"];
 
 fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
     let crates = match name {
         "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
-        "expect" => EXPECT_TEST_CRATES,
+        "expect" | "expect_file" => EXPECT_TEST_CRATES,
         "json" => &["serde_json"],
         _ => return false,
     };
@@ -864,6 +871,216 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
         segments.as_slice(),
         [root, imported] if crates.contains(root) && *imported == name
     )
+}
+
+/// Words that let tokens bind or import a name, or pull in unseen items,
+/// once a macro expansion parses them as items.
+const BINDING_WORDS: &[&str] = &[
+    "macro_rules",
+    "macro",
+    "use",
+    "extern",
+    "mod",
+    "include",
+    "macro_use",
+    "macro_export",
+    "no_implicit_prelude",
+];
+
+/// Attributes a binding-free wrapper may carry through its tokens: built-in
+/// test, lint, `cfg` and `doc` attributes, none of which can emit an item.
+const INERT_ATTRIBUTES: &[&str] = &[
+    "test",
+    "ignore",
+    "should_panic",
+    "allow",
+    "warn",
+    "deny",
+    "expect",
+    "cfg",
+    "doc",
+];
+
+/// Whether `call` invokes a `macro_rules!` this file defines once, in
+/// textual scope before the call, whose expansion cannot bind a macro name
+/// (#6648). The definition and the call arguments hold no binding word
+/// ([`BINDING_WORDS`]) and no attribute outside [`INERT_ATTRIBUTES`]; the
+/// definition invokes no bang macro and captures no `tt` fragment, and the
+/// arguments invoke only trusted names by their bare name. Nothing between
+/// the definition and this call may shadow it: no module item, and no macro
+/// call other than another inert call of the same wrapper. A wrapper
+/// reached by path (`a::wrap!`), named by a `use` in this file, defined
+/// twice, under an attribute other than a doc comment, inside a function or
+/// block, or used before or outside its definition's scope fails closed: it
+/// may be a macro ripr cannot see. Attribute proc macros stay invisible here
+/// as everywhere else.
+fn binding_free_local_wrapper(
+    root: &SyntaxNode,
+    call: &ast::MacroCall,
+    argument_tokens: &[ra_ap_syntax::SyntaxToken],
+    trusted: &[&str],
+) -> bool {
+    let Some(name) = bare_macro_name(call) else {
+        return false;
+    };
+    if !inert_tokens(argument_tokens, trusted, false) {
+        return false;
+    }
+    let named = |candidate: Option<ast::Name>| {
+        candidate.is_some_and(|candidate| candidate.text().trim_start_matches("r#") == name)
+    };
+    let imported = root
+        .descendants()
+        .filter_map(ast::UseTree::cast)
+        .any(|tree| {
+            tree.rename().is_some_and(|rename| named(rename.name()))
+                || tree
+                    .path()
+                    .and_then(|path| path.segment())
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|segment| segment.text().trim_start_matches("r#") == name)
+        });
+    if imported {
+        return false;
+    }
+    let mut definitions = root
+        .descendants()
+        .filter_map(ast::MacroRules::cast)
+        .filter(|rules| named(rules.name()));
+    let (Some(definition), None) = (definitions.next(), definitions.next()) else {
+        return false;
+    };
+    if definition.attrs().next().is_some() {
+        return false;
+    }
+    let definition_end = definition.syntax().text_range().end();
+    let call_start = call.syntax().text_range().start();
+    if definition_end > call_start {
+        return false;
+    }
+    // A file-level definition reaches the rest of the file. One in an
+    // inline module reaches the call only when `textual_scope` can bound
+    // it and the call sits inside; `None` there means the scope cannot be
+    // bounded, not that it covers everything. Function and block bodies
+    // fail closed.
+    let in_scope = match definition.syntax().parent().map(|parent| parent.kind()) {
+        Some(ra_ap_syntax::SyntaxKind::SOURCE_FILE) => true,
+        Some(ra_ap_syntax::SyntaxKind::ITEM_LIST) => textual_scope(definition.syntax())
+            .is_some_and(|scope| scope.text_range().contains(call_start)),
+        _ => false,
+    };
+    if !in_scope {
+        return false;
+    }
+    let Some(body) = definition.token_tree() else {
+        return false;
+    };
+    let body_tokens = non_trivia_tokens(body.syntax());
+    if !inert_tokens(&body_tokens, trusted, true) {
+        return false;
+    }
+    // Only a `tt` fragment can capture a lone `!` (or `#`) from the
+    // arguments and splice it after another name: `$m $bang ($n)` turns
+    // `case!(define assert_eq!(x))` into `define!(assert_eq)`. Every other
+    // fragment keeps a macro call or attribute whole.
+    let token_tree_fragment = body_tokens.windows(2).any(|pair| {
+        pair[0].kind() == ra_ap_syntax::SyntaxKind::COLON
+            && pair[1].text().trim_start_matches("r#") == "tt"
+    });
+    if token_tree_fragment {
+        return false;
+    }
+    // A module between the definition and the call (`#[macro_use] mod
+    // shadow;`) may carry a second `macro_rules!` of the same name in a
+    // file this scan never shows.
+    let between = |node: &SyntaxNode| {
+        let start = node.text_range().start();
+        start >= definition_end && start < call_start
+    };
+    if root
+        .descendants()
+        .filter(|node| ast::Module::can_cast(node.kind()))
+        .any(|node| between(&node))
+    {
+        return false;
+    }
+    // A macro expanded between the definition and the call could emit a
+    // second `macro_rules!` of the same name, which this file never shows
+    // but which shadows the first at the call. Even a trusted name may be
+    // a local or imported macro there (`macro_rules! vec`), so only inert
+    // calls of this same wrapper may sit between them.
+    root.descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter(|other| between(other.syntax()))
+        .all(|other| {
+            bare_macro_name(&other).is_some_and(|other_name| other_name == name)
+                && other.token_tree().is_some_and(|tree| {
+                    inert_tokens(&non_trivia_tokens(tree.syntax()), trusted, false)
+                })
+        })
+}
+
+/// The name of a macro call reached by a bare, unqualified path.
+fn bare_macro_name(call: &ast::MacroCall) -> Option<String> {
+    let path = call.path()?;
+    if path.qualifier().is_some() {
+        return None;
+    }
+    path.segment()
+        .and_then(|segment| segment.name_ref())
+        .map(|name| name.text().trim_start_matches("r#").to_string())
+}
+
+fn non_trivia_tokens(node: &SyntaxNode) -> Vec<ra_ap_syntax::SyntaxToken> {
+    node.descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect()
+}
+
+/// Whether macro tokens can bind nothing once expanded: no binding word, no
+/// attribute outside [`INERT_ATTRIBUTES`], and no `!` other than a bare
+/// trusted `name!` (none at all in a definition body, whose `$name!` could
+/// be anything). A unary `!` fails closed too: a `$b:tt` or a repetition
+/// can splice it after a name.
+fn inert_tokens(tokens: &[ra_ap_syntax::SyntaxToken], trusted: &[&str], definition: bool) -> bool {
+    use ra_ap_syntax::SyntaxKind::{BANG, COLON, COLON2, IDENT, L_BRACK, POUND};
+    let word =
+        |token: &ra_ap_syntax::SyntaxToken| token.text().trim_start_matches("r#").to_string();
+    tokens.iter().enumerate().all(|(index, token)| {
+        if BINDING_WORDS.contains(&word(token).as_str()) {
+            return false;
+        }
+        match token.kind() {
+            BANG => {
+                // Even a `!` that reads as unary here may follow a name once
+                // a `$b:tt` or a repetition splices it, so only the bare
+                // trusted `name!` shape passes.
+                let previous = index.checked_sub(1).and_then(|before| tokens.get(before));
+                let Some(previous) = previous.filter(|previous| previous.kind() == IDENT) else {
+                    return false;
+                };
+                let qualified = index
+                    .checked_sub(2)
+                    .and_then(|before| tokens.get(before))
+                    .is_some_and(|before| matches!(before.kind(), COLON | COLON2));
+                !definition && !qualified && trusted.contains(&word(previous).as_str())
+            }
+            POUND => {
+                tokens
+                    .get(index + 1)
+                    .is_some_and(|open| open.kind() == L_BRACK)
+                    && tokens.get(index + 2).is_some_and(|attribute| {
+                        attribute.kind() == IDENT
+                            && INERT_ATTRIBUTES.contains(&word(attribute).as_str())
+                    })
+                    && tokens
+                        .get(index + 3)
+                        .is_some_and(|next| !matches!(next.kind(), COLON | COLON2))
+            }
+            _ => true,
+        }
+    })
 }
 
 /// The inline module or function body that bounds a `macro_rules!`
@@ -1253,16 +1470,20 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                 .push(call.syntax().clone());
         }
         // #6578: an inline expect-test comparison
-        // (`expect![["alice: 42"]].assert_eq(&render_row("alice", 41))`) is
-        // a method call on the bare `expect!` value; the classify side
-        // decides which spelling pins.
+        // (`expect![["alice: 42"]].assert_eq(&render_row("alice", 41))`) or
+        // golden-file one (`expect_file!["out.txt"].assert_eq(..)`) is a
+        // method call on the bare macro's value; the classify side decides
+        // which spelling pins.
         for call in function
             .syntax()
             .descendants()
             .filter_map(ast::MethodCallExpr::cast)
         {
             if !is_expect_test_comparison(&call)
-                || expect_test_receiver(&call).as_deref() != Some("expect")
+                || !matches!(
+                    expect_test_receiver(&call).as_deref(),
+                    Some("expect" | "expect_file")
+                )
                 || call
                     .name_ref()
                     .is_none_or(|name| name.text() != "assert_eq")
@@ -1421,7 +1642,7 @@ fn admitted_assertions(
 ///   nested item or `use` item anywhere in its body;
 /// - the helper is a plain function: no attributes other than
 ///   `#[track_caller]`, no generics or `where` clause, not `async`, `const`
-///   or `unsafe`, no `self` parameter, no return type, and no `return` or `?`
+///   or `unsafe`, no `self` parameter, and no `return` or `?`
 ///   in its body, so the assertion cannot be skipped by an early exit;
 /// - the helper passes the test's own escape gate (only trusted macros, no
 ///   closure exits or `yield`) and its supported item context.
@@ -1595,8 +1816,10 @@ fn plain_parameter_names(helper: &ast::Fn) -> Vec<String> {
     if rebound { Vec::new() } else { names }
 }
 
-/// A helper whose body runs to its end on every call: see
-/// [`local_helper_assertions`].
+/// A synchronous helper with no early exit: see [`local_helper_assertions`].
+/// Its return type does not swallow a panic from the borrowed `assert_eq!`,
+/// even if the caller discards a returned `Result`. Fallible macros and `?`
+/// remain refused; their errors could otherwise skip the assertion unnoticed.
 fn plain_check_helper(
     helper: &ast::Fn,
     trusted: &[&str],
@@ -1613,7 +1836,6 @@ fn plain_check_helper(
         && helper.async_token().is_none()
         && helper.const_token().is_none()
         && helper.unsafe_token().is_none()
-        && helper.ret_type().is_none()
         && helper
             .param_list()
             .is_some_and(|params| params.self_param().is_none())

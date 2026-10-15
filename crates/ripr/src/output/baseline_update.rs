@@ -152,8 +152,14 @@ pub(crate) fn build_baseline_update_remove_resolved(
 
     let current_records = current_decisions
         .iter()
-        .filter_map(current_record_from_value)
-        .collect::<Vec<_>>();
+        .map(current_record_from_value)
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| {
+            format!(
+                "baseline update current gate-decision input {} contains a decision without stable identity; refusing to remove or migrate reviewed debt",
+                input.current_gate_decision_path
+            )
+        })?;
     let current_root = string_field(current.get("root"));
     // Classification authority is `baseline_delta::analyzer_version_discontinuity`
     // (issue #7421). Update must preserve unmatched entries that delta would
