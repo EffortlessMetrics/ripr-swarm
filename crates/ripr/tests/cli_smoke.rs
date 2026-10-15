@@ -20503,6 +20503,143 @@ expires = "2025-01-01"
 }
 
 #[test]
+fn check_configured_suppression_diagnostics_preserve_locations_and_escaping() -> Result<(), String>
+{
+    let valid = "schema_version = 1\n[[suppressions]]\nkind = \"exposure_gap\"\nfinding_id = \"probe:one\"\nowner = \"alice\"\nreason = \"accepted debt\"\n";
+    let duplicate = format!("{valid}owner = \"bob\"\n");
+    // Preserve the default filename inside the offending value while escaping
+    // its terminal control byte. Only the diagnostic's location is renamed.
+    let malformed = valid.replace("exposure_gap", ".ripr/suppressions.toml\u{1b}[31m");
+    let unquoted = valid.replace("owner = \"alice\"", "owner = alice");
+    for relative_policy in [
+        ".ripr/suppressions.toml",
+        "policies/accepted $debt & 50%.toml",
+    ] {
+        let workspace =
+            make_temp_workspace_with_suppressions(None, Some("invalid default policy\n"))?;
+        std::fs::create_dir_all(workspace.join("policies")).map_err(|e| e.to_string())?;
+        if relative_policy != ".ripr/suppressions.toml" {
+            std::fs::write(
+                workspace.join("ripr.toml"),
+                format!("[suppressions]\npath = \"{relative_policy}\"\n"),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        let policy = workspace.join(relative_policy);
+        let root = workspace.display().to_string();
+        let diff = sample_diff().display().to_string();
+        for (manifest, diagnostics) in [
+            (
+                duplicate.as_str(),
+                [":7 duplicate `[[suppressions]]` field `owner` (first declared at line 5)"]
+                    .as_slice(),
+            ),
+            (
+                malformed.as_str(),
+                [":3 unsupported kind `.ripr/suppressions.toml\\u{1b}[31m`"].as_slice(),
+            ),
+            (
+                unquoted.as_str(),
+                [
+                    ":5 expected quoted string, got `alice`",
+                    ":2 `[[suppressions]]` entry is missing required `owner`",
+                ]
+                .as_slice(),
+            ),
+        ] {
+            std::fs::write(&policy, manifest).map_err(|e| e.to_string())?;
+            for format in ["badge-json", "badge-shields", "sarif"] {
+                let output = run_ripr(&[
+                    "check", "--root", &root, "--diff", &diff, "--format", format,
+                ]);
+                assert!(
+                    !output.status.success(),
+                    "{format}: invalid policy accepted"
+                );
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert!(
+                    stderr.contains(&format!("{relative_policy} validation failed:\n"))
+                        && diagnostics
+                            .iter()
+                            .all(|diagnostic| stderr
+                                .contains(&format!("{relative_policy}{diagnostic}"))),
+                    "{format}: wrong policy location or diagnostic: {stderr}"
+                );
+                assert!(
+                    !stderr.contains('\u{1b}'),
+                    "raw terminal control: {stderr:?}"
+                );
+            }
+
+            // Explicit loading already names the supplied path (#7921).
+            // Keep it fail-closed without changing that production path.
+            let output = run_ripr(&[
+                "check",
+                "--root",
+                &root,
+                "--diff",
+                &diff,
+                "--suppression-policy",
+                relative_policy,
+            ]);
+            assert!(!output.status.success(), "explicit invalid policy accepted");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                diagnostics
+                    .iter()
+                    .all(|diagnostic| stderr.contains(&format!("{relative_policy}{diagnostic}"))),
+                "{stderr}"
+            );
+            assert!(
+                !stderr.contains('\u{1b}'),
+                "raw terminal control: {stderr:?}"
+            );
+        }
+
+        // Valid and missing optional policies still work. A malformed default
+        // file remains present for custom paths, defeating fallback to it.
+        std::fs::write(&policy, valid).map_err(|e| e.to_string())?;
+        for missing in [false, true] {
+            if missing {
+                std::fs::remove_file(&policy).map_err(|e| e.to_string())?;
+            }
+            let output = run_ripr(&[
+                "check",
+                "--root",
+                &root,
+                "--diff",
+                &diff,
+                "--format",
+                "badge-json",
+            ]);
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let output = run_ripr(&[
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--suppression-policy",
+            relative_policy,
+        ]);
+        assert!(!output.status.success(), "explicit missing policy accepted");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("failed to read suppression policy")
+                && stderr.contains(relative_policy),
+            "{stderr}"
+        );
+        ignore_remove_dir_all(&workspace);
+    }
+    Ok(())
+}
+
+#[test]
 fn check_badge_plus_fails_when_suppressions_manifest_is_malformed() -> Result<(), String> {
     let suppressions = r#"schema_version = 1
 

@@ -75,7 +75,10 @@ names the field, repeated declaration line, and original declaration line;
 third declarations still cite the first line. Later declarations do not overwrite the
 first parsed value or declaration identity. Both loaders reject the manifest
 when violations are present.
-The explicit loader names the supplied policy path in its error.
+Both loaders name the supplied policy path in every parser diagnostic. The
+implicit loader uses the configured root-relative path; duplicate diagnostics
+retain the original and repeated declaration lines. Diagnostic values and
+terminal escaping are preserved.
 
 Declaration tracking resets for each entry, so field names may be reused in
 separate entries. This is distinct from the existing duplicate exact-selector
