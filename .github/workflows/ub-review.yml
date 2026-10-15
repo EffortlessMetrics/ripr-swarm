@@ -76,6 +76,21 @@ jobs:
           # other planned sensors stay in the review.
           except-tools: artifact-verifier
 
+      - name: Verify advisory receipt reporter
+        if: always()
+        continue-on-error: true
+        run: cargo test --locked -p xtask --example ub_review_evidence_report
+
+      - name: Report advisory evidence dimensions
+        if: always()
+        continue-on-error: true
+        run: |
+          cargo run --locked -p xtask --example ub_review_evidence_report -- target/ub-review || {
+            status=$?
+            printf '%s\n' '## UB Review advisory evidence' '' 'MISSING EVIDENCE: consumer reporter did not complete; inspect this step log. No report pass is established.' >> "$GITHUB_STEP_SUMMARY"
+            exit "$status"
+          }
+
       - name: Upload ub-review artifacts
         if: always()
         uses: actions/upload-artifact@v7

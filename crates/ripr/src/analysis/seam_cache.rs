@@ -880,9 +880,11 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.38`: retain separate parser-owned match-head coverage (#5604).
 /// `1.39`: the guarded-match scan emits the RIPR-SPEC-0175 accepted-Err
 /// form; `1.38` facts lack it.
-/// `1.40`: `expect_file` joins the trusted macro names a binding site may
-/// report (#6578); `1.39` candidates never record it.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.40";
+/// `1.40`: single-line `self.<field>` assignments mint a parser-owned
+/// `field_construction` shape (RIPR-SPEC-0228, #6485). `1.39` facts lack it.
+/// `1.41`: `expect_file` joins the trusted macro names a binding site may
+/// report (#6578); `1.40` candidates never record it.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.41";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -4370,8 +4372,9 @@ mod tests {
         // (#6578); 1.35 is allocated to #7828.
         // 1.36 -> 1.37: combine expect-test facts and JSON binding candidates.
         // 1.38 -> 1.39: accepted-Err guarded-match form (RIPR-SPEC-0175).
-        // 1.39 -> 1.40: trusted `expect_file` binding candidates (#6578).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.40");
+        // 1.39 -> 1.40: field-assignment probe shapes (RIPR-SPEC-0228).
+        // 1.40 -> 1.41: trusted `expect_file` binding candidates (#6578).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.41");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes

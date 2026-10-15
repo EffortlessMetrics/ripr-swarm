@@ -896,6 +896,10 @@ id = "RIPR-SPEC-0007"
 name = "repository configuration"
 spec = "docs/specs/RIPR-SPEC-0007-repository-configuration.md"
 tests = [
+  "crates/ripr/tests/cli_smoke.rs::config_validate_does_not_consume_root_flag_as_a_path",
+  "crates/ripr/tests/cli_smoke.rs::check_github_over_broad_suppression_policy_emits_denominator_notice",
+  "crates/ripr/tests/cli_smoke/suppression_notice.rs::retained_oracle_rejects_silence_wrong_counts_and_leaked_annotations",
+  "crates/ripr/tests/cli_smoke.rs::check_configured_suppression_diagnostics_preserve_locations_and_escaping",
   "crates/ripr/tests/default_suppression_disclosure.rs",
   "crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_owner",
   "crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_expiry",
@@ -14792,6 +14796,7 @@ fixtures = [
   "fixtures/inequality_struct_assertion_not_exact",
   "fixtures/bool_compared_inequality_not_exact",
   "fixtures/test_compared_with_non_literal_not_exact",
+  "fixtures/test_cast_to_integer_not_exact",
 ]
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
@@ -15072,6 +15077,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_pin_stays_weak_without_the_listed_field_on_the_whole_result",
   "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_facts_read_field_construction_changes_only",
   "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_refused_readings_keep_their_parsed_subject",
+  "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_pin_looks_through_a_test_local_identity_helper",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",
@@ -15081,6 +15087,7 @@ code = [
   "crates/ripr/src/analysis/language/typescript/instance_class_guard.rs",
   "crates/ripr/src/analysis/language/typescript/match_object_guard.rs",
   "crates/ripr/src/analysis/language/typescript/oracle.rs",
+  "crates/ripr/src/analysis/language/typescript/tests_extract.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0250-typescript-match-object-field-pin.md",
@@ -15099,6 +15106,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::instance_pin_stays_weak_without_a_settled_class_split",
   "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::instance_pin_does_not_credit_a_returned_message_change",
   "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::instance_facts_read_predicate_changes_only",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::instance_pin_looks_through_a_test_local_identity_helper",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::identity_helpers_read_only_unrebound_top_level_identity_functions",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",
@@ -15107,6 +15116,7 @@ code = [
   "crates/ripr/src/analysis/language/typescript/classifier.rs",
   "crates/ripr/src/analysis/language/typescript/instance_class_guard.rs",
   "crates/ripr/src/analysis/language/typescript/oracle.rs",
+  "crates/ripr/src/analysis/language/typescript/tests_extract.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0249-typescript-instance-class-pin.md",
