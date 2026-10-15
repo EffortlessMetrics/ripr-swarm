@@ -131,9 +131,8 @@ fn scalar_marker_preserves_cargo_uv_git_and_unmarked_root_boundaries() -> TestRe
         ("unmarked", None, false, "null"),
     ];
     for (label, marker, git, workspaces) in cases {
-        // A uv workspace marker is a Python project marker: a binary built
-        // without `lang-python` refuses the analysis instead of resolving a
-        // root (the Rust-only feature lane), so the case needs that feature.
+        // A uv marker turns on Python detection, which a binary built
+        // without `lang-python` refuses (the Rust-only feature lane).
         if label == "uv" && !cfg!(feature = "lang-python") {
             continue;
         }
@@ -147,6 +146,15 @@ fn scalar_marker_preserves_cargo_uv_git_and_unmarked_root_boundaries() -> TestRe
         }
         if let Some((name, contents)) = marker {
             fs::write(repo.join(name), contents)?;
+        }
+        // Without `lang-python`, a uv workspace marker otherwise makes this
+        // rust-only binary refuse (#8144). Keep Python preview off so the
+        // rust subject still analyses and the uv/git root is still pinned.
+        if label == "uv" && !cfg!(feature = "lang-python") {
+            fs::write(
+                repo.join("ripr.toml"),
+                "[languages]\nenabled = [\"rust\"]\n",
+            )?;
         }
         fs::write(
             member.join("package.json"),

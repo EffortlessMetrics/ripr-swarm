@@ -129,6 +129,10 @@ pub(crate) struct LocalTypeEquality {
     /// Whether a `#[derive(..)]` entry is a path (`foo::PartialEq`), which
     /// may name a derive other than the standard one.
     pub(crate) qualified_derives: bool,
+    /// The declared variant names of an enum (empty for a struct or union),
+    /// so a `Type::NAME` path can be told from an associated constant
+    /// (#7063).
+    pub(crate) variants: Vec<String>,
 }
 
 /// Equality facts of the one non-test struct, enum or union named `name`
@@ -180,6 +184,7 @@ pub(crate) fn local_type_equality(source: &str, name: &str) -> Option<LocalTypeE
         )
     });
     let mut fields = Vec::new();
+    let mut variants = Vec::new();
     let mut push_list = |list: Option<ast::FieldList>| match list {
         Some(ast::FieldList::RecordFieldList(list)) => {
             for field in list.fields() {
@@ -221,6 +226,9 @@ pub(crate) fn local_type_equality(source: &str, name: &str) -> Option<LocalTypeE
                 .into_iter()
                 .flat_map(|list| list.variants())
             {
+                if let Some(name) = variant.name() {
+                    variants.push(name.text().to_string());
+                }
                 push_list(variant.field_list());
             }
         }
@@ -243,6 +251,7 @@ pub(crate) fn local_type_equality(source: &str, name: &str) -> Option<LocalTypeE
         fields,
         generic_params,
         qualified_derives,
+        variants,
     })
 }
 

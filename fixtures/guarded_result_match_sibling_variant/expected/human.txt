@@ -32,6 +32,6 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - fixtures/guarded_result_match_sibling_variant/input/src/lib.rs:9 (weakly_exposed)
+    - ./src/lib.rs:9 (weakly_exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

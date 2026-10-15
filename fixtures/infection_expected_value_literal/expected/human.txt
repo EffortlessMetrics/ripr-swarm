@@ -31,6 +31,6 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - fixtures/infection_expected_value_literal/input/src/lib.rs:28 (exposed)
+    - ./src/lib.rs:28 (exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
