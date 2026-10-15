@@ -3108,7 +3108,7 @@ mod tests {
                 .unwrap_or_default();
             assert!(
                 line.ends_with(
-                    "…); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`."
+                    "…); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`"
                 ),
                 "{class:?}: {line}"
             );
@@ -4207,7 +4207,7 @@ mod tests {
             "missing discriminator enabled == false: related tests do not use the changed value"
         ));
         assert!(rendered.contains("Next step\n"));
-        assert!(rendered.contains("Add assertion for disabled path result."));
+        assert!(rendered.contains("Add assertion for disabled path result"));
     }
 
     /// #4320: the 5-related-test window must disclose the total — the number
@@ -5066,7 +5066,7 @@ mod tests {
             digest.lines().all(|line| line.chars().count() <= 180),
             "no digest line exceeds the budget; got:\n{digest}"
         );
-        assert!(digest.contains("remedy."), "{digest}");
+        assert!(digest.contains("remedy"), "{digest}");
     }
 
     /// #4323: the default no-path guidance is ~330 characters and ends with
@@ -5099,7 +5099,7 @@ mod tests {
 
         assert!(
             flattened.ends_with(
-                "add a co-located test that reaches and observes the changed behavior so a discriminator exists."
+                "add a co-located test that reaches and observes the changed behavior so a discriminator exists"
             ),
             "digest must keep the remedy; got:\n{digest}"
         );

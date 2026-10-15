@@ -42,10 +42,11 @@ fn trim_field_period(value: &str) -> &str {
 fn next_step_prefix(step: &str) -> &'static str {
     const NEXT_STEP_PREFIX: &str = "  Next step: ";
     const NEXT_STEP_NESTED_PREFIX: &str = "  Next step — ";
-    // A leading producer label never runs past ~40 characters
-    // ("TypeScript preview advisory", "Static limit `unsupported_syntax`");
-    // a later sentence colon is prose, not a label, and keeps the colon form.
-    const NESTED_LABEL_MAX: usize = 45;
+    // A leading producer label never runs past ~35 characters
+    // ("TypeScript preview advisory:" ends at 27, "Static limit
+    // `unsupported_syntax`:" at 33); a mid-sentence colon at 40+ is prose,
+    // not a label, and keeps the colon form.
+    const NESTED_LABEL_MAX: usize = 40;
     match step.find(": ") {
         Some(idx) if idx <= NESTED_LABEL_MAX => NEXT_STEP_NESTED_PREFIX,
         _ => NEXT_STEP_PREFIX,

@@ -692,10 +692,10 @@ fn no_selection_hidden_line(omitted: &[&Finding]) -> String {
 fn no_selection_safe_action_line(omitted: &[&Finding]) -> String {
     match no_selection_mix(omitted) {
         NoSelectionMix::AllBaseSide => {
-            "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n".to_string()
+            "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable\n".to_string()
         }
         NoSelectionMix::AllUnresolved => {
-            "  Safe next action: no finding is resolved to the candidate (subject currentness unresolved); rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n".to_string()
+            "  Safe next action: no finding is resolved to the candidate (subject currentness unresolved); rerun with --format human-full to inspect the full evidence before treating this run as actionable\n".to_string()
         }
         NoSelectionMix::Mixed { base_side, unresolved } => format!(
             "  Safe next action: no finding is a candidate edit target ({} base-side, {} unresolved currentness); rerun with --format human-full to inspect the full evidence before treating this run as actionable\n",
@@ -860,7 +860,7 @@ fn python_preview_safe_action(finding: &Finding) -> String {
         return EXPOSED_PREVIEW_SAFE_ACTION.to_string();
     }
     if python_repair_card(finding).is_some() {
-        return "  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it.\n".to_string();
+        return "  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it\n".to_string();
     }
     if let Some(kind) = finding.static_limit_kind.as_ref() {
         return format!(
