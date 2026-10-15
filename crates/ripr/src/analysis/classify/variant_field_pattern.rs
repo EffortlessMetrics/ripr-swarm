@@ -86,15 +86,17 @@ pub(super) fn pattern_pins_constructed_field(
 /// through shared state, so the pattern no longer reads only the owner's
 /// own literal.
 fn builds_outside_patterns(test_body: &str, last: &str) -> bool {
-    let total = literal_heads(&mask_comments_and_strings(test_body), last);
+    // Search the masked body, so a pattern assertion written inside a
+    // comment or string never offsets a real build.
+    let masked = mask_comments_and_strings(test_body);
+    let total = literal_heads(&masked, last);
     let in_patterns: usize = PATTERN_MACROS
         .iter()
-        .flat_map(|name| test_body.match_indices(name))
-        .filter(|(at, name)| {
-            // `assert!(matches!(` also holds `matches!(`; count each once.
-            !(*name == "assert_matches!(" && test_body[..*at].ends_with("debug_"))
-        })
-        .filter_map(|(at, _)| macro_operands(&test_body[at..]))
+        .flat_map(|name| masked.match_indices(name))
+        // `debug_assert_matches!(` also holds `assert_matches!(`; count
+        // its pattern once.
+        .filter(|(at, name)| !(*name == "assert_matches!(" && masked[..*at].ends_with("debug_")))
+        .filter_map(|(at, _)| macro_operands(&masked[at..]))
         .map(|(_, _, pattern_masked)| literal_heads(&pattern_masked, last))
         .sum();
     total > in_patterns
@@ -579,6 +581,19 @@ mod tests {
             &|_| true,
             &|_| 1,
         ));
+        // A pattern assertion inside a comment or string offsets nothing.
+        for hidden in [
+            "// assert_matches!(parse_num(\"1\"), Err(ParseError::BadDigit { pos: 0 }));",
+            "let note = \"assert_matches!(x, Err(ParseError::BadDigit { pos: 0 }))\";",
+        ] {
+            let body = format!(
+                "{hidden}\nFAULT.with(|f| f.set(Some(ParseError::BadDigit {{ pos: 0 }})));\n{assertion}"
+            );
+            assert!(
+                !pattern_pins_constructed_field(&CHANGED, &body, assertion, &|_| true, &|_| 1),
+                "{hidden}"
+            );
+        }
         // Two pattern assertions alone build nothing.
         let body = format!(
             "{assertion}\ndebug_assert_matches!(parse_num(\"1\"), Err(ParseError::BadDigit {{ pos: 0 }}));\nassert!(matches!(parse_num(\"x\"), Err(ParseError::BadDigit {{ pos: 0 }})));"
