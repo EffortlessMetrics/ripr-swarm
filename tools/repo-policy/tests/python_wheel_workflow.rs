@@ -574,7 +574,7 @@ fn actual_job_conditions_cover_skip_failures_and_both_dispatch_routes() -> TestR
     let applicability = job(WORKFLOW, "applicability")?;
     let pair_job = job(WORKFLOW, "mcp-evidence-pair")?;
     let consume = job(WORKFLOW, "consume")?;
-    assert!(consume.contains("    needs: build-wheel"));
+    assert!(consume.contains("    needs: [build-wheel, source-contract]"));
     assert!(consume.contains("client: [pip, uv]"));
     assert!(consumer_runnable(
         &fixture, WORKFLOW, "failure", "success", false
@@ -741,13 +741,35 @@ fn consumer_runnable(
     build: &str,
     cancelled: bool,
 ) -> TestResult<bool> {
+    consumer_runnable_with_contract(
+        fixture,
+        workflow,
+        applicability,
+        build,
+        "success",
+        cancelled,
+    )
+}
+
+fn consumer_runnable_with_contract(
+    fixture: &Fixture,
+    workflow: &str,
+    applicability: &str,
+    build: &str,
+    contract: &str,
+    cancelled: bool,
+) -> TestResult<bool> {
     let consume = job(workflow, "consume")?;
     let expression = condition(&consume).unwrap_or("1 == 1");
     let status_function = expression.contains("always()") || expression.contains("cancelled()");
-    if !status_function && (applicability != "success" || build != "success") {
+    if !status_function
+        && (applicability != "success" || build != "success" || contract != "success")
+    {
         return Ok(false);
     }
-    let expression = expression.replace("needs.build-wheel.result", &format!("'{build}'"));
+    let expression = expression
+        .replace("needs.build-wheel.result", &format!("'{build}'"))
+        .replace("needs.source-contract.result", &format!("'{contract}'"));
     runnable_with_status(
         fixture,
         &expression,
@@ -874,8 +896,7 @@ fn consumers_survive_failed_ancestor_but_require_successful_build() -> TestResul
             "app={app}, build={build}, cancelled={cancelled}"
         );
     }
-    let guard =
-        "    if: ${{ always() && !cancelled() && needs.build-wheel.result == 'success' }}\n";
+    let guard = "    if: ${{ always() && !cancelled() && needs.build-wheel.result == 'success' && needs.source-contract.result == 'success' }}\n";
     let removed = WORKFLOW.replace(guard, "");
     assert_ne!(removed, WORKFLOW);
     assert!(!consumer_runnable(
@@ -1287,5 +1308,116 @@ fn callable_graph_uses_exact_subject_and_cannot_turn_guard_failure_into_skip() -
         )?,
         "removed guard must demonstrate expensive fallback"
     );
+    Ok(())
+}
+
+#[test]
+fn package_contract_runs_in_parallel_but_remains_required_for_consumers() -> TestResult {
+    let fixture = Fixture::new()?;
+    let contract = job(WORKFLOW, "source-contract")?;
+    let build = job(WORKFLOW, "build-wheel")?;
+    let consume = job(WORKFLOW, "consume")?;
+    // Same selector/guard authority, independent producers: neither awaits the other.
+    assert!(contract.contains("    needs: applicability"));
+    assert!(build.contains("    needs: applicability"));
+    assert_eq!(condition(&contract)?, condition(&build)?);
+    assert!(!build.contains("needs.source-contract"));
+    assert!(!contract.contains("needs.build-wheel"));
+    assert!(consume.contains("needs: [build-wheel, source-contract]"));
+    assert!(contract.contains("&& 8 || 20"));
+    assert!(build.contains("&& 12 || 20"));
+    let shell = shell_from_job(
+        WORKFLOW,
+        "source-contract",
+        "Validate package source contract",
+    )?;
+    assert_eq!(
+        shell.trim(),
+        "set -euo pipefail\ncargo xtask check-release-targets\ncargo test -p xtask --locked policy::distribution::tests -- --nocapture"
+    );
+    assert!(!build.contains("cargo xtask check-release-targets"));
+    assert!(!build.contains("policy::distribution::tests"));
+    assert!(contract.contains("ref: ${{ env.CANDIDATE_SHA }}"));
+    assert!(contract.contains("persist-credentials: false"));
+    assert!(!contract.contains("continue-on-error:"));
+    for app in ["success", "failure", "skipped"] {
+        for status in ["success", "failure", "cancelled", "skipped"] {
+            assert_eq!(
+                consumer_runnable_with_contract(&fixture, WORKFLOW, app, "success", status, false)?,
+                status == "success",
+                "package contract {status} after applicability {app}"
+            );
+        }
+    }
+    let removed = WORKFLOW.replace(" && needs.source-contract.result == 'success'", "");
+    assert_ne!(removed, WORKFLOW);
+    assert!(
+        consumer_runnable_with_contract(
+            &fixture, &removed, "success", "success", "failure", false
+        )?,
+        "removing the contract-result guard must expose false consumer admission"
+    );
+    // Replay the retained production shell. A failed first command cannot be masked
+    // by a successful test command, and both commands must run in the positive case.
+    let calls = fixture.0.join("package-calls");
+    fixture.write_shim(
+        "cargo",
+        &format!(
+            r#"printf '%s\n' "$*" >> '{}'
+if test "$*" = 'xtask check-release-targets'; then exit 7; fi
+"#,
+            calls.display()
+        ),
+    )?;
+    let failed = fixture.command("bash")?.args(["-c", &shell]).output()?;
+    assert_eq!(failed.status.code(), Some(7));
+    assert_eq!(fs::read_to_string(&calls)?, "xtask check-release-targets\n");
+    fs::remove_file(&calls)?;
+    fixture.write_shim(
+        "cargo",
+        &format!(
+            r#"printf '%s\n' "$*" >> '{}'
+"#,
+            calls.display()
+        ),
+    )?;
+    assert!(
+        fixture
+            .command("bash")?
+            .args(["-c", &shell])
+            .status()?
+            .success()
+    );
+    assert_eq!(
+        fs::read_to_string(&calls)?,
+        "xtask check-release-targets\ntest -p xtask --locked policy::distribution::tests -- --nocapture\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn parallel_contract_binds_its_checkout_and_propagates_failed_git() -> TestResult {
+    let fixture = Fixture::new()?;
+    let head = fixture.git(&["rev-parse", "HEAD"])?;
+    let shell = shell_from_job(
+        WORKFLOW,
+        "source-contract",
+        "Bind exact package source candidate",
+    )?;
+    let run = |candidate: &str| -> TestResult<Output> {
+        Ok(fixture
+            .command("bash")?
+            .args(["-c", &shell])
+            .env("GITHUB_REPOSITORY", "EffortlessMetrics/ripr-swarm")
+            .env("CANDIDATE_SHA", candidate)
+            .output()?)
+    };
+    assert!(run(head.trim())?.status.success());
+    assert!(!run(&"0".repeat(40))?.status.success());
+    fixture.write_shim(
+        "git",
+        &format!("printf '%s\\n' {:?}; exit 9\n", head.trim()),
+    )?;
+    assert_eq!(run(head.trim())?.status.code(), Some(9));
     Ok(())
 }

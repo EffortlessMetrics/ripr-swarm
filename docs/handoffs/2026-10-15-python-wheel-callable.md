@@ -48,8 +48,11 @@ the fallback build/consumers; a failed callable guard/policy blocks expensive wo
 and leaves the callable workflow red. Missing/failed/cancelled producers cannot
 be accepted as selected evidence by the future caller.
 
-The callable critical path has job execution limits of 3 + 12 + 5 minutes
-(consumers run in parallel). Queue/setup overhead and actual hosted performance
+The callable critical path has job execution limits of 3 + max(8, 12) + 5
+minutes. The source-contract job runs the unchanged package-source commands
+alongside the release wheel job; each pip/uv consumer requires both producers
+to succeed. The source contract checks the same exact subject and retains
+failure propagation. Queue/setup overhead and actual hosted performance
 are unqualified; these limits alone do not prove <=20-minute wall-clock admission.
 The parent must budget its entire admission graph and reject timeout/cancellation.
 No successful-skip receipt or candidate-authored success document is introduced.
@@ -129,3 +132,33 @@ baseline completion is not established by that attempt. The trailing broad WSL
 whitespace scan was likewise stopped after the focused candidate gates passed;
 native Windows Git supplied the scoped whitespace observation. These local
 tooling observations are separate from source behavior and hosted qualification.
+
+
+## Repair after admitted-run timeout
+
+Joined run [38705560148](https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38705560148)
+on integration head `1915dfb6a09d6c473e2220ccb3ddab609e78fd28` admitted
+its exact subject but cancelled the wheel job at its 12-minute execution cap.
+The package-source step consumed 253 seconds before release compilation began:
+170 seconds building the dev xtask, 82 seconds building its test executable,
+and 20 distribution tests passed. This left approximately 448 seconds for the
+release build; metadata validation and both consumers never ran. The protected
+caller correctly rejected the cancelled leaf.
+
+The repair moves those same two source-contract commands to a parallel job.
+It preserves all build, metadata/RECORD/payload negatives and pip/uv commands,
+release optimization/LTO/features, tool pins, event semantics and permissions.
+Both producers depend on the original applicability authority; consumers require
+both successes. A failed or skipped source contract cannot satisfy qualification.
+The wheel timeout remains 12 minutes; no cache hit or weaker release profile is
+assumed. Pinned package setup consumed only 13 seconds in the failed hosted run,
+so it is not the primary serial cost. No Rust restore step existed in that job;
+this repair removes a measured prefix without depending on a new warm cache.
+
+The new parallel-contract oracle failed against the serial workflow and passed
+after the repair. The complete focused suite now passes 16 tests; focused Clippy,
+policy preflight, Actions syntax and scoped whitespace checks also passed. New
+controls replay actual shell and reject failed Git inspection, failed contract
+commands and missing/failed/cancelled producer results; removing the contract
+result guard demonstrates false consumer admission. The previous broader-policy
+completion limitations above remain; source checks do not establish hosted time.
