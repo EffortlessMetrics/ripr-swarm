@@ -338,13 +338,32 @@ fn comparison_call(text: &str) -> Option<(&'static str, &str, &str)> {
 /// (`flag && PartialEq::`, `a < b`) ends the path, so the call is not the
 /// whole text.
 fn is_path_head(head: &str) -> bool {
+    let head = head.trim_end();
     if !head.ends_with("::") {
         return false;
     }
     let bytes = head.as_bytes();
+    // Unformatted code may space a separator (`Result :: eq`); a space
+    // anywhere else outside the angles ends the path.
+    let beside_separator = |index: usize| {
+        let before = bytes
+            .get(..index)
+            .and_then(|head| head.iter().rev().find(|byte| !byte.is_ascii_whitespace()));
+        let after = bytes
+            .get(index..)
+            .and_then(|tail| tail.iter().find(|byte| !byte.is_ascii_whitespace()));
+        before == Some(&b':') || after == Some(&b':')
+    };
     let mut generics = 0usize;
+    // A const-generic block inside the angles (`C::<{ A > B }>::ne`) is one
+    // argument: its `<`, `>` and spaces are not the path's.
+    let mut blocks = 0usize;
     for (index, &byte) in bytes.iter().enumerate() {
         match byte {
+            b';' => return false,
+            b'{' if generics > 0 => blocks += 1,
+            b'}' if blocks > 0 => blocks -= 1,
+            _ if blocks > 0 => {}
             b'<' if generics > 0
                 || index == 0
                 || (index >= 2 && bytes.get(index - 2..index) == Some(&b"::"[..])) =>
@@ -354,14 +373,15 @@ fn is_path_head(head: &str) -> bool {
             b'>' if generics > 0 && (index == 0 || bytes.get(index - 1) != Some(&b'-')) => {
                 generics -= 1;
             }
-            b';' | b'{' | b'}' => return false,
+            b'{' | b'}' => return false,
             _ if generics > 0 => {}
             b':' | b'_' => {}
             _ if byte.is_ascii_alphanumeric() => {}
+            _ if byte.is_ascii_whitespace() && beside_separator(index) => {}
             _ => return false,
         }
     }
-    generics == 0
+    generics == 0 && blocks == 0
 }
 
 /// The two arguments of a call's argument list when it holds exactly two,
@@ -700,14 +720,24 @@ fn holds_comparison_call(text: &str) -> bool {
     text.contains("PartialEq::")
         || text.contains("PartialOrd::")
         || ["eq", "ne", "lt", "le", "gt", "ge"].iter().any(|name| {
-            [format!(".{name}"), format!("::{name}")]
-                .iter()
-                .any(|spelling| {
-                    text.match_indices(spelling.as_str()).any(|(at, matched)| {
-                        text.get(at + matched.len()..)
-                            .is_some_and(|rest| rest.trim_start().starts_with(['(', ':']))
-                    })
+            // A method call or its turbofish follows the name; after a path
+            // `::name` only a call does, since `helpers::eq::value()` names
+            // a module.
+            let called = |rest: &str, turbofish: bool| {
+                let rest = rest.trim_start();
+                rest.starts_with('(') || (turbofish && rest.starts_with(':'))
+            };
+            text.match_indices(&format!(".{name}"))
+                .any(|(at, matched)| {
+                    text.get(at + matched.len()..)
+                        .is_some_and(|rest| called(rest, true))
                 })
+                || text
+                    .match_indices(&format!("::{name}"))
+                    .any(|(at, matched)| {
+                        text.get(at + matched.len()..)
+                            .is_some_and(|rest| called(rest, false))
+                    })
         })
 }
 
