@@ -1698,11 +1698,17 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
         PilotLanguageRoutes::commands(&required.routes),
         expected_commands
     );
+    if typescript_available || LanguageId::Python.is_available() {
+        assert!(required.supported_headline_route().is_some());
+    } else {
+        assert!(required.supported_headline_route().is_none());
+    }
 
     let supplementary = PilotLanguageRoutes::from_discovered(root, true, &enabled, &files);
     assert_eq!(supplementary.state, PilotLanguageRoutesState::Supplementary);
     assert_eq!(supplementary.routes, required.routes);
     assert!(supplementary.required().is_none());
+    assert!(supplementary.supported_headline_route().is_none());
 }
 
 #[test]
@@ -2022,11 +2028,31 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
             "{terminal}"
         );
         assert!(
+            terminal.contains(&format!(
+                "Top recommendation:\n  analyze the TypeScript diff: {}\n",
+                route_command()
+            )),
+            "{terminal}"
+        );
+        assert!(
+            !terminal.contains(
+                "none: pilot ranks Rust seams and found none here; see the languages below"
+            ),
+            "{terminal}"
+        );
+        assert!(
             terminal.ends_with(&format!(
                 "Next, analyze the changed code in these languages:\n  {}\n",
                 route_command()
             )),
             "{terminal}"
+        );
+        assert!(
+            md.contains(&format!(
+                "Analyze the TypeScript diff: `{}`",
+                route_command()
+            )),
+            "{md}"
         );
         assert!(
             md.contains(&format!("```bash\n{}\n```", route_command())),
@@ -2062,6 +2088,12 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         };
         let terminal = render_pilot_terminal(&[], context);
         assert!(
+            terminal.contains(
+                "none: pilot ranks Rust seams and found none here; see the languages below"
+            ),
+            "unavailable-only languages keep the none headline:\n{terminal}"
+        );
+        assert!(
             terminal.ends_with("No follow-up command applies: this ripr binary cannot analyze the languages listed above.\n"),
             "{terminal}"
         );
@@ -2069,6 +2101,106 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         assert!(md.ends_with("No follow-up command applies: this ripr binary cannot analyze the languages listed above.\n"), "{md}");
         assert!(!md.contains("```bash"), "{md}");
     }
+    Ok(())
+}
+
+/// #7665: a Python-only repo with no Rust seam and no repair card used to
+/// headline `Top recommendation: none` even though `ripr check` is the
+/// supported route. The headline names that route; JSON `language_routes`
+/// and `current_change.top_recommendation_in_change` stay as they were.
+#[test]
+#[cfg(feature = "lang-python")]
+fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> Result<(), String> {
+    use crate::domain::LanguageId;
+
+    let artifacts = pilot_artifacts();
+    let files = discovered_files(&[(LanguageId::Python, "src/pricing.py")]);
+    let routes =
+        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &files);
+    let python = PilotPythonFirstUse {
+        status: super::types::PilotPythonFirstUseStatus::NoPythonFindings,
+        findings_total: 0,
+        repair_cards_total: 0,
+        limitation_count: 0,
+        analysis_error: None,
+        top_repair_card: None,
+    };
+    let command = route_command();
+    let context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        python_first_use: Some(&python),
+        ..pilot_context(&artifacts)
+    };
+
+    let terminal = render_pilot_terminal(&[], context);
+    let headline = format!("analyze the Python diff: {command}");
+    assert!(
+        terminal.contains(&format!("Top recommendation:\n  {headline}\n")),
+        "supported-language headline must lead with the check route, not none:\n{terminal}"
+    );
+    assert!(
+        !terminal
+            .contains("none: pilot ranks Rust seams and found none here; see the languages below"),
+        "headline must not read as an empty recommendation:\n{terminal}"
+    );
+    assert!(
+        terminal.contains("(pilot ranks Rust seams and found none here; see the languages below)"),
+        "Rust-scan explanation stays secondary:\n{terminal}"
+    );
+    assert!(
+        terminal.contains("Python preview:\n  status: no_python_findings"),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains(&format!(
+            "python: 1 file (preview, diff-first)\n    route: {command}\n"
+        )),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("Next, analyze the changed code in these languages:"),
+        "{terminal}"
+    );
+
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains(&format!("Analyze the Python diff: `{command}`")),
+        "{md}"
+    );
+    assert!(
+        md.contains("Pilot ranks Rust seams and found none in this repository. This is not a clean result for the languages listed under Languages Outside The Rust Seam Scan."),
+        "{md}"
+    );
+
+    let json = render_pilot_summary_json(&[], context);
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert!(
+        parsed.get("top_recommendation").is_none(),
+        "schema must not grow a top_recommendation field: {json}"
+    );
+    assert_eq!(parsed["language_routes"]["state"], "required");
+    assert_eq!(parsed["language_routes"]["routes"][0]["language"], "python");
+    assert_eq!(parsed["language_routes"]["routes"][0]["command"], command);
+    assert_eq!(parsed["python_first_use"]["status"], "no_python_findings");
+    assert_eq!(parsed["current_change"], serde_json::Value::Null);
+    assert!(parsed["next"]["repair_command"].is_null(), "{json}");
+
+    // A repair card still outranks the language-route headline.
+    let carded = python_first_use();
+    let carded_context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        ..pilot_context_with_python(&artifacts, &carded)
+    };
+    let carded_terminal = render_pilot_terminal(&[], carded_context);
+    assert!(
+        !carded_terminal.contains(&headline),
+        "a Python repair card remains the top recommendation:\n{carded_terminal}"
+    );
+    assert!(
+        carded_terminal.contains("Top recommendation:\n  language: python (preview)"),
+        "{carded_terminal}"
+    );
     Ok(())
 }
 

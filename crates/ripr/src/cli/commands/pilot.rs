@@ -306,8 +306,10 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     }
 
     let python_first_use = collect_pilot_python_first_use(&input, &config);
-    // #3906: pilot ranks Rust seams only. Name the languages it did not rank
-    // so an empty ranking is never read as a clean result for them.
+    // #3906 / #7665: pilot ranks Rust seams only. Name the languages it did
+    // not rank so an empty ranking is never read as a clean result for them;
+    // when a supported language is present, the headline names its `ripr check`
+    // route instead of "none".
     let language_routes = output::pilot::PilotLanguageRoutes::from_discovered(
         &input.root,
         !classified.is_empty(),

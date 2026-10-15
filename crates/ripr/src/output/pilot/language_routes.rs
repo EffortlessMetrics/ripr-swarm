@@ -202,6 +202,15 @@ impl PilotLanguageRoutes {
         (self.state == PilotLanguageRoutesState::Required).then_some(self.routes.as_slice())
     }
 
+    /// First language with a runnable `ripr check` route when the empty
+    /// ranking would otherwise headline as "none" (#7665). Unavailable
+    /// adapters have no command and stay on the none line.
+    pub(crate) fn supported_headline_route(&self) -> Option<(&PilotLanguageRoute, &str)> {
+        self.required()?
+            .iter()
+            .find_map(|route| route.command.as_deref().map(|command| (route, command)))
+    }
+
     /// Distinct runnable route commands, in route order.
     pub(crate) fn commands(routes: &[PilotLanguageRoute]) -> Vec<&String> {
         let mut commands: Vec<&String> = Vec::new();
