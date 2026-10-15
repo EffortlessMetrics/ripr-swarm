@@ -1,13 +1,50 @@
 /// Shell disclosure shown before generated command fences (#2628).
 ///
-/// The command strings are bash source (`agent::loop_commands::shell_arg`), so
-/// a fenced `bash` block is paired with a PowerShell translation derived by
-/// [`powershell_command`] when the translation differs ([`powershell_form`]). Naming both shells — and the cmd.exe boundary — in
-/// the prose keeps the packet honest on Windows; the wording mirrors the landed
-/// `agent_workflow` disclosure so every generated-command surface states the
-/// same contract. Shared here — beside the translation it describes — so the
-/// fenced command surfaces do not fork one disclosure per module.
+/// The command strings come from `agent::loop_commands::shell_arg`, which
+/// quotes for the shell family of the running host (#7729): POSIX single
+/// quotes off Windows, double quotes on it. [`command_shell_disclosure`]
+/// picks the host-appropriate text so the prose never claims a shell the
+/// printed commands do not parse in. On both hosts a fenced command is
+/// paired with a PowerShell translation derived by [`powershell_command`]
+/// when the translation differs ([`powershell_form`]). Shared here — beside
+/// the translation it describes — so the fenced command surfaces do not fork
+/// one disclosure per module.
 pub(crate) const COMMAND_SHELL_DISCLOSURE: &str = "Commands are written for Bash, with POSIX single-quote quoting and `>` redirection. A PowerShell form follows a command only when PowerShell needs a different one: doubled-quote escaping, the `&` call operator before a quoted program path, or a guarded BOM-free UTF-8 write in place of `>`. A command with no PowerShell form after it runs unchanged in PowerShell, unless a line says its PowerShell form is unavailable. cmd.exe is not supported. On Windows, use either Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths keep their Windows drive-letter prefix, which WSL resolves as a relative path.\n\n";
+
+/// Host-appropriate variant of [`COMMAND_SHELL_DISCLOSURE`] for Windows
+/// hosts (#7729): the renderer double-quotes there, so the commands paste
+/// into cmd.exe and PowerShell (and Git Bash for paths without `$` or
+/// backtick content), and saying cmd.exe is unsupported would be false.
+pub(crate) const COMMAND_SHELL_DISCLOSURE_WINDOWS: &str = "Commands are written for the Windows console: arguments are double-quoted, the one form cmd.exe, PowerShell, and Git Bash all honor for spaced paths (Git Bash expands `$` and backtick inside double quotes, so a value carrying those characters pastes into cmd.exe or PowerShell, not Git Bash). A PowerShell form follows a command only when PowerShell needs a different one: the `&` call operator before a quoted program path, or a guarded BOM-free UTF-8 write in place of `>`. A command with no PowerShell form after it runs unchanged in cmd.exe and PowerShell, unless a line says its PowerShell form is unavailable. Values containing control characters keep an explicit bash escape form; paste those in Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths keep their Windows drive-letter prefix, which WSL resolves as a relative path.\n\n";
+
+/// The shell disclosure for the running host (#7729).
+pub(crate) fn command_shell_disclosure() -> &'static str {
+    if cfg!(windows) {
+        COMMAND_SHELL_DISCLOSURE_WINDOWS
+    } else {
+        COMMAND_SHELL_DISCLOSURE
+    }
+}
+
+/// One-line claim for a command whose PowerShell form was translated
+/// (`PowershellForm::Translated`), host-aware (#7729).
+pub(crate) fn translated_form_claim() -> &'static str {
+    if cfg!(windows) {
+        "The first form uses Windows double-quote quoting, which cmd.exe, PowerShell, and Git Bash all accept for paths without `$` or backtick content."
+    } else {
+        "The first form is written for Bash; cmd.exe is not supported."
+    }
+}
+
+/// One-line claim for a command that runs unchanged in PowerShell
+/// (`PowershellForm::SameAsBash`), host-aware (#7729).
+pub(crate) fn unchanged_form_claim() -> &'static str {
+    if cfg!(windows) {
+        "It runs unchanged in cmd.exe, PowerShell, and Git Bash."
+    } else {
+        "It runs unchanged in Bash and PowerShell; cmd.exe is not supported."
+    }
+}
 
 pub(crate) fn render_string_section(out: &mut String, title: &str, values: &[String]) {
     out.push_str(&format!("\n## {title}\n\n"));
@@ -920,9 +957,13 @@ mod tests {
         let command = "cargo test example -- --test-threads=1";
         assert!(powershell_command(command).is_none());
         let forms = rooted_command_forms(Some("/selected repo"), command);
+        // The root token follows the host's quoting form (#7729); the
+        // surrounding `(cd -P -- ...)` wrapper stays bash source on both
+        // hosts, so double-quoted roots remain valid bash there.
+        let quoted_root = crate::agent::loop_commands::shell_arg("/selected repo");
         assert_eq!(
             forms["bash"],
-            "(cd -P -- '/selected repo' && cargo test example -- --test-threads=1)"
+            format!("(cd -P -- {quoted_root} && cargo test example -- --test-threads=1)")
         );
         assert!(forms["powershell"].is_null());
         assert!(

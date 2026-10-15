@@ -325,12 +325,16 @@ pub(crate) fn validate_repo_exposure_artifact(
                 "draft",
                 "recovered.repo-exposure.json",
             );
+            // Host-aware first-form label (#7729): off Windows the recovery
+            // command is bash source; on Windows it is double-quoted for the
+            // Windows console, so naming it "Bash" would be false.
+            let first_form = if cfg!(windows) { "cmd.exe" } else { "Bash/Git Bash" };
             let recovery = match crate::output::markdown::powershell_command(&bash_recovery) {
                 Some(powershell) => {
-                    format!("Bash/Git Bash: `{bash_recovery}`; PowerShell: `{powershell}`")
+                    format!("{first_form}: `{bash_recovery}`; PowerShell: `{powershell}`")
                 }
                 None => format!(
-                    "Bash/Git Bash only: `{bash_recovery}` (PowerShell recovery unavailable)"
+                    "{first_form} only: `{bash_recovery}` (PowerShell recovery unavailable)"
                 ),
             };
             return format!(
@@ -1375,18 +1379,48 @@ mod tests {
         let error = validate_repo_exposure_artifact(Path::new("selected's $root"), raw, "before")
             .err()
             .ok_or("legacy artifact was accepted")?;
-        for text in ["Bash/Git Bash:", "PowerShell:", "selected''s $root"] {
-            if !error.contains(text) {
+        // The recovery line must carry the rendered command verbatim, in the
+        // host's quoting form (#7729: single-quoted off Windows, double-quoted
+        // on it), so the expectation comes from the same builders production
+        // uses rather than a hardcoded quote character.
+        let expected_form = crate::agent::loop_commands::check_repo_exposure_command(
+            &crate::agent::loop_commands::bound_root("selected's $root"),
+            "draft",
+            "recovered.repo-exposure.json",
+        );
+        if !error.contains(&expected_form) {
+            return Err(format!(
+                "shell-labeled literal recovery omitted the rendered form {expected_form:?}: {error}"
+            ));
+        }
+        if cfg!(windows) {
+            // `$` inside the double-quoted Windows form makes the PowerShell
+            // translation withhold honestly, so the console form alone is
+            // advertised.
+            if !error.contains("cmd.exe only:") {
                 return Err(format!(
-                    "shell-labeled literal recovery omitted {text}: {error}"
+                    "shell-labeled literal recovery omitted the cmd.exe label: {error}"
                 ));
+            }
+        } else {
+            for text in ["Bash/Git Bash:", "PowerShell:", "selected''s $root"] {
+                if !error.contains(text) {
+                    return Err(format!(
+                        "shell-labeled literal recovery omitted {text}: {error}"
+                    ));
+                }
             }
         }
         let unsupported =
             validate_repo_exposure_artifact(Path::new("selected>root"), raw, "before")
                 .err()
                 .ok_or("legacy artifact was accepted")?;
-        if !unsupported.contains("Bash/Git Bash only:")
+        let withheld_label = if cfg!(windows) {
+            "cmd.exe only:"
+        } else {
+            "Bash/Git Bash only:"
+        };
+        if !unsupported.contains(withheld_label)
             || !unsupported.contains("PowerShell recovery unavailable")
         {
             return Err(format!(

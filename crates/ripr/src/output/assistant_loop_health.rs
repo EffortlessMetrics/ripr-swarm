@@ -1343,6 +1343,7 @@ mod tests {
     /// #4000: since #3948 the handoff's agent command names the checkout
     /// root, quoted when it holds a space. Splitting it on whitespace handed
     /// back `'/work/my` and every repair command carried an unbalanced quote.
+    /// The extracted root re-renders in the host's quoting form (#7729).
     #[test]
     fn repair_commands_keep_a_quoted_root_whole() {
         assert_eq!(
@@ -1350,7 +1351,7 @@ mod tests {
                 "ripr agent brief --root '/work/my repo' --seam-id abc --json > target/ripr/workflow/agent-brief.json"
             )
             .as_deref(),
-            Some("'/work/my repo'")
+            Some(crate::agent::loop_commands::shell_arg("/work/my repo").as_str())
         );
         assert_eq!(
             root_from_agent_command("ripr agent start --root repo-root --seam-id s").as_deref(),
@@ -1358,14 +1359,20 @@ mod tests {
         );
         // Every form `shell_arg` renders round-trips as the same word, including
         // metacharacters and the `$(printf ...)` escape for control characters.
+        // On Windows a `$`/backtick value is the exception (#7729): no Windows
+        // quoting form protects it from PowerShell expansion, so extraction
+        // refuses rather than round-trip a value that would expand in one of
+        // the target consoles — the same fail-closed shape the expansion
+        // guards below pin.
         for root in ["/w/a&b", "/w/$HOME", "/w/it's", "/w/a\u{1}b", "/w/a b;c"] {
             let quoted = crate::agent::loop_commands::shell_arg(root);
             let command = format!("ripr agent start --root {quoted} --seam-id s");
-            assert_eq!(
-                root_from_agent_command(&command).as_deref(),
-                Some(quoted.as_str()),
-                "{command}"
-            );
+            let extracted = root_from_agent_command(&command);
+            if cfg!(windows) && root.contains(['$', '`']) {
+                assert_eq!(extracted, None, "{command}");
+            } else {
+                assert_eq!(extracted.as_deref(), Some(quoted.as_str()), "{command}");
+            }
         }
         assert_eq!(
             root_from_agent_command("ripr agent start --seam-id s"),

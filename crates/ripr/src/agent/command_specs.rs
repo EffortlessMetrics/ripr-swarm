@@ -883,11 +883,20 @@ fn command_spec(
 }
 
 fn shell_words(command: &str) -> Option<Vec<String>> {
+    shell_words_for(command, cfg!(windows))
+}
+
+/// Pure host-parameterised core of [`shell_words`], so both hosts' parse
+/// semantics are testable on any machine. The recovery parser must agree with
+/// the renderer (`loop_commands::shell_arg`) on the host ripr runs on, or a
+/// rendered token cannot round-trip (#3231, #7729).
+fn shell_words_for(command: &str, windows: bool) -> Option<Vec<String>> {
     let mut words = Vec::new();
     let mut current = String::new();
     let mut quote = None;
     let mut escaped = false;
-    for character in command.chars() {
+    let mut chars = command.chars().peekable();
+    while let Some(character) = chars.next() {
         if escaped {
             current.push(character);
             escaped = false;
@@ -901,6 +910,18 @@ fn shell_words(command: &str) -> Option<Vec<String>> {
             // single quotes the backslash keeps its escape meaning (unquoted
             // and double-quoted behavior).
             (Some('\''), '\\') => current.push(character),
+            // #7729: on Windows the renderer quotes with double quotes, in
+            // which cmd.exe and PowerShell keep a backslash literal; the
+            // parser must agree or a rendered `C:\...` token loses its
+            // separators to escape consumption.
+            (Some('"'), '\\') if windows => current.push(character),
+            // #7729: cmd.exe escapes an interior double quote by doubling
+            // it; the pair is one literal quote in the argument, not a
+            // close-then-reopen of the quoting region.
+            (Some('"'), '"') if windows && chars.peek() == Some(&'"') => {
+                current.push('"');
+                let _ = chars.next();
+            }
             (_, '\\') => escaped = true,
             (Some(active), value) if value == active => quote = None,
             (Some(_), ';' | '&' | '|' | '<' | '>' | '`' | '$') => {
@@ -1260,14 +1281,18 @@ mod tests {
             ));
         }
         // Renderer agreement: the same token rendered by `shell_arg` (inside
-        // `agent_verify_command`) recovers to the identical argv entry.
+        // `agent_verify_command`) recovers to the identical argv entry. The
+        // quoting form is host-dependent (#7729: single quotes off Windows,
+        // double quotes on it), so the expectation comes from the renderer
+        // itself rather than a hardcoded quote character.
         let rendered = crate::agent::loop_commands::agent_verify_command(
             ".",
             &windows_before,
             "after.json",
             None,
         );
-        if !rendered.contains(&format!("'{windows_before}'")) {
+        let quoted = crate::agent::loop_commands::shell_arg(&windows_before);
+        if !rendered.contains(&quoted) {
             return Err(format!("renderer left the token unquoted: {rendered}"));
         }
         let round_tripped = agent_command_spec_from_display(&rendered, std::path::Path::new("."))
@@ -1287,17 +1312,50 @@ mod tests {
 
     /// #3231: outside single quotes the backslash keeps its escape meaning —
     /// unquoted and double-quoted tokens consume it as an escape, matching
-    /// the pre-fix behavior the canonical display tokens rely on.
+    /// the pre-fix behavior the canonical display tokens rely on. The
+    /// double-quoted arm is host-dependent (#7729: literal inside double
+    /// quotes on Windows), so both host parses are pinned through the pure
+    /// `shell_words_for` core.
     #[test]
     fn backslash_outside_single_quotes_keeps_escape_semantics() -> Result<(), String> {
         if shell_words(r"a\b c") != Some(vec!["ab".to_string(), "c".to_string()]) {
             return Err("unquoted backslash must escape the next character".to_string());
         }
-        if shell_words(r#""a\b" c"#) != Some(vec!["ab".to_string(), "c".to_string()]) {
-            return Err("double-quoted backslash must escape the next character".to_string());
+        if shell_words_for(r#""a\b" c"#, false) != Some(vec!["ab".to_string(), "c".to_string()]) {
+            return Err("bash double-quoted backslash must escape the next character".to_string());
+        }
+        if shell_words_for(r#""a\b" c"#, true) != Some(vec!["a\\b".to_string(), "c".to_string()]) {
+            return Err("Windows double-quoted backslash must stay literal".to_string());
         }
         if shell_words(r"'a\b' c") != Some(vec!["a\\b".to_string(), "c".to_string()]) {
             return Err("single-quoted backslash must stay literal".to_string());
+        }
+        Ok(())
+    }
+
+    /// #7729: on Windows the renderer double-quotes values (cmd.exe and
+    /// PowerShell form, interior quote doubled), and the recovery parser must
+    /// rebuild exactly the original bytes — the spaced drive-letter root that
+    /// motivates the fix, plus an interior-quote value exercising the `""`
+    /// escape pair. Pure-core assertions so both directions run on any host.
+    #[test]
+    fn windows_double_quoted_tokens_round_trip_through_recovery() -> Result<(), String> {
+        for value in [
+            r"C:\tmp\probe win space".to_string(),
+            "with\"quote".to_string(),
+        ] {
+            let rendered_token = crate::agent::loop_commands::shell_arg_for(&value, true);
+            let command = format!("ripr check --root {rendered_token} --base main");
+            let words = shell_words_for(&command, true)
+                .ok_or_else(|| format!("Windows-quoted route was not recoverable: {command}"))?;
+            if !words
+                .windows(2)
+                .any(|pair| pair == ["--root", value.as_str()])
+            {
+                return Err(format!(
+                    "Windows-quoted token did not round-trip: rendered {rendered_token:?}, parsed {words:?}"
+                ));
+            }
         }
         Ok(())
     }
