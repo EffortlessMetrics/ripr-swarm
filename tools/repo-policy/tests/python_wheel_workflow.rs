@@ -1421,3 +1421,84 @@ fn parallel_contract_binds_its_checkout_and_propagates_failed_git() -> TestResul
     assert_eq!(run(head.trim())?.status.code(), Some(9));
     Ok(())
 }
+
+fn canonical_wheel_codegen(source: &str) -> TestResult<bool> {
+    let Some((_, section)) = source.split_once("[tool.maturin]\n") else {
+        return Ok(false);
+    };
+    let section = section.split("\n[").next().ok_or("maturin section")?;
+    let values = section
+        .lines()
+        .filter_map(|line| {
+            let (key, value) = line.trim().split_once('=')?;
+            (key.trim() == "config").then_some(value.trim())
+        })
+        .collect::<Vec<_>>();
+    if values.len() != 1 {
+        return Ok(false);
+    }
+    let config: Vec<String> = serde_json::from_str(values[0])?;
+    Ok(config == ["profile.release.codegen-units=4"])
+}
+
+#[test]
+fn wheel_codegen_recipe_and_native_release_profile_are_preserved() -> TestResult {
+    let manifest = include_str!("../../../packaging/python/pyproject.toml");
+    assert!(
+        canonical_wheel_codegen(manifest)?,
+        "all wheel producers need the same explicit codegen recipe"
+    );
+    for wrong in [
+        manifest.replace(
+            "profile.release.codegen-units=4",
+            "profile.release.codegen-units=1",
+        ),
+        manifest.replace(
+            "profile.release.codegen-units=4",
+            "profile.release.lto=false",
+        ),
+        manifest.replace(
+            "profile.release.codegen-units=4",
+            "profile.release.opt-level=1",
+        ),
+        manifest.replace("config = [", "# config = ["),
+        manifest.replace("[tool.maturin]", "[tool.maturin.generate-ci]"),
+    ] {
+        assert_ne!(wrong, manifest);
+        assert!(!canonical_wheel_codegen(&wrong)?);
+    }
+    let cargo = include_str!("../../../Cargo.toml");
+    let release = cargo
+        .split_once("[profile.release]\n")
+        .ok_or("release profile")?
+        .1
+        .split("\n[")
+        .next()
+        .ok_or("release body")?;
+    let native_quality = |source: &str| {
+        ["lto = true", "strip = true", "codegen-units = 1"]
+            .into_iter()
+            .all(|retained| source.lines().any(|line| line == retained))
+            && source
+                .lines()
+                .filter_map(|line| line.trim().split_once('='))
+                .all(|(key, value)| key.trim() != "opt-level" || value.trim() == "3")
+    };
+    assert!(native_quality(release));
+    assert!(!native_quality(&format!("{release}\nopt-level = 1\n")));
+    assert!(!native_quality(
+        &release.replace("lto = true", "lto = false")
+    ));
+    let build = shell_from_job(
+        WORKFLOW,
+        "build-wheel",
+        "Build wheel without a compatibility-floor claim",
+    )?;
+    assert!(build.contains("--release"));
+    assert!(
+        !build.contains("CARGO_PROFILE_RELEASE_"),
+        "the workflow must use the canonical package recipe"
+    );
+    assert!(!job(WORKFLOW, "mcp-evidence-pair")?.contains("CARGO_PROFILE_RELEASE_"));
+    Ok(())
+}
