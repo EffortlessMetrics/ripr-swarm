@@ -847,7 +847,10 @@ to `amount - 20`, and `tests/lib.test.ts` has
     `save(db, 1); expect(db.write).toHaveBeenCalledWith(3)`:
     `mock_expectation` / medium, `weakly_exposed` (unchanged). With
     `const db = { write: jest.fn() }` in the test, RIPR-SPEC-0247 rule 1
-    reads `mock_expectation` / strong, `exposed`.
+    reads `mock_expectation` / strong, `exposed`; amended 2026-10-15, so
+    does `const db = makeDb();` through a test-file
+    `function makeDb() { return { write: jest.fn() }; }` (RIPR-SPEC-0247
+    decision 8).
 31. `src/lib.ts` is `import { fee } from "./other";` plus the base
     `price`, whose line reads `return fee(amount - 10);`, changed to
     `return fee(amount - 20);`; the test
