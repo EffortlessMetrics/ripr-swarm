@@ -10,10 +10,10 @@ use crate::analysis::classify::{
     fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
     helper_pins_owner_call, infection_evidence_with_boundary_input, local_flow_sinks,
-    method_cannot_store, operand_only_pin, oracle_crediting_relations, owner_may_be_reached_unseen,
-    owner_touches_field_only_at, package_prefix, parameter_rebound,
-    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
-    same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
+    method_cannot_store, observes_returned_element_field, operand_only_pin,
+    oracle_crediting_relations, owner_may_be_reached_unseen, owner_touches_field_only_at,
+    package_prefix, parameter_rebound, propagation_evidence_with_witness, reach_evidence,
+    reveal_outcome, same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
     unconditional_owner_insert_field,
 };
 use crate::analysis::extract::mask_comments_and_strings;
@@ -682,8 +682,42 @@ impl ClassifiedProbeEvidence {
         // gates (a name-only relation next to a reach-bearing test, a
         // foreign same-name import, a cross-package same-name definition);
         // a token match never does.
+        // #7858: a field built inside an array the owner returns is observed
+        // by a test that pins that element alone, by its literal index or by
+        // an `.any(..)` membership no other element can satisfy. The same
+        // name defeats as reveal's owner pins apply to the owner call.
+        let element_field_pinned = matches!(context.probe.family, ProbeFamily::FieldConstruction)
+            && activation.missing_discriminators.iter().any(|fact| {
+                fact.flow_sink
+                    .as_ref()
+                    .is_some_and(|sink| sink.kind == FlowSinkKind::StructField)
+            })
+            && context.owner_fn.is_some_and(|owner| {
+                // The pin matches the owner call by name. A second indexed
+                // function of that name (a nested module's `super::rows`, a
+                // test file's local `fn rows`) may be the one the test
+                // calls, so only a unique name is read (#8059 review).
+                context
+                    .index
+                    .functions()
+                    .iter()
+                    .filter(|function| function.name == owner.name)
+                    .count()
+                    == 1
+                    && context.related_tests.iter().any(|(test, _)| {
+                        !import_defeats(test, &owner.name)
+                            && !cross_package_defeats(test, &owner.name)
+                            && observes_returned_element_field(
+                                context.probe,
+                                owner,
+                                test,
+                                context.index,
+                                pin_syntax,
+                            )
+                    })
+            });
         if matches!(context.probe.family, ProbeFamily::FieldConstruction)
-            && reveal.owner_pin_credited
+            && (reveal.owner_pin_credited || element_field_pinned)
         {
             activation.missing_discriminators.retain(|fact| {
                 fact.flow_sink

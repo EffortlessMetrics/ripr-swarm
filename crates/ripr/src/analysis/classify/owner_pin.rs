@@ -207,12 +207,25 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// computed once per run over the once-built module-name set.
     /// The index is immutable, so the memo never goes stale.
     unit_struct_facts: OnceCell<UnitStructFacts>,
+    /// RIPR-SPEC-0225 decision 9: whether the workspace is closed for
+    /// iteration, a whole-index scan computed once per run.
+    iteration_closed: OnceCell<bool>,
+    /// RIPR-SPEC-0225 decision 9: the names a workspace macro may declare a
+    /// type under, `None` when any name may be declared.
+    macro_type_names: OnceCell<Option<BTreeSet<String>>>,
+    /// RIPR-SPEC-0225 decision 9: [`field_builtin_integer`] answers per
+    /// [`FieldIntegerKey`]; the index is immutable, so none goes stale.
+    field_integer_memo: RefCell<BTreeMap<FieldIntegerKey, Option<&'static str>>>,
     withheld: WithheldMacroBindings,
 }
 
 /// #7097: a bare-call binding verdict key: owner file, owner line, owner
 /// name, test file, test line.
 type BareCallKey = (PathBuf, usize, String, PathBuf, usize);
+
+/// RIPR-SPEC-0225 decision 9: a field-integer key: owner file, owner name,
+/// record type name, field name.
+type FieldIntegerKey = (PathBuf, String, String, String);
 
 /// #6974: run-scoped answers for [`OwnerReturnPin::path_reaches_owner`].
 #[derive(Clone, Debug, Default)]
@@ -325,6 +338,19 @@ fn withheld_crate_root(path: &Path) -> Option<PathBuf> {
 }
 
 impl OwnerPinSyntax {
+    /// The run's memo of a whole-index verdict that `compute` reads once.
+    pub(in crate::analysis) fn iteration_closed(&self, compute: impl FnOnce() -> bool) -> bool {
+        *self.iteration_closed.get_or_init(compute)
+    }
+
+    /// Whether a macro in the workspace may declare a type named `name`.
+    fn macro_may_declare(&self, name: &str, index: &RustIndex) -> bool {
+        self.macro_type_names
+            .get_or_init(|| macro_type_names(index))
+            .as_ref()
+            .is_none_or(|names| names.contains("$") || names.contains(name))
+    }
+
     /// Bounded targeted-selection identity for a non-generic inherent call.
     /// Cross-file imports, nested type paths and receiver inference stay
     /// unresolved; this is not a general Rust name resolver.
@@ -5279,6 +5305,176 @@ fn initialized_field_name(expression: &str) -> Option<&str> {
 
 /// How deep [`type_compares_by_value`] follows workspace field types.
 const EQUALITY_DEPTH_LIMIT: usize = 4;
+
+/// RIPR-SPEC-0225 decision 9: the primitive integer type `field` of
+/// `type_name` is declared with, when `type_name` is the struct a record
+/// literal in the owner's body names, so comparing the field to an integer
+/// literal is the built-in `==`. The struct is declared exactly once in the
+/// owner's own file, in the owner's own inline module (a local item takes
+/// the name from every import), with no attribute that may compile it out
+/// or change it, no generic parameter, and no attribute on any enclosing
+/// module; no other indexed file declares a type of that name. The field is
+/// named once, carries no attribute, and its type is a standard integer
+/// name that no workspace type, alias, rename or foreign import rebinds in
+/// the owner's file. Anything else refuses.
+pub(in crate::analysis) fn field_builtin_integer(
+    owner: &FunctionSummary,
+    type_name: &str,
+    field: &str,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> Option<&'static str> {
+    let key = (
+        owner.file.clone(),
+        owner.name.clone(),
+        type_name.to_owned(),
+        field.to_owned(),
+    );
+    if let Some(found) = syntax.field_integer_memo.borrow().get(&key) {
+        return *found;
+    }
+    let found = field_builtin_integer_uncached(owner, type_name, field, index, syntax);
+    syntax.field_integer_memo.borrow_mut().insert(key, found);
+    found
+}
+
+fn field_builtin_integer_uncached(
+    owner: &FunctionSummary,
+    type_name: &str,
+    field: &str,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> Option<&'static str> {
+    let file = index.files().get(&owner.file)?;
+    if file.used_lexical_fallback
+        || index.files().iter().any(|(path, other)| {
+            *path != owner.file
+                && other.source.contains(type_name)
+                && declares_type(&mask_comments_and_strings(&other.source), type_name)
+        })
+    {
+        return None;
+    }
+    let parse = parse_clean_source_file(&file.source)?;
+    let tree = parse.tree();
+    let modules = |node: &SyntaxNode| {
+        node.ancestors()
+            .filter_map(ast::Module::cast)
+            .collect::<Vec<_>>()
+    };
+    let mut owners = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .is_some_and(|name| name.text() == owner.name.as_str())
+                && function.syntax().parent().is_some_and(|parent| {
+                    ast::SourceFile::can_cast(parent.kind())
+                        || ast::ItemList::can_cast(parent.kind())
+                })
+        });
+    let (Some(owner_fn), None) = (owners.next(), owners.next()) else {
+        return None;
+    };
+    let owner_modules = modules(owner_fn.syntax());
+    if owner_modules
+        .iter()
+        .any(|module| module.attrs().next().is_some())
+    {
+        return None;
+    }
+    let mut declarations = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Adt::cast)
+        .filter(|adt| adt.name().is_some_and(|name| name.text() == type_name));
+    let (Some(ast::Adt::Struct(declaration)), None) = (declarations.next(), declarations.next())
+    else {
+        return None;
+    };
+    if modules(declaration.syntax()) != owner_modules {
+        return None;
+    }
+    let facts = local_type_equality(&file.source, type_name)?;
+    if facts.generic_params || facts.other_attributes {
+        return None;
+    }
+    let mut named = facts
+        .fields
+        .iter()
+        .filter(|candidate| candidate.name.as_deref() == Some(field));
+    let (Some(found), None) = (named.next(), named.next()) else {
+        return None;
+    };
+    let ty = BUILTIN_INTEGERS
+        .iter()
+        .copied()
+        .find(|integer| *integer == found.ty.trim())?;
+    (!found.has_attributes
+        && !type_declared_in_workspace(ty, index)
+        && !syntax.macro_may_declare(ty, index)
+        && !declaring_file_rebinds(&file.source, ty, false, index))
+    .then_some(ty)
+}
+
+/// The names a macro in the workspace may declare a type under: every
+/// identifier of a macro body or argument that also holds `struct`, `enum`,
+/// `union` or `type` (`$` among them when a metavariable may supply the
+/// name). `None` when any name may be declared: an unparsed file, or an
+/// item-level call of a macro the workspace does not define, whose output
+/// no scan reads (#8059 review: `shadow!(u32)` declared a local `u32`).
+fn macro_type_names(index: &RustIndex) -> Option<BTreeSet<String>> {
+    const ITEM_MACROS: &[&str] = &["thread_local", "compile_error"];
+    let mut names = BTreeSet::new();
+    let mut defined = BTreeSet::new();
+    let mut called = Vec::new();
+    for facts in index.files().values() {
+        if facts.used_lexical_fallback {
+            return None;
+        }
+        let parse = parse_clean_source_file(&facts.source)?;
+        for node in parse.tree().syntax().descendants() {
+            if let Some(rules) = ast::MacroRules::cast(node.clone()) {
+                defined.insert(rules.name()?.text().to_string());
+            } else if let Some(call) = ast::MacroCall::cast(node.clone()) {
+                if call.syntax().parent().is_some_and(|parent| {
+                    ast::SourceFile::can_cast(parent.kind())
+                        || ast::ItemList::can_cast(parent.kind())
+                        || ast::MacroItems::can_cast(parent.kind())
+                }) {
+                    called.push(call.path()?.segment()?.syntax().text().to_string());
+                }
+            } else if ast::TokenTree::can_cast(node.kind())
+                && !node
+                    .parent()
+                    .is_some_and(|parent| ast::TokenTree::can_cast(parent.kind()))
+            {
+                let tokens: Vec<String> = node
+                    .descendants_with_tokens()
+                    .filter_map(|element| element.into_token())
+                    .filter(|token| !token.kind().is_trivia())
+                    .map(|token| token.text().trim_start_matches("r#").to_string())
+                    .collect();
+                if tokens
+                    .iter()
+                    .any(|token| matches!(token.as_str(), "struct" | "enum" | "union" | "type"))
+                {
+                    names.extend(tokens);
+                }
+            }
+        }
+    }
+    called
+        .iter()
+        .all(|name| defined.contains(name) || ITEM_MACROS.contains(&name.as_str()))
+        .then_some(names)
+}
+
+const BUILTIN_INTEGERS: &[&str] = &[
+    "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+];
 
 /// #6692 (RIPR-SPEC-0225 rules 3-4): whether `==` on `type_name` compares
 /// its field `field` by value through the derived comparison. `type_name`
