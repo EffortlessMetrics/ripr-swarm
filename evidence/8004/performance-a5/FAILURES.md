@@ -48,3 +48,16 @@
 The user-provided denial of issue #8005 was honored. There was no read,
 alternate-route retry, bot contact, or candidate-source write. Later failures,
 if any, are retained in raw process output and the final report.
+
+## Measurement setup details
+
+* After the candidate build, a process-absence check `ps -C rustc -C cargo`
+  returned 1 because no processes matched, causing a `set -e` wrapper to exit.
+  Both builds had already completed; candidate file-backed status was 0 and
+  version/digest checks succeeded. Repeating the check with explicit acceptance
+  of the empty process list established the intended no-build boundary.
+* The first main invocation filtered with substring `sync-4-single`, which also
+  selected `async-4-single`. Both are planned workloads, fully labeled in raw
+  files/TSV and independently completed at nine pairs. They remain valid; do
+  not repeat async-4 samples. The driver was corrected to exact workload names,
+  retaining suffix matching only for the explicit pilot selector `-4-single`.

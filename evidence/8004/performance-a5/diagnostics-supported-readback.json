@@ -1,0 +1,70 @@
+{
+  "commit": "752cc1ba1c1140a58af284663c9c05f6f4570678",
+  "remote_blob_sha": "ae5ad87b3e151d5976d8b832413837d7f4041c96",
+  "computed_git_blob_sha": "ae5ad87b3e151d5976d8b832413837d7f4041c96",
+  "archive_sha256": "21e7928e09f5df067e2c65bdf7772c0faf17df926958233c66e4a8aebab0636e",
+  "bytes": 83908,
+  "files": [
+    {
+      "path": "diagnostics/base-unique4-compact.stderr",
+      "bytes": 352,
+      "sha256": "d449299b02238dae10c5e8ee6b204056bc9b6b24ed9f4c37dbd1d58965d1f0d2"
+    },
+    {
+      "path": "diagnostics/base-sync64-full.json",
+      "bytes": 3836354,
+      "sha256": "426419799f0b312161e4ab355ea650ef460b33cb8a72313e22490fc2551cebd4"
+    },
+    {
+      "path": "diagnostics/base-unique4-full.stderr",
+      "bytes": 344,
+      "sha256": "25ae0f264b36eb3f3dd892d830965682cfbc32a60c0bb7dd95e85cd4f3e79fea"
+    },
+    {
+      "path": "diagnostics/base-sync64-full.stderr",
+      "bytes": 439,
+      "sha256": "8d737098178f2be381c4731a963ee5207521cedb1148d07f1eb2a2d5f32f54e8"
+    },
+    {
+      "path": "diagnostics/base-sync64-full.status",
+      "bytes": 12,
+      "sha256": "bde294368bfed77c2cddf8cec271d398aee9cdbab3b26e1059281bd33adb0120"
+    },
+    {
+      "path": "diagnostics/base-sync64-compact.json",
+      "bytes": 1802,
+      "sha256": "c513ebf5b07426fa5005ea845ce2f194bb2e012ff79fdd8e3f3ece7f0c59a68a"
+    },
+    {
+      "path": "diagnostics/base-sync64-compact.status",
+      "bytes": 12,
+      "sha256": "bde294368bfed77c2cddf8cec271d398aee9cdbab3b26e1059281bd33adb0120"
+    },
+    {
+      "path": "diagnostics/base-unique4-compact.status",
+      "bytes": 12,
+      "sha256": "bde294368bfed77c2cddf8cec271d398aee9cdbab3b26e1059281bd33adb0120"
+    },
+    {
+      "path": "diagnostics/base-sync64-compact.stderr",
+      "bytes": 495,
+      "sha256": "989863e83f7d77210e9c32d59223ef25238e31463771dd3246a15dd9f1487cbe"
+    },
+    {
+      "path": "diagnostics/base-unique4-full.json",
+      "bytes": 186715,
+      "sha256": "f28678a3eb201f50a35d81f0f70872abfb733defa599bdcf1475c206be1f1e90"
+    },
+    {
+      "path": "diagnostics/base-unique4-compact.json",
+      "bytes": 1797,
+      "sha256": "f715a14001f171822a077daf588318d7e6570a3765189cdcaf96b9ce595cbeac"
+    },
+    {
+      "path": "diagnostics/base-unique4-full.status",
+      "bytes": 12,
+      "sha256": "bde294368bfed77c2cddf8cec271d398aee9cdbab3b26e1059281bd33adb0120"
+    }
+  ],
+  "all_terminal_outputs_equal_local": true
+}

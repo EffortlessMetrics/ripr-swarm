@@ -1,0 +1,3 @@
+Inherited benchmark-relevant environment
+Toolchain linker probe
+linker_probe_exit=0

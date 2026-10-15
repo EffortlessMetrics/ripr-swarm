@@ -22,6 +22,24 @@ fn differences(a: &Value,b: &Value,p: &str,out: &mut Vec<Value>) {
         _=>out.push(json!({"pointer":p,"base":a,"candidate":b}))
     }
 }
+fn inventory(v:&Value)->Value {
+    let mut rows:Vec<_>=v["seams"].as_array().unwrap().iter().map(|s| json!([s["seam_id"],s["kind"],s["file"],s["line"],s["owner"],s["expression"]])).collect();
+    rows.sort_by_key(|v|v.to_string());Value::Array(rows)
+}
+fn relations(v:&Value)->Value {
+    let mut counts=BTreeMap::<String,usize>::new();
+    let seams=v["seams"].as_array().unwrap();
+    let mut totals=0u64;
+    let mut kinds=BTreeMap::<String,usize>::new();
+    for s in seams {
+        totals+=s["related_tests_total"].as_u64().unwrap_or(0);
+        *kinds.entry(s["kind"].as_str().unwrap_or("unknown").into()).or_default()+=1;
+        if let Some(tests)=s["related_tests"].as_array(){for t in tests {
+            *counts.entry(format!("{}/{}",t["relation_reason"].as_str().unwrap_or("unknown"),t["relation_confidence"].as_str().unwrap_or("unknown"))).or_default()+=1;
+        }}
+    }
+    json!({"rendered_relation_counts":counts,"sum_related_tests_total":totals,"seam_kinds":kinds})
+}
 fn main()->Result<(),Box<dyn std::error::Error>> {
     let args:Vec<_>=env::args().collect(); let home=Path::new(&args[1]);
     let text=fs::read_to_string(home.join("evidence/measurements.tsv"))?;
@@ -38,6 +56,7 @@ fn main()->Result<(),Box<dyn std::error::Error>> {
         let id=format!("main-{workload}-{mode}-{round}-{variant}-{path}");
         let mut value:Value=serde_json::from_slice(&fs::read(home.join(format!("evidence/raw/{id}.json")))?)?;
         if value["metrics"].is_null() {return Err(format!("no metrics {id}").into())}
+        if mode=="full" && value["run_status"]!="complete" {return Err(format!("full analysis incomplete {id}: {}",value["run_status"]).into())}
         let total=value["metrics"][if mode=="full" {"seams_total"}else{"raw_seams"}].as_u64().ok_or("missing total")?;
         if total==0 {return Err(format!("zero workload {id}").into())}
         if mode=="full" && value["seams"].as_array().ok_or("missing seams")?.len() as u64 != total {return Err(format!("seam count mismatch {id}").into())}
@@ -75,6 +94,7 @@ fn main()->Result<(),Box<dyn std::error::Error>> {
             let a=&canonical[&(workload.clone(),mode.into(),"base".into())];let b=&canonical[&(workload.clone(),mode.into(),"candidate".into())];
             let mut diff=Vec::new();differences(a,b,"",&mut diff);
             outputs.push(json!({"workload":workload,"mode":mode,"base_metrics":a["metrics"],"candidate_metrics":b["metrics"],"normalized_equal":a==b,"first_200_differences":diff}));
+            if mode=="full" {outputs.push(json!({"workload":workload,"inventory_id_kind_location_owner_expression_equal":inventory(a)==inventory(b),"base_relations":relations(a),"candidate_relations":relations(b)}));}
         }
         for variant in ["base","candidate"] {
             let full=&canonical[&(workload.clone(),"full".into(),variant.into())]["metrics"];

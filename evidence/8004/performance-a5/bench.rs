@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut table = fs::OpenOptions::new().create(true).append(true).open(home.join("evidence/measurements.tsv"))?;
     for root in workloads {
         let workload = root.file_name().unwrap().to_str().unwrap();
-        if !workload.contains(workload_filter) { continue; }
+        if !workload_filter.is_empty() && !(if workload_filter.starts_with('-') { workload.ends_with(workload_filter) } else { workload==workload_filter }) { continue; }
         for (mode, format) in [("full", "repo-exposure-json"), ("compact", "repo-exposure-summary-json")] {
             for round in 0..count {
                 let order = if round % 2 == 0 { ["base", "candidate"] } else { ["candidate", "base"] };

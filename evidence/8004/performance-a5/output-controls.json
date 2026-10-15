@@ -1,0 +1,2379 @@
+{
+  "normalization": "remove only top-level artifact from reports; preserve all remaining fields and array order",
+  "outputs": [
+    {
+      "base_metrics": {
+        "activation_unknown": 0,
+        "discrimination_unknown": 0,
+        "headline_eligible": 28,
+        "intentional": 0,
+        "observation_unknown": 0,
+        "opaque": 0,
+        "propagation_unknown": 0,
+        "reachable_unrevealed": 0,
+        "seams_total": 28,
+        "strongly_gripped": 0,
+        "suppressed": 0,
+        "ungripped": 0,
+        "weakly_gripped": 28
+      },
+      "candidate_metrics": {
+        "activation_unknown": 0,
+        "discrimination_unknown": 0,
+        "headline_eligible": 28,
+        "intentional": 0,
+        "observation_unknown": 0,
+        "opaque": 0,
+        "propagation_unknown": 0,
+        "reachable_unrevealed": 0,
+        "seams_total": 28,
+        "strongly_gripped": 0,
+        "suppressed": 0,
+        "ungripped": 0,
+        "weakly_gripped": 28
+      },
+      "first_200_differences": [
+        {
+          "base": "yes",
+          "candidate": "weak",
+          "pointer": "/seams/0/evidence/reach"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/0/evidence_record/canonical_item/related_test/reason"
+        },
+        {
+          "base": "medium",
+          "candidate": "low",
+          "pointer": "/seams/0/evidence_record/evidence_path/reach/confidence"
+        },
+        {
+          "base": "yes",
+          "candidate": "weak",
+          "pointer": "/seams/0/evidence_record/evidence_path/reach/state"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_0::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "No test is seen calling as_object; tests share only its file or a name token: subject, subject, subject",
+          "pointer": "/seams/0/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/0/evidence_record/recommendation/nearest_test_to_imitate/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/0/evidence_record/recommendation/nearest_test_to_imitate/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/0/evidence_record/related_tests/0/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/0/evidence_record/related_tests/0/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/0/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/0/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/0/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/0/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/0/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/0/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/0/related_tests/0/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/0/related_tests/0/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/0/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/0/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/0/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/0/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/0/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/0/related_tests/3/relation_reason"
+        },
+        {
+          "base": "yes",
+          "candidate": "weak",
+          "pointer": "/seams/1/evidence/reach"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/1/evidence_record/canonical_item/related_test/reason"
+        },
+        {
+          "base": "medium",
+          "candidate": "low",
+          "pointer": "/seams/1/evidence_record/evidence_path/reach/confidence"
+        },
+        {
+          "base": "yes",
+          "candidate": "weak",
+          "pointer": "/seams/1/evidence_record/evidence_path/reach/state"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_0::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "No test is seen calling as_object; tests share only its file or a name token: subject, subject, subject",
+          "pointer": "/seams/1/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/1/evidence_record/recommendation/nearest_test_to_imitate/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/1/evidence_record/recommendation/nearest_test_to_imitate/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/1/evidence_record/related_tests/0/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/1/evidence_record/related_tests/0/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/1/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/1/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/1/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/1/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/1/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/1/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/1/related_tests/0/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/1/related_tests/0/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/1/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/1/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/1/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/1/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/1/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/1/related_tests/3/relation_reason"
+        },
+        {
+          "base": "yes",
+          "candidate": "weak",
+          "pointer": "/seams/2/evidence/reach"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/2/evidence_record/canonical_item/related_test/reason"
+        },
+        {
+          "base": "medium",
+          "candidate": "low",
+          "pointer": "/seams/2/evidence_record/evidence_path/reach/confidence"
+        },
+        {
+          "base": "yes",
+          "candidate": "weak",
+          "pointer": "/seams/2/evidence_record/evidence_path/reach/state"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_0::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "No test is seen calling as_object; tests share only its file or a name token: subject, subject, subject",
+          "pointer": "/seams/2/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/2/evidence_record/recommendation/nearest_test_to_imitate/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/2/evidence_record/recommendation/nearest_test_to_imitate/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/2/evidence_record/related_tests/0/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/2/evidence_record/related_tests/0/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/2/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/2/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/2/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/2/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/2/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/2/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/2/related_tests/0/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/2/related_tests/0/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/2/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/2/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/2/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/2/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/2/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/2/related_tests/3/relation_reason"
+        },
+        {
+          "base": "yes",
+          "candidate": "weak",
+          "pointer": "/seams/3/evidence/reach"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/3/evidence_record/canonical_item/related_test/reason"
+        },
+        {
+          "base": "medium",
+          "candidate": "low",
+          "pointer": "/seams/3/evidence_record/evidence_path/reach/confidence"
+        },
+        {
+          "base": "yes",
+          "candidate": "weak",
+          "pointer": "/seams/3/evidence_record/evidence_path/reach/state"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_0::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "No test is seen calling as_object; tests share only its file or a name token: subject, subject, subject",
+          "pointer": "/seams/3/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/3/evidence_record/recommendation/nearest_test_to_imitate/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/3/evidence_record/recommendation/nearest_test_to_imitate/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/3/evidence_record/related_tests/0/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/3/evidence_record/related_tests/0/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/3/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/3/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/3/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/3/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/3/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/3/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/3/related_tests/0/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/3/related_tests/0/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/3/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/3/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/3/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/3/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/3/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/3/related_tests/3/relation_reason"
+        },
+        {
+          "base": "yes",
+          "candidate": "weak",
+          "pointer": "/seams/7/evidence/reach"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/7/evidence_record/canonical_item/related_test/reason"
+        },
+        {
+          "base": "medium",
+          "candidate": "low",
+          "pointer": "/seams/7/evidence_record/evidence_path/reach/confidence"
+        },
+        {
+          "base": "yes",
+          "candidate": "weak",
+          "pointer": "/seams/7/evidence_record/evidence_path/reach/state"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_1::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "No test is seen calling as_object; tests share only its file or a name token: subject, subject, subject",
+          "pointer": "/seams/7/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/7/evidence_record/recommendation/nearest_test_to_imitate/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/7/evidence_record/recommendation/nearest_test_to_imitate/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/7/evidence_record/related_tests/0/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/7/evidence_record/related_tests/0/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/7/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/7/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/7/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/7/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/7/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/7/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/7/related_tests/0/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/7/related_tests/0/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/7/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/7/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/7/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/7/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/7/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/7/related_tests/3/relation_reason"
+        },
+        {
+          "base": "yes",
+          "candidate": "weak",
+          "pointer": "/seams/8/evidence/reach"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/8/evidence_record/canonical_item/related_test/reason"
+        },
+        {
+          "base": "medium",
+          "candidate": "low",
+          "pointer": "/seams/8/evidence_record/evidence_path/reach/confidence"
+        },
+        {
+          "base": "yes",
+          "candidate": "weak",
+          "pointer": "/seams/8/evidence_record/evidence_path/reach/state"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_1::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "No test is seen calling as_object; tests share only its file or a name token: subject, subject, subject",
+          "pointer": "/seams/8/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/8/evidence_record/recommendation/nearest_test_to_imitate/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/8/evidence_record/recommendation/nearest_test_to_imitate/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/8/evidence_record/related_tests/0/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/8/evidence_record/related_tests/0/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/8/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/8/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/8/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/8/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/8/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/8/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/8/related_tests/0/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/8/related_tests/0/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/8/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/8/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/8/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/8/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/8/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/8/related_tests/3/relation_reason"
+        },
+        {
+          "base": "yes",
+          "candidate": "weak",
+          "pointer": "/seams/9/evidence/reach"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/9/evidence_record/canonical_item/related_test/reason"
+        },
+        {
+          "base": "medium",
+          "candidate": "low",
+          "pointer": "/seams/9/evidence_record/evidence_path/reach/confidence"
+        },
+        {
+          "base": "yes",
+          "candidate": "weak",
+          "pointer": "/seams/9/evidence_record/evidence_path/reach/state"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_1::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "No test is seen calling as_object; tests share only its file or a name token: subject, subject, subject",
+          "pointer": "/seams/9/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/9/evidence_record/recommendation/nearest_test_to_imitate/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/9/evidence_record/recommendation/nearest_test_to_imitate/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/9/evidence_record/related_tests/0/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/9/evidence_record/related_tests/0/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/9/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/9/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/9/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/9/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/9/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/9/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/9/related_tests/0/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/9/related_tests/0/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/9/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/9/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/9/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/9/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/9/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/9/related_tests/3/relation_reason"
+        },
+        {
+          "base": "yes",
+          "candidate": "weak",
+          "pointer": "/seams/10/evidence/reach"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/10/evidence_record/canonical_item/related_test/reason"
+        },
+        {
+          "base": "medium",
+          "candidate": "low",
+          "pointer": "/seams/10/evidence_record/evidence_path/reach/confidence"
+        },
+        {
+          "base": "yes",
+          "candidate": "weak",
+          "pointer": "/seams/10/evidence_record/evidence_path/reach/state"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_1::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "No test is seen calling as_object; tests share only its file or a name token: subject, subject, subject",
+          "pointer": "/seams/10/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/10/evidence_record/recommendation/nearest_test_to_imitate/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/10/evidence_record/recommendation/nearest_test_to_imitate/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/10/evidence_record/related_tests/0/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/10/evidence_record/related_tests/0/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/10/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/10/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/10/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/10/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/10/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/10/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/10/related_tests/0/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/10/related_tests/0/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/10/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/10/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/10/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/10/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/10/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/10/related_tests/3/relation_reason"
+        },
+        {
+          "base": "yes",
+          "candidate": "weak",
+          "pointer": "/seams/14/evidence/reach"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/14/evidence_record/canonical_item/related_test/reason"
+        },
+        {
+          "base": "medium",
+          "candidate": "low",
+          "pointer": "/seams/14/evidence_record/evidence_path/reach/confidence"
+        },
+        {
+          "base": "yes",
+          "candidate": "weak",
+          "pointer": "/seams/14/evidence_record/evidence_path/reach/state"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_2::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "No test is seen calling as_object; tests share only its file or a name token: subject, subject, subject",
+          "pointer": "/seams/14/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/14/evidence_record/recommendation/nearest_test_to_imitate/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/14/evidence_record/recommendation/nearest_test_to_imitate/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/14/evidence_record/related_tests/0/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/14/evidence_record/related_tests/0/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/14/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/14/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/14/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/14/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/14/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/14/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/14/related_tests/0/relation_confidence"
+        }
+      ],
+      "mode": "full",
+      "normalized_equal": false,
+      "workload": "async-4-single"
+    },
+    {
+      "base_relations": {
+        "rendered_relation_counts": {
+          "direct_owner_call/high": 4,
+          "helper_owner_call/high": 96
+        },
+        "seam_kinds": {
+          "match_arm": 12,
+          "return_value": 16
+        },
+        "sum_related_tests_total": 100
+      },
+      "candidate_relations": {
+        "rendered_relation_counts": {
+          "direct_owner_call/high": 4,
+          "helper_owner_call/high": 32,
+          "same_test_file/medium": 64
+        },
+        "seam_kinds": {
+          "match_arm": 12,
+          "return_value": 16
+        },
+        "sum_related_tests_total": 100
+      },
+      "inventory_id_kind_location_owner_expression_equal": true,
+      "workload": "async-4-single"
+    },
+    {
+      "base_metrics": {
+        "canonical_gap_records": 28,
+        "grip_class": {
+          "activation_unknown": 0,
+          "discrimination_unknown": 0,
+          "intentional": 0,
+          "observation_unknown": 0,
+          "opaque": 0,
+          "propagation_unknown": 0,
+          "reachable_unrevealed": 0,
+          "strongly_gripped": 0,
+          "suppressed": 0,
+          "ungripped": 0,
+          "weakly_gripped": 28
+        },
+        "headline_eligible_seams": 28,
+        "raw_actionable_seam_records": 0,
+        "raw_seams": 28,
+        "suppressed_exposure_gaps": 0,
+        "unsuppressed_exposure_gaps": 0
+      },
+      "candidate_metrics": {
+        "canonical_gap_records": 28,
+        "grip_class": {
+          "activation_unknown": 0,
+          "discrimination_unknown": 0,
+          "intentional": 0,
+          "observation_unknown": 0,
+          "opaque": 0,
+          "propagation_unknown": 0,
+          "reachable_unrevealed": 0,
+          "strongly_gripped": 0,
+          "suppressed": 0,
+          "ungripped": 0,
+          "weakly_gripped": 28
+        },
+        "headline_eligible_seams": 28,
+        "raw_actionable_seam_records": 0,
+        "raw_seams": 28,
+        "suppressed_exposure_gaps": 0,
+        "unsuppressed_exposure_gaps": 0
+      },
+      "first_200_differences": [],
+      "mode": "compact",
+      "normalized_equal": true,
+      "workload": "async-4-single"
+    },
+    {
+      "full_compact_inventory_and_grip_parity": true,
+      "variant": "base",
+      "workload": "async-4-single"
+    },
+    {
+      "full_compact_inventory_and_grip_parity": true,
+      "variant": "candidate",
+      "workload": "async-4-single"
+    },
+    {
+      "base_metrics": {
+        "activation_unknown": 0,
+        "discrimination_unknown": 0,
+        "headline_eligible": 0,
+        "intentional": 0,
+        "observation_unknown": 0,
+        "opaque": 0,
+        "propagation_unknown": 0,
+        "reachable_unrevealed": 0,
+        "seams_total": 28,
+        "strongly_gripped": 28,
+        "suppressed": 0,
+        "ungripped": 0,
+        "weakly_gripped": 0
+      },
+      "candidate_metrics": {
+        "activation_unknown": 0,
+        "discrimination_unknown": 0,
+        "headline_eligible": 0,
+        "intentional": 0,
+        "observation_unknown": 0,
+        "opaque": 0,
+        "propagation_unknown": 0,
+        "reachable_unrevealed": 0,
+        "seams_total": 28,
+        "strongly_gripped": 28,
+        "suppressed": 0,
+        "ungripped": 0,
+        "weakly_gripped": 0
+      },
+      "first_200_differences": [
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_0::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "Related tests appear to reach `src/lib.rs::unit_0::impl JsonValue::as_object`: subject",
+          "pointer": "/seams/0/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/0/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/0/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/0/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/0/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/0/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/0/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/0/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/0/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/0/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/0/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/0/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/0/related_tests/3/relation_reason"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_0::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "Related tests appear to reach `src/lib.rs::unit_0::impl JsonValue::as_object`: subject",
+          "pointer": "/seams/1/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/1/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/1/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/1/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/1/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/1/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/1/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/1/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/1/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/1/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/1/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/1/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/1/related_tests/3/relation_reason"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_0::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "Related tests appear to reach `src/lib.rs::unit_0::impl JsonValue::as_object`: subject",
+          "pointer": "/seams/2/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/2/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/2/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/2/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/2/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/2/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/2/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/2/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/2/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/2/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/2/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/2/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/2/related_tests/3/relation_reason"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_0::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "Related tests appear to reach `src/lib.rs::unit_0::impl JsonValue::as_object`: subject",
+          "pointer": "/seams/3/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/3/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/3/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/3/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/3/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/3/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/3/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/3/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/3/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/3/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/3/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/3/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/3/related_tests/3/relation_reason"
+        },
+        {
+          "base": 13,
+          "candidate": 28,
+          "pointer": "/seams/7/evidence_record/canonical_item/related_test/line"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_1::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "Related tests appear to reach `src/lib.rs::unit_1::impl JsonValue::as_object`: subject",
+          "pointer": "/seams/7/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": 13,
+          "candidate": 28,
+          "pointer": "/seams/7/evidence_record/recommendation/nearest_test_to_imitate/line"
+        },
+        {
+          "base": 13,
+          "candidate": 28,
+          "pointer": "/seams/7/evidence_record/related_tests/0/line"
+        },
+        {
+          "base": 28,
+          "candidate": 13,
+          "pointer": "/seams/7/evidence_record/related_tests/1/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/7/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/7/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/7/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/7/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/7/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/7/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": 13,
+          "candidate": 28,
+          "pointer": "/seams/7/related_tests/0/line"
+        },
+        {
+          "base": 28,
+          "candidate": 13,
+          "pointer": "/seams/7/related_tests/1/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/7/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/7/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/7/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/7/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/7/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/7/related_tests/3/relation_reason"
+        },
+        {
+          "base": 13,
+          "candidate": 28,
+          "pointer": "/seams/8/evidence_record/canonical_item/related_test/line"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_1::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "Related tests appear to reach `src/lib.rs::unit_1::impl JsonValue::as_object`: subject",
+          "pointer": "/seams/8/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": 13,
+          "candidate": 28,
+          "pointer": "/seams/8/evidence_record/recommendation/nearest_test_to_imitate/line"
+        },
+        {
+          "base": 13,
+          "candidate": 28,
+          "pointer": "/seams/8/evidence_record/related_tests/0/line"
+        },
+        {
+          "base": 28,
+          "candidate": 13,
+          "pointer": "/seams/8/evidence_record/related_tests/1/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/8/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/8/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/8/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/8/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/8/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/8/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": 13,
+          "candidate": 28,
+          "pointer": "/seams/8/related_tests/0/line"
+        },
+        {
+          "base": 28,
+          "candidate": 13,
+          "pointer": "/seams/8/related_tests/1/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/8/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/8/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/8/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/8/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/8/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/8/related_tests/3/relation_reason"
+        },
+        {
+          "base": 13,
+          "candidate": 28,
+          "pointer": "/seams/9/evidence_record/canonical_item/related_test/line"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_1::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "Related tests appear to reach `src/lib.rs::unit_1::impl JsonValue::as_object`: subject",
+          "pointer": "/seams/9/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": 13,
+          "candidate": 28,
+          "pointer": "/seams/9/evidence_record/recommendation/nearest_test_to_imitate/line"
+        },
+        {
+          "base": 13,
+          "candidate": 28,
+          "pointer": "/seams/9/evidence_record/related_tests/0/line"
+        },
+        {
+          "base": 28,
+          "candidate": 13,
+          "pointer": "/seams/9/evidence_record/related_tests/1/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/9/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/9/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/9/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/9/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/9/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/9/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": 13,
+          "candidate": 28,
+          "pointer": "/seams/9/related_tests/0/line"
+        },
+        {
+          "base": 28,
+          "candidate": 13,
+          "pointer": "/seams/9/related_tests/1/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/9/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/9/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/9/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/9/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/9/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/9/related_tests/3/relation_reason"
+        },
+        {
+          "base": 13,
+          "candidate": 28,
+          "pointer": "/seams/10/evidence_record/canonical_item/related_test/line"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_1::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "Related tests appear to reach `src/lib.rs::unit_1::impl JsonValue::as_object`: subject",
+          "pointer": "/seams/10/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": 13,
+          "candidate": 28,
+          "pointer": "/seams/10/evidence_record/recommendation/nearest_test_to_imitate/line"
+        },
+        {
+          "base": 13,
+          "candidate": 28,
+          "pointer": "/seams/10/evidence_record/related_tests/0/line"
+        },
+        {
+          "base": 28,
+          "candidate": 13,
+          "pointer": "/seams/10/evidence_record/related_tests/1/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/10/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/10/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/10/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/10/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/10/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/10/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": 13,
+          "candidate": 28,
+          "pointer": "/seams/10/related_tests/0/line"
+        },
+        {
+          "base": 28,
+          "candidate": 13,
+          "pointer": "/seams/10/related_tests/1/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/10/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/10/related_tests/1/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/10/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/10/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/10/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/10/related_tests/3/relation_reason"
+        },
+        {
+          "base": 13,
+          "candidate": 43,
+          "pointer": "/seams/14/evidence_record/canonical_item/related_test/line"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_2::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "Related tests appear to reach `src/lib.rs::unit_2::impl JsonValue::as_object`: subject",
+          "pointer": "/seams/14/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": 13,
+          "candidate": 43,
+          "pointer": "/seams/14/evidence_record/recommendation/nearest_test_to_imitate/line"
+        },
+        {
+          "base": 13,
+          "candidate": 43,
+          "pointer": "/seams/14/evidence_record/related_tests/0/line"
+        },
+        {
+          "base": 28,
+          "candidate": 13,
+          "pointer": "/seams/14/evidence_record/related_tests/1/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/14/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/14/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": 43,
+          "candidate": 28,
+          "pointer": "/seams/14/evidence_record/related_tests/2/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/14/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/14/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/14/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/14/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": 13,
+          "candidate": 43,
+          "pointer": "/seams/14/related_tests/0/line"
+        },
+        {
+          "base": 28,
+          "candidate": 13,
+          "pointer": "/seams/14/related_tests/1/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/14/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/14/related_tests/1/relation_reason"
+        },
+        {
+          "base": 43,
+          "candidate": 28,
+          "pointer": "/seams/14/related_tests/2/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/14/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/14/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/14/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/14/related_tests/3/relation_reason"
+        },
+        {
+          "base": 13,
+          "candidate": 43,
+          "pointer": "/seams/15/evidence_record/canonical_item/related_test/line"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_2::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "Related tests appear to reach `src/lib.rs::unit_2::impl JsonValue::as_object`: subject",
+          "pointer": "/seams/15/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": 13,
+          "candidate": 43,
+          "pointer": "/seams/15/evidence_record/recommendation/nearest_test_to_imitate/line"
+        },
+        {
+          "base": 13,
+          "candidate": 43,
+          "pointer": "/seams/15/evidence_record/related_tests/0/line"
+        },
+        {
+          "base": 28,
+          "candidate": 13,
+          "pointer": "/seams/15/evidence_record/related_tests/1/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/15/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/15/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": 43,
+          "candidate": 28,
+          "pointer": "/seams/15/evidence_record/related_tests/2/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/15/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/15/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/15/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/15/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": 13,
+          "candidate": 43,
+          "pointer": "/seams/15/related_tests/0/line"
+        },
+        {
+          "base": 28,
+          "candidate": 13,
+          "pointer": "/seams/15/related_tests/1/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/15/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/15/related_tests/1/relation_reason"
+        },
+        {
+          "base": 43,
+          "candidate": 28,
+          "pointer": "/seams/15/related_tests/2/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/15/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/15/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/15/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/15/related_tests/3/relation_reason"
+        },
+        {
+          "base": 13,
+          "candidate": 43,
+          "pointer": "/seams/16/evidence_record/canonical_item/related_test/line"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_2::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "Related tests appear to reach `src/lib.rs::unit_2::impl JsonValue::as_object`: subject",
+          "pointer": "/seams/16/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": 13,
+          "candidate": 43,
+          "pointer": "/seams/16/evidence_record/recommendation/nearest_test_to_imitate/line"
+        },
+        {
+          "base": 13,
+          "candidate": 43,
+          "pointer": "/seams/16/evidence_record/related_tests/0/line"
+        },
+        {
+          "base": 28,
+          "candidate": 13,
+          "pointer": "/seams/16/evidence_record/related_tests/1/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/16/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/16/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": 43,
+          "candidate": 28,
+          "pointer": "/seams/16/evidence_record/related_tests/2/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/16/evidence_record/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/16/evidence_record/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/16/evidence_record/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/16/evidence_record/related_tests/3/relation_reason"
+        },
+        {
+          "base": 13,
+          "candidate": 43,
+          "pointer": "/seams/16/related_tests/0/line"
+        },
+        {
+          "base": 28,
+          "candidate": 13,
+          "pointer": "/seams/16/related_tests/1/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/16/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/16/related_tests/1/relation_reason"
+        },
+        {
+          "base": 43,
+          "candidate": 28,
+          "pointer": "/seams/16/related_tests/2/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/16/related_tests/2/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/16/related_tests/2/relation_reason"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/16/related_tests/3/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/16/related_tests/3/relation_reason"
+        },
+        {
+          "base": 13,
+          "candidate": 43,
+          "pointer": "/seams/17/evidence_record/canonical_item/related_test/line"
+        },
+        {
+          "base": "Related tests appear to reach `src/lib.rs::unit_2::impl JsonValue::as_object`: subject, subject, subject",
+          "candidate": "Related tests appear to reach `src/lib.rs::unit_2::impl JsonValue::as_object`: subject",
+          "pointer": "/seams/17/evidence_record/evidence_path/reach/summary"
+        },
+        {
+          "base": 13,
+          "candidate": 43,
+          "pointer": "/seams/17/evidence_record/recommendation/nearest_test_to_imitate/line"
+        },
+        {
+          "base": 13,
+          "candidate": 43,
+          "pointer": "/seams/17/evidence_record/related_tests/0/line"
+        },
+        {
+          "base": 28,
+          "candidate": 13,
+          "pointer": "/seams/17/evidence_record/related_tests/1/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/17/evidence_record/related_tests/1/relation_confidence"
+        },
+        {
+          "base": "helper_owner_call",
+          "candidate": "same_test_file",
+          "pointer": "/seams/17/evidence_record/related_tests/1/relation_reason"
+        },
+        {
+          "base": 43,
+          "candidate": 28,
+          "pointer": "/seams/17/evidence_record/related_tests/2/line"
+        },
+        {
+          "base": "high",
+          "candidate": "medium",
+          "pointer": "/seams/17/evidence_record/related_tests/2/relation_confidence"
+        }
+      ],
+      "mode": "full",
+      "normalized_equal": false,
+      "workload": "sync-4-single"
+    },
+    {
+      "base_relations": {
+        "rendered_relation_counts": {
+          "direct_owner_call/high": 4,
+          "helper_owner_call/high": 96
+        },
+        "seam_kinds": {
+          "match_arm": 12,
+          "return_value": 16
+        },
+        "sum_related_tests_total": 100
+      },
+      "candidate_relations": {
+        "rendered_relation_counts": {
+          "direct_owner_call/high": 4,
+          "helper_owner_call/high": 48,
+          "same_test_file/medium": 48
+        },
+        "seam_kinds": {
+          "match_arm": 12,
+          "return_value": 16
+        },
+        "sum_related_tests_total": 100
+      },
+      "inventory_id_kind_location_owner_expression_equal": true,
+      "workload": "sync-4-single"
+    },
+    {
+      "base_metrics": {
+        "canonical_gap_records": 0,
+        "grip_class": {
+          "activation_unknown": 0,
+          "discrimination_unknown": 0,
+          "intentional": 0,
+          "observation_unknown": 0,
+          "opaque": 0,
+          "propagation_unknown": 0,
+          "reachable_unrevealed": 0,
+          "strongly_gripped": 28,
+          "suppressed": 0,
+          "ungripped": 0,
+          "weakly_gripped": 0
+        },
+        "headline_eligible_seams": 0,
+        "raw_actionable_seam_records": 0,
+        "raw_seams": 28,
+        "suppressed_exposure_gaps": 0,
+        "unsuppressed_exposure_gaps": 0
+      },
+      "candidate_metrics": {
+        "canonical_gap_records": 0,
+        "grip_class": {
+          "activation_unknown": 0,
+          "discrimination_unknown": 0,
+          "intentional": 0,
+          "observation_unknown": 0,
+          "opaque": 0,
+          "propagation_unknown": 0,
+          "reachable_unrevealed": 0,
+          "strongly_gripped": 28,
+          "suppressed": 0,
+          "ungripped": 0,
+          "weakly_gripped": 0
+        },
+        "headline_eligible_seams": 0,
+        "raw_actionable_seam_records": 0,
+        "raw_seams": 28,
+        "suppressed_exposure_gaps": 0,
+        "unsuppressed_exposure_gaps": 0
+      },
+      "first_200_differences": [],
+      "mode": "compact",
+      "normalized_equal": true,
+      "workload": "sync-4-single"
+    },
+    {
+      "full_compact_inventory_and_grip_parity": true,
+      "variant": "base",
+      "workload": "sync-4-single"
+    },
+    {
+      "full_compact_inventory_and_grip_parity": true,
+      "variant": "candidate",
+      "workload": "sync-4-single"
+    },
+    {
+      "base_metrics": {
+        "activation_unknown": 0,
+        "discrimination_unknown": 0,
+        "headline_eligible": 0,
+        "intentional": 0,
+        "observation_unknown": 0,
+        "opaque": 0,
+        "propagation_unknown": 0,
+        "reachable_unrevealed": 0,
+        "seams_total": 28,
+        "strongly_gripped": 28,
+        "suppressed": 0,
+        "ungripped": 0,
+        "weakly_gripped": 0
+      },
+      "candidate_metrics": {
+        "activation_unknown": 0,
+        "discrimination_unknown": 0,
+        "headline_eligible": 0,
+        "intentional": 0,
+        "observation_unknown": 0,
+        "opaque": 0,
+        "propagation_unknown": 0,
+        "reachable_unrevealed": 0,
+        "seams_total": 28,
+        "strongly_gripped": 28,
+        "suppressed": 0,
+        "ungripped": 0,
+        "weakly_gripped": 0
+      },
+      "first_200_differences": [],
+      "mode": "full",
+      "normalized_equal": true,
+      "workload": "unique-4-single"
+    },
+    {
+      "base_relations": {
+        "rendered_relation_counts": {
+          "direct_owner_call/high": 4,
+          "helper_owner_call/high": 24,
+          "same_test_file/medium": 84
+        },
+        "seam_kinds": {
+          "match_arm": 12,
+          "return_value": 16
+        },
+        "sum_related_tests_total": 112
+      },
+      "candidate_relations": {
+        "rendered_relation_counts": {
+          "direct_owner_call/high": 4,
+          "helper_owner_call/high": 24,
+          "same_test_file/medium": 84
+        },
+        "seam_kinds": {
+          "match_arm": 12,
+          "return_value": 16
+        },
+        "sum_related_tests_total": 112
+      },
+      "inventory_id_kind_location_owner_expression_equal": true,
+      "workload": "unique-4-single"
+    },
+    {
+      "base_metrics": {
+        "canonical_gap_records": 0,
+        "grip_class": {
+          "activation_unknown": 0,
+          "discrimination_unknown": 0,
+          "intentional": 0,
+          "observation_unknown": 0,
+          "opaque": 0,
+          "propagation_unknown": 0,
+          "reachable_unrevealed": 0,
+          "strongly_gripped": 28,
+          "suppressed": 0,
+          "ungripped": 0,
+          "weakly_gripped": 0
+        },
+        "headline_eligible_seams": 0,
+        "raw_actionable_seam_records": 0,
+        "raw_seams": 28,
+        "suppressed_exposure_gaps": 0,
+        "unsuppressed_exposure_gaps": 0
+      },
+      "candidate_metrics": {
+        "canonical_gap_records": 0,
+        "grip_class": {
+          "activation_unknown": 0,
+          "discrimination_unknown": 0,
+          "intentional": 0,
+          "observation_unknown": 0,
+          "opaque": 0,
+          "propagation_unknown": 0,
+          "reachable_unrevealed": 0,
+          "strongly_gripped": 28,
+          "suppressed": 0,
+          "ungripped": 0,
+          "weakly_gripped": 0
+        },
+        "headline_eligible_seams": 0,
+        "raw_actionable_seam_records": 0,
+        "raw_seams": 28,
+        "suppressed_exposure_gaps": 0,
+        "unsuppressed_exposure_gaps": 0
+      },
+      "first_200_differences": [],
+      "mode": "compact",
+      "normalized_equal": true,
+      "workload": "unique-4-single"
+    },
+    {
+      "full_compact_inventory_and_grip_parity": true,
+      "variant": "base",
+      "workload": "unique-4-single"
+    },
+    {
+      "full_compact_inventory_and_grip_parity": true,
+      "variant": "candidate",
+      "workload": "unique-4-single"
+    }
+  ],
+  "samples_checked": 216,
+  "total_trace_status_counts": {
+    "compact/cold/compact_computed": 54,
+    "compact/warm/compact_cache_hit": 54,
+    "full/cold/computed": 54,
+    "full/warm/cache_hit": 54
+  },
+  "within_variant_failures": []
+}
