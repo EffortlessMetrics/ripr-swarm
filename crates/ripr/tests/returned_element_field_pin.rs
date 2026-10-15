@@ -570,6 +570,9 @@ fn a_macro_or_outside_crate_that_may_supply_the_name_keeps_the_gap() -> Result<(
     Ok(())
 }
 
+/// A lib tail, test body, manifest dependencies, extra `src/` files and label.
+type OutsideCase<'a> = (&'a str, &'a str, &'a str, &'a [(&'a str, &'a str)], &'a str);
+
 /// The indexed form needs the closed workspace too: a macro alias, a module
 /// in a directory the index skips, or an outside crate's macro may declare a
 /// local `u32`, and a skipped module may bring the membership's trait
@@ -579,7 +582,7 @@ fn a_name_from_outside_the_scanned_workspace_keeps_the_gap() -> Result<(), Strin
     const INDEX: &str = "        assert_eq!(rows(30, 3)[1].total, 33);";
     const SHADOW: &str = "pub struct u32(pub i64);\nimpl PartialEq<i32> for u32 {\n    fn eq(&self, _: &i32) -> bool {\n        true\n    }\n}\n";
     const DEP: &str = "\n[dependencies]\nshadowdep = { path = \"../shadowdep\" }\n";
-    let cases: [(&str, &str, &str, &[(&str, &str)], &str); 5] = [
+    let cases: [OutsideCase<'_>; 5] = [
         (
             "mod w {\n    pub struct W(pub i64);\n}\nmacro_rules! alias {\n    ($n:ident) => {\n        use crate::w::W as $n;\n    };\n}\nalias!(u32);\n",
             INDEX,
