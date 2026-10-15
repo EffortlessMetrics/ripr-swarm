@@ -33,6 +33,10 @@ pub(crate) struct PilotSummaryContext<'a> {
     pub(crate) config_path: Option<&'a Path>,
     pub(crate) max_seams: usize,
     pub(crate) timeout_ms: u64,
+    /// Automatic deadline extension granted when `--timeout-ms` was omitted
+    /// (#2424). Zero when the budget was a hard limit or this summary is
+    /// not a timeout path.
+    pub(crate) timeout_extension_ms: u64,
     pub(crate) artifacts: &'a PilotArtifacts,
     pub(crate) python_first_use: Option<&'a PilotPythonFirstUse>,
     /// Routes for languages pilot's Rust seam scan does not rank. `None` when
