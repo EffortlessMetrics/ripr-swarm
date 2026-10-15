@@ -12,6 +12,12 @@ framework. The singular `detect_python_test_framework` is pytest-first
 primary-of-set for adapter repo-input, not mixed catalog authority.
 Django `tests.py` admission stays #7706.
 
+A 4096-byte evidence prefix that cuts `import unittest_extra` after
+`import unittest` is not unittest evidence. Read one extra byte; if the
+file continues and the last line is not newline-terminated (and the extra
+byte is not that newline), drop the incomplete line. Fail-closed is
+correct; a false `python: unittest` surface is not.
+
 ## 2026-10-12: A timed-out pilot packet must not keep the previous run's repo-exposure (#7425)
 
 `ripr pilot` reuses `--out`. The timeout path writes only `pilot-summary.{json,md}`.

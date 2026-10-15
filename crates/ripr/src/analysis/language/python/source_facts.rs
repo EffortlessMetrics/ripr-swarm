@@ -179,16 +179,36 @@ pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> 
     detect_python_test_frameworks(root).into_iter().next()
 }
 
-/// Bytes inspected for framework import evidence. The read itself stops here.
+/// Bytes inspected for framework import evidence. The read consumes at most
+/// one extra byte so a cut final line can be dropped instead of classified.
 const PYTHON_FRAMEWORK_EVIDENCE_PREFIX_BYTES: u64 = 4096;
 
 fn read_framework_evidence_prefix(path: &Path) -> Option<String> {
     let file = std::fs::File::open(path).ok()?;
     let mut buf = Vec::new();
-    file.take(PYTHON_FRAMEWORK_EVIDENCE_PREFIX_BYTES)
+    file.take(PYTHON_FRAMEWORK_EVIDENCE_PREFIX_BYTES + 1)
         .read_to_end(&mut buf)
         .ok()?;
+    drop_truncated_final_line(&mut buf, PYTHON_FRAMEWORK_EVIDENCE_PREFIX_BYTES as usize);
     Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// When the file continues past `prefix_bytes`, the last inspected line may
+/// be a cut identifier (`import unittest` vs `import unittest_extra`). Keep
+/// that line only when it is newline-terminated, including the case where
+/// the newline sits in the extra lookahead byte.
+fn drop_truncated_final_line(buf: &mut Vec<u8>, prefix_bytes: usize) {
+    let Some(&extra) = buf.get(prefix_bytes) else {
+        return;
+    };
+    buf.truncate(prefix_bytes);
+    if buf.last() == Some(&b'\n') || extra == b'\n' {
+        return;
+    }
+    match buf.iter().rposition(|&b| b == b'\n') {
+        Some(idx) => buf.truncate(idx + 1),
+        None => buf.clear(),
+    }
 }
 
 /// Whether a line is a real pytest import statement — `import pytest`,

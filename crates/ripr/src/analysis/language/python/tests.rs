@@ -246,6 +246,60 @@ fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<
 }
 
 #[test]
+fn detect_python_test_frameworks_does_not_complete_a_truncated_import() -> Result<(), String> {
+    // Prefix contract (#7664 review): if byte 4096 cuts `import unittest_extra`
+    // after `import unittest`, the incomplete line is not framework evidence.
+    const PREFIX: usize = 4096;
+    const UNITTEST_IMPORT: &str = "import unittest";
+
+    let root = unique_test_root("prefix-truncated-lookalike");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let mut lookalike = "x".repeat(PREFIX - UNITTEST_IMPORT.len() - 1);
+    lookalike.push('\n');
+    lookalike.push_str("import unittest_extra\n");
+    std::fs::write(root.join("test_truncated.py"), lookalike)
+        .map_err(|err| format!("write truncated lookalike: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        Vec::<&str>::new()
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // The genuine import whose trailing newline sits in the extra byte
+    // is still complete and must count.
+    let root = unique_test_root("prefix-newline-in-lookahead");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let mut newline_in_extra = "x".repeat(PREFIX - UNITTEST_IMPORT.len() - 1);
+    newline_in_extra.push('\n');
+    newline_in_extra.push_str("import unittest\n");
+    std::fs::write(root.join("test_newline_extra.py"), newline_in_extra)
+        .map_err(|err| format!("write newline-in-extra: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // A newline-terminated import that ends exactly at the prefix, with
+    // more bytes after it, still counts.
+    let root = unique_test_root("prefix-complete-at-bound");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let complete = format!("{UNITTEST_IMPORT}\n");
+    let mut at_bound = "x".repeat(PREFIX - complete.len() - 1);
+    at_bound.push('\n');
+    at_bound.push_str(&complete);
+    at_bound.push_str("trailing source after the inspection window\n");
+    std::fs::write(root.join("test_complete_bound.py"), at_bound)
+        .map_err(|err| format!("write complete-at-bound: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
 fn detect_python_test_frameworks_reads_only_the_file_prefix() -> Result<(), String> {
     // Prefix contract (#7664 review): an import after 4096 bytes is ignored,
     // and an import at the start of a larger file still counts.
