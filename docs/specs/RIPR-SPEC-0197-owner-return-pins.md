@@ -1448,10 +1448,10 @@ and only per pinned call:
 The run check reads values, not mutants: it shows the changed chain runs
 to its end on a pinned input, which is what rule 3 asks of any tail.
 Whether those inputs discriminate a boundary stays the infection stage's
-question. `grid-equality-table` (`day % 7 == 6 || day % 7 == 0` over a
-table) stays below `exposed`: its predicate keeps `infection_unknown` for
-computed operands, and its return value still lacks a complete
-owner-bound propagation witness.
+question. In `grid-equality-table` (`day % 7 == 6 || day % 7 == 0` over a
+table) the predicate keeps `infection_unknown` for computed operands; the
+return value, which before item 4 lacked a complete owner-bound
+propagation witness, is now credited through that witness and the pin.
 
 ### Exact projections
 
