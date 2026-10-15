@@ -341,7 +341,9 @@ mod tests {
     }
 
     fn cli_receipts(input: Value) -> Result<Result<(), String>, Box<dyn std::error::Error>> {
-        let root = std::env::temp_dir().join(format!(
+        let temp_root = std::env::temp_dir();
+        fs::create_dir_all(&temp_root)?;
+        let root = temp_root.join(format!(
             "ripr-partition-controls-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
