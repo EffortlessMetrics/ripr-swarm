@@ -500,6 +500,10 @@ from returned reviews/comments without treating either as review completion.
 Historical response subjects remain unattributed; the packet head is collection
 context only. This does not add a provider gate or change the advisory action.
 See [provider observation fields](OUTPUT_SCHEMA.md#github-pr-status-provider-observations).
+For unresolved inline conversations and their next actions, use the read-only
+[finish-pr conversation inventory](../.agents/skills/finish-pr/references/review-conversations.md).
+It paginates threads and keeps outdated unresolved findings visible; it does not
+replace substantive review or change merge protections.
 Use [Merge freshness and watcher policy](MERGE_WATCH_POLICY.md) for polling
 cadence, branch-refresh decisions, REST status fallback, Droid/advisory-check
 handling, and local worktree merge limitations.
