@@ -130,3 +130,15 @@ Own branch/worktree: `codex/4987-windows-subset-admission`,
 `/workspace/windows-subset-proof`. The original checkout and all other writers'
 branches remain unchanged. Local target is bounded/product-independent; compact
 patch/bundle/logs are retained for parent review. No broad cleanup is authorized.
+
+## Independent source review repair
+
+Exact candidate `789a615` review found two source defects, both repaired on the
+same owner branch: embedded Windows storage tests now read the extracted callee,
+and ordinary COMMENTED reviews cannot erase a native CHANGES_REQUESTED
+verdict. Admission and final refresh retain the latest decisive native review
+(APPROVED / CHANGES_REQUESTED / DISMISSED) separately from source attestation
+comments. A later native approval or dismissal resolves that reviewer's verdict;
+ordinary comments, including source-ready markers, do not. Focused regressions
+exercise both rejection cases and native resolution. All 30 embedded storage
+Python tests run portably; this is consumer/source proof, not Windows execution.

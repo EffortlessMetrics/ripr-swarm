@@ -79,7 +79,7 @@ jobs:
                   echo "::warning title=Dark conflicted PR head::PR #$number head ${head_sha:0:8} is mergeable_state=dirty, so no pull_request run can exist (no merge ref); merge main into $head_ref first, then explicitly request merge-ready."
                 else
                   dark=$((dark + 1))
-                  disposition="DARK; needs Draft -> Ready (\`$head_ref\`)"
+                  disposition="DARK; review and explicitly request merge-ready (\`$head_ref\`)"
                   echo "::warning title=Dark requested PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run (pushed after Ready, or the Ready event was dropped); refresh current readiness and explicitly request merge-ready."
                 fi
               fi

@@ -58,11 +58,14 @@ jobs:
           reviews=$(gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100")
           author=$(jq -r .user.login <<< "$pr")
           jq -s -e --arg head "$HEAD_SHA" --arg author "$author" '
-            [ .[][] ] | group_by(.user.login) | map(max_by(.submitted_at)) |
-            all(.[]; .commit_id != $head or .state != "CHANGES_REQUESTED") and
-            any(.[]; .commit_id == $head and
-              (.state == "APPROVED" or (.state == "COMMENTED" and
-               (.body | test("(^|[^A-Z_])(SOURCE_REVIEW_READY|REVIEW_READY)([^A-Z_]|$)")))))' <<< "$reviews" >/dev/null
+            [ .[][] ] as $reviews |
+            ($reviews | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
+              group_by(.user.login) | map(max_by(.submitted_at))) as $dispositions |
+            all($dispositions[]; .commit_id != $head or .state != "CHANGES_REQUESTED") and
+            (any($dispositions[]; .commit_id == $head and .state == "APPROVED") or
+             any($reviews | group_by(.user.login) | map(max_by(.submitted_at))[];
+               .commit_id == $head and .state == "COMMENTED" and
+               (.body | test("(^|[^A-Z_])(SOURCE_REVIEW_READY|REVIEW_READY)([^A-Z_]|$)"))))' <<< "$reviews" >/dev/null
           cursor=null
           while :; do
             threads=$(gh api graphql -f query='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}' -F number="$PR_NUMBER" -F cursor="$cursor")
@@ -364,11 +367,14 @@ jobs:
           reviews=$(gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100")
           author=$(jq -r .user.login <<< "$pr")
           jq -s -e --arg head "$HEAD_SHA" --arg author "$author" '
-            [ .[][] ] | group_by(.user.login) | map(max_by(.submitted_at)) |
-            all(.[]; .commit_id != $head or .state != "CHANGES_REQUESTED") and
-            any(.[]; .commit_id == $head and
-              (.state == "APPROVED" or (.state == "COMMENTED" and
-               (.body | test("(^|[^A-Z_])(SOURCE_REVIEW_READY|REVIEW_READY)([^A-Z_]|$)")))))' <<< "$reviews" >/dev/null
+            [ .[][] ] as $reviews |
+            ($reviews | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
+              group_by(.user.login) | map(max_by(.submitted_at))) as $dispositions |
+            all($dispositions[]; .commit_id != $head or .state != "CHANGES_REQUESTED") and
+            (any($dispositions[]; .commit_id == $head and .state == "APPROVED") or
+             any($reviews | group_by(.user.login) | map(max_by(.submitted_at))[];
+               .commit_id == $head and .state == "COMMENTED" and
+               (.body | test("(^|[^A-Z_])(SOURCE_REVIEW_READY|REVIEW_READY)([^A-Z_]|$)"))))' <<< "$reviews" >/dev/null
           cursor=null
           while :; do
             threads=$(gh api graphql -f query='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}' -F number="$PR_NUMBER" -F cursor="$cursor")

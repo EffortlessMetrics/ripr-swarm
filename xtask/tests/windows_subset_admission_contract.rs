@@ -25,11 +25,15 @@ fn normalized_job(source: &str) -> Result<String, String> {
         .replace("          name: ripr-windows-advisory-subset-${{ inputs.request_id }}\n", "          name: ripr-windows-advisory-subset\n")
         .replace("      # Bind native subset/consumer proof to the immutable PR head; the required\n      # Rust lane separately owns its integration checkout.",
             "      # Native merge-ready preflight admits H/B/T before invoking this inactive template.\n      # Product execution consumes exact T; it has no admission/check-write authority.");
+    // Extraction changes the embedded source-test owner, not the consumer oracle.
+    job = job.replace("WORKFLOW = Path.cwd() / '.github/workflows/windows-advisory.yml'",
+        "WORKFLOW = Path.cwd() / '.github/workflows/windows-subset-qualification.yml'");
     Ok(job)
 }
 
 #[test]
 fn production_producer_preserves_all_native_commands_oracles_and_cleanup() -> Result<(), String> {
+    assert!(STAGED.contains("WORKFLOW = Path.cwd() / '.github/workflows/windows-subset-qualification.yml'"));
     assert_eq!(normalized_job(STAGED)?, normalized_job(LEGACY)?);
     Ok(())
 }

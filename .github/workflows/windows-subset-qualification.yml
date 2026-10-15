@@ -105,7 +105,7 @@ jobs:
           import unittest
           from unittest.mock import patch
 
-          WORKFLOW = Path.cwd() / '.github/workflows/windows-advisory.yml'
+          WORKFLOW = Path.cwd() / '.github/workflows/windows-subset-qualification.yml'
 
 
           def consumer():

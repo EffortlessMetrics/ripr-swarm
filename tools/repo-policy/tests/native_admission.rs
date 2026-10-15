@@ -180,3 +180,68 @@ fn final_result_replays_all_independent_terminal_vectors() -> Result<(), String>
     }
     Ok(())
 }
+
+#[test]
+fn ordinary_comments_cannot_erase_native_review_dispositions() -> Result<(), String> {
+    let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
+    let pr = &vectors["live_drift_cases"][0]["live_pull_request"];
+    let script = body("Recheck current head and base before result publication")?;
+    let reviewer = |state: &str, time: &str, user: &str, text: &str| {
+        json!({
+            "user": {"login": user}, "state": state, "submitted_at": time,
+            "commit_id": "a".repeat(40), "body": text
+        })
+    };
+    let requested = reviewer(
+        "CHANGES_REQUESTED",
+        "2026-10-15T01:00:00Z",
+        "alice",
+        "repair required",
+    );
+    let comment = reviewer(
+        "COMMENTED",
+        "2026-10-15T02:00:00Z",
+        "alice",
+        "ordinary follow-up",
+    );
+    let approved = reviewer("APPROVED", "2026-10-15T01:00:00Z", "bob", "");
+    let marker = reviewer(
+        "COMMENTED",
+        "2026-10-15T03:00:00Z",
+        "alice",
+        "SOURCE_REVIEW_READY",
+    );
+    for tail in [comment, marker] {
+        assert!(!execute(
+            &script,
+            pr,
+            &json!([requested.clone(), tail, approved.clone()]),
+            &json!({})
+        )?);
+    }
+    // Native approval or dismissal resolves that reviewer's requested changes;
+    // an ordinary comment does not revoke another reviewer's approval.
+    for state in ["APPROVED", "DISMISSED"] {
+        let resolved = reviewer(state, "2026-10-15T04:00:00Z", "alice", "");
+        assert!(execute(
+            &script,
+            pr,
+            &json!([requested.clone(), resolved, approved.clone()]),
+            &json!({})
+        )?);
+    }
+    // Admission and final refresh must use exactly the same review reducer.
+    let admission = body("Reconcile native request and current readiness")?;
+    let reducer = |text: &str| -> Result<String, String> {
+        Ok(text
+            .split_once("[ .[][] ] as $reviews |")
+            .ok_or("review reducer missing")?
+            .1
+            .split_once("' <<< \"$reviews\"")
+            .ok_or("review reducer end missing")?
+            .0
+            .to_owned())
+    };
+    assert_eq!(reducer(&admission)?, reducer(&script)?);
+    Ok(())
+}
