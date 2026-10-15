@@ -55,6 +55,10 @@ export function resolveHostDiagnosticsDir(artifactRoot: string): string {
   return path.join(artifactRoot, HOST_DIAGNOSTICS_DIR_NAME);
 }
 
+export function resetHostLogDir(userDataDir: string): void {
+  fs.rmSync(resolveLogDir(userDataDir), { force: true, recursive: true });
+}
+
 export function redactHostDiagnosticsText(text: string): string {
   let redacted = text.replace(COMPLETE_PEM, '[redacted-pem]');
   // PEM-tail matching is only safe when an END marker exists; otherwise a
@@ -113,36 +117,13 @@ export function retainHostDiagnostics(
     }
   }
 
-  const env = input.env ?? process.env;
-  let identity = redactHostDiagnosticsText(
-    `${JSON.stringify(
-      {
-        schema_version: '0.1',
-        retained_because: 'test_host_failure',
-        user_data_dir: input.userDataDir,
-        log_dir: logDir,
-        max_total_bytes: MAX_HOST_DIAGNOSTICS_BYTES,
-        max_file_bytes: MAX_HOST_DIAGNOSTICS_FILE_BYTES,
-        retention_days: HOST_DIAGNOSTICS_RETENTION_DAYS,
-        copied_files: copiedFiles,
-        error: serializeError(input.error),
-        github_run_id: env.GITHUB_RUN_ID ?? null,
-        github_run_attempt: env.GITHUB_RUN_ATTEMPT ?? null,
-        github_sha: env.GITHUB_SHA ?? null,
-        github_job: env.GITHUB_JOB ?? null,
-        runner_os: env.RUNNER_OS ?? null,
-        claim:
-          'failure-only host log retention; does not change the original test exit status'
-      },
-      null,
-      2
-    )}\n`
-  );
-  if (Buffer.byteLength(identity, 'utf8') > MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES) {
-    identity = Buffer.from(identity, 'utf8')
-      .subarray(0, MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES)
-      .toString('utf8');
-  }
+  const identity = serializeIdentity({
+    userDataDir: input.userDataDir,
+    logDir,
+    copiedFiles,
+    error: input.error,
+    env: input.env ?? process.env
+  });
   const identityPath = path.join(diagnosticsDir, HOST_DIAGNOSTICS_IDENTITY_FILE);
   fs.writeFileSync(identityPath, identity, 'utf8');
   bytesWritten += Buffer.byteLength(identity, 'utf8');
@@ -186,24 +167,81 @@ export function finalizeHostRun(input: {
   return { exitCode: 0, retention };
 }
 
+const MAX_IDENTITY_PATH_CHARS = 256;
+const MAX_COPIED_FILE_ENTRIES = 64;
+
+function serializeIdentity(input: {
+  userDataDir: string;
+  logDir: string;
+  copiedFiles: string[];
+  error: unknown;
+  env: NodeJS.ProcessEnv;
+}): string {
+  const copied = input.copiedFiles
+    .slice(0, MAX_COPIED_FILE_ENTRIES)
+    .map((name) => clipField(name, MAX_IDENTITY_PATH_CHARS));
+  const body: Record<string, unknown> = {
+    schema_version: '0.1',
+    retained_because: 'test_host_failure',
+    user_data_dir: clipField(input.userDataDir, MAX_IDENTITY_PATH_CHARS),
+    log_dir: clipField(input.logDir, MAX_IDENTITY_PATH_CHARS),
+    max_total_bytes: MAX_HOST_DIAGNOSTICS_BYTES,
+    max_file_bytes: MAX_HOST_DIAGNOSTICS_FILE_BYTES,
+    retention_days: HOST_DIAGNOSTICS_RETENTION_DAYS,
+    copied_files: copied,
+    copied_files_omitted: Math.max(0, input.copiedFiles.length - copied.length),
+    error: serializeError(input.error),
+    github_run_id: clipEnv(input.env.GITHUB_RUN_ID),
+    github_run_attempt: clipEnv(input.env.GITHUB_RUN_ATTEMPT),
+    github_sha: clipEnv(input.env.GITHUB_SHA),
+    github_job: clipEnv(input.env.GITHUB_JOB),
+    runner_os: clipEnv(input.env.RUNNER_OS),
+    claim:
+      'failure-only host log retention; does not change the original test exit status'
+  };
+  let identity = redactHostDiagnosticsText(`${JSON.stringify(body, null, 2)}\n`);
+  if (Buffer.byteLength(identity, 'utf8') <= MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES) {
+    return identity;
+  }
+  body.copied_files = [];
+  body.copied_files_omitted = input.copiedFiles.length;
+  identity = redactHostDiagnosticsText(`${JSON.stringify(body, null, 2)}\n`);
+  if (Buffer.byteLength(identity, 'utf8') <= MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES) {
+    return identity;
+  }
+  return `${JSON.stringify({
+    schema_version: '0.1',
+    retained_because: 'test_host_failure',
+    copied_file_count: input.copiedFiles.length,
+    identity_truncated: true
+  })}\n`;
+}
+
 function serializeError(error: unknown): { message: string; stack?: string } | null {
   if (error === undefined) {
     return null;
   }
   if (error instanceof Error) {
     return {
-      message: clipErrorField(error.message),
-      stack: error.stack === undefined ? undefined : clipErrorField(error.stack)
+      message: clipField(error.message, MAX_ERROR_FIELD_CHARS),
+      stack: error.stack === undefined ? undefined : clipField(error.stack, MAX_ERROR_FIELD_CHARS)
     };
   }
-  return { message: clipErrorField(String(error)) };
+  return { message: clipField(String(error), MAX_ERROR_FIELD_CHARS) };
 }
 
-function clipErrorField(text: string): string {
-  if (text.length <= MAX_ERROR_FIELD_CHARS) {
+function clipEnv(value: string | undefined): string | null {
+  if (value === undefined || value.length === 0) {
+    return null;
+  }
+  return clipField(value, MAX_IDENTITY_PATH_CHARS);
+}
+
+function clipField(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
     return text;
   }
-  return `${text.slice(0, MAX_ERROR_FIELD_CHARS)}...[truncated]`;
+  return `${text.slice(0, maxChars)}...[truncated]`;
 }
 
 function listRelativeFiles(root: string, relative = ''): string[] {

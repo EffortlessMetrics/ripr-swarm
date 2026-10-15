@@ -12,6 +12,7 @@ import {
   USER_DATA_DIR_NAME,
   finalizeHostRun,
   redactHostDiagnosticsText,
+  resetHostLogDir,
   resolveHostDiagnosticsDir,
   resolveLogDir,
   resolveUserDataDir,
@@ -69,6 +70,21 @@ suite('VS Code test host diagnostics', () => {
     });
     assert.strictEqual(result.retained, false);
     assert.ok(!fs.existsSync(resolveHostDiagnosticsDir(root)));
+  });
+
+  test('resetting the log dir drops previous-run logs from a later failure snapshot', () => {
+    writeLog(root, 'old.log', 'PREVIOUS-RUN\n');
+    resetHostLogDir(resolveUserDataDir(root));
+    writeLog(root, 'new.log', 'CURRENT-RUN\n');
+    retainHostDiagnostics({
+      artifactRoot: root,
+      userDataDir: resolveUserDataDir(root),
+      failed: true,
+      error: new Error('host hung')
+    });
+    const snapshot = path.join(resolveHostDiagnosticsDir(root), HOST_LOG_DIR_NAME);
+    assert.ok(!fs.existsSync(path.join(snapshot, 'old.log')));
+    assert.ok(fs.readFileSync(path.join(snapshot, 'new.log'), 'utf8').includes('CURRENT-RUN'));
   });
 
   test('copies host logs into the known diagnostics folder on failure', () => {
@@ -165,6 +181,41 @@ suite('VS Code test host diagnostics', () => {
     assert.ok(redacted.includes('x-access-token:[redacted]'), redacted);
   });
 
+  test('keeps retention.json parseable when copied-file metadata would overflow', () => {
+    const longName = `${'n'.repeat(240)}.log`;
+    for (let index = 0; index < 80; index += 1) {
+      writeLog(root, `${index}-${longName}`, 'x\n');
+    }
+    const result = retainHostDiagnostics({
+      artifactRoot: root,
+      userDataDir: resolveUserDataDir(root),
+      failed: true,
+      error: new Error('host hung')
+    });
+    const identityRaw = fs.readFileSync(
+      path.join(result.diagnosticsDir, HOST_DIAGNOSTICS_IDENTITY_FILE),
+      'utf8'
+    );
+    assert.ok(
+      identityRaw.trimEnd().endsWith('}'),
+      'identity must remain complete JSON, not a sliced prefix'
+    );
+    const identity = JSON.parse(identityRaw) as {
+      schema_version: string;
+      copied_files?: unknown;
+      copied_file_count?: number;
+    };
+    assert.strictEqual(identity.schema_version, '0.1');
+    assert.ok(
+      Array.isArray(identity.copied_files) || typeof identity.copied_file_count === 'number',
+      JSON.stringify(identity)
+    );
+    assert.ok(
+      Buffer.byteLength(identityRaw, 'utf8') <= MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES,
+      String(Buffer.byteLength(identityRaw, 'utf8'))
+    );
+  });
+
   test('keeps identity plus logs inside the total byte cap', () => {
     const chunk = '#'.repeat(MAX_HOST_DIAGNOSTICS_FILE_BYTES);
     for (let index = 0; index < 24; index += 1) {
@@ -205,16 +256,15 @@ suite('VS Code test host diagnostics', () => {
   test('keeps the original failing exit when diagnostic retention cannot write', () => {
     const blocker = path.join(root, 'not-a-directory');
     fs.writeFileSync(blocker, 'cannot-be-a-parent\n');
-    const originalError = console.error;
     const logged: unknown[][] = [];
-    console.error = (...args: unknown[]) => {
+    const restoreError = replaceConsoleError((...args: unknown[]) => {
       logged.push(args);
-    };
+    });
     try {
       const result = finalizeHostRun({
         artifactRoot: blocker,
         userDataDir: path.join(blocker, USER_DATA_DIR_NAME),
-        error: new Error('CodeWindow: detected unresponsive')
+        error: new Error('synthetic host failure for retention write control')
       });
       assert.strictEqual(result.exitCode, 1);
       assert.strictEqual(result.retention.retained, false);
@@ -228,7 +278,7 @@ suite('VS Code test host diagnostics', () => {
         JSON.stringify(logged)
       );
     } finally {
-      console.error = originalError;
+      restoreError();
     }
   });
 });
@@ -237,4 +287,21 @@ function writeLog(artifactRoot: string, relative: string, contents: string): voi
   const file = path.join(resolveLogDir(resolveUserDataDir(artifactRoot)), relative);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, contents);
+}
+
+function replaceConsoleError(stub: (...args: unknown[]) => void): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(console, 'error');
+  Object.defineProperty(console, 'error', {
+    configurable: true,
+    enumerable: descriptor?.enumerable ?? true,
+    writable: true,
+    value: stub
+  });
+  return () => {
+    if (descriptor === undefined) {
+      delete (console as { error?: unknown }).error;
+      return;
+    }
+    Object.defineProperty(console, 'error', descriptor);
+  };
 }

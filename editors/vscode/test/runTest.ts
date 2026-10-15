@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import { execFileSync, spawn } from 'child_process';
 import { downloadAndUnzipVSCode, runTests } from '@vscode/test-electron';
 import { stageGenuineActionableQueue } from './actionableQueueFixture';
-import { finalizeHostRun, resolveUserDataDir } from './hostDiagnostics';
+import { finalizeHostRun, resetHostLogDir, resolveUserDataDir } from './hostDiagnostics';
 
 function runGit(workspacePath: string, args: string[]): string {
   return execFileSync('git', args, {
@@ -158,6 +158,7 @@ async function main() {
   const userDataPath = resolveUserDataDir(artifactRoot);
   let error: unknown;
   try {
+    resetHostLogDir(userDataPath);
     const extensionDevelopmentPath = path.resolve(
       process.env.RIPR_TEST_EXTENSION_PATH ?? path.resolve(__dirname, '../../')
     );

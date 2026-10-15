@@ -49150,6 +49150,10 @@ fn vscode_host_diagnostics_ci_job_retains_failure_only() -> Result<(), String> {
         "runTest.ts must preserve the original host exit through finalizeHostRun"
     );
     assert!(
+        runner.contains("resetHostLogDir"),
+        "runTest.ts must clear the pinned log dir before setup"
+    );
+    assert!(
         !runner.contains("vscode-test-user-data', runId"),
         "user-data must be a known folder, not a pid-suffixed path"
     );
