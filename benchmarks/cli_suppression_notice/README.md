@@ -73,7 +73,7 @@ existing explicit fixture path/decoy implementation and retained #7923 controls,
 not a new claim of an observed Windows read set.
 
 Raw Cargo artifact receipts, native terminal logs, timing JSONL and ordinary
-copied witnesses are retained at `H:\Temp\ripr-task5-evidence`.
+copied witnesses are retained in the task-owned `$EVIDENCE` directory identified in the PR handoff.
 `baseline-ripr.exe`, `baseline-cli-smoke.exe` and `suppression-cli-smoke.exe`
 are actual copied bytes, not hard links. The runner embeds its original absolute
 CLI path; retain the task target while replaying it, or restore the retained CLI
