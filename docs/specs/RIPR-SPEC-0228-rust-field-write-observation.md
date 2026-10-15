@@ -385,7 +385,9 @@ changes `self.count += 2` to `self.count += 1`.
   otherwise only reads it (`.get`, `.contains_key`, `.len`, `.is_empty`) or
   writes it as `self.<path>.insert(k, v)` or
   `*self.<path>.entry(k).or_insert(0) += v` (or `.or_default()`) with `v` a
-  parameter that is neither `mut` nor rebound in the body; a helper is
+  parameter that is neither `mut` nor rebound in the body, used as is or
+  through `.clone()` / `.to_owned()` (a conversion such as `.into()` turns
+  `true` into 1); a helper is
   followed only when every argument it receives is a parameter or a literal;
   the method and its helpers write the field at most once, and no body
   holds a macro call, loop or closure (`method_cannot_store` in
@@ -406,8 +408,8 @@ changes `self.count += 2` to `self.count += 1`.
   not be rebound in the owner body, and a `#[should_panic]` test never
   confirms. A field's collection type counts as std only when spelled
   `std::collections::X`, or imported bare from `std::collections` without
-  `as` while no item, alias or generic parameter in the file reuses the
-  name (a local `BTreeMap` with a seeded `Default` fails closed). A
+  `as` in the struct's own module while no other import, item, alias or
+  generic parameter in the file reuses the name (a local `BTreeMap` with a seeded `Default` fails closed). A
   stored value computed from several parameters (`insert(k, a + b)`) is
   not a parameter and fails closed (#7988).
 - Not yet implemented for argument-free field reads: rule 3 (no

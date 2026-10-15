@@ -1041,7 +1041,8 @@ fn struct_declares_std_collection(item: &ast::Struct, field: &str) -> bool {
 }
 
 /// Whether the bare collection name `name` in `item`'s file is the std
-/// type: the file imports it from `std::collections` without renaming,
+/// type: the struct's own module imports it from `std::collections`
+/// without renaming, no other import in the file names it,
 /// and neither the struct's generics nor any item in the file reuse the
 /// name (`mod seeded { pub struct BTreeMap .. }` with `use
 /// seeded::BTreeMap`, `type HashMap = ..`, `struct Bin<BTreeMap>`).
@@ -1060,11 +1061,16 @@ fn bare_name_is_std(item: &ast::Struct, name: &str) -> bool {
     {
         return false;
     }
+    // Only an import beside the struct, in the same module, names its type.
+    let scope = item.syntax().parent();
     let mut imported = false;
     for node in file.syntax().descendants() {
         if let Some(import) = ast::Use::cast(node.clone()) {
             if !names_it(import.syntax()) {
                 continue;
+            }
+            if import.syntax().parent() != scope {
+                return false;
             }
             let text: String = import
                 .syntax()
@@ -1226,8 +1232,9 @@ fn method_touches_field_read_only(
 /// and `assert_eq!(.., 5)`), must not hand `self` or `&mut self.f` to
 /// other code, and may write `self.<field>` only as
 /// `self.<field>.insert(k, v)` or `*self.<field>.entry(k).or_insert(0)
-/// += v` (or `.or_default()`) with `v` a parameter (optionally `.clone()`d, `.to_owned()`,
-/// `.to_string()` or `.into()`): a constant, another field, or a function
+/// += v` (or `.or_default()`) with `v` a parameter (optionally `.clone()`d
+/// or `.to_owned()`; a conversion such as `.into()` or `.to_string()` turns
+/// `true` into 1 or `5` into `"5"`): a constant, another field, or a function
 /// result (`SEED`, `self.base`, `five()`, `self.m = Self::defaults()`)
 /// may hold the expected value under another name. A `mut` or shadowed
 /// parameter (`let qty = SEED;`) does not count, and a helper is followed
@@ -1474,11 +1481,11 @@ fn field_write_takes_parameter(after: &str, parameters: &[String]) -> bool {
         .is_some_and(|(value, _)| parameter_value(value))
 }
 
-/// Whether `value` is one of `parameters`, optionally `.clone()`d,
-/// `.to_owned()`, `.to_string()` or `.into()`.
+/// Whether `value` is one of `parameters`, optionally `.clone()`d or
+/// `.to_owned()`, so it holds the literal the test passed, unconverted.
 fn parameter_value(value: &str, parameters: &[String]) -> bool {
     let mut value = value.trim();
-    while let Some(inner) = [".clone()", ".to_owned()", ".to_string()", ".into()"]
+    while let Some(inner) = [".clone()", ".to_owned()"]
         .iter()
         .find_map(|suffix| value.strip_suffix(suffix))
     {
@@ -2201,6 +2208,15 @@ mod tests {
                 "pub fn prime(&mut self, k: &str) { *self.stock.entry(k.into()).or_default() += self.stock.len() as u32; }",
                 "7",
             ),
+            // A converted parameter: `true.into()` is 1, `5.to_string()` is "5".
+            (
+                "pub fn prime(&mut self, k: &str, on: bool) { self.stock.insert(k.into(), on.into()); }",
+                "1",
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { self.put(k, q.into()); }\nfn put(&mut self, k: &str, v: u32) { self.stock.insert(k.into(), v); }",
+                "7",
+            ),
             // A value computed from parameters (#7988).
             (
                 "pub fn prime(&mut self, k: &str, a: u32, b: u32) { self.stock.insert(k.into(), a + b); }",
@@ -2326,6 +2342,11 @@ mod tests {
             ),
             ("use std::collections::BTreeMap;", "<BTreeMap>"),
             ("use std::collections::*;", ""),
+            (
+                "use std::collections::BTreeMap;\nmod other { use seeded::BTreeMap; }",
+                "",
+            ),
+            ("mod tests { use std::collections::BTreeMap; }", ""),
         ] {
             assert!(
                 !starts_empty(prelude, generics, map),
@@ -2344,8 +2365,8 @@ mod tests {
         );
         assert!(!constructor_starts_empty(&index, "S", "default", "stock"));
         let index = source_index(
-            "use std::collections::BTreeMap;\n\
-             pub mod a { #[derive(Default)] pub struct S { stock: BTreeMap<String, u32> } }\n",
+            "pub mod a { use std::collections::BTreeMap;\n\
+             #[derive(Default)] pub struct S { stock: BTreeMap<String, u32> } }\n",
         );
         assert!(constructor_starts_empty(&index, "S", "default", "stock"));
     }
