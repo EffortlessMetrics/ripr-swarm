@@ -299,7 +299,6 @@ fn contract_rejects_a_dispatching_watchdog() -> Result<(), String> {
 // #4987: these are event/config contract checks, not a scheduler, review cache,
 // or a claim that a hosted lifecycle has been observed.
 const UB_WORKFLOW: &str = ".github/workflows/ub-review.yml";
-const DROID_WORKFLOW: &str = ".github/workflows/droid-review.yml";
 const REVIEW_EVENTS: &[&str] = &["opened", "reopened", "synchronize"];
 
 fn parsed_types(source: &str) -> Result<Vec<String>, String> {
@@ -326,18 +325,11 @@ fn publication_events(config: &str) -> Result<Vec<String>, String> {
         .collect()
 }
 
-fn advisory_contract(ub: &str, droid: &str, config: &str) -> Result<(), String> {
+fn advisory_contract(ub: &str, config: &str) -> Result<(), String> {
     let mut ub_events = parsed_types(ub)?;
     ub_events.sort();
     if ub_events != REVIEW_EVENTS {
         return Err(format!("UB early review events changed: {ub_events:?}"));
-    }
-    let mut droid_events = parsed_types(droid)?;
-    droid_events.sort();
-    if droid_events != ["labeled", "opened", "reopened", "synchronize", "unlabeled"] {
-        return Err(format!(
-            "Droid early/label review events changed: {droid_events:?}"
-        ));
     }
     let mut posts = publication_events(config)?;
     posts.sort();
@@ -351,26 +343,20 @@ fn advisory_contract(ub: &str, droid: &str, config: &str) -> Result<(), String> 
 
 #[test]
 fn advisory_ready_dedup_contract() -> Result<(), String> {
-    advisory_contract(
-        &repo_file(UB_WORKFLOW)?,
-        &repo_file(DROID_WORKFLOW)?,
-        &repo_file(".ub-review.toml")?,
-    )
+    advisory_contract(&repo_file(UB_WORKFLOW)?, &repo_file(".ub-review.toml")?)
 }
 
 #[test]
 fn ready_after_active_completed_or_unavailable_advisory_has_no_new_admission() -> Result<(), String>
 {
     // GitHub event admission has no dependency on the previous run's outcome.
-    // One assertion per real workflow covers all three prior states; there is
-    // no fixture state machine that could manufacture review success.
-    for path in [UB_WORKFLOW, DROID_WORKFLOW] {
-        let events = parsed_types(&repo_file(path)?)?;
-        assert!(
-            !events.iter().any(|event| event == "ready_for_review"),
-            "{path}: Ready must neither replace active work nor repeat completed/unavailable work"
-        );
-    }
+    // The real UB workflow covers all three prior states; there is no fixture
+    // state machine that could manufacture review success.
+    let events = parsed_types(&repo_file(UB_WORKFLOW)?)?;
+    assert!(
+        !events.iter().any(|event| event == "ready_for_review"),
+        "UB: Ready must neither replace active work nor repeat completed/unavailable work"
+    );
     assert_eq!(parsed_types(&workflow_source()?)?, ["labeled"]);
     Ok(())
 }
@@ -378,15 +364,12 @@ fn ready_after_active_completed_or_unavailable_advisory_has_no_new_admission() -
 #[test]
 fn new_head_synchronize_and_reopened_keep_review_and_publication() -> Result<(), String> {
     let posts = publication_events(&repo_file(".ub-review.toml")?)?;
+    let events = parsed_types(&repo_file(UB_WORKFLOW)?)?;
     for action in REVIEW_EVENTS {
-        for path in [UB_WORKFLOW, DROID_WORKFLOW] {
-            assert!(
-                parsed_types(&repo_file(path)?)?
-                    .iter()
-                    .any(|event| event == action),
-                "{path}: {action} still computes review"
-            );
-        }
+        assert!(
+            events.iter().any(|event| event == action),
+            "UB: {action} still computes review"
+        );
         assert!(
             posts.iter().any(|event| event == action),
             "UB {action} still permits publication through the pinned action"
@@ -398,14 +381,11 @@ fn new_head_synchronize_and_reopened_keep_review_and_publication() -> Result<(),
 #[test]
 fn advisory_guards_and_concurrency_remain_exact() -> Result<(), String> {
     let ub = repo_file(UB_WORKFLOW)?;
-    let droid = repo_file(DROID_WORKFLOW)?;
     // Pin executable guard fields, not coincidental words in comments.
     assert!(
         ub.contains("    if: github.event.pull_request.head.repo.full_name == github.repository\n")
     );
-    assert!(droid.contains("    if: |\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      !contains(github.event.pull_request.title, '[skip-review]') &&\n      !contains(github.event.pull_request.labels.*.name, 'release-check')\n"));
     assert!(ub.contains("  group: ub-review-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n"));
-    assert!(droid.contains("  group: droid-review-${{ github.repository }}-${{ github.event.pull_request.number }}\n  cancel-in-progress: false\n"));
     assert!(ub.contains("          review-mode: advisory\n"));
     assert!(ub.contains("          config: .ub-review.toml\n"));
     assert!(ub.contains("          posting: review\n"));
@@ -416,21 +396,16 @@ fn advisory_guards_and_concurrency_remain_exact() -> Result<(), String> {
 #[test]
 fn contract_rejects_ready_reentry_and_missing_repair_publication() -> Result<(), String> {
     let ub = repo_file(UB_WORKFLOW)?;
-    let droid = repo_file(DROID_WORKFLOW)?;
     let config = repo_file(".ub-review.toml")?;
-    for (path, source) in [(UB_WORKFLOW, &ub), (DROID_WORKFLOW, &droid)] {
-        let changed = source.replacen("types: [", "types: [ready_for_review, ", 1);
-        assert_ne!(&changed, source, "mutation engages {path}");
-        let result = if path == UB_WORKFLOW {
-            advisory_contract(&changed, &droid, &config)
-        } else {
-            advisory_contract(&ub, &changed, &config)
-        };
-        assert!(result.is_err(), "Ready reentry must violate {path}");
-    }
+    let changed = ub.replacen("types: [", "types: [ready_for_review, ", 1);
+    assert_ne!(changed, ub, "mutation engages UB review");
+    assert!(
+        advisory_contract(&changed, &config).is_err(),
+        "Ready reentry must violate UB review"
+    );
     let changed = config.replace("\"synchronize\", ", "");
     assert_ne!(changed, config, "publication mutation engages");
-    assert!(advisory_contract(&ub, &droid, &changed).is_err());
+    assert!(advisory_contract(&ub, &changed).is_err());
     Ok(())
 }
 
@@ -476,5 +451,36 @@ fn contract_rejects_replacing_required_ready_admission() -> Result<(), String> {
     assert_ne!(changed, source, "required-admission mutation engages");
     assert_ne!(event_declarations(&changed)?, EXPECTED_EVENT_DECLARATIONS);
     assert_ne!(parsed_types(&changed)?, ["ready_for_review"]);
+    Ok(())
+}
+
+#[test]
+fn automatic_droid_review_is_retired() -> Result<(), String> {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest
+        .parent()
+        .ok_or_else(|| "xtask package has a repository parent".to_string())?;
+    for path in [
+        ".github/workflows/droid-review.yml",
+        ".github/workflows/droid-review.yaml",
+    ] {
+        assert!(
+            !root
+                .join(path)
+                .try_exists()
+                .map_err(|error| error.to_string())?,
+            "{path}: automatic Droid review was retired under #5086"
+        );
+    }
+    // Retiring automatic review must not remove the independently invoked lanes.
+    for path in [
+        ".github/workflows/droid.yml",
+        ".github/workflows/droid-security-scan.yml",
+    ] {
+        assert!(
+            !repo_file(path)?.is_empty(),
+            "{path}: retained Droid workflow is required"
+        );
+    }
     Ok(())
 }

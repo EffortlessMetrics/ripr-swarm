@@ -619,7 +619,7 @@ result. Cache acceleration may be cold/stale after retiring that writer; proof
 still executes and no warm-cache or <=20-minute result is assumed. Main-health
 sampling remains a separate proposal rather than a cutover prerequisite.
 
-Early UB/Droid review remains separate, including Drafts. Quota, skipped sensors,
+Early UB review remains separate, including Drafts. Quota, skipped sensors,
 failed-to-review and missing provider output are not clean reviews. The
 [explicit request handoff](PR_AUTOMATION.md#draft-to-ready-handoff) binds source
 review before qualification and final REVIEW_READY/current-state decision after
@@ -1003,7 +1003,7 @@ EM self-hosted runners.
 | `security.yml` `cargo-deny` | `em-ci-tiny` | `rust-tiny` |
 | `source-of-truth.yml`, `badge-endpoints.yml` | `em-ci-tiny` | `rust-tiny` |
 | `security.yml` `dependency-review` | `em-ci-nano` | `policy-nano` |
-| `droid-review`, `droid`, `droid-security-scan` | `em-ci-review` | `droid-review` |
+| `droid`, `droid-security-scan` | `em-ci-review` | `droid-review` |
 
 All self-hosted lanes carry the `trusted-pr` label and keep their existing
 fork/untrusted-PR `if:` guards, so fork code cannot reach trusted self-hosted

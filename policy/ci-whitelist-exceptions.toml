@@ -44,15 +44,6 @@ target_behavior = "Keep the JUnit artifact advisory, selected explicitly for exp
 review_note = "Trusted selected runs may upload to Codecov Test Analytics when CODECOV_TOKEN is available; ordinary pull requests remain unselected."
 
 [[exception]]
-id = "droid_review_is_advisory_but_visible"
-kind = "advisory_review"
-paths = [".github/workflows/droid-review.yml"]
-lanes = ["droid-review"]
-current_behavior = "Droid review posts findings and a check result, but review comments are evaluated by humans or agents."
-target_behavior = "Keep automated review evidence advisory unless a separate policy explicitly promotes a class of finding."
-review_note = "Do not treat LGTM as a sufficient review record; inspect posted findings."
-
-[[exception]]
 id = "ci_plan_and_actuals_not_yet_generated"
 kind = "planned_artifact"
 paths = ["docs/ci/pr-plan.md", "policy/ci-budget.toml", "policy/ci-lane-whitelist.toml", "policy/ci-risk-packs.toml"]
