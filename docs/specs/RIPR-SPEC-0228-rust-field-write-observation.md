@@ -63,7 +63,10 @@ fn bumps() {
 The parser emits no shape for assignments or compound assignments: a binary
 expression counts only for predicate operators (`analysis/syntax/ra.rs`). The
 lexical fallback needs a `:` without `::` to call a line a field
-(`analysis/probes/lexical.rs`, `has_field_shape`). So the line becomes a
+(`analysis/probes/lexical.rs`, `has_field_shape`). It masks strings and
+comments on the changed line's own text first; masking is per line, so a
+line inside a multi-line string or block comment, or one that starts
+inside a string, is still read as code (#8013). So the line becomes a
 `static_unknown` probe and the finding reads `static_unknown` with stop
 reason `static_probe_unknown` and no `static_limit_kind`
 (`analysis/classify/decision.rs`).
@@ -261,7 +264,12 @@ changes `self.count += 2` to `self.count += 1`.
   `let_binding_type_annotations_are_not_field_construction` and
   `struct_literal_fields_keep_field_construction_beside_let_bindings` keep a
   `let` binding's `: Type` annotation out of `field_construction` while real
-  struct-literal fields keep it; `diff.rs`
+  struct-literal fields keep it;
+  `colons_in_strings_and_comments_are_not_field_construction` (#6578) keeps
+  a colon inside a string or comment (`format!("{:<8}{:>6}\n", ..)`,
+  `println!("total: {}", t)`) out of `field_construction`, so a spurious
+  field probe cannot turn a credited format-call line into a gap
+  (verdict corpus `lib-pretty-render-shadowed-assert-eq`); `diff.rs`
   `reordered_replacement_does_not_repeat_the_removed_static_unknown` drops the
   removed side's `static_unknown` for a pure operand reorder only when the
   added side's probe carries the removed text as its `before`.
