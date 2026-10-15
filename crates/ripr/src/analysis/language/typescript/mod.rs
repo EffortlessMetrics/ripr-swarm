@@ -597,10 +597,17 @@ impl TypeScriptAdapter {
                     finding.evidence.extend(discovery_evidence.clone());
                     // Inject verify-command evidence derived from the strongest
                     // related test and the package-discovery facts already
-                    // resolved above. Fail-closed: when the runner is
-                    // unresolved the named limitation
-                    // `typescript_test_runner_unresolved` is emitted instead
-                    // so consumers know why no command is available.
+                    // resolved above. Fail-closed: invent no command when
+                    // inference returns `None`. `typescript_test_runner_unresolved`
+                    // names a missing runner, so emit it only when neither a
+                    // framework nor a package-manager runner resolved. An empty
+                    // `related_tests` list also yields `None` (`max_by_key`
+                    // over an empty iterator); that is a missing test target,
+                    // not an unknown runner. When the runner is already known
+                    // (`typescript_test_runner: vitest`, mocha detected, npm
+                    // lockfile, …) omit the limitation rather than contradict
+                    // the detected name. Do not invent a second limitation
+                    // code for the no-related-test case (#7646).
                     let inferred_cmd = finding
                         .related_tests
                         .iter()
@@ -627,18 +634,9 @@ impl TypeScriptAdapter {
                             }
                         }
                         finding.evidence.retain(|ev| !ev.is_empty());
-                    } else {
-                        // Fail-closed: no verify command resolved. Emit the
-                        // named limitation so consumers know why no command is
-                        // available. This must fire whenever the inferred
-                        // command is `None` — not only when no framework was
-                        // detected: mocha has no file-target command mapping,
-                        // so a detected mocha framework with no lockfile/runner
-                        // evidence previously produced NEITHER a command NOR a
-                        // limitation, contradicting the contract documented
-                        // above. (When the command IS resolved the
-                        // `typescript_test_runner: <name>` evidence line
-                        // already identifies the runner, so no limitation.)
+                    } else if pkg_discovery.framework_hint.is_none()
+                        && pkg_discovery.runner_hint.is_none()
+                    {
                         finding.evidence.push(
                             "typescript_package_limitation: typescript_test_runner_unresolved"
                                 .to_string(),
