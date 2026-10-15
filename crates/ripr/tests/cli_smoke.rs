@@ -85,6 +85,8 @@ mod shell_words;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/source_unicode.rs"]
 mod source_unicode;
+#[path = "cli_smoke/suppression_notice.rs"]
+mod suppression_notice;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/typescript_effect_aliases.rs"]
 mod typescript_effect_aliases;
@@ -2826,70 +2828,9 @@ fn check_human_suppression_policy_lists_suppressed_findings_compactly() -> Resul
 }
 
 #[test]
-fn check_github_over_broad_suppression_policy_emits_denominator_notice() -> Result<(), String> {
-    // Production-path control for #4393: an over-broad path glob that hides
-    // every sample finding must still emit a github denominator notice, not
-    // zero bytes, and must not annotate the suppressed findings. Exit status
-    // stays success (no gate/exit-code authority change).
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let policy = write_suppression_policy(
-        "suppression-github-over-broad",
-        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"crates/ripr/examples/sample/**\"\nreason = \"repro: suppress all sample findings\"\nowner = \"qa\"\n",
-    )?;
-    let policy_arg = policy.display().to_string();
-
-    let unfiltered = run_ripr(&[
-        "check", "--root", &root, "--diff", &diff, "--format", "github",
-    ]);
-    assert_success(&unfiltered);
-    let unfiltered_stdout = String::from_utf8_lossy(&unfiltered.stdout);
-    let unfiltered_annotations = unfiltered_stdout
-        .lines()
-        .filter(|line| line.contains("file="))
-        .count();
-    assert!(
-        unfiltered_annotations > 0,
-        "unfiltered github output must annotate findings: {unfiltered_stdout}"
-    );
-    assert!(
-        !unfiltered_stdout.contains("suppressed by policy"),
-        "unfiltered run must not mention policy: {unfiltered_stdout}"
-    );
-
-    let filtered = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--format",
-        "github",
-        "--suppression-policy",
-        &policy_arg,
-    ]);
-    assert_success(&filtered);
-    let stdout = String::from_utf8_lossy(&filtered.stdout);
-    assert!(
-        !stdout.is_empty(),
-        "all-suppressed github output must not be silent"
-    );
-    let expected = format!(
-        "::notice title=ripr::Annotated 0 of {unfiltered_annotations} static exposure finding(s); {unfiltered_annotations} suppressed by policy"
-    );
-    assert!(
-        stdout.contains(&expected),
-        "all-suppressed github output must name the denominator ({expected}): {stdout}"
-    );
-    assert!(
-        !stdout.contains("file="),
-        "suppressed findings must stay unannotated: {stdout}"
-    );
-    assert!(
-        !stdout.contains("No static exposure findings found"),
-        "all-suppressed is not an empty run: {stdout}"
-    );
-    Ok(())
+fn check_github_over_broad_suppression_policy_emits_denominator_notice() -> sample_output::TestResult
+{
+    suppression_notice::run()
 }
 
 #[test]

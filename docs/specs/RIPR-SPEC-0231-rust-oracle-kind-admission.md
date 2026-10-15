@@ -303,11 +303,23 @@ Two pattern terms are used below.
    (`assert_eq!(r == Err(E::Bad), expected)`,
    `assert_eq!(matches!(r, Err(E::Bad)).eq(&true), expected)`; #8006); a
    bool value compared with one still pins (`assert_eq!(is_valid(x),
-   expected)`). A negation of a whole boolean assertion condition that holds
-   a `matches!`, through grouping, a one-expression block, `.not()` or a
-   negating literal call on any wrapper, caps (`!(flag || matches!(..))`,
+   expected)`). A cast of a test to an integer type, or `u8::from` and the
+   other integer `From` calls, carries the test, and an integer is no boolean
+   literal, so `0`, `1` or a variable on the other side caps
+   (`assert_eq!((r == Err(E::Bad)) as u8, 0)`,
+   `assert_eq!(u8::from(r == Err(E::Bad)), n)`; #8093); a cast of a value
+   still pins (`assert_eq!(x as u8, 3)`). Such a comparison asserted by a
+   boolean literal caps the same way (`assert_eq!((r == Err(E::Bad)) as u8
+   == 0, true)`, `assert_eq!((r == Err(E::Bad)) == flag, true)`), and a
+   path call to `not` negates like `!` (`assert_eq!(Not::not(r ==
+   Err(E::Bad)), true)`, `bool::not(..)`; any path, because a function named
+   `not` most likely inverts and the reading only lowers). A negation of a whole boolean
+   assertion condition that holds a `matches!`, through grouping, a
+   one-expression block, `.not()`, a `Not::not(..)` path call or a negating
+   literal call on any wrapper, caps (`!(flag || matches!(..))`,
    `!{ matches!(..) }`, `Some(matches!(..)).unwrap().not()`,
-   `(matches!(..),).0.eq(&false)`; #8006), and a one-expression block
+   `(matches!(..),).0.eq(&false)`; #8006; `Not::not(flag || matches!(..))`;
+   #8101), and a one-expression block
    passes a pattern through to `^` or `|` (`flag ^ { matches!(..) }`).
    `^` and a
    single `|` over an operand holding a `matches!` or a comparison, in
