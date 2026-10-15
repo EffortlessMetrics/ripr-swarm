@@ -162,3 +162,72 @@ controls replay actual shell and reject failed Git inspection, failed contract
 commands and missing/failed/cancelled producer results; removing the contract
 result guard demonstrates false consumer admission. The previous broader-policy
 completion limitations above remain; source checks do not establish hosted time.
+
+## Measured wheel codegen repair
+
+The subsequent standalone producer on integration head
+`c4c67acbf08e905e5e5dc1a84ac5abab0a0e3620` completed successfully but took
+12m49.685s, including 12m07s of release compilation, exceeding the callable
+producer's unchanged 12-minute cap. Its
+[run](https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38715099088)
+is counterevidence to treating the parallel-contract repair alone as sufficient.
+
+The canonical `[tool.maturin]` Cargo configuration now selects four release
+codegen units for wheels. Keeping this in the package manifest gives manual and
+CI wheel producers the same recipe. Optimization level 3, full/fat LTO, stripping,
+language features, locked dependencies, tooling pins, validation negatives and
+all consumer commands remain. The root Cargo release profile and separate manual
+MCP evidence route retain their existing single-unit recipe. Job timeouts,
+permissions, triggers, applicability and caller/result authority are unchanged.
+
+A local Linux x86_64 experiment used Rust 1.95, Maturin 1.14.1, four CPU affinity,
+and independent cold Cargo targets on immutable c4 above. Only the wheel codegen
+environment override varied. The same baseline was retained for the four-unit
+follow-up; registry/OS/source pages could be warm, so this is a directional local
+comparison, not a replicated or hosted speed guarantee.
+
+| Recipe | Complete wheel-build command | Native payload bytes | Disposition |
+| --- | ---: | ---: | --- |
+| Existing one unit | 610.390s | 32,776,256 | Baseline |
+| Sixteen units | 402.904s | 35,705,336 | Rejected: 8.94% payload growth |
+| Four units | 353.610s | 34,084,976 | 42.1% less time; 3.99% payload growth |
+
+Acceptance limits were set before measurements: at least 20% compile saving,
+at most 5% native-payload growth, and at most 5% median CPU regression on the
+bounded workloads. The baseline and four-unit wheels passed metadata, RECORD and payload
+negatives plus independent pip and uv install, fresh-shell follow-up, disabled
+adapter, reinstall and uninstall controls. Sixteen units remains rejected even
+though its compressed wheel grew less than its native payload.
+
+The accepted four-unit payload and baseline also passed eight interleaved pairs
+per workload with exclusive, initially empty analyzer caches: Python128,
+Rust32 and mixed Rust/TypeScript. Tests required complete analysis, intended
+changed-file/probe counts, actual preview-language findings, equal exit status
+and every JSON field equal after normalizing only the exclusive cache directory.
+Median CPU ratios were 1.012, 0.960 and 0.906 respectively; wall ratios were
+1.005, 0.963 and 0.925. OS/source pages could remain warm. These are small bounded
+workloads, not universal runtime equivalence. A passive compiler observation
+reached 7,429,136 KiB of per-process high-water RSS; full hosted memory headroom
+remains unqualified.
+
+The full experimental wheels used immutable c4 plus an environment override,
+not this later source commit. Separately, a dependency-free pinned-Maturin probe
+with canonical pyproject config and no profile environment override emitted
+actual rustc `opt-level=3`, `lto`, `codegen-units=4` and `strip=symbols` arguments.
+That establishes the config route; it does not turn the experimental artifacts
+into exact-commit hosted proof. The manifest setting applies to every Maturin
+wheel target, while measurements cover Linux x86_64 only; Windows/macOS runtime,
+size and timing are not established here.
+
+Early local namespace, jobserver and resumed-environment failures were harness
+failures. The first concatenated Rust runtime patch was malformed and is not
+runtime-quality evidence. Corrected difflib-generated workloads apply real new
+source; the mixed workload explicitly enables both languages. Rejected and
+failed attempts remain in the task proof return, without a clean-pass claim.
+
+Activation delta remains the admitted-caller wiring and coordinated legacy
+trigger cutover described above. This repair does not activate either. Review
+the new exact integration subject and measure its separately authorized hosted
+producer and complete admitted graph before claiming the 12/20-minute budgets.
+No timeout increase, release, deployment or protection change is included.
+Changelog: `changelog.d/4987-wheel-codegen.md` (Internal / CI).
