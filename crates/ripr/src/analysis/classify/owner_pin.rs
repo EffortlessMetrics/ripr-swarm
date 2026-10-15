@@ -2325,7 +2325,13 @@ impl OwnerReturnPin {
             // owner, say) before comparing fixes nothing, so a test that
             // writes, copies or renames a file, or sets `UPDATE_EXPECT`,
             // lends no golden-file pin.
-            if is_golden_file_comparison(&assertion.text) && test_may_write_files(&test.body) {
+            if is_golden_file_comparison(&assertion.text)
+                && (test_may_write_files(&test.body)
+                    || index
+                        .files()
+                        .get(&test.file)
+                        .is_none_or(|facts| file_renames_fs_or_env_import(&facts.source)))
+            {
                 return false;
             }
             let Some(call) = self.awaited_call_shape(&expect_operands[0], &self.name) else {
@@ -5951,7 +5957,7 @@ pub(in crate::analysis) fn inline_expect_operands(text: &str) -> Option<[String;
     let literal = match texts.as_slice() {
         // `expect_file!["path"]`: one string literal naming the file.
         ["[", path, "]"] if golden_file => {
-            if tokens[1].0 != ra_ap_syntax::SyntaxKind::STRING {
+            if tokens[1].0 != ra_ap_syntax::SyntaxKind::STRING || !is_in_tree_relative_path(path) {
                 return None;
             }
             (*path).to_string()
@@ -5984,6 +5990,47 @@ pub(in crate::analysis) fn inline_expect_operands(text: &str) -> Option<[String;
         other => other.syntax().text().to_string(),
     };
     Some([actual, literal])
+}
+
+/// #6578 review: `expect_file!` resolves its path against the test's own
+/// source directory, so a relative path without `..` names a file under the
+/// crate, which the commit fixes. An absolute path (`/tmp/x`, `C:\\x`, a
+/// UNC `\\\\host`), a home-relative `~` or any `..` segment may name text
+/// produced outside the commit, so it lends no pin. `path` is the literal's
+/// source text, quotes and any raw-string hashes included.
+fn is_in_tree_relative_path(path: &str) -> bool {
+    let inner = path
+        .trim_start_matches('r')
+        .trim_matches('#')
+        .trim_matches('"');
+    let absolute = inner.starts_with(['/', '\\', '~']) || inner.as_bytes().get(1) == Some(&b':');
+    !inner.is_empty() && !absolute && !inner.split(['/', '\\']).any(|segment| segment == "..")
+}
+
+/// #6578 review: whether a test file renames an import from `std::fs` or
+/// `std::env` (`use std::fs::write as save;`), which would let a bare
+/// `save(..)` write the golden or set `UPDATE_EXPECT` unseen by
+/// [`test_may_write_files`]. Fail-closed: any such rename refuses.
+fn file_renames_fs_or_env_import(source: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    masked.split(';').any(|statement| {
+        let statement = statement.trim();
+        let Some(tree) = statement
+            .strip_prefix("pub ")
+            .unwrap_or(statement)
+            .trim_start()
+            .strip_prefix("use ")
+        else {
+            return false;
+        };
+        let names_fs_or_env = tree
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .any(|segment| matches!(segment, "fs" | "env"));
+        names_fs_or_env
+            && tree
+                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .any(|segment| segment == "as")
+    })
 }
 
 /// Whether an expect-test comparison's receiver is `expect_file!`.

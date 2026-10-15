@@ -279,6 +279,19 @@ fn a_verified_golden_file_comparison_pins_the_owner() -> Result<(), String> {
             "",
             "unsafe { std::env::set_var(\"UPDATE_EXPECT\", \"1\") };\n    expect_file![\"w.txt\"].assert_eq(&render(4));",
         ),
+        // A renamed file writer, and a golden outside the crate.
+        (
+            EXPECT_TEST,
+            "use expect_test::expect_file;\nuse std::fs::write as save;",
+            "",
+            "save(\"tests/w.txt\", render(4)).unwrap();\n    expect_file![\"w.txt\"].assert_eq(&render(4));",
+        ),
+        (
+            EXPECT_TEST,
+            FILE_IMPORT,
+            "",
+            "expect_file![\"/tmp/w.txt\"].assert_eq(&render(4));",
+        ),
     ] {
         let finding = render_finding(OLD, NEW, dev, imports, attributes, test)?;
         // A renamed macro is not recognized as an expect-test comparison

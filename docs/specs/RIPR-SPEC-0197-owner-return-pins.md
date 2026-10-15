@@ -1414,7 +1414,10 @@ The rules above apply with four differences:
 
 1. The macro's one argument is a single string literal naming the file. A
    computed path (`concat!(..)`, a binding) or the inline form's double
-   brackets refuses.
+   brackets refuses. `expect_file!` resolves the path against the test
+   source's directory, so the literal must be relative and stay in the
+   tree: an absolute path (`/tmp/x`, `C:\x`, `\\host\x`), a `~` path or
+   any `..` segment may name text the commit does not fix, and refuses.
 2. The bare `expect_file!` must be expect-test's under rule 2: its file
    imports `use expect_test::expect_file;` (alone or grouped) under its own
    name, verified against the manifest, and nothing else binds
@@ -1429,7 +1432,9 @@ The rules above apply with four differences:
    writes, creates, copies or renames a file (`fs::write`, a bare `write(..)`
    under `use std::fs::write`, `File::create`, `OpenOptions`, `fs::copy`,
    `fs::rename`), or calls `set_var` / names `UPDATE_EXPECT`, lends no
-   golden-file pin: it could derive the golden from the owner and compare
+   golden-file pin, and neither does a test whose file renames an import
+   from `std::fs` or `std::env` (`use std::fs::write as save;`), which would
+   hide the write behind another name: it could derive the golden from the owner and compare
    the owner with itself. Read from the test's masked body text, so it also
    refuses a test that writes some unrelated file; a write hidden in a
    helper the test calls is not seen (#8097 tracks the same hole for

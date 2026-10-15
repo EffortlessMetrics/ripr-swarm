@@ -344,3 +344,47 @@ fn a_test_that_may_write_files_lends_no_golden_pin() {
         "expect![[\"w12\"]].assert_eq(&render(4));"
     ));
 }
+
+/// #6578 review: a golden path must stay under the test's directory, and a
+/// renamed `std::fs` / `std::env` import refuses the golden-file pin.
+#[test]
+fn a_golden_path_stays_in_tree_and_fs_renames_refuse() {
+    for path in [
+        "\"w.txt\"",
+        "\"snapshots/w.txt\"",
+        "r#\"w.txt\"#",
+        "\"a\\\\b.txt\"",
+    ] {
+        assert!(is_in_tree_relative_path(path), "{path}");
+    }
+    for path in [
+        "\"/tmp/w.txt\"",
+        "\"~/w.txt\"",
+        "\"C:\\\\w.txt\"",
+        "\"\\\\\\\\host\\\\w.txt\"",
+        "\"../w.txt\"",
+        "\"a/../../w.txt\"",
+        "\"\"",
+    ] {
+        assert!(!is_in_tree_relative_path(path), "{path}");
+    }
+    for source in [
+        "use std::fs::write as save;",
+        "use std::{env::set_var as on, fs};",
+        "pub use std::fs as files;",
+    ] {
+        assert!(file_renames_fs_or_env_import(source), "{source}");
+    }
+    for source in [
+        "use std::fs;\nuse std::fs::write;",
+        "use crate::offsets as o;",
+        "use expect_test::expect_file as golden;",
+        "// use std::fs::write as save;",
+    ] {
+        assert!(!file_renames_fs_or_env_import(source), "{source}");
+    }
+    assert_eq!(
+        inline_expect_operands("expect_file![\"/tmp/w.txt\"].assert_eq(&render(4));"),
+        None
+    );
+}
