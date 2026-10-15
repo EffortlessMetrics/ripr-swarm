@@ -33,7 +33,7 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - fixtures/binding_predicate_two_uses/input/src/lib.rs:5 (no_static_path)
+    - ./src/lib.rs:5 (no_static_path)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

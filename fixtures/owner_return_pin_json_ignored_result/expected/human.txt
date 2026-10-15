@@ -31,7 +31,7 @@ Write a test for it:
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - fixtures/owner_return_pin_json_ignored_result/input/src/lib.rs:5 (reachable_unrevealed)
-    - fixtures/owner_return_pin_json_ignored_result/input/src/lib.rs:5 (reachable_unrevealed)
+    - ./src/lib.rs:5 (reachable_unrevealed)
+    - ./src/lib.rs:5 (reachable_unrevealed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

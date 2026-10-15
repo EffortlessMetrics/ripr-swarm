@@ -31,7 +31,7 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - fixtures/rust_pyo3_cross_language_limit/input/src/lib.rs:20 (no_static_path)
+    - ./src/lib.rs:20 (no_static_path)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

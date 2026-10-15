@@ -32,7 +32,7 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - fixtures/helper_chain_controls/input/src/other.rs:2 (no_static_path)
+    - ./src/other.rs:2 (no_static_path)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

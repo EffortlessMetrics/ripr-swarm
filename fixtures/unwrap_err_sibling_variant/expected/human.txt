@@ -31,6 +31,6 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - fixtures/unwrap_err_sibling_variant/input/src/lib.rs:11 (reachable_unrevealed)
+    - ./src/lib.rs:11 (reachable_unrevealed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
