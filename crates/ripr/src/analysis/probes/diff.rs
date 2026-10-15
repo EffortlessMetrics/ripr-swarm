@@ -1569,14 +1569,31 @@ mod tests {
                 "{removed} -> {added}: {probes:?}"
             );
         }
-        // A real call deletion on the removed side is still reported, whether
-        // the accumulator update calls nothing or calls something else.
-        for added in [
-            "        total += 1;",
-            "        total += compute(*x);",
-            "        total = total + compute(*x);",
+        // A real call deletion on the removed side is still reported: the
+        // update calls nothing, another callee, only the deleted call's
+        // argument, the same method on another receiver, or appends to
+        // another accumulator.
+        for (removed, added) in [
+            ("        notify(total);", "        total += 1;"),
+            ("        notify(total);", "        total += compute(*x);"),
+            (
+                "        notify(total);",
+                "        total = total + compute(*x);",
+            ),
+            (
+                "        notify(compute(*x));",
+                "        total += compute(*x);",
+            ),
+            (
+                "        total = notify.compute(*x);",
+                "        total += other.compute(*x);",
+            ),
+            (
+                "        notify.push_str(&format!(\"{}\", x));",
+                "        total += &format!(\"{}\", x);",
+            ),
         ] {
-            let probes = shapes_probes(added, "        notify(total);", &[], "");
+            let probes = shapes_probes(added, removed, &[], "");
             assert!(
                 probes
                     .iter()
@@ -1586,7 +1603,7 @@ mod tests {
                                 .before
                                 .as_deref()
                                 .is_some_and(|before| before.contains("notify")))),
-                "notify(total) -> {added}: {probes:?}"
+                "{removed} -> {added}: {probes:?}"
             );
         }
     }

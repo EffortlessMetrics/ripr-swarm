@@ -571,8 +571,10 @@ fn skip_field_visibility(text: &str) -> Option<&str> {
 fn is_local_accumulator_assignment(masked: &str) -> bool {
     let line = masked.trim();
     // `count += 1; notify(x);` holds a second statement whose call can be
-    // deleted; only a line that is one statement is judged here.
-    if line.trim_end_matches(';').contains(';') {
+    // deleted; only a line that is one statement is judged here. A block's
+    // closing braces after it (`total += f(x); }`) are not a statement.
+    let statement = line.trim_end_matches(|ch: char| ch == '}' || ch.is_whitespace());
+    if statement.trim_end_matches(';').contains(';') {
         return false;
     }
     let target_len = line
@@ -623,46 +625,76 @@ fn is_accumulator_call_update(text: &str) -> bool {
     has_call_shape(text) && is_local_accumulator_assignment(&mask_comments_and_strings(text))
 }
 
-/// Names called on a line, `compute` in `compute(x)`, `push_str` in
-/// `out.push_str(..)`, `format!` in `format!(..)`; strings and comments are
-/// masked first so their text names nothing.
-fn called_names(text: &str) -> Vec<String> {
+/// Callee paths on a line in source order: `compute` in `compute(x)`,
+/// `out.push_str` in `out.push_str(..)`, `format!` in `format!(..)`. The
+/// receiver stays in the path, so `a.f(x)` and `b.f(x)` differ; a method on
+/// a call result keeps only its name (`count` in `.iter().count()`).
+/// Strings and comments are masked first so their text names nothing.
+fn callee_paths(text: &str) -> Vec<String> {
     let masked = mask_comments_and_strings(text);
-    let mut names = Vec::new();
+    let mut paths = Vec::new();
     for (open, _) in masked.match_indices('(') {
         let before = masked[..open].trim_end();
         let (before, bang) = match before.strip_suffix('!') {
             Some(rest) => (rest, "!"),
             None => (before, ""),
         };
-        let name: String = before
-            .chars()
+        let start = before
+            .char_indices()
             .rev()
-            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-        if !name.is_empty() && !name.starts_with(|ch: char| ch.is_ascii_digit()) {
-            names.push(format!("{name}{bang}"));
+            .take_while(|(_, ch)| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | ':'))
+            .last()
+            .map_or(before.len(), |(index, _)| index);
+        let path = before[start..].trim_start_matches(['.', ':']);
+        let named = path.rsplit(['.', ':']).next().is_some_and(|name| {
+            !name.is_empty() && !name.starts_with(|ch: char| ch.is_ascii_digit())
+        });
+        if named {
+            paths.push(format!("{path}{bang}"));
         }
     }
-    names
+    paths
 }
 
+/// Methods that append their argument to the receiver, as `+=` does.
+const APPEND_METHODS: [&str; 5] = ["push_str", "push", "extend", "extend_from_slice", "append"];
+
 /// Whether `added` rewrites the removed call line `removed` as an
-/// accumulator update of the same call (`total = compute(x);` to
-/// `total += compute(x);`). A different callee (`notify(total);` to
-/// `total += compute(x);`) is a real deletion of the removed call and does
-/// not pair (#8027).
+/// accumulator update that keeps the removed call (#8027):
+///
+/// - the removed line's outermost call is consumed by the update
+///   (`total = compute(x);` to `total += compute(x);`), or
+/// - the removed call appends to the same accumulator and the update adds
+///   the same argument calls (`out.push_str(&format!(..));` to
+///   `out += &format!(..);`).
+///
+/// A different outer callee (`notify(total);` or `notify(compute(x));` to
+/// `total += compute(x);`) or receiver (`a.f(x)` to `b.f(x)`) is a real
+/// deletion of the removed call and does not pair.
 pub(crate) fn is_accumulator_rewrite_of(removed: &str, added: &str) -> bool {
     if !is_accumulator_call_update(added) {
         return false;
     }
-    let removed_names = called_names(removed);
-    called_names(added)
-        .iter()
-        .any(|name| removed_names.contains(name))
+    let removed_paths = callee_paths(removed);
+    let Some((outer, arguments)) = removed_paths.split_first() else {
+        return false;
+    };
+    let added_paths = callee_paths(added);
+    if added_paths.contains(outer) {
+        return true;
+    }
+    let masked = mask_comments_and_strings(added);
+    let target: String = masked
+        .trim_start()
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+        .collect();
+    outer
+        .strip_prefix(target.as_str())
+        .and_then(|method| method.strip_prefix('.'))
+        .is_some_and(|method| APPEND_METHODS.contains(&method))
+        && !arguments.is_empty()
+        && arguments == added_paths.as_slice()
 }
 
 fn starts_with_binding_or_control(text: &str) -> bool {
@@ -833,6 +865,7 @@ mod tests {
             "out += &format!(\"{}\", x);",
             "acc <<= shift(x);",
             "total -= fee(weight);",
+            "total += compute(x); }",
         ] {
             assert!(
                 !classify_changed_line(line).contains(&ProbeFamily::CallDeletion),
@@ -851,6 +884,7 @@ mod tests {
             "count = count(x);",
             "count = count.max(f(x));",
             "count += 1; notify(x);",
+            "count += 1; notify(x); }",
         ] {
             assert!(
                 classify_changed_line(line).contains(&ProbeFamily::CallDeletion),

@@ -94,11 +94,17 @@ call is not a mutant of the line; the lexical fallback no longer reads them as
 `grid-loop-table`). Only a line holding one statement qualifies
 (`count += 1; notify(x);` keeps its `call_deletion`). Diff pairing treats a
 removed `call_deletion` line rewritten as such an update (`total =
-compute(x);` to `total += compute(x);`) as the same edit when both lines call
-the same name, so the removed line mints no base-side `call_deletion`
-(`analysis/probes/diff.rs`, `has_matching_added_line`). A different callee
-(`notify(total);` to `total += compute(x);`) is a real deletion of the removed
-call and keeps its `call_deletion`. Field, deref and index targets
+compute(x);` to `total += compute(x);`) as the same edit when the update
+consumes the removed line's outermost call, receiver included, or when the
+removed call appends to the same accumulator (`push_str`, `push`, `extend`,
+`extend_from_slice`, `append`) and the update adds the same argument calls
+(`out.push_str(&format!(..));` to `out += &format!(..);`). The removed line
+then mints no base-side `call_deletion` (`analysis/probes/diff.rs`,
+`has_matching_added_line`). A different outer callee (`notify(total);` or
+`notify(compute(x));` to `total += compute(x);`) or receiver (`a.f(x)` to
+`b.f(x)`) is a real deletion of the removed call and keeps its
+`call_deletion`. Closing braces after the one statement (`total += f(x); }`)
+do not count as a second statement. Field, deref and index targets
 (`self.total += f(x)`, `*out += f(x)`, `v[i] += f(x)`) and a
 non-self-referential `total = compute(x)` keep their current families; the
 latter also consumes the call's value, but this rule covers only updates that
