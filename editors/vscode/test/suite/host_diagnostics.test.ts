@@ -168,11 +168,16 @@ suite('VS Code test host diagnostics', () => {
     const matrixUserData = path.join(resolveUserDataDir(root), 'multiroot');
     fs.mkdirSync(resolveLogDir(matrixUserData), { recursive: true });
     fs.writeFileSync(path.join(resolveLogDir(matrixUserData), 'matrix.log'), 'MATRIX-PRIORITY');
+    for (let i = 0; i < 24; i++) {
+      fs.writeFileSync(path.join(resolveLogDir(matrixUserData), `zz-${i}.log`), '#'.repeat(MAX_HOST_DIAGNOSTICS_FILE_BYTES));
+    }
     const receiptPath = path.join(root, 'receipt.json');
     fs.writeFileSync(receiptPath, '{"outcome":"failed"}');
     const result = retainHostDiagnostics({ artifactRoot: root, userDataDir: resolveUserDataDir(root),
       multiRoot: { userDataDir: matrixUserData, receiptPath }, failed: true });
-    assert.ok(result.bytesWritten <= MAX_HOST_DIAGNOSTICS_BYTES);
+    const actualBytes = retainedBytes(result.diagnosticsDir);
+    assert.ok(actualBytes <= MAX_HOST_DIAGNOSTICS_BYTES, String(actualBytes));
+    assert.strictEqual(result.bytesWritten, actualBytes);
     assert.strictEqual(fs.readFileSync(path.join(result.diagnosticsDir, 'multiroot', 'logs', 'matrix.log'), 'utf8'),
       'MATRIX-PRIORITY');
     assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(result.diagnosticsDir, 'multiroot', 'acceptance.json'), 'utf8')),
@@ -498,4 +503,11 @@ function replaceConsoleError(stub: (...args: unknown[]) => void): () => void {
     }
     Object.defineProperty(console, 'error', descriptor);
   };
+}
+
+function retainedBytes(root: string): number {
+  return fs.readdirSync(root, { withFileTypes: true }).reduce((total, entry) => {
+    const file = path.join(root, entry.name);
+    return total + (entry.isDirectory() ? retainedBytes(file) : fs.statSync(file).size);
+  }, 0);
 }
