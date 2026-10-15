@@ -23,7 +23,7 @@ pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     if has_effect_shape(text) {
         out.push(ProbeFamily::SideEffect);
     }
-    if has_call_shape(text) {
+    if has_call_shape(text) && !is_local_accumulator_assignment(&masked) {
         out.push(ProbeFamily::CallDeletion);
     }
     if has_field_shape(text) {
@@ -560,6 +560,55 @@ fn skip_field_visibility(text: &str) -> Option<&str> {
     None
 }
 
+/// A loop-accumulator update of a bare local, `count += f(x);` or
+/// `count = count + f(x);`. The call's value is consumed by the update
+/// (#6677), so deleting the call is not a mutant of this line; the
+/// changed behavior is the accumulator's value, which has no
+/// high-confidence family yet and reads `static_unknown`, like the
+/// call-free `sum += w;`. Field, deref and index targets
+/// (`self.total += f(x)`, `*out += f(x)`, `v[i] += f(x)`) stay with their
+/// own rules (RIPR-SPEC-0228).
+fn is_local_accumulator_assignment(masked: &str) -> bool {
+    let line = masked.trim();
+    let target_len = line
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+        .count();
+    if target_len == 0 || line.starts_with(|ch: char| ch.is_ascii_digit()) {
+        return false;
+    }
+    let target = &line[..target_len];
+    if matches!(
+        target,
+        "let" | "return" | "if" | "while" | "for" | "match" | "self"
+    ) {
+        return false;
+    }
+    let rest = line[target_len..].trim_start();
+    const COMPOUND: [&str; 10] = ["<<=", ">>=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^="];
+    if COMPOUND.iter().any(|operator| rest.starts_with(operator)) {
+        return true;
+    }
+    // `count = count + f(x)`: a plain `=` (not `==`) whose right side opens
+    // with the same bare name followed by a binary operator.
+    let Some(value) = rest.strip_prefix('=') else {
+        return false;
+    };
+    if value.starts_with('=') {
+        return false;
+    }
+    let Some(after) = value.trim_start().strip_prefix(target) else {
+        return false;
+    };
+    if after.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_') {
+        return false;
+    }
+    let after = after.trim_start();
+    after.starts_with(['+', '-', '*', '/', '%', '&', '|', '^'])
+        || after.starts_with("<<")
+        || after.starts_with(">>")
+}
+
 fn starts_with_binding_or_control(text: &str) -> bool {
     ["let ", "if ", "while ", "for ", "match "]
         .iter()
@@ -715,6 +764,45 @@ mod tests {
                 families.contains(&ProbeFamily::CallDeletion),
                 "`{line}` must stay a call: {families:?}"
             );
+        }
+    }
+
+    #[test]
+    fn a_local_accumulator_update_is_not_a_call_deletion() {
+        // The update consumes the call's value (#6677); the line reads like
+        // the call-free `sum += w;`.
+        for line in [
+            "count += line.split_whitespace().count();",
+            "count = count + line.split_whitespace().count();",
+            "out += &format!(\"{}\", x);",
+            "acc <<= shift(x);",
+            "total -= fee(weight);",
+        ] {
+            assert!(
+                !classify_changed_line(line).contains(&ProbeFamily::CallDeletion),
+                "{line}"
+            );
+        }
+        for line in [
+            "send_invoice(invoice);",
+            "total = compute(x);",
+            "self.label = compute(x);",
+            "self.total += f(x);",
+            "*out += f(x);",
+            "v[i] += f(x);",
+            "count = other + f(x);",
+            "count = count_of(x);",
+        ] {
+            assert!(
+                classify_changed_line(line).contains(&ProbeFamily::CallDeletion),
+                "{line}"
+            );
+        }
+        for (line, family) in [
+            ("written += sink.write(buf)?;", ProbeFamily::ErrorPath),
+            ("if a == f(b) {", ProbeFamily::Predicate),
+        ] {
+            assert!(classify_changed_line(line).contains(&family), "{line}");
         }
     }
 

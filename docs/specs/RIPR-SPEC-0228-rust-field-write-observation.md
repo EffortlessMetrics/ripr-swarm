@@ -85,6 +85,18 @@ receiver (`items.push`) and leaves field-path receivers on its Part C.
 RIPR-SPEC-0001 says labels "should be available for state writes" without
 defining them for assignments.
 
+A bare local accumulator update follows the call-free rule even when its
+right-hand side calls something. `count += line.split_whitespace().count();`
+and `count = count + f(x);` consume the call's value (#6677), so deleting the
+call is not a mutant of the line; the lexical fallback no longer reads them as
+`call_deletion` and the line reads `static_unknown`, like `sum += w;`
+(`analysis/probes/lexical.rs`, `is_local_accumulator_assignment`; corpus row
+`grid-loop-table`). Field, deref and index targets (`self.total += f(x)`,
+`*out += f(x)`, `v[i] += f(x)`) and a non-self-referential `total =
+compute(x)` keep their current families. Crediting an accumulator observed
+through an exact owner-return assertion needs loop-count reasoning
+RIPR-SPEC-0197 leaves out, and stays future work.
+
 ## Behavior
 
 ### Probe
