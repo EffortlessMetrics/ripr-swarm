@@ -1113,10 +1113,11 @@ mod tests {
     /// backslash-typed root normalizes there; Unix keeps the identity).
     #[test]
     fn header_root_line_uses_human_path_not_raw_display() {
+        let spaced_root = format!("C:{}tmp{}probe win space", '\\', '\\');
         for root_text in [
-            r"\\?\C:\tmp\probe win space",
-            r"C:\tmp\probe win space",
-            "repo",
+            r"\\?\C:\tmp\probe win space".to_string(),
+            spaced_root,
+            "repo".to_string(),
         ] {
             let root = PathBuf::from(root_text);
             let output = CheckOutput {

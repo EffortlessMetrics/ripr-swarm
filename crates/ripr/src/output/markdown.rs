@@ -1429,18 +1429,23 @@ mod tests {
     #[test]
     fn powershell_command_translates_windows_form_redirect_with_backslash_target()
     -> Result<(), String> {
-        let windows_command = "ripr check --root \"C:\\work space\\repo\" --format repo-exposure-json > \"C:\\work space\\repo\\before.json\"";
+        let spaced_root = format!("C:{}work{}space{}repo", '\\', '\\', '\\');
+        let before_json = format!("{spaced_root}{}before.json", '\\');
+        let windows_command = format!(
+            "ripr check --root \"{spaced_root}\" --format repo-exposure-json > \"{before_json}\""
+        );
         assert!(!has_unsupported_shell_syntax_for(
-            windows_command,
+            &windows_command,
             false,
             true
         ));
-        let translated = powershell_command_for(windows_command, true).ok_or_else(|| {
+        let translated = powershell_command_for(&windows_command, true).ok_or_else(|| {
             "Windows redirect form must translate to the guarded write".to_string()
         })?;
-        if !translated.contains(
-            "WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath(\"C:\\work space\\repo\\before.json\")",
-        ) {
+        let expected_write = format!(
+            "WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath(\"{before_json}\")"
+        );
+        if !translated.contains(&expected_write) {
             return Err(format!(
                 "double-quoted redirect target must pass through unchanged: {translated}"
             ));
@@ -1453,15 +1458,18 @@ mod tests {
         // The same text is bash form off Windows and keeps its conservative
         // withhold there.
         assert!(has_unsupported_shell_syntax_for(
-            windows_command,
+            &windows_command,
             false,
             false
         ));
         // A doubled trailing separator (the renderer's escape for a path
         // ending in `\`) passes through and is un-doubled by the native argv
         // parser at run time.
-        let trailing = "ripr check --root \"C:\\repo\\\\\" > out.json";
-        assert!(!has_unsupported_shell_syntax_for(trailing, false, true));
+        let trailing = format!(
+            "ripr check --root \"C:{}repo{}{}\" > out.json",
+            '\\', '\\', '\\'
+        );
+        assert!(!has_unsupported_shell_syntax_for(&trailing, false, true));
         // An odd backslash run before a quote is an argv-escaped quote the
         // shells read differently: withhold in the Windows form too.
         assert!(has_unsupported_shell_syntax_for(

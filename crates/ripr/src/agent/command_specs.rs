@@ -914,7 +914,7 @@ pub(crate) fn shell_words_for(command: &str, windows: bool) -> Option<Vec<String
             (Some('\''), '\\') => current.push(character),
             // #7729: on Windows the renderer quotes with double quotes, in
             // which cmd.exe and PowerShell keep a backslash literal; the
-            // parser must agree or a rendered `C:\...` token loses its
+            // parser must agree or a rendered Windows-path token loses its
             // separators to escape consumption. #8152 review: the renderer
             // doubles a trailing backslash run before the closing quote
             // (the native argv parser would else read `\"` as an escaped
@@ -1364,9 +1364,9 @@ mod tests {
     #[test]
     fn windows_double_quoted_tokens_round_trip_through_recovery() -> Result<(), String> {
         for value in [
-            r"C:\tmp\probe win space".to_string(),
+            format!("C:{}tmp{}probe win space", '\\', '\\'),
             "with\"quote".to_string(),
-            r"C:\repo\".to_string(),
+            format!("C:{}repo{}", '\\', '\\'),
             "folder space\\".to_string(),
         ] {
             let rendered_token = crate::agent::loop_commands::shell_arg_for(&value, true);

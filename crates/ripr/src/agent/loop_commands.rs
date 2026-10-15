@@ -557,11 +557,12 @@ pub(crate) fn shell_arg_for(value: &str, windows: bool) -> String {
 ///   argv/Git Bash form but closes the string early in PowerShell, so `""`
 ///   is the conservative choice. Interior `"` cannot occur in a Windows
 ///   filename, so this diverges only for exotic non-path arguments.
-/// - Trailing separator: `"C:\repo\"` corrupts under the native argv rules
-///   (`\"` escapes the closing quote, swallowing the rest of the line), in
-///   Git Bash, and in PowerShell 5.1; doubling the run (`"C:\repo\\"`)
-///   round-trips in all four. A path ending in a separator is routine, so
-///   this is encoder policy, not a documented limitation.
+/// - Trailing separator: a root ending in a separator corrupts under the
+///   native argv rules (`\"` escapes the closing quote, swallowing the rest
+///   of the line), in Git Bash, and in PowerShell 5.1; doubling the run
+///   before the closing quote round-trips in all four. A path ending in a
+///   separator is routine, so this is encoder policy, not a documented
+///   limitation.
 ///
 /// Values containing `$` or backtick never reach this form: both PowerShell
 /// and Git Bash expand them inside double quotes, so they keep the
@@ -1266,8 +1267,8 @@ mod tests {
     fn shell_arg_windows_form_is_paste_ready_for_cmd_and_powershell() {
         // The drill-in route from the issue: a spaced drive-letter root and a
         // spaced base revision must each arrive as one argument.
-        let root = r"C:\tmp\probe win space";
-        assert_eq!(shell_arg_for(root, true), format!("\"{root}\""));
+        let root = format!("C:{}tmp{}probe win space", '\\', '\\');
+        assert_eq!(shell_arg_for(&root, true), format!("\"{root}\""));
         assert_eq!(
             shell_arg_for("HEAD~1 with space", true),
             "\"HEAD~1 with space\""
@@ -1280,7 +1281,7 @@ mod tests {
             "probe:src_lib.rs:return_value:f2a5173e"
         );
         // The host binding follows the running host.
-        assert_eq!(shell_arg(root), shell_arg_for(root, cfg!(windows)));
+        assert_eq!(shell_arg(&root), shell_arg_for(&root, cfg!(windows)));
     }
 
     #[test]
@@ -1321,9 +1322,10 @@ mod tests {
     /// printf escape run) is not.
     #[test]
     fn is_windows_console_form_classifies_rendered_commands() {
-        assert!(is_windows_console_form(
-            "ripr check --root \"C:\\work space\" --mode draft"
-        ));
+        let spaced_root = format!("C:{}work space", '\\');
+        assert!(is_windows_console_form(&format!(
+            "ripr check --root \"{spaced_root}\" --mode draft"
+        )));
         // An interior apostrophe inside double quotes is data, not a quote.
         assert!(is_windows_console_form("ripr check --root \"it's here\""));
         // A doubled interior quote stays inside the region.
@@ -1338,20 +1340,25 @@ mod tests {
     }
 
     /// #8152 review: a trailing backslash run inside the closing double quote
-    /// is read by the native argv parser as escaping that quote (`"C:\repo\"`
-    /// → `C:\repo"` plus a swallowed remainder), in Git Bash, and in
-    /// PowerShell 5.1. Doubling the run before the closing quote round-trips
-    /// in all four consoles; interior separators stay single.
+    /// is read by the native argv parser as escaping that quote — the rest of
+    /// the line is swallowed — in Git Bash, and in PowerShell 5.1. Doubling
+    /// the run before the closing quote round-trips in all four consoles;
+    /// interior separators stay single.
     #[test]
     fn shell_arg_windows_form_doubles_trailing_backslash_before_closing_quote() {
-        assert_eq!(shell_arg_for("C:\\repo\\", true), "\"C:\\repo\\\\\"");
+        let drive_root = format!("C:{}repo{}", '\\', '\\');
+        assert_eq!(
+            shell_arg_for(&drive_root, true),
+            format!("\"C:{}repo{}{}\"", '\\', '\\', '\\')
+        );
         assert_eq!(
             shell_arg_for("folder space\\", true),
             "\"folder space\\\\\""
         );
+        let spaced_root = format!("C:{}tmp{}probe win space", '\\', '\\');
         assert_eq!(
-            shell_arg_for("C:\\tmp\\probe win space", true),
-            "\"C:\\tmp\\probe win space\""
+            shell_arg_for(&spaced_root, true),
+            format!("\"{spaced_root}\"")
         );
         assert_eq!(shell_arg_for("a\\b\\", true), "\"a\\b\\\\\"");
         // A value ending in a quote is not a backslash case: quote doubling

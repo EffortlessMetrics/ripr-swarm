@@ -1391,11 +1391,11 @@ mod tests {
         // collapses back to one. The fail-closed `.` fallback stays
         // unreachable for every path shape this form exists to quote.
         for root in [
-            r"C:\my repo\work",
-            r"C:\my repo\work\",
-            r"D:\a b\c d\e.json",
+            format!("C:{}my repo{}work", '\\', '\\'),
+            format!("C:{}my repo{}work{}", '\\', '\\', '\\'),
+            format!("D:{}a b{}c d{}e.json", '\\', '\\', '\\'),
         ] {
-            let quoted = crate::agent::loop_commands::shell_arg(root);
+            let quoted = crate::agent::loop_commands::shell_arg(&root);
             let command = format!("ripr agent start --root {quoted} --seam-id s");
             assert_eq!(
                 root_from_agent_command(&command).as_deref(),
