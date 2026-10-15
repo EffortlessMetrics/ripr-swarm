@@ -188,9 +188,11 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         stages.push({ phase, failure: String(failure) });
         // Re-tag the reported failure with the journey phase: mocha reports
         // hook and test failures identically, and the phase is the first
-        // question every reader of a CI log asks.
+        // question every reader of a CI log asks. Mutating the existing
+        // error keeps the assertion's actual/expected fields and original
+        // stack that Mocha's reporter reads.
         if (failure instanceof Error && !failure.message.includes(`[phase: ${phase}]`)) {
-          this.currentTest.err = new Error(`[phase: ${phase}] ${failure.message}`, { cause: failure });
+          failure.message = `[phase: ${phase}] ${failure.message}`;
         }
       }
     });

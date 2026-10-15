@@ -3005,6 +3005,38 @@ impl Backend {
             .unwrap_or(false)
     }
 
+    /// Whether a clean open still carries an input the committed snapshot
+    /// never analyzed: the file may have changed on disk while it was closed
+    /// and no watch event arrived, so the buffer matches the persisted bytes
+    /// while both differ from the bytes behind the session's seam evidence.
+    /// The opened Rust file's saved digest is compared with the digest the
+    /// committed snapshot captured for the same path; a captured mismatch
+    /// keeps the interactive refresh. An absent commitment (the file is
+    /// outside the committed snapshot, or the snapshot holds no captured
+    /// bytes for it) preserves the clean-open skip.
+    fn opened_file_differs_from_committed_snapshot(&self, uri: &Uri) -> bool {
+        let committed = self.latest_analysis.lock().ok().and_then(|latest| {
+            let snapshot = latest.as_ref()?;
+            let relative = super::uri::file_uri_relative_to_root(&snapshot.root, uri)?;
+            let analyzed_digest = snapshot.rust_consumed_sources.digest(&relative);
+            Some((relative, analyzed_digest))
+        });
+        let Some((_relative, Some(analyzed_digest))) = committed else {
+            return false;
+        };
+        let saved_digest_matches = self
+            .documents
+            .lock()
+            .ok()
+            .and_then(|documents| {
+                documents
+                    .state_for_uri(uri)
+                    .map(|state| state.saved_digest.as_deref() == Some(analyzed_digest.as_str()))
+            })
+            .unwrap_or(false);
+        !saved_digest_matches
+    }
+
     /// Whether the refresh scheduler already holds analysis state (active,
     /// pending, or completed). A failed lock reads as state present so the
     /// conservative route is the interactive refresh.
@@ -5390,12 +5422,19 @@ impl LanguageServer for Backend {
         // A fresh session still refreshes so the first opened document
         // establishes the session's analysis, and a diverging recovered
         // buffer, an unreadable saved identity, or a failed store lock all
-        // keep today's interactive refresh.
+        // keep today's interactive refresh. A buffer matching the persisted
+        // bytes but differing from the digest the committed snapshot
+        // captured for the same Rust path keeps the refresh too: the file
+        // changed on disk while closed, so the session's committed evidence
+        // predates the input it would otherwise keep serving.
         let open_matches_saved = self.open_document_matches_saved_content(&uri);
         let session_has_analysis = self.refresh_scheduler_has_analysis_state();
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
             .await;
-        if open_matches_saved && session_has_analysis {
+        if open_matches_saved
+            && session_has_analysis
+            && !self.opened_file_differs_from_committed_snapshot(&uri)
+        {
             return;
         }
         self.advance_workspace_revision();
