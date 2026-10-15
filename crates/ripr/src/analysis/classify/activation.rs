@@ -2136,6 +2136,36 @@ fn missing_field_value_discriminator(
                         reads_owner_result_field(&test.body, &assertion.text, read, owner)
                     }))
                 || pushed_literal_observed(test, assertion)
+                // #6578: `assert_matches!(owner(..), Err(E::V { f: 0 }))`
+                // pins the constructed variant field by a literal pattern.
+                || owner_fn.is_some_and(|owner| {
+                    // A `#[should_panic]` test passes when the pattern fails.
+                    !test
+                        .attrs
+                        .iter()
+                        .map(String::as_str)
+                        .chain(std::iter::once(test.body.as_str()))
+                        .any(|text| text.contains("should_panic"))
+                        && super::variant_field_pattern::pattern_pins_constructed_field(
+                        &super::variant_field_pattern::ConstructedField {
+                            owner_body: &owner.body,
+                            owner_start_line: owner.start_line,
+                            owner_name: &owner.name,
+                            probe_line: probe.location.line,
+                            probe_expression: &probe.expression,
+                        },
+                        &test.body,
+                        &assertion.text,
+                        &|qualifier| {
+                            super::call_identity::shared_owner_call_identity(index, owner)
+                                .is_none_or(|identity| {
+                                    identity.resolve_call(test, index, qualifier)
+                                        == super::call_identity::CallTarget::Owner
+                                })
+                        },
+                        &|last| super::variant_field_pattern::production_literal_heads(index, last),
+                    )
+                })
         })
     });
     if field_already_observed {
