@@ -126,3 +126,15 @@ unavailable for this conversation`; no timings or prior decisions were
 invented from that unavailable source. The required report input is still
 missing. Local raw proof is retained for the coordinator, including the
 reviewer's mutation receipts at `/workspace/partition-review-evidence`.
+
+Affected-head independent review at 2026-10-15 04:08 UTC inspected repair
+`1937cf1b601097689dbdb13ce3b252f6fdfbee1d`, tree
+`ecd3be3668e8be8ea794fe274728a5882e92abb7`. Disposition:
+**REVIEW_INCOMPLETE; no blocking findings for inactive branch publication**.
+The reviewer independently ran all six tests and both literal-filename CLI
+forms (with and without a later real receipts marker), observed exit 0,
+checked the Clippy log and source hash, and confirmed the appendix's
+carried-forward mutation scope. The parser finding is repaired. This review
+does not establish merge/activation readiness, balance or <=20-minute proof.
+The publication-only receipt update leaves that reviewed Rust source and
+configuration unchanged.
