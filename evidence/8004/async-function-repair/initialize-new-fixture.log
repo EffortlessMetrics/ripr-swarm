@@ -1,6 +1,0 @@
-   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
-   Compiling xtask v0.1.0 (/workspace/ripr-swarm/xtask)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2m 56s
-     Running `target/debug/xtask goldens bless inherent_receiver_async_function --reason 'RIPR-SPEC-0005: initialize the new async-function helper execution regression; no existing snapshot re-bless'`
-$ cargo build -p ripr
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.31s

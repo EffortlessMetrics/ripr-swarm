@@ -1,6 +1,0 @@
-{"label": "committed-cli-build", "argv": ["cargo", "build", "--locked", "-p", "ripr", "--bin", "ripr", "--message-format=json"], "cwd": "/workspace/ripr-swarm", "head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d", "tree": "cc498e204e08facb92cab0d1dad36b36bddd428d", "returncode": 0, "seconds": 36.41, "cargo_build_jobs": 2}
-Traceback (most recent call last):
-  File "/workspace/8004-repair/checks.py", line 17, in <module>
-    digest=hashlib.sha256((root/'target/debug/ripr').read_bytes()).hexdigest();expected=hashlib.sha256((out/'fixed-ripr').read_bytes()).hexdigest();assert digest==expected,(digest,expected)
-                                                                                                                                                           ^^^^^^^^^^^^^^^^
-AssertionError: ('097e6832231684cb191b9f2088b6af4abe1f47e3397b2722dfd10f720db1803a', '66c47ca310321735f84250e0745564cf782ee58a883f576d88050a2b9c230621')

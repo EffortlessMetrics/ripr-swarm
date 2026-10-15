@@ -1,5 +1,0 @@
-Traceback (most recent call last):
-  File "/workspace/8004-repair/quarantine_owned.py", line 19, in <module>
-    assert free > 8*1024**3 + total*2 + 64*1024**2,(free,total)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: (11126673408, 2016368280)

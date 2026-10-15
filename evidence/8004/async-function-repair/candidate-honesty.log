@@ -1,3 +1,0 @@
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.31s
-     Running `target/debug/xtask check-evidence-promotion-honesty`
-pass: corpus tiers valid; all charter members at expected class; no clean-guard case lost its findings; scope-guard cases kept report scope headers; no promoted case carries exposed; all controls retain exposed

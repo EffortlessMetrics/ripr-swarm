@@ -1,0 +1,24 @@
+{
+  "kind": "independent-a5 publication transport correction",
+  "source_head": "a5c69b1cd2ef73d47a11163bca0432f9fe285c3d",
+  "intended_archive_bytes": 978481,
+  "manifest_sha256": "baceea1f2ee4513e3e5ada23235b5d83366af862f27e57101167e4c9dbba0b1f",
+  "archive_sha256": "5b27ad6997c0cf0355c0e7c418dd6f57480dc300d00fa410d63d1fad255a4abf",
+  "failed_archive_blob": "b3e45a6109177bd305f1fbe9ee55774855f9cad0",
+  "corrected_archive_blob": "531a85e7b2cfb9dfc7d34241c22237cbb2d27a6b",
+  "cause": "exec_command bounded terminal output at 1MiB, omitting256068 base64 characters with an omission marker. Prior sender checked truncated, not omitted/exact length/strict base64. Native reconstruction of that transfer reproduces the failed Git blob SHA exactly.",
+  "failed_decoded_bytes": 786444,
+  "corrected_transfer": {
+    "chunks": 5,
+    "encoded_chars": 1304644,
+    "bytes": 978481,
+    "git_sha": "531a85e7b2cfb9dfc7d34241c22237cbb2d27a6b"
+  },
+  "corrected_write_returned_expected_git_sha": true,
+  "old_utf8_blob_reader_error": "UnicodeDecodeError is a binary-reader limitation, not itself corruption evidence.",
+  "generic_fetch_binary_reader_error": "HTTPError400: GitHub Fetch only accepts UTF-8 text; no access denial.",
+  "packet_content_and_three_text_blobs_unchanged": true,
+  "original_manifest_scope": "Four files under independent-a5-review; this adjacent supplementary receipt is bound by the evidence Git tree, outside that manifest.",
+  "original_review_limitations_preserved": true,
+  "issue8005_retry": false
+}

@@ -1,9 +1,0 @@
-b78adbd0ce0dfd5f0baf438497b292133e1c1dc0	refs/heads/artifacts/8004-independent-a2-20261015
-6f338913cf8a7b9f89aa8554892e0b07e74a26e9	refs/heads/evidence/8004-independent-review43
-28b14701b8c0d773db61081f2fde3ce963b009cb	refs/heads/evidence/8004/independent-review53
-a2b489b9d7d5b78daebf9fc1b3e4201dae3c9524	refs/heads/rook/7415-private-target-attribution
-7a1170e535e410ad5227c3d8b807f15869e922b7	refs/heads/rook/8004-async-operand-integration-evidence
-afbcaaf4c2c2d4d4919484ba0112fde281b03337	refs/heads/rook/8004-corpus-repair-evidence
-62c8fe9d4f256f11e31f21f1eb151d8fbfac5a76	refs/heads/rook/8004-executable-owner-evidence-8bbc8dd4
-776209c1eab8512696f50fedcaf555028b6394b2	refs/heads/rook/8004-repair53-evidence
-faff142b4607c65bf02e431a73562ad21ba23766	refs/heads/rook/evidence-8004-receiver-attribution
