@@ -1580,8 +1580,8 @@ fn package_and_verify_vsix(
 }
 
 /// Reads the built VSIX and applies the production inventory bounds plus
-/// complete-notice membership. Returns the one-line summary `vscode-package`
-/// prints.
+/// regular-file complete-notice membership. Returns the one-line summary
+/// `vscode-package` prints.
 fn verify_packaged_vsix(
     vsix_path: &Path,
     notices: &RepositoryLicenseNotices,
@@ -1710,8 +1710,6 @@ const UNIX_S_IFREG: u32 = 0o100_000;
 /// `external_file_attributes`. Rejected even when the member name has no
 /// trailing slash and Unix type bits look regular.
 const DOS_DIRECTORY_ATTRIBUTE: u32 = 0x10;
-const ZIP_CENTRAL_HEADER_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x01, 0x02];
-const ZIP_CENTRAL_EXTERNAL_ATTRIBUTES_OFFSET: usize = 38;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RepositoryLicenseNotices {
@@ -1789,11 +1787,12 @@ fn read_vsix_license_txt_member(
             vsix_path.display()
         )
     })?;
+    use zip::HasZipMetadata;
     require_vsix_license_txt_regular_file(
         vsix_path,
         member.is_file(),
         member.unix_mode(),
-        member.central_header_start(),
+        member.get_metadata().external_attributes,
     )?;
     let mut actual = Vec::new();
     std::io::copy(&mut member, &mut actual).map_err(|err| {
@@ -1809,7 +1808,7 @@ fn require_vsix_license_txt_regular_file(
     vsix_path: &Path,
     is_file: bool,
     unix_mode: Option<u32>,
-    central_header_start: u64,
+    external_attributes: u32,
 ) -> Result<(), String> {
     if !is_file {
         return Err(vsix_license_txt_not_regular(vsix_path));
@@ -1820,8 +1819,7 @@ fn require_vsix_license_txt_regular_file(
             return Err(vsix_license_txt_not_regular(vsix_path));
         }
     }
-    let attributes = read_zip_central_external_attributes(vsix_path, central_header_start)?;
-    if attributes & DOS_DIRECTORY_ATTRIBUTE != 0 {
+    if external_attributes & DOS_DIRECTORY_ATTRIBUTE != 0 {
         return Err(vsix_license_txt_not_regular(vsix_path));
     }
     Ok(())
@@ -1832,46 +1830,6 @@ fn vsix_license_txt_not_regular(vsix_path: &Path) -> String {
         "packaged VSIX {} member {VSIX_LICENSE_TXT_ENTRY} is not a regular file",
         vsix_path.display()
     )
-}
-
-fn read_zip_central_external_attributes(
-    vsix_path: &Path,
-    central_header_start: u64,
-) -> Result<u32, String> {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut file = fs::File::open(vsix_path).map_err(|err| {
-        format!(
-            "failed to reopen packaged VSIX {} to inspect {VSIX_LICENSE_TXT_ENTRY} metadata: {err}",
-            vsix_path.display()
-        )
-    })?;
-    file.seek(SeekFrom::Start(central_header_start))
-        .map_err(|err| {
-            format!(
-                "failed to seek packaged VSIX {} {VSIX_LICENSE_TXT_ENTRY} central-directory header: {err}",
-                vsix_path.display()
-            )
-        })?;
-    let mut header = [0u8; ZIP_CENTRAL_EXTERNAL_ATTRIBUTES_OFFSET + 4];
-    file.read_exact(&mut header).map_err(|err| {
-        format!(
-            "failed to read packaged VSIX {} {VSIX_LICENSE_TXT_ENTRY} central-directory header: {err}",
-            vsix_path.display()
-        )
-    })?;
-    if header.get(..4) != Some(ZIP_CENTRAL_HEADER_SIGNATURE.as_slice()) {
-        return Err(format!(
-            "packaged VSIX {} member {VSIX_LICENSE_TXT_ENTRY} central-directory header is corrupt",
-            vsix_path.display()
-        ));
-    }
-    let Some(&[b0, b1, b2, b3]) = header.get(ZIP_CENTRAL_EXTERNAL_ATTRIBUTES_OFFSET..) else {
-        return Err(format!(
-            "packaged VSIX {} member {VSIX_LICENSE_TXT_ENTRY} central-directory header is truncated",
-            vsix_path.display()
-        ));
-    };
-    Ok(u32::from_le_bytes([b0, b1, b2, b3]))
 }
 
 fn require_license_bytes_contain_notices(

@@ -48867,8 +48867,10 @@ fn assert_typed_license_txt_fixture(
                 .to_string(),
         );
     }
-    let actual_attributes =
-        super::read_zip_central_external_attributes(path, member.central_header_start())?;
+    let actual_attributes = {
+        use zip::HasZipMetadata;
+        member.get_metadata().external_attributes
+    };
     if actual_attributes != external_attributes {
         return Err(format!(
             "typed LICENSE.txt fixture attributes {actual_attributes:#010x} != {external_attributes:#010x}"
