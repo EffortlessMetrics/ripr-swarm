@@ -570,6 +570,11 @@ fn skip_field_visibility(text: &str) -> Option<&str> {
 /// own rules (RIPR-SPEC-0228).
 fn is_local_accumulator_assignment(masked: &str) -> bool {
     let line = masked.trim();
+    // `count += 1; notify(x);` holds a second statement whose call can be
+    // deleted; only a line that is one statement is judged here.
+    if line.trim_end_matches(';').contains(';') {
+        return false;
+    }
     let target_len = line
         .chars()
         .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
@@ -607,6 +612,15 @@ fn is_local_accumulator_assignment(masked: &str) -> bool {
     after.starts_with(['+', '-', '*', '/', '%', '&', '|', '^'])
         || after.starts_with("<<")
         || after.starts_with(">>")
+}
+
+/// A changed line that calls something only to feed a bare local
+/// accumulator (`total += compute(x);`). It replaces a removed
+/// `call_deletion` line (`total = compute(x);`) without leaving that call
+/// deletable, so diff pairing treats the two as the same edit.
+pub(crate) fn is_accumulator_call_update(text: &str) -> bool {
+    let text = text.trim_start();
+    has_call_shape(text) && is_local_accumulator_assignment(&mask_comments_and_strings(text))
 }
 
 fn starts_with_binding_or_control(text: &str) -> bool {
@@ -792,6 +806,9 @@ mod tests {
             "v[i] += f(x);",
             "count = other + f(x);",
             "count = count_of(x);",
+            "count = count(x);",
+            "count = count.max(f(x));",
+            "count += 1; notify(x);",
         ] {
             assert!(
                 classify_changed_line(line).contains(&ProbeFamily::CallDeletion),

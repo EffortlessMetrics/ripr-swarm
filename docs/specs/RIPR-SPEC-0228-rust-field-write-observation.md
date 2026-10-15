@@ -91,7 +91,12 @@ and `count = count + f(x);` consume the call's value (#6677), so deleting the
 call is not a mutant of the line; the lexical fallback no longer reads them as
 `call_deletion` and the line reads `static_unknown`, like `sum += w;`
 (`analysis/probes/lexical.rs`, `is_local_accumulator_assignment`; corpus row
-`grid-loop-table`). Field, deref and index targets (`self.total += f(x)`,
+`grid-loop-table`). Only a line holding one statement qualifies
+(`count += 1; notify(x);` keeps its `call_deletion`). Diff pairing treats a
+removed `call_deletion` line rewritten as such an update (`total =
+compute(x);` to `total += compute(x);`) as the same edit, so the removed line
+mints no base-side `call_deletion` (`analysis/probes/diff.rs`,
+`has_matching_added_line`). Field, deref and index targets (`self.total += f(x)`,
 `*out += f(x)`, `v[i] += f(x)`) and a non-self-referential `total =
 compute(x)` keep their current families. Crediting an accumulator observed
 through an exact owner-return assertion needs loop-count reasoning
