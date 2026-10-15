@@ -709,6 +709,11 @@ fn identity_helpers_read_only_unrebound_top_level_identity_functions() {
             "function wrap(this: unknown, e: number) {\n  return e;\n}",
         ),
         ("member result", "function wrap(e) {\n  return e.cause;\n}"),
+        (
+            "other identifier",
+            "function wrap(e) {\n  return cached;\n}",
+        ),
+        ("arrow other identifier", "const wrap = (e) => cached;"),
         ("other result", "function wrap(e) {\n  return make(2);\n}"),
         (
             "extra statement",
@@ -750,6 +755,10 @@ fn identity_helpers_read_only_unrebound_top_level_identity_functions() {
         (
             "nested declaration",
             "function wrap(e) {\n  return e;\n}\nfunction outer() {\n  function wrap(e) {\n    return 0;\n  }\n}",
+        ),
+        (
+            "nested generator",
+            "function wrap(e) {\n  return e;\n}\nfunction outer() {\n  function* wrap(e) {\n    return 0;\n  }\n}",
         ),
         (
             "member write",

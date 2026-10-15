@@ -873,6 +873,23 @@ fn instance_pin_looks_through_a_test_local_identity_helper() -> Result<(), Strin
         let tests = extract_tests(Path::new("tests/errors.test.ts"), &test);
         assert_eq!(tests.len(), 1, "{label}");
         assert_eq!(tests[0].assertions.len(), 1, "{label}");
+        // The call-shape cases keep the helper, so their refusal comes from
+        // the classifier's call-site check, not from extraction.
+        let helper_kept = matches!(
+            label,
+            "identity-function"
+                | "identity-arrow"
+                | "awaited-identity"
+                | "two-arguments"
+                | "wrapped-local"
+                | "wrapped-member"
+                | "nested-wrap"
+        );
+        assert_eq!(
+            tests[0].identity_helpers_in_file.is_empty(),
+            !helper_kept,
+            "{label}"
+        );
         let candidates =
             related_test_candidates(&owner, &tests, Some(&root), &ReExportIndex::empty(), None);
         let facts = ts_instance_class_facts(
