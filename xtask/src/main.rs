@@ -5983,7 +5983,12 @@ fn has_explicit_planned_test_mapping(text: &str) -> bool {
         let fence_indent = line.len() - fence_text.len();
         if let Some((delimiter, length)) = fence {
             let count = fence_text.chars().take_while(|ch| *ch == delimiter).count();
-            if fence_indent <= 3 && count >= length && fence_text[count..].trim().is_empty() {
+            if fence_indent <= 3
+                && count >= length
+                && fence_text[count..]
+                    .bytes()
+                    .all(|byte| byte == b' ' || byte == b'\t')
+            {
                 fence = None;
             }
             continue;
