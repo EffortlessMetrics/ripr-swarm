@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate",
   "test_shape": "jest_tobeinstanceof_wrapped_owner_call",
-  "hard_case": "the boundary pin observes `wrap(errorForWrap(404))`, not the owner call itself, so the spec withholds the class-pin credit although `wrap` returns its argument",
+  "hard_case": "the boundary pin observes `wrap(errorForWrap(404))`, not the owner call itself; the spec credits it only because `wrap` is a test-local identity helper (`return err;`)",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
@@ -47,7 +47,7 @@
       "silent"
     ]
   },
-  "reasoning": "`if (status === 404)` becomes `if (404 === status)`. The test pins `expect(wrap(errorForWrap(404))).toBeInstanceOf(NotFound)`, where the test-local `wrap` returns its argument, and `expect(errorForWrap(403)).toBeInstanceOf(Forbidden)`; all three listed mutants fail the test. RIPR-SPEC-0249 example 5: a pin on `wrap(errorFor(404))` is not credited. ripr credits only the 403 pin, which is not at the changed boundary 404, and reports `weakly_exposed`, as the spec states; against the discriminated truth that is a false actionable gap the spec accepts.",
+  "reasoning": "`if (status === 404)` becomes `if (404 === status)`. The test pins `expect(wrap(errorForWrap(404))).toBeInstanceOf(NotFound)`, where the test-local `wrap` returns its argument, and `expect(errorForWrap(403)).toBeInstanceOf(Forbidden)`; all three listed mutants fail the test. RIPR-SPEC-0249 example 5, amended 2026-10-15: a pin on `wrap(errorFor(404))` is credited when `wrap` is a top-level, unexported one-parameter function whose body is exactly `return err;` and whose name the file uses only as a direct call. `wrap` qualifies here, so the 404 pin reads `exact_value` / strong at the changed boundary and ripr reports `exposed`, matching the discriminated truth.",
   "labeling_observation": {
     "ripr_commit": "3480fb2",
     "full_checkout_verdict": "gap",

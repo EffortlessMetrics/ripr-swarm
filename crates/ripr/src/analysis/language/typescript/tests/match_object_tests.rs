@@ -254,7 +254,7 @@ fn match_object_pin_stays_weak_without_the_listed_field_on_the_whole_result() ->
         ),
         (
             "match-object-dynamic",
-            "  const expected = { adult: true };\n  expect(buildProfile(\"bo\", 18)).toMatchObject(expected);",
+            "  let expected = { adult: true };\n  expect(buildProfile(\"bo\", 18)).toMatchObject(expected);",
         ),
         (
             "match-object-rejects",
@@ -365,5 +365,445 @@ fn match_object_facts_read_field_construction_changes_only() -> Result<(), Strin
     // Only the assertion that lists `adult` is credited.
     assert_eq!(field, 1);
     assert_eq!(predicate, 0);
+    Ok(())
+}
+
+/// RIPR-SPEC-0250 example 4 (amended 2026-10-15): a pin on
+/// `normalize(buildProfile(...))` reads as a pin on the owner call when
+/// `normalize` is a test-local identity helper, and stays weak when the
+/// helper rebuilds its argument.
+#[test]
+fn match_object_pin_looks_through_a_test_local_identity_helper() -> Result<(), String> {
+    let pins = "test(\"profile records adulthood\", () => {\n  expect(normalize(buildProfile(\"ana\", 17))).toMatchObject({ name: \"ana\", adult: false });\n  expect(normalize(buildProfile(\"bo\", 18))).toMatchObject({ name: \"bo\", adult: true });\n});\n";
+    let with_helper = |helper: &str| {
+        format!("import {{ buildProfile }} from \"../src/profile\";\n{helper}\n{pins}")
+    };
+    let identity = with_helper("function normalize<T>(value: T): T {\n  return value;\n}");
+    let tests = extract_tests(Path::new("tests/profile.test.ts"), &identity);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].assertions.len(), 2);
+    assert_eq!(
+        tests[0].identity_helpers_in_file,
+        vec!["normalize".to_string()]
+    );
+    let finding = profile_finding("match-object-identity", &identity)?;
+    assert_eq!(finding.probe.family, ProbeFamily::FieldConstruction);
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    let row = finding
+        .related_tests
+        .first()
+        .ok_or("expected a related test row")?;
+    assert_eq!(row.oracle_kind, OracleKind::ExactValue);
+    assert_eq!(row.oracle_strength, OracleStrength::Strong);
+
+    // Through the owner's namespace import the identity reading holds; a
+    // body-local `ns` shadowing that import reaches the shadow instead.
+    let namespaced = |body: &str| {
+        format!(
+            "import * as ns from \"../src/profile\";\nimport {{ buildProfile }} from \"../src/profile\";\nfunction normalize<T>(value: T): T {{\n  return value;\n}}\ntest(\"profile records adulthood\", () => {{\n{body}\n}});\n"
+        )
+    };
+    let pin = "  expect(normalize(ns.buildProfile(\"bo\", 18))).toMatchObject({ name: \"bo\", adult: true });";
+    let finding = profile_finding("match-object-namespace", &namespaced(pin))?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    let shadowed = namespaced(&format!(
+        "  const ns = fakeProfiles();\n  buildProfile(\"ana\", 17);\n{pin}"
+    ));
+    let tests = extract_tests(Path::new("tests/profile.test.ts"), &shadowed);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].assertions.len(), 1);
+    let finding = profile_finding("match-object-shadowed-namespace", &shadowed)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    // A dynamic import is the owner namespace only as the whole
+    // initializer: a chained `.then(...)` binds the callback's value.
+    let dynamic = |init: &str| {
+        format!(
+            "import {{ buildProfile }} from \"../src/profile\";\nfunction normalize<T>(value: T): T {{\n  return value;\n}}\ntest(\"profile records adulthood\", async () => {{\n  const ns = {init};\n  buildProfile(\"ana\", 17);\n{pin}\n}});\n"
+        )
+    };
+    let finding = profile_finding(
+        "match-object-dynamic-namespace",
+        &dynamic("await import(\"../src/profile\")"),
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    let finding = profile_finding(
+        "match-object-chained-dynamic-namespace",
+        &dynamic("await import(\"../src/profile\").then(() => fakeProfiles())"),
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+
+    // The helper stays eligible, so these refusals come from the call-site
+    // shape: a member of the owner result, or a second wrap around it.
+    for (label, shape) in [
+        (
+            "match-object-wrapped-member",
+            "normalize(buildProfile(\"bo\", 18).meta)",
+        ),
+        (
+            "match-object-nested-wrap",
+            "normalize(normalize(buildProfile(\"bo\", 18)))",
+        ),
+    ] {
+        let source = format!(
+            "import {{ buildProfile }} from \"../src/profile\";\nfunction normalize<T>(value: T): T {{\n  return value;\n}}\ntest(\"profile records adulthood\", () => {{\n  buildProfile(\"ana\", 17);\n  expect({shape}).toMatchObject({{ name: \"bo\", adult: true }});\n}});\n"
+        );
+        let tests = extract_tests(Path::new("tests/profile.test.ts"), &source);
+        assert_eq!(tests.len(), 1, "{label}");
+        assert_eq!(tests[0].assertions.len(), 1, "{label}");
+        assert_eq!(
+            tests[0].identity_helpers_in_file,
+            vec!["normalize".to_string()],
+            "{label}"
+        );
+        let finding = profile_finding(label, &source)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{label}");
+    }
+
+    for (label, helper) in [
+        (
+            "match-object-rebuilding-helper",
+            "function normalize<T>(value: T): T {\n  return { ...value, adult: true };\n}",
+        ),
+        (
+            "match-object-reassigned-helper",
+            "let normalize = <T>(value: T): T => value;",
+        ),
+    ] {
+        let finding = profile_finding(label, &with_helper(helper))?;
+        let row = finding
+            .related_tests
+            .first()
+            .ok_or_else(|| format!("{label}: expected a related test row"))?;
+        assert_ne!(
+            (row.oracle_kind.clone(), row.oracle_strength.clone()),
+            (OracleKind::ExactValue, OracleStrength::Strong),
+            "{label}"
+        );
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
+    Ok(())
+}
+
+/// #7497: a local bound once to the owner result that the test rewrites
+/// before asserting observes the test's own write, not the owner call, so
+/// the whole-result credit stays unavailable. Every shape below read
+/// `exposed` before the fix (false exposed); all must downgrade now — for
+/// the `toMatchObject` pin and for the `toEqual` whole-object reading,
+/// which shares the whole-result reader. The later review round widened
+/// the guard to keyword-rooted member calls (`this.fix(bo)`), computed and
+/// parenthesized callee escapes (`Object["assign"](bo, ...)`,
+/// `(fix)(bo)`), generic type arguments (`fix<any>(bo)`), and non-null
+/// bracket writes (`bo!["adult"] = true`); those pins keep each widened
+/// branch honest.
+#[test]
+fn rewritten_owner_local_is_not_the_owner_result() -> Result<(), String> {
+    for (label, body) in [
+        (
+            "rewritten-member-assign",
+            "  const bo = buildProfile(\"bo\", 18);\n  bo.adult = true;\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-bracket-assign",
+            "  const bo = buildProfile(\"bo\", 18);\n  bo[\"adult\"] = true;\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-object-assign",
+            "  const bo = buildProfile(\"bo\", 18);\n  Object.assign(bo, { adult: true });\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-helper-escape",
+            "  function fix(p: any) { p.adult = true; }\n  const bo = buildProfile(\"bo\", 18);\n  fix(bo);\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-member-assign-to-equal",
+            "  const bo = buildProfile(\"bo\", 18);\n  bo.adult = true;\n  expect(bo).toEqual({ name: \"bo\", adult: true, tags: [] });",
+        ),
+        (
+            "rewritten-object-assign-to-equal",
+            "  const bo = buildProfile(\"bo\", 18);\n  Object.assign(bo, { adult: true });\n  expect(bo).toEqual({ name: \"bo\", adult: true, tags: [] });",
+        ),
+        (
+            "rewritten-helper-escape-to-equal",
+            "  function fix(p: any) { p.adult = true; }\n  const bo = buildProfile(\"bo\", 18);\n  fix(bo);\n  expect(bo).toEqual({ name: \"bo\", adult: true, tags: [] });",
+        ),
+        (
+            "rewritten-this-escape",
+            "  const bo = buildProfile(\"bo\", 18);\n  this.fix(bo);\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-computed-object-assign",
+            "  const bo = buildProfile(\"bo\", 18);\n  Object[\"assign\"](bo, { adult: true });\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-computed-object-assign-to-equal",
+            "  const bo = buildProfile(\"bo\", 18);\n  Object[\"assign\"](bo, { adult: true });\n  expect(bo).toEqual({ name: \"bo\", adult: true, tags: [] });",
+        ),
+        (
+            "rewritten-parenthesized-escape",
+            "  const bo = buildProfile(\"bo\", 18);\n  (fix)(bo);\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-generic-escape",
+            "  const bo = buildProfile(\"bo\", 18);\n  fix<any>(bo);\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-nonnull-bracket-assign",
+            "  const bo = buildProfile(\"bo\", 18);\n  bo![\"adult\"] = true;\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-nonnull-bracket-assign-to-equal",
+            "  const bo = buildProfile(\"bo\", 18);\n  bo![\"adult\"] = true;\n  expect(bo).toEqual({ name: \"bo\", adult: true, tags: [] });",
+        ),
+        (
+            "rebound-bare-let",
+            "  let bo = buildProfile(\"bo\", 18);\n  bo = { name: \"bo\", adult: true, tags: [] };\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            // No seeding `bo.count = 0;` line: a plain member assign would
+            // trip the guard before the compound branch is reached, and the
+            // case would pass even with `+=` detection deleted.
+            "rewritten-compound-assign",
+            "  const bo = buildProfile(\"bo\", 18);\n  bo.count += 1;\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-delete-field",
+            "  const bo = buildProfile(\"bo\", 18);\n  delete bo.adult;\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            // Seeding assignment removed for the same reason: this case
+            // must exercise the postfix `++` branch itself.
+            "rewritten-postfix-incr",
+            "  const bo = buildProfile(\"bo\", 18);\n  bo.count++;\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+    ] {
+        let finding = profile_finding(label, &profile_test(body))?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    // Preservation: an unmutated local still witnesses through the same
+    // reader, for both the pin and the whole-object equality.
+    for (label, body) in [
+        (
+            "unmutated-local-match-object",
+            "  const bo = buildProfile(\"bo\", 18);\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "unmutated-local-to-equal",
+            "  const bo = buildProfile(\"bo\", 18);\n  expect(bo).toEqual({ name: \"bo\", adult: true, tags: [] });",
+        ),
+    ] {
+        let finding = profile_finding(label, &profile_test(body))?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    // Preservation through non-`expect` assertion spellings: a pristine
+    // local asserted via `node:assert` or `chai.expect` must not be
+    // downgraded by the mutation guard.
+    for (label, source) in [
+        (
+            "unmutated-local-node-assert",
+            "import { buildProfile } from \"../src/profile\";\nimport assert from \"node:assert\";\ntest(\"profile records adulthood\", async () => {\n  const bo = buildProfile(\"bo\", 18);\n  assert.deepStrictEqual(bo, { name: \"bo\", adult: true, tags: [] });\n});\n",
+        ),
+        (
+            "unmutated-local-chai-expect",
+            "import { buildProfile } from \"../src/profile\";\nimport * as chai from \"chai\";\ntest(\"profile records adulthood\", async () => {\n  const bo = buildProfile(\"bo\", 18);\n  chai.expect(bo).to.deep.equal({ name: \"bo\", adult: true, tags: [] });\n});\n",
+        ),
+    ] {
+        let finding = profile_finding(label, source)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    // Preservation through keyword-rooted reads: `if (bo)` keeps the
+    // whole-result credit. The keyword exemption still applies while the
+    // keyword is the whole callee (`root == last`), so only member calls
+    // rooted in one (`this.fix(bo)`) reach the escape check.
+    {
+        let finding = profile_finding(
+            "keyword-condition-read",
+            &profile_test(
+                "  const bo = buildProfile(\"bo\", 18);\n  if (bo) {\n    console.log(\"kept\");\n  }\n  expect(bo).toMatchObject({ adult: true });",
+            ),
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "keyword-condition-read: {:?}",
+            finding.missing
+        );
+    }
+    Ok(())
+}
+
+/// RIPR-SPEC-0250 example 5 (amended 2026-10-15): `toMatchObject(<name>)`
+/// reads the flat literal of a test-body `const` the body names only in its
+/// binding and that argument; any other mention, binding kind, object shape,
+/// matcher chain or escape hatch keeps the pin uncredited.
+#[test]
+fn match_object_pin_reads_a_test_body_object_const() -> Result<(), String> {
+    let pinned = profile_test(
+        "  const minor = { name: \"ana\", adult: false };\n  const grown = { name: \"bo\", adult: true };\n  expect(buildProfile(\"ana\", 17)).toMatchObject(minor);\n  expect(buildProfile(\"bo\", 18)).toMatchObject(grown);",
+    );
+    let tests = extract_tests(Path::new("tests/profile.test.ts"), &pinned);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].assertions.len(), 2);
+    let assertion = &tests[0].assertions[1];
+    assert_eq!(assertion.matcher, "toMatchObject");
+    assert_eq!(assertion.expected_value_or_variant, None);
+    assert!(assertion.has_dynamic_matcher_arg);
+    assert_eq!(
+        assertion.expected_object_const.as_deref(),
+        Some("{ name: \"bo\", adult: true }")
+    );
+    let finding = profile_finding("match-object-const", &pinned)?;
+    assert_eq!(finding.probe.family, ProbeFamily::FieldConstruction);
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    let row = finding
+        .related_tests
+        .first()
+        .ok_or("expected a related test row")?;
+    assert_eq!(row.oracle_kind, OracleKind::ExactValue);
+    assert_eq!(row.oracle_strength, OracleStrength::Strong);
+    // The argument is resolved, so the finding does not also say it is not.
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("typescript_dynamic_assertion_unresolved")),
+        "{:?}",
+        finding.evidence
+    );
+
+    let pin = "  expect(buildProfile(\"bo\", 18)).toMatchObject(expected);";
+    let declared = "  const expected = { adult: true };";
+    for (label, body) in [
+        ("let", format!("  let expected = {{ adult: true }};\n{pin}")),
+        (
+            "field-write",
+            format!("{declared}\n  expected.adult = false;\n{pin}"),
+        ),
+        (
+            "alias",
+            format!(
+                "{declared}\n  const same = expected;\n  expect(buildProfile(\"bo\", 18)).toMatchObject(same);"
+            ),
+        ),
+        (
+            "helper-call",
+            format!("{declared}\n  tweak(expected);\n{pin}"),
+        ),
+        ("second-assertion", format!("{declared}\n{pin}\n{pin}")),
+        (
+            "unlisted-field",
+            format!("  const expected = {{ name: \"bo\" }};\n{pin}"),
+        ),
+        (
+            "nested-value",
+            format!("  const expected = {{ adult: true, meta: {{ id: 1 }} }};\n{pin}"),
+        ),
+        (
+            "spread",
+            format!("  const expected = {{ ...base, adult: true }};\n{pin}"),
+        ),
+        ("eval", format!("{declared}\n  eval(\"x\");\n{pin}")),
+        (
+            "unicode-escape",
+            format!("{declared}\n  const s = \"\\u0041\";\n{pin}"),
+        ),
+        ("nested-block", format!("  {{\n  {declared}\n  {pin}\n  }}")),
+        // The binding is top-level but the call sits in a nested block.
+        (
+            "call-in-block",
+            format!("{declared}\n  if (true) {{\n  {pin}\n  }}"),
+        ),
+        (
+            "resolves-chain",
+            format!(
+                "{declared}\n  await expect(Promise.resolve(buildProfile(\"bo\", 18))).resolves.toMatchObject(expected);"
+            ),
+        ),
+    ] {
+        let test = profile_test(&body);
+        let tests = extract_tests(Path::new("tests/profile.test.ts"), &test);
+        assert_eq!(tests.len(), 1, "{label}");
+        let assertion = tests[0]
+            .assertions
+            .iter()
+            .find(|assertion| assertion.matcher == "toMatchObject")
+            .ok_or_else(|| format!("{label}: no toMatchObject assertion"))?;
+        if label != "unlisted-field" {
+            assert_eq!(assertion.expected_object_const, None, "{label}");
+        }
+        let finding = profile_finding(&format!("match-object-const-{label}"), &test)?;
+        let row = finding
+            .related_tests
+            .first()
+            .ok_or_else(|| format!("{label}: expected a related test row"))?;
+        assert_ne!(
+            (row.oracle_kind.clone(), row.oracle_strength.clone()),
+            (OracleKind::ExactValue, OracleStrength::Strong),
+            "{label}"
+        );
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
+
+    // A binding outside the test body is shared with other tests and hooks,
+    // so it is not read even when this body names it only once.
+    let outside = format!(
+        "import {{ buildProfile }} from \"../src/profile\";\n{declared}\ntest(\"profile records adulthood\", () => {{\n{pin}\n}});\n"
+    );
+    let tests = extract_tests(Path::new("tests/profile.test.ts"), &outside);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].assertions.len(), 1);
+    assert_eq!(tests[0].assertions[0].expected_object_const, None);
+    let finding = profile_finding("match-object-const-outside-body", &outside)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+
+    // A sloppy-mode script can reach the object through a `with` scope.
+    let script = |extra: &str| {
+        let source = format!(
+            "const {{ buildProfile }} = require(\"../src/profile\");\ntest(\"t\", () => {{\n{declared}\n{extra}{pin}\n}});\n"
+        );
+        let tests = extract_tests(Path::new("tests/profile.test.cjs"), &source);
+        assert_eq!(tests.len(), 1, "{extra}");
+        tests[0]
+            .assertions
+            .iter()
+            .find(|assertion| assertion.matcher == "toMatchObject")
+            .and_then(|assertion| assertion.expected_object_const.clone())
+    };
+    assert_eq!(script("").as_deref(), Some("{ adult: true }"));
+    assert_eq!(script("  with (globalThis) {\n  }\n"), None);
     Ok(())
 }

@@ -123,6 +123,13 @@ pub(crate) struct TypeScriptTest {
     /// outside the test body and to detect shadowed constructor names; owner
     /// calls and assertions must still sit in `body_text`.
     pub(crate) scope_bindings: Vec<TypeScriptScopeBinding>,
+    /// Test-local identity helpers of the containing test file
+    /// (RIPR-SPEC-0249 / RIPR-SPEC-0250, amended 2026-10-15): top-level
+    /// `function f(p) { return p; }` or `const f = (p) => p;` declarations
+    /// whose name appears nowhere else in the file except as a direct call
+    /// `f(`. Populated once per file by `extract_tests`; empty when anything
+    /// could rebind or replace the name.
+    pub(crate) identity_helpers_in_file: Vec<String>,
     /// Whether the test's assertion state is established: a recognized
     /// assertion, an established absence of anything assertion-like, or
     /// something assertion-like RIPR cannot resolve (#5524). An empty
@@ -483,6 +490,12 @@ pub(crate) struct TypeScriptAssertion {
     /// other `exact_value` matchers stay false: sharing a kind is not
     /// identity. A refused or non-strict custom matcher stays false.
     pub(crate) compares_reference_identity: bool,
+    /// RIPR-SPEC-0250 rule 1 (amended 2026-10-15): the flat literal object a
+    /// `toMatchObject(<name>)` argument stands for, when `<name>` is a
+    /// test-body `const` the body names only in its binding and that
+    /// argument ([`match_object_consts`]). Read only by
+    /// `ts_match_object_facts`; `expected_value_or_variant` stays `None`.
+    pub(crate) expected_object_const: Option<String>,
 }
 
 impl TypeScriptAssertion {

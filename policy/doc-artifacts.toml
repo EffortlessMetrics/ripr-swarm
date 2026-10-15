@@ -1554,3 +1554,11 @@ path = "docs/specs/RIPR-SPEC-0253-local-collect-all-policy.md"
 status = "accepted"
 owner = "repo-infra"
 standalone_reason = "Issue #5073 defines the bounded local check-policy-all contract over nine existing independent policy scans, with actual-driver tests for collect-all errors, preserved leaf diagnostics, stale-report I/O failures and aggregate write failures; no product policy composition, hosted gate or timing-budget change."
+
+[[artifact]]
+id = "RIPR-SPEC-0266"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0266-coverage-binary-id-diagnostics.md"
+status = "proposed"
+owner = "repo-policy"
+standalone_reason = "Issue #4978 covers an additive CI failure-manifest diagnostic: bounded LLVM profile IDs associate only with exact GNU build IDs in instrumented ELF candidates, with explicit partiality and no test, termination, or cause attribution."

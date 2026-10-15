@@ -839,7 +839,7 @@ rule only for an assertion whose context was admitted.
      module of the file are refused.
    - The helper runs to its end on every call: no attributes other than
      `#[track_caller]`, no generic parameters or `where` clause, not `async`,
-     `const` or `unsafe`, no `self` parameter, no return type, and no `return`
+     `const` or `unsafe`, no `self` parameter, and no `return`
      or `?` anywhere in its body. It passes the same escape gate as a test
      (only the trusted standard macros, no `break`, `continue` or `yield`) and
      the same item-context and cfg gates, and the macros it invokes join the
@@ -847,6 +847,11 @@ rule only for an assertion whose context was admitted.
      `macro_rules!` or `use` inside the helper's own body) is checked at the
      borrowed assertion's line as well as across the test's span, since the
      helper's scope never overlaps the test's.
+     An explicit return type is allowed (#7818): a synchronous call runs the
+     panic assertion even if the caller discards a returned `Result` or
+     `Option`. This lends only the `assert_eq!`, never the returned value or
+     error. An early exit, including an opaque `ensure!`/`bail!`, still refuses
+     the helper; rule 7a's separate fallible-literal grammar is unchanged.
    - The assertion sits on the helper's own eager path and is uniquely
      identified by its line and text, as rule 1 requires within a test.
    - The assertion must also reach the test's oracle facts through the
@@ -1066,7 +1071,9 @@ Implementation and validation obligations:
 2. Extend the existing owner-pin owner with private bounded extraction and
    composition modules under `syntax/owner_pin/` and `classify/owner_pin/`.
    Reuse cfg/source-role provenance, body identity and call-binding defeats;
-   do not broaden `plain_check_helper` or the existing helper producer.
+   do not broaden `plain_check_helper` for this fallible adapter or the existing
+   helper producer. Rule 7's later explicit-return panic-assertion extension
+   (#7818) does not admit fallible macros here.
 3. Add a lazily memoized dependency-identity query under `analysis/workspace/`,
    bounded to structurally eligible shapes and using the existing deadline,
    output budget and process policy. Failure yields no receipt, without fetching,
@@ -1434,14 +1441,24 @@ and only per pinned call:
    included, never counts.
 3. Every other rule holds unchanged. The predicate twin pins through the
    same gate, as for any bool owner's whole tail.
+4. Propagation (#8037). An admitted chain that is the owner's whole body
+   completes a DirectReturn witness on its line (limitation
+   `short_circuit_owner_tail`), as a constant tail and an admitted
+   iterator-adaptor tail (RIPR-SPEC-0265 rule 3) do: its operands are
+   comparisons of parameters with literals and make no calls, so its value
+   is the owner's return. Before this,
+   an `||` chain had no witness, because the closure-syntax guard reads any
+   paired pipes as an opaque closure, so its return-value probe stayed
+   `weakly_exposed` even when the pin held. Whether a pinned run evaluates
+   every operand stays item 2's run check, not this edge's.
 
 The run check reads values, not mutants: it shows the changed chain runs
 to its end on a pinned input, which is what rule 3 asks of any tail.
 Whether those inputs discriminate a boundary stays the infection stage's
-question. `grid-equality-table` (`day % 7 == 6 || day % 7 == 0` over a
-table) stays below `exposed`: its predicate keeps `infection_unknown` for
-computed operands, and its return value still lacks a complete
-owner-bound propagation witness.
+question. In `grid-equality-table` (`day % 7 == 6 || day % 7 == 0` over a
+table) the predicate keeps `infection_unknown` for computed operands; the
+return value, which before item 4 lacked a complete owner-bound
+propagation witness, is now credited through that witness and the pin.
 
 ### Exact projections
 
@@ -1578,7 +1595,24 @@ reaches the ordinary token rule and reads `weakly_exposed`, still a gap.
   mention of a trusted name in another macro's arguments stays ambiguous,
   a plain `assert_eq!(..)` included: to that macro it is only tokens, and
   `define!(assert_eq!(mod tests;))` can emit `macro_rules! assert_eq`
-  together with the module whose tests then compile against it.
+  together with the module whose tests then compile against it. The one
+  exception is a call to a wrapper that cannot bind a name at all (#6648):
+  an unqualified call to a `macro_rules!` this file defines exactly once,
+  without an attribute and never names in a `use`. The definition sits at
+  file level, or in an inline module whose textual scope can be bounded and
+  contains the call, and ends before the call. Neither the definition nor
+  the call's arguments hold a binding word (`macro_rules`, `macro`, `use`,
+  `extern`, `mod`, `include`, `macro_use`, `macro_export`,
+  `no_implicit_prelude`) or an attribute other than a built-in test, lint,
+  `cfg` or `doc` attribute. The definition holds no `!` at all and captures
+  no `tt` fragment (the only fragment that can lift a lone `!` or `#` out of
+  the arguments and splice it after another name), and the arguments hold a
+  `!` only as a bare trusted `name!` (a unary `!` fails closed, since a `tt`
+  fragment or a repetition can splice it after a name). No module item sits
+  between the definition and the call, and every macro call there is another
+  such call of the same wrapper (even a trusted name may be a local macro
+  there), so nothing can bring in a shadowing definition. Attribute proc
+  macros elsewhere in the file stay invisible, as for every other site.
   `macro_use` or `no_implicit_prelude` anywhere in a non-trusted macro's
   arguments makes every trusted name ambiguous (stricter than the same
   attribute written on an item, which a resolved module can admit). A
@@ -1866,6 +1900,10 @@ assertions. This repair shares the existing callback without that larger migrati
   read `exposed` through table boundary pairing; the pin must not undo it), and
   `trap-short-circuit-skipped-operand` (`x == 0 && 0 == y` pinned only
   with `x != 0`) stays a gap. No other row changes.
+- Short-circuit tail propagation (#8037): `grid-equality-table`
+  (`day % 7 == 6 || day % 7 == 0` over a table whose rows 0, 1 and 5 run
+  both operands) moves from a false actionable gap to `credited`. No other
+  row changes.
 
 ## Acceptance Examples
 
@@ -2052,6 +2090,13 @@ assertions. This repair shares the existing callback without that larger migrati
   mutant fails; `raw_path_shadow_module_keeps_the_mutant_green` (#7098
   review) loads a rival `Unit` from a `#[r#path]`-named non-`.rs` module,
   and the mutant passes while the finding refuses.
+- Binding-free local wrappers (#6648): `owner_pin/tests.rs`
+  `a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted`.
+- Short-circuit tail propagation (#8037): `propagation_witness.rs`
+  `short_circuit_owner_tail_completes_only_an_admitted_chain`;
+  `crates/ripr/tests/short_circuit_or_tail.rs`
+  `an_or_tail_run_to_its_end_by_a_table_is_exposed` and
+  `an_or_tail_whose_changed_operand_never_runs_stays_below_exposed`.
 - Short-circuit tails (#7969): `owner_pin/short_circuit.rs` unit tests
   `reads_homogeneous_comparison_chains_over_parameters`,
   `refuses_anything_that_can_call_panic_or_mix_operators`,
