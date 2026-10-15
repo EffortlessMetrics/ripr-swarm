@@ -142,15 +142,20 @@ fn read_json(path: &str) -> Result<Value, String> {
         .map_err(|e| format!("{path}: {e}"))
 }
 
+fn receipt_offset(args: &[String]) -> usize {
+    args.iter()
+        .enumerate()
+        .skip(3)
+        .find_map(|(i, arg)| (arg == "--receipts").then_some(i))
+        .unwrap_or(args.len())
+}
+
 fn run(args: &[String]) -> Result<(), String> {
     if args.len() < 5 {
         return Err("usage: mandatory_partitions PLAN FULL SHARD1 SHARD2 [SHARD3 [SHARD4]]; or ... PLAN FULL SHARDS... --receipts CONTEXT RECEIPTS_JSON".into());
     }
     let plan = plan(&fs::read_to_string(&args[1]).map_err(|e| e.to_string())?)?;
-    let receipt_offset = args
-        .iter()
-        .position(|a| a == "--receipts")
-        .unwrap_or(args.len());
+    let receipt_offset = receipt_offset(args);
     let full = inventory(&read_json(&args[2])?, false)?;
     let shards = args[3..receipt_offset]
         .iter()
@@ -192,6 +197,22 @@ fn main() -> std::process::ExitCode {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn required_input_named_receipts_is_a_path() {
+        let mut args = [
+            "program",
+            "plan.toml",
+            "--receipts",
+            "part1.json",
+            "part2.json",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        assert_eq!(receipt_offset(&args), 5);
+        args.extend(["--receipts", "context", "receipts.json"].map(str::to_owned));
+        assert_eq!(receipt_offset(&args), 5);
+    }
 
     fn full() -> Inventory {
         [

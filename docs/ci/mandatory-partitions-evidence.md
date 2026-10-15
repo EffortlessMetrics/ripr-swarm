@@ -86,3 +86,43 @@ and independent reviewer. This path is executor-local; this committed receipt
 and the fixture above are the GitHub-readable evidence, not a claim that local
 files have been uploaded. The worktree/target are retained for pending review;
 the original checkout and owner branches were not edited.
+
+## Scoped repair and independent oracle challenge
+
+Independent review of `df158cbd656b2a633659335fa458804951eb2d27`, tree
+`6c21481086ef075501491f6cc7af893ace1e6a11`, independently recomputed the native
+inventories, XML and insertion-stability comparisons. Its separate scratch
+baseline passed 5/5; individually removing the exit, complete, context or
+passed-subject comparison made the unchanged aggregation test fail (exit 101
+for each). Scratch mutation sources differ only in the named comparison and
+the relocated `include_str!` fixture path. These are controls on that original
+candidate, carried forward because the aggregation implementation/tests are
+unchanged by the following parser repair.
+
+Review also confirmed a small CLI robustness defect: naming the required
+full-inventory file literally `--receipts` caused an inverted slice and exit
+101. The repaired parser recognizes the optional marker only after required
+inputs. The same real CLI invocation now prints `coverage complete; runnable
+per shard: [6, 3]; ignored: 1`, exit 0. A persistent argument-boundary test
+also covers the literal filename together with a later real receipts marker.
+
+Repaired example source SHA256:
+`46a3a6a936f53fed5c225de0712c4b8f897254b842416dcd13602a2c4d8c956f`.
+`cargo test -p xtask --example mandatory_partitions`: **6/6 pass**.
+`cargo clippy -p xtask --example mandatory_partitions -- -D warnings`: pass.
+Changelog-fragment, no-panic-family, allow-attributes, doc-index and Markdown
+link checks pass. No full precommit/product-suite/hosted claim is made.
+
+Committed initial-candidate `check-fast` selected the independently verified
+five-path diff and passed six gates, skipping six. Its existing category
+heuristic excludes `xtask/examples/` from automatic Rust Clippy/file-policy
+selection; this was inspected in `categorize_changed_files`. The direct
+focused Clippy and example tests above cover the new Rust surface. The selector
+was not changed to expand this assignment. Final head/currentness and the
+affected-head review disposition are in the publication handoff.
+
+Remaining report lookup: Personal Context returned `Personal context is
+unavailable for this conversation`; no timings or prior decisions were
+invented from that unavailable source. The required report input is still
+missing. Local raw proof is retained for the coordinator, including the
+reviewer's mutation receipts at `/workspace/partition-review-evidence`.
