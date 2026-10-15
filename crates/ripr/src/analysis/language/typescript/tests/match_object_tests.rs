@@ -367,3 +367,109 @@ fn match_object_facts_read_field_construction_changes_only() -> Result<(), Strin
     assert_eq!(predicate, 0);
     Ok(())
 }
+
+/// #7497: a local bound once to the owner result that the test rewrites
+/// before asserting observes the test's own write, not the owner call, so
+/// the whole-result credit stays unavailable. Every shape below read
+/// `exposed` before the fix (false exposed); all must downgrade now — for
+/// the `toMatchObject` pin and for the `toEqual` whole-object reading,
+/// which shares the whole-result reader.
+#[test]
+fn rewritten_owner_local_is_not_the_owner_result() -> Result<(), String> {
+    for (label, body) in [
+        (
+            "rewritten-member-assign",
+            "  const bo = buildProfile(\"bo\", 18);\n  bo.adult = true;\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-bracket-assign",
+            "  const bo = buildProfile(\"bo\", 18);\n  bo[\"adult\"] = true;\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-object-assign",
+            "  const bo = buildProfile(\"bo\", 18);\n  Object.assign(bo, { adult: true });\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-helper-escape",
+            "  function fix(p: any) { p.adult = true; }\n  const bo = buildProfile(\"bo\", 18);\n  fix(bo);\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-member-assign-to-equal",
+            "  const bo = buildProfile(\"bo\", 18);\n  bo.adult = true;\n  expect(bo).toEqual({ name: \"bo\", adult: true, tags: [] });",
+        ),
+        (
+            "rewritten-object-assign-to-equal",
+            "  const bo = buildProfile(\"bo\", 18);\n  Object.assign(bo, { adult: true });\n  expect(bo).toEqual({ name: \"bo\", adult: true, tags: [] });",
+        ),
+        (
+            "rewritten-helper-escape-to-equal",
+            "  function fix(p: any) { p.adult = true; }\n  const bo = buildProfile(\"bo\", 18);\n  fix(bo);\n  expect(bo).toEqual({ name: \"bo\", adult: true, tags: [] });",
+        ),
+        (
+            "rebound-bare-let",
+            "  let bo = buildProfile(\"bo\", 18);\n  bo = { name: \"bo\", adult: true, tags: [] };\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-compound-assign",
+            "  const bo = buildProfile(\"bo\", 18);\n  bo.count = 0;\n  bo.count += 1;\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-delete-field",
+            "  const bo = buildProfile(\"bo\", 18);\n  delete bo.adult;\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "rewritten-postfix-incr",
+            "  const bo = buildProfile(\"bo\", 18);\n  bo.count = 0;\n  bo.count++;\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+    ] {
+        let finding = profile_finding(label, &profile_test(body))?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    // Preservation: an unmutated local still witnesses through the same
+    // reader, for both the pin and the whole-object equality.
+    for (label, body) in [
+        (
+            "unmutated-local-match-object",
+            "  const bo = buildProfile(\"bo\", 18);\n  expect(bo).toMatchObject({ adult: true });",
+        ),
+        (
+            "unmutated-local-to-equal",
+            "  const bo = buildProfile(\"bo\", 18);\n  expect(bo).toEqual({ name: \"bo\", adult: true, tags: [] });",
+        ),
+    ] {
+        let finding = profile_finding(label, &profile_test(body))?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    // Preservation through non-`expect` assertion spellings: a pristine
+    // local asserted via `node:assert` or `chai.expect` must not be
+    // downgraded by the mutation guard.
+    for (label, source) in [
+        (
+            "unmutated-local-node-assert",
+            "import { buildProfile } from \"../src/profile\";\nimport assert from \"node:assert\";\ntest(\"profile records adulthood\", async () => {\n  const bo = buildProfile(\"bo\", 18);\n  assert.deepStrictEqual(bo, { name: \"bo\", adult: true, tags: [] });\n});\n",
+        ),
+        (
+            "unmutated-local-chai-expect",
+            "import { buildProfile } from \"../src/profile\";\nimport * as chai from \"chai\";\ntest(\"profile records adulthood\", async () => {\n  const bo = buildProfile(\"bo\", 18);\n  chai.expect(bo).to.deep.equal({ name: \"bo\", adult: true, tags: [] });\n});\n",
+        ),
+    ] {
+        let finding = profile_finding(label, source)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    Ok(())
+}

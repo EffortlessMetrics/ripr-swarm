@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- TypeScript: a local bound to the owner result that the test rewrites before asserting (`bo.adult = true`, `Object.assign(bo, ...)`, or `fix(bo)` that mutates it) no longer reads `exposed`: the shared whole-result reader refuses test-mutated locals fail-closed, for both `toMatchObject` pins and `toEqual` whole-object readings. Passing the local to a pure helper is under-credited by design (#7497).
