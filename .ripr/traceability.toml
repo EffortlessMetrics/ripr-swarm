@@ -14339,6 +14339,7 @@ code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/syntax/ra.rs",
   "crates/ripr/src/analysis/classifier/evidence/side_flip/guard.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0227-result-side-oracles.md",

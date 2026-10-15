@@ -122,8 +122,8 @@ fn plain_related_tests<'c>(
         })
 }
 
-/// The expressions of a plain `#[test]`'s top-level expression statements,
-/// when every one of them runs: the same test gates as rule 3b's
+/// The expressions of a plain `#[test]`'s top-level expression statements
+/// and tail, when every one of them runs: the same test gates as rule 3b's
 /// `asserts_owner_err` (no `return`, closure, nested item or non-assertion
 /// macro anywhere in the body, no binding of the owner's name, no attribute
 /// on the statement).
@@ -141,9 +141,10 @@ fn plain_test_statements(function: &ast::Fn, owner: &str) -> Option<Vec<ast::Exp
     }
     let body = function.body()?;
     for node in body.syntax().descendants() {
+        // A macro call parses as an item too; the check below reads it.
         if ast::ReturnExpr::can_cast(node.kind())
             || ast::ClosureExpr::can_cast(node.kind())
-            || ast::Item::can_cast(node.kind())
+            || (ast::Item::can_cast(node.kind()) && !ast::MacroCall::can_cast(node.kind()))
         {
             return None;
         }
@@ -160,8 +161,9 @@ fn plain_test_statements(function: &ast::Fn, owner: &str) -> Option<Vec<ast::Exp
             return None;
         }
     }
+    let statements = body.stmt_list()?;
     Some(
-        body.stmt_list()?
+        statements
             .statements()
             .filter_map(|statement| {
                 let ast::Stmt::ExprStmt(statement) = statement else {
@@ -177,6 +179,7 @@ fn plain_test_statements(function: &ast::Fn, owner: &str) -> Option<Vec<ast::Exp
                 }
                 statement.expr()
             })
+            .chain(statements.tail_expr())
             .collect(),
     )
 }
@@ -625,16 +628,17 @@ mod tests {
         Guard::read(&unique_free_function(root.syntax(), "check")?, source)
     }
 
-    fn both_sides(body: &str) -> bool {
+    /// Whether the test observes both sides; `None` when the test gates
+    /// refuse it. A source or guard that does not read is an error, so a
+    /// control cannot pass on a broken premise.
+    fn both_sides(body: &str) -> Result<Option<bool>, String> {
         let source = format!("{OWNER}#[test]\nfn t() {{\n{body}\n}}\n");
-        let Some(root) = parsed(&source) else {
-            return false;
-        };
-        let (Some(guard), Some(test)) = (guard(&source), unique_function(root.syntax(), "t"))
-        else {
-            return false;
-        };
-        guard.observed_on_both_sides(&test, "check")
+        let root = parsed(&source).ok_or("premise: the source parses")?;
+        let guard = guard(&source).ok_or("premise: the owner guard reads")?;
+        let test = unique_function(root.syntax(), "t").ok_or("premise: one test `t`")?;
+        Ok(plain_test_statements(&test, "check")
+            .is_some()
+            .then(|| guard.observed_on_both_sides(&test, "check")))
     }
 
     #[test]
@@ -701,7 +705,7 @@ mod tests {
     }
 
     #[test]
-    fn err_on_the_edge_and_ok_beside_it_observe_both_sides() {
+    fn err_on_the_edge_and_ok_beside_it_observe_both_sides() -> Result<(), String> {
         for body in [
             "assert!(check(256).is_err());\nassert!(check(255).is_ok());",
             "assert!(check(255).is_ok());\nassert!(!check(256).is_ok());",
@@ -710,13 +714,18 @@ mod tests {
             // A far assertion that agrees with the guard adds nothing and
             // takes nothing away.
             "assert!(check(300).is_err());\nassert!(check(256).is_err());\nassert!(check(255).is_ok());",
+            // A tail assertion is read too.
+            "assert!(check(256).is_err());\nassert!(check(255).is_ok())",
         ] {
-            assert!(both_sides(body), "{body}");
+            assert_eq!(both_sides(body)?, Some(true), "{body}");
         }
+        Ok(())
     }
 
     #[test]
-    fn one_side_far_inputs_and_disagreeing_assertions_do_not() {
+    fn one_side_far_inputs_and_disagreeing_assertions_do_not() -> Result<(), String> {
+        // Each body is read by the test gates, so the refusal is the
+        // observation's own.
         for body in [
             // RIPR-SPEC-0227 example 2: `len >= 255` survives.
             "assert!(check(256).is_err());",
@@ -725,29 +734,39 @@ mod tests {
             "assert!(check(300).is_err());\nassert!(check(3).is_ok());",
             // Adjacent, but both on the untaken side.
             "assert!(check(254).is_ok());\nassert!(check(255).is_ok());",
-            // An assertion the current code fails: ripr misreads the test.
+            // An assertion the current code fails: ripr misreads the test,
+            // as a statement or as the tail.
             "assert!(check(256).is_err());\nassert!(check(255).is_ok());\nassert!(check(9).is_err());",
+            "assert!(check(256).is_err());\nassert!(check(255).is_ok());\nassert!(check(9).is_err())",
             // Non-literal argument.
             "let n = 256;\nassert!(check(n).is_err());\nassert!(check(255).is_ok());",
             // Inside a branch: may not run.
             "if true { assert!(check(256).is_err()); }\nassert!(check(255).is_ok());",
+        ] {
+            assert_eq!(both_sides(body)?, Some(false), "{body}");
+        }
+        // The test gates refuse these outright.
+        for body in [
             // A skip macro may return first.
             "skip!();\nassert!(check(256).is_err());\nassert!(check(255).is_ok());",
+            // A nested item can rebind the owner's name.
+            "use other::check;\nassert!(check(256).is_err());\nassert!(check(255).is_ok());",
+            "return;\nassert!(check(256).is_err());\nassert!(check(255).is_ok());",
         ] {
-            assert!(!both_sides(body), "{body}");
+            assert_eq!(both_sides(body)?, None, "{body}");
         }
+        Ok(())
     }
 
     #[test]
-    fn the_old_guard_must_return_the_same_error() {
-        let Some(read) = guard(OWNER) else {
-            panic!("premise: the owner guard reads");
-        };
+    fn the_old_guard_must_return_the_same_error() -> Result<(), String> {
+        let read = guard(OWNER).ok_or("premise: the owner guard reads")?;
         assert!(read.keeps_error("    if len > 256 { return Err(E::TooLong); }"));
         assert!(read.keeps_error("len > 256"));
         assert!(read.keeps_error("return Err(E::TooLong)"));
         assert!(!read.keeps_error("    if len > 256 { return Err(E::Bad); }"));
         assert!(!read.keeps_error("return Err(E::Bad)"));
         assert!(!read.keeps_error("Ok(len)"));
+        Ok(())
     }
 }

@@ -367,8 +367,13 @@ or removed `?`: a result-side oracle (RIPR-SPEC-0227) confirms the
 input, and the path conditions of RIPR-SPEC-0227 rule 3b hold. RIPR-SPEC-0227
 decision 4 (2026-10-07) extends it to a changed line that keeps the same `?`
 operand when that `?` is the owner's only source of `Err`
-(`crates/ripr/src/analysis/classifier/evidence/side_flip.rs`). Every other
-`error_path` probe still needs a variant-observing oracle.
+(`crates/ripr/src/analysis/classifier/evidence/side_flip.rs`). RIPR-SPEC-0227
+rule 3 (2026-10-15) adds a second: the `error_path` probe of a
+`return Err(..)` on the same line as a changed guard condition is confirmed
+with that guard's side flip when the edit kept the returned payload, so the
+only changed behavior on the line is which inputs return `Err`
+(`side_flip/guard.rs`). Every other `error_path` probe still needs a
+variant-observing oracle.
 
 RIPR-SPEC-0238 (2026-10-04) states the Python error-path gate as rule 6:
 `exposed` needs one `exact_error_variant` assertion that itself credits a
