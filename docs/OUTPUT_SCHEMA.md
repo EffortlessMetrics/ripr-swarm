@@ -10331,7 +10331,10 @@ Field contract:
 - `delta.invalid_baseline_entry` - malformed baseline records or records
   missing required identity fields.
 - `delta.missing_current_input` - records whose movement cannot be classified
-  because required current artifacts are missing or unreadable.
+  because required current artifacts are missing, unreadable, or contain a
+  decision without a usable stable or legacy fallback identity. Such input
+  must not be interpreted as resolved baseline debt, even when other decisions
+  have valid identities.
 - `items[].bucket` - one primary bucket from the `delta` object.
 - `items[].identity` - stable identity fields. Matching order is
   `canonical_gap_id`, `seam_id`, `source_id`, `id`, `dedupe_key`, then
