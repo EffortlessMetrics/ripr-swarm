@@ -45,6 +45,10 @@ paths = ["target/ripr/first-run/first-run.json", "target/ripr/first-run/first-ru
 id = "public-badge-endpoints"
 paths = ["badges/*.json", "target/ripr/reports/repo-ripr-badge*.json", "target/ripr/reports/repo-ripr-badges.md"]
 
+[[artifact_family]]
+id = "vscode-test-host-diagnostics"
+paths = ["target/ripr/vscode-test-host-diagnostics/"]
+
 [[lane]]
 id = "docs"
 posture = "required"
@@ -212,7 +216,7 @@ workflow = ".github/workflows/ci.yml"
 jobs = ["vscode"]
 commands = ["npm run package", "cargo build -p ripr", "xvfb-run -a npm run test:e2e"]
 estimated_lem = 14
-artifact_families = ["editor-agent-loop"]
+artifact_families = ["editor-agent-loop", "vscode-test-host-diagnostics"]
 description = "Saved-workspace VS Code extension smoke proof."
 
 [[lane]]

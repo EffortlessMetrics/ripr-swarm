@@ -8820,6 +8820,140 @@ fn a_scalar_rendering_compared_with_exact_text_pins() {
     assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
 }
 
+/// RIPR-SPEC-0197 rule 3 short-circuit tails (#7969): a pure `&&`/`||`
+/// chain pins only on a call that evaluates every operand.
+fn short_circuit_lib(tail: &str, test_items: &str) -> String {
+    format!(
+        "pub fn both_zero(x: i32, y: i32) -> bool {{\n    {tail}\n}}\n\nfn check(x: i32, y: i32, want: bool) {{\n    assert_eq!(both_zero(x, y), want);\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{test_items}\n}}\n"
+    )
+}
+
+#[test]
+fn a_short_circuit_tail_pins_only_on_a_call_that_runs_every_operand() {
+    const AND: &str = "x == 0 && 0 == y";
+    const OR: &str = "x != 0 || 0 == y";
+    for (tail, body, admitted) in [
+        // `(0, 0)` runs both operands of the `&&`; `(1, 0)` stops at `x`.
+        (AND, "        assert_eq!(both_zero(0, 0), true);", true),
+        (AND, "        assert_eq!(both_zero(1, 0), false);", false),
+        (AND, "        assert_eq!(false, both_zero(-1, 5));", false),
+        // `||` continues on a false first operand.
+        (OR, "        assert_eq!(both_zero(0, 4), false);", true),
+        (OR, "        assert_eq!(both_zero(3, 0), true);", false),
+        // An argument ripr cannot read never counts.
+        (
+            AND,
+            "        let x = 0;\n        assert_eq!(both_zero(x, 0), true);",
+            false,
+        ),
+        (AND, "        assert_eq!(both_zero(0i32, 0), true);", false),
+        // An unread last argument fails closed too.
+        (
+            AND,
+            "        let y = 0;\n        assert_eq!(both_zero(0, y), true);",
+            false,
+        ),
+        // A table row that runs both operands.
+        (
+            AND,
+            "        for (x, y, want) in [(1, 0, false), (0, 0, true)] {\n            assert_eq!(both_zero(x, y), want);\n        }",
+            true,
+        ),
+        (
+            AND,
+            "        for (x, y, want) in [(1, 0, false), (2, 0, false)] {\n            assert_eq!(both_zero(x, y), want);\n        }",
+            false,
+        ),
+    ] {
+        let lib = short_circuit_lib(
+            tail,
+            &format!("    #[test]\n    fn pins() {{\n{body}\n    }}"),
+        );
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, "both_zero", tail);
+        assert!(pin.is_some(), "the chain must establish a pin: {tail}");
+        let Some(pin) = pin else { return };
+        assert_eq!(!admitted_texts(&index, &pin).is_empty(), admitted, "{body}");
+    }
+}
+
+#[test]
+fn a_short_circuit_table_column_counts_only_inside_its_loop() {
+    // Outside the loop, `x` and `y` are the module's constants `(1, 0)`,
+    // which stop at `x == 0`; the loop's `(0, 0)` row is not that call.
+    const AND: &str = "x == 0 && 0 == y";
+    for (assertion, admitted) in [
+        (
+            "        assert_eq!(both_zero(x, y), want);\n        }",
+            true,
+        ),
+        (
+            "        }\n        assert_eq!(both_zero(x, y), false);",
+            false,
+        ),
+    ] {
+        let lib = short_circuit_lib(
+            AND,
+            &format!(
+                "    #[allow(non_upper_case_globals)]\n    const x: i32 = 1;\n    #[allow(non_upper_case_globals)]\n    const y: i32 = 0;\n\n    #[test]\n    fn pins() {{\n        for (x, y, want) in [(0, 0, true)] {{\n            let _ = (x, y, want);\n    {assertion}\n    }}"
+            ),
+        );
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, "both_zero", AND);
+        assert!(pin.is_some(), "the chain must establish a pin");
+        let Some(pin) = pin else { return };
+        assert_eq!(
+            !admitted_texts(&index, &pin).is_empty(),
+            admitted,
+            "{assertion}"
+        );
+    }
+}
+
+#[test]
+fn a_short_circuit_tail_refuses_a_body_with_earlier_statements() {
+    // `let x = x + 1;` rebinds the parameter the chain reads, so the call's
+    // `0` is not the value `x == 0` compares. The same pin without the
+    // statement is the control.
+    for (statement, admitted) in [("", true), ("    let x = x + 1;\n", false)] {
+        let lib = format!(
+            "pub fn both_zero(x: i32, y: i32) -> bool {{\n{statement}    x == 0 && y == 1\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn pins() {{\n        assert_eq!(both_zero(0, 1), true);\n    }}\n}}\n"
+        );
+        let index = index(&[(LIB, lib.as_str())]);
+        let owner = owner(&index, "both_zero");
+        // The probe sits on the chain's line, after any statement.
+        let mut probe = return_probe(owner, "x == 0 && y == 1");
+        probe.location = SourceLocation::new(
+            owner.file.clone(),
+            owner.start_line + 1 + usize::from(!statement.is_empty()),
+            1,
+        );
+        assert_eq!(
+            OwnerReturnPin::establish(&probe, owner, &index).is_some(),
+            admitted,
+            "{statement:?}"
+        );
+    }
+}
+
+#[test]
+fn a_short_circuit_tail_refuses_impure_or_mixed_chains() {
+    for tail in [
+        "x == 0 && check_y(y)",
+        "x == 0 && y + 1 == 1",
+        "x == 0 || y == 0 && x == y",
+        "(x == 0) && y == 0",
+        "x == 0 && y == LIMIT",
+    ] {
+        let lib = short_circuit_lib(
+            tail,
+            "    #[test]\n    fn pins() {\n        assert_eq!(both_zero(0, 0), true);\n    }",
+        );
+        let index = index(&[(LIB, &lib)]);
+        assert!(establish(&index, "both_zero", tail).is_none(), "{tail}");
+    }
+}
+
 #[test]
 fn an_integer_projection_that_keeps_the_value_pins() {
     // trap-ceiling-wide-min-control / trap-muffle-times-one-control: a

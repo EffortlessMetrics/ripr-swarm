@@ -44,6 +44,7 @@
 pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
+mod short_circuit;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
 
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -1756,6 +1757,10 @@ enum ReturnPathGate {
     /// parameter a non-empty literal sequence, so the closure runs at least
     /// once on the pinned input.
     Adaptor { position: usize },
+    /// RIPR-SPEC-0197 rule 3: the changed tail is the owner's whole body and
+    /// one pure `&&` or `||` chain over its parameters. The pinned call
+    /// must evaluate every operand on some run.
+    ShortCircuit(short_circuit::ShortCircuitTail),
     /// RIPR-SPEC-0225: field `field` of the `type_name { .. }` literal the
     /// owner returns (inside `wrapper(..)` when the owner returns
     /// `Result`/`Option`). The pinned value must be a literal of that type,
@@ -2456,6 +2461,21 @@ impl OwnerReturnPin {
                             text,
                             &self.name,
                             *position,
+                        )
+                    })
+                {
+                    return false;
+                }
+                // RIPR-SPEC-0197 rule 3: a short-circuit tail pins only on a
+                // call that evaluates every operand.
+                if let ReturnPathGate::ShortCircuit(chain) = path
+                    && !call_text.is_some_and(|text| {
+                        chain.pinned_call_evaluates_every_operand(
+                            test,
+                            loan.as_ref(),
+                            text,
+                            assertion.line,
+                            &self.name,
                         )
                     })
                 {
@@ -3324,7 +3344,7 @@ impl ReturnPathGate {
 
     fn admits(&self, expected: &str) -> bool {
         match self {
-            Self::Any | Self::Adaptor { .. } => true,
+            Self::Any | Self::Adaptor { .. } | Self::ShortCircuit(_) => true,
             Self::Head(head) | Self::EarlyHead(head) => {
                 constructor_call_span(expected.trim(), head).is_some()
             }
@@ -3975,14 +3995,23 @@ fn return_path_gate_from(
         }
         return early_return_gate(body, inner, inner_text, changed, &spans_changed_line);
     }
-    // The uncollapsed expression: collapsing would also merge whitespace
-    // inside a string literal that the change touched.
-    if has_unbounded_macro(inner) || changed_part_evaluates_conditionally(expression, before) {
+    if has_unbounded_macro(inner) {
         return None;
     }
     let returns = whole_word_offsets(inner, "return");
     let other_returns = returns.len() - usize::from(final_return_is_changed);
     let early_exits = inner.bytes().filter(|byte| *byte == b'?').count() + other_returns;
+    // The uncollapsed expression: collapsing would also merge whitespace
+    // inside a string literal that the change touched.
+    if changed_part_evaluates_conditionally(expression, before) {
+        // RIPR-SPEC-0197 rule 3: a pure `&&`/`||` chain is the one
+        // conditional tail a pin may observe, and only on a pinned call
+        // that evaluates every operand (checked per test).
+        return (early_exits == 0)
+            .then(|| short_circuit::ShortCircuitTail::parse(body, changed))
+            .flatten()
+            .map(ReturnPathGate::ShortCircuit);
+    }
     if early_exits == 0 {
         return Some(ReturnPathGate::Any);
     }
@@ -4994,6 +5023,225 @@ const STD_VALUE_CONTAINERS: &[&str] = &[
     "Option", "Result", "Vec", "VecDeque", "Box", "Rc", "Arc", "BTreeMap", "BTreeSet", "HashMap",
     "HashSet",
 ];
+
+/// Bind a directly constructed test root's one field to the existing value
+/// equality authority. A callee's `&mut Vec<_>` alone does not establish the
+/// asserted field: a custom collection can coerce through `DerefMut`.
+pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
+    constructor: &str,
+    field: &str,
+    receiver_type: &str,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    if owner.file != test.file
+        || syntax.target_roots(index).root(&owner.file, index).as_ref() != Some(&owner.file)
+        || targeted_type_name_is_unresolved(test, index, constructor)
+    {
+        return false;
+    }
+    let Some(source) = index
+        .files()
+        .get(&test.file)
+        .map(|facts| &*facts.data().source)
+    else {
+        return false;
+    };
+    if !index
+        .drop_in_manifests
+        .unbound_standard_root(&test.file, "std")
+        || !index
+            .drop_in_manifests
+            .unbound_standard_root(&test.file, "core")
+        || index.files().values().any(|facts| {
+            let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
+            let modules = declared_module_names(&masked);
+            let imports = file_use_statements(&masked);
+            STD_ROOTS.iter().any(|root| {
+                modules.contains(root)
+                    || declares_type(&masked, root)
+                    || binds_extern_crate(&masked, root)
+                    || file_renames_to(&masked, root)
+                    || imports
+                        .iter()
+                        .any(|item| use_statement_binds_name(item, root))
+            })
+        })
+    {
+        return false;
+    }
+    let scope = OwnerScope::new(&owner.name, owner.start_line, &owner.file);
+    if !matches!(
+        named_or_slice(constructor, test, Some(source), index,
+            &|_, name| file_imports_foreign_callee_name(source, name, &index.package_names), scope),
+        Some(ReceiverType::Named(name)) if name == constructor
+    ) {
+        return false;
+    }
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    // The type namespace does not rule out a callable/value that shadows a
+    // tuple constructor. A competing local, function, constant or static
+    // keeps this deliberately bounded binding unestablished.
+    let names_constructor = |name: String| name.strip_prefix("r#").unwrap_or(&name) == constructor;
+    if index.files().iter().any(|(file, facts)| {
+        let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
+        if file_aliases_type(&masked, constructor)
+            || file_renames_to(&masked, constructor)
+            || !fn_definition_offsets(&masked, constructor).is_empty()
+            || file_use_statements(&masked).iter().any(|import| {
+                ["test", "cfg"]
+                    .iter()
+                    .any(|name| use_statement_binds_name(import, name))
+            })
+            || flattened_use_paths(&masked).iter().any(|import| {
+                let segments: Vec<_> = import.path.trim_start_matches("::").split("::").collect();
+                if !segments
+                    .last()
+                    .is_some_and(|name| *name == constructor || *name == "*")
+                {
+                    return false;
+                }
+                // A constructor reached through another module may be a
+                // callable re-export whose defining bytes were not indexed.
+                // Only direct local namespace imports establish this bounded
+                // same-file construction; a missing companion cannot clear it.
+                !matches!(segments.as_slice(), ["crate" | "self" | "super", _])
+            })
+        {
+            return true;
+        }
+        let Some(parsed) = parse_clean_source_file(&facts.source) else {
+            return true;
+        };
+        parsed.tree().syntax().descendants().any(|node| {
+            // Attribute/derive expansion can also manufacture a binding.
+            // This bounded construction admits only the ordinary test
+            // harness attributes; expansion is not type-identity evidence.
+            ast::Attr::cast(node.clone()).is_some_and(|attr| {
+                let text = attr.syntax().text().to_string();
+                collapse_whitespace(&text) != "#[test]"
+                    && !crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(&text)
+            }) ||
+            // Arbitrary expansion can introduce a constructor binding that
+            // the parsed item index never saw. The two observation macros
+            // still require their carried canonical binding authority.
+            ast::MacroCall::cast(node.clone()).is_some_and(|call| {
+                call.path().is_none_or(|path| {
+                    let path = collapse_whitespace(&path.syntax().text().to_string());
+                    !matches!(
+                        path.as_str(),
+                        "assert_eq" | "vec" | "std::vec" | "::std::vec"
+                    ) && !STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
+                })
+            }) || (file != &test.file
+                && ast::Adt::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string())))
+                || ast::Fn::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+                || ast::Const::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+                || ast::Static::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+                || ast::IdentPat::cast(node)
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+        })
+    }) {
+        return false;
+    }
+    let definitions: Vec<_> = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Adt::cast)
+        .filter(|item| {
+            item.name()
+                .is_some_and(|name| names_constructor(name.text().to_string()))
+        })
+        .collect();
+    let [ast::Adt::Struct(definition)] = definitions.as_slice() else {
+        return false;
+    };
+    let Some(function) = resolve_owner_fn(parse.tree().syntax(), source, scope) else {
+        return false;
+    };
+    let (Some(owner_scope), Some(test_scope)) = (
+        syntax.item_nesting(index, &owner.file, &owner.name, owner.start_line),
+        syntax.item_nesting(index, &test.file, &test.name, test.start_line),
+    ) else {
+        return false;
+    };
+    if definition.syntax().parent() != function.syntax().parent()
+        || !test_scope.modules.starts_with(&owner_scope.modules)
+    {
+        return false;
+    }
+    let Some(facts) = local_type_equality(source, constructor) else {
+        return false;
+    };
+    if facts.generic_params || facts.other_attributes {
+        return false;
+    }
+    let selected = if let Ok(position) = field.parse::<usize>() {
+        facts
+            .fields
+            .get(position)
+            .filter(|field| field.name.is_none())
+    } else {
+        facts
+            .fields
+            .iter()
+            .find(|candidate| candidate.name.as_deref() == Some(field))
+    };
+    let Some(selected) = selected.filter(|field| !field.has_attributes) else {
+        return false;
+    };
+    // Raw type bindings denote the same names. Give the existing lexical
+    // equality authority their normalized spelling, without changing source.
+    let declaring = mask_comments_and_strings(source).replace("r#", "");
+    let standard_vec = |ty: &str| {
+        let ty = collapse_whitespace(ty);
+        let (path, arguments) = ty.split_once('<')?;
+        let arguments = arguments.strip_suffix('>')?;
+        let elements = top_level_arguments(arguments);
+        let [element] = elements.as_slice() else {
+            return None;
+        };
+        (matches!(path, "Vec" | "std::vec::Vec" | "::std::vec::Vec")
+            && INTEGER_TYPES.contains(element)
+            && !index.files().values().any(|facts| {
+                let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
+                ["Vec", *element].iter().any(|name| {
+                    declares_type(&masked, name)
+                        || file_aliases_type(&masked, name)
+                        || file_renames_to(&masked, name)
+                        || flattened_use_paths(&masked).iter().any(|import| {
+                            let segments: Vec<_> =
+                                import.path.trim_start_matches("::").split("::").collect();
+                            segments.first() == Some(&"alloc")
+                                && segments
+                                    .last()
+                                    .is_some_and(|last| *last == *name || *last == "*")
+                        })
+                })
+            })
+            && !declares_type(&declaring, "Vec")
+            && !type_declared_in_workspace("Vec", index)
+            && type_compares_by_value(&ty, &declaring, index, 0))
+        .then_some(collapse_whitespace(arguments))
+    };
+    standard_vec(&selected.ty)
+        .zip(standard_vec(receiver_type))
+        .is_some_and(|(field, receiver)| field == receiver)
+}
 
 /// RIPR-SPEC-0225 rule 4: whether a field type compares by value: a
 /// standard value type, a reference, tuple, array or standard container of

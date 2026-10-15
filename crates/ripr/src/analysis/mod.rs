@@ -287,12 +287,14 @@ pub(crate) fn detect_typescript_test_framework(root: &Path) -> Option<&'static s
     language::detect_framework_for_root(root).map(|framework| framework.as_str())
 }
 
-/// Detect the Python test framework for a workspace root (#2106): one
+/// Detect Python test frameworks for a workspace root (#2106 / #7664): one
 /// detector shared by doctor and any adapter-side repo-level check.
-/// Fail-closed: `None` when no evidence marker matches.
+/// Fail-closed: empty when no evidence marker matches. Pytest is listed
+/// before unittest when both are present. Primary-of-set consumers use
+/// `language::detect_python_test_framework`.
 #[cfg(feature = "lang-python")]
-pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> {
-    language::detect_python_test_framework(root)
+pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
+    language::detect_python_test_frameworks(root)
 }
 
 #[cfg(feature = "lang-typescript")]

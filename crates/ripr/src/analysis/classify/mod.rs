@@ -66,7 +66,8 @@ pub(in crate::analysis) use owner_pin::{
 pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use propagation_witness::{
-    PropagationWitnessV1, assertion_observes_direct_collection, current_path_witness,
+    PropagationWitnessV1, assertion_observes_collection_argument,
+    assertion_observes_direct_collection, current_path_witness,
     direct_collection_mutation_receiver, retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use propagation_witness::{

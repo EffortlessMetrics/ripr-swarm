@@ -86,6 +86,20 @@ Supported bare keys, double-quoted entry string values, and the integer schema
 header retain their existing syntax. Single-quoted string values and quoted
 keys remain unsupported. This repair adds no broader TOML or calendar support.
 
+### Unused default suppression disclosure (#7759)
+
+After successful analysis, `ripr check` in human, human-full, JSON or GitHub
+format emits one stderr line when no explicit `--suppression-policy` was
+supplied and `.ripr/suppressions.toml` resolves to a file under the analyzed
+root. The line names the unused default path and the explicit flag needed
+to apply it. It is a presence disclosure, not validation: malformed unused
+content remains nonfatal. The command does not parse or apply this file,
+change stdout or change exit semantics. A foreign working-directory file,
+a missing file, or a directory at that path does not trigger the note.
+An explicit policy retains its loader and typed refusal contract from
+RIPR-SPEC-0241. Implicit SARIF/badge and repository consumers do not receive
+a false skipped-policy note and keep their existing policy authority.
+
 ## Required Evidence
 
 Repository configuration evidence should cover:
@@ -130,6 +144,13 @@ This spec does not require:
 - unsaved-buffer overlays or deep editor analysis by default.
 
 ## Acceptance Examples
+
+A valid default policy matching `src/**` leaves ordinary check findings
+unchanged without the flag, while stderr explains how to apply it. With
+`--suppression-policy .ripr/suppressions.toml`, matching findings are marked
+suppressed and no skipped-policy note appears. An invalid unused file keeps
+the ordinary JSON document unchanged; the same file supplied explicitly
+produces the existing non-consumable `suppression_policy_invalid` refusal.
 
 ### Missing config preserves defaults
 
@@ -296,6 +317,11 @@ cargo-only).
 ```
 
 ## Test Mapping
+
+- `crates/ripr/tests/default_suppression_disclosure.rs` — real CLI explicit
+  opt-in, unchanged full stdout, malformed-unused versus explicit refusal,
+  analyzed-root/foreign-CWD/directory controls, and implicit-consumer note
+  exclusion. Expected prose and finding paths are literal consumer values.
 
 Current tests:
 
