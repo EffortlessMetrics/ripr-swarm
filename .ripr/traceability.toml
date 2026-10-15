@@ -3278,6 +3278,7 @@ tests = [
   "crates/ripr/src/output/pilot/tests.rs::pilot_markdown_and_terminal_use_python_repair_card_when_no_seam_ranked",
   "crates/ripr/tests/cli_smoke.rs::pilot_projects_python_repair_card_for_git_diff",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_python_repair_card_becomes_agent_packet_gap_record",
+  "crates/ripr/src/output/gap_decision_ledger/python_identity_tests.rs::python_selected_second_line_follows_runnable_card_identity",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::gap_record_packet_carries_shared_repair_route_and_stop_conditions",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::gap_record_queue_marks_receipt_closed_python_packets_stale",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_from_python_check_json_matches_canonical_gap_ids",
