@@ -313,7 +313,17 @@ refresh, then returned to Draft and held further baseline edits pending that
 decision; this repair accepts no refreshed values. The later
 `3961078c56b8c89258af56068fdf989f97b7d776` report has eight differing rows and is
 not a replacement. Historical per-case contradiction denominators are absent
-and were not reconstructed. Legacy TypeScript/Python observations still lack
+and were not reconstructed.
+
+#7325 is that policy decision: the owner accepted the retained Rust abstention
+rise, and the five Rust verdict-corpus entries of the operational baseline
+now hold the trust-board observation at
+`2af3f38a1de75ca48d5d84555a839d50710159b6` (false verdicts 29/477, false
+actionable 26/236, abstention 177/477, false silent 0/241, false exposed
+3/241). Each refreshed sample carries `population_provenance` with kind
+`committed_expected_rows`, that revision, the `corpus.json` blob and the
+`expected/rows` tree. The witness file above is unchanged; a test pins the
+operational baseline to it in every other field. Legacy TypeScript/Python observations still lack
 attributable population evidence and fail comparison explicitly.
 
 `testdata/7552-rust-abstention.json` freezes committed expected records at
