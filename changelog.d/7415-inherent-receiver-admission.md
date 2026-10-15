@@ -6,3 +6,6 @@
   outer receivers after an inner foreign shadow expires. Corpus snapshots
   retain the false actionable cost of unsupported factory/parameter/import flow
   (#7415, #8004).
+- Same-name local wrapper delegation retains helper reach, while module-shadowed
+  assertion operands and foreign helper receivers withhold high attribution
+  consistently across diff and repository consumers (#7415, #8004).

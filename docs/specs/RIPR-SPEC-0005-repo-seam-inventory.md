@@ -104,6 +104,26 @@ invalidates full, compact and count facts. Content-read, fingerprint-rebuilt and
 current-input export keys agree on that identity. Raw configuration text remains
 an additional conservative invalidator; parser file facts remain oracle-policy-independent.
 
+### Bounded Inherent Helper Reach
+
+A helper-name graph proposes a route; it does not establish an inherent
+method's receiver identity. High helper credit requires a bounded executable
+same-file chain whose last hop passes the direct owner's receiver, module/type
+shadow and assertion-binding refusals. An inherent wrapper entry also requires
+its own receiver identity. Declaration spellings, including split-line function
+headers, do not supply self edges; genuine same-name local-receiver delegation
+remains supported. Verified unit-struct bindings retain their existing helper
+reach through the shared unit-struct authority.
+
+Only evaluated operands of unambiguously bound supported assertions supply
+receiver evidence. Module or imported macro shadows refuse that interpretation
+in both diff and repository consumers; a sibling module's private macro does
+not shadow a real assertion outside it. Foreign or unresolved helper last hops
+cannot make the private owner strongly gripped. General type resolution,
+parameter/field flow and cross-file helper receiver inference remain outside
+this bounded admission. The five retained corpus accuracy losses keep their
+runtime truth and false-actionable accounting.
+
 ### Stable Seam ID Rules
 
 Seam IDs must be stable across runs and across input file walk reorderings.

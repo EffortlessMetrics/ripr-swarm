@@ -86,9 +86,9 @@ pub(in crate::analysis) use reach::{
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, body_contains_owner_call,
     call_text_may_call_free_function, find_related_tests_with_candidate_index, impl_self_type_name,
-    inherent_receiver_call_resolves, manifests_with_unindexed_files, method_call_resolves_to_impl,
-    module_stem, owner_call_text, owner_dispatch_trait, package_prefix,
-    requires_inherent_receiver_identity, test_calls_free_function,
+    inherent_owner_call_resolves, inherent_receiver_call_resolves, manifests_with_unindexed_files,
+    method_call_resolves_to_impl, module_stem, owner_call_text, owner_dispatch_trait,
+    package_prefix, requires_inherent_receiver_identity, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::reveal_outcome;
 pub(in crate::analysis) use reveal::unconditional_owner_insert_field;

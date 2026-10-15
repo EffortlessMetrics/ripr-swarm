@@ -19674,3 +19674,146 @@ fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), S
     }
     Ok(())
 }
+
+/// Independent review #8004: each source is also a real native mutation control.
+#[test]
+fn inherent_receiver_review_last_hop_and_wrapper_controls() -> Result<(), String> {
+    for (source, name, expected) in [
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_foreign_helper/controls/local-helper.rs"
+            ),
+            "local_helper",
+            Some(RelationReason::HelperOwnerCall),
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_local_wrapper/controls/foreign-entry.rs"
+            ),
+            "wrapper_route",
+            None,
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_local_wrapper/controls/foreign-last-hop.rs"
+            ),
+            "wrapper_route",
+            None,
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_foreign_helper/controls/shadowed-owner-type.rs"
+            ),
+            "foreign_helper",
+            None,
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_macro_discard/controls/standard.rs"
+            ),
+            "evaluated_operand",
+            Some(RelationReason::DirectOwnerCall),
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_macro_discard/controls/sibling-shadow.rs"
+            ),
+            "evaluated_operand",
+            Some(RelationReason::DirectOwnerCall),
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_local_wrapper/input/src/lib.rs"
+            ),
+            "wrapper_route",
+            Some(RelationReason::HelperOwnerCall),
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_foreign_helper/input/src/lib.rs"
+            ),
+            "foreign_helper",
+            None,
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_macro_discard/input/src/lib.rs"
+            ),
+            "ignored_operand",
+            None,
+        ),
+    ] {
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams: Vec<_> = inventory_seams_from_index(&[path], &index)
+            .into_iter()
+            .filter(|seam| seam.owner() == "src/lib.rs::impl JsonValue::as_object")
+            .collect();
+        assert_eq!(seams.len(), 4, "all owner seams must exist");
+        let context = CompactGripContext::new(&index);
+        for seam in &seams {
+            let full = evidence_for_seam(seam, &index);
+            let compact = find_related_tests_with_context(seam, &context);
+            let full_rows: BTreeMap<_, _> = full
+                .related_tests
+                .iter()
+                .map(|t| (t.test_name.as_str(), t.relation_reason))
+                .collect();
+            let compact_rows: BTreeMap<_, _> = compact
+                .iter()
+                .map(|(t, r)| (t.test.name.as_str(), *r))
+                .collect();
+            assert_eq!(full_rows, compact_rows);
+            assert!(
+                full_rows.contains_key(name),
+                "retain the subject: {name}: {full_rows:?}"
+            );
+            if let Some(expected) = expected {
+                assert_eq!(
+                    full_rows.get(name),
+                    Some(&expected),
+                    "{name}: {full_rows:?}"
+                );
+            } else {
+                assert!(
+                    !matches!(
+                        full_rows.get(name),
+                        Some(RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall)
+                    ),
+                    "{name}: {full_rows:?}"
+                );
+                assert_ne!(
+                    full.reach.state,
+                    StageState::Yes,
+                    "negative must not reach: {name}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn inherent_helper_declarations_are_not_executable_self_edges() -> Result<(), String> {
+    let declaration =
+        include_str!("../../../../../fixtures/inherent_receiver_foreign_helper/input/src/lib.rs")
+            .replace("fn as_object", "fn\nas_object");
+    let wrapper =
+        include_str!("../../../../../fixtures/inherent_receiver_local_wrapper/input/src/lib.rs");
+    for (source, expected) in [(declaration.as_str(), false), (wrapper, true)] {
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let shared = SharedIndexTables::build(&index);
+        let pairs = helper_owner_calls_by_file_with_fanout(&index, &shared, false);
+        let self_edge = pairs
+            .any_spelling
+            .get(&path)
+            .and_then(|helpers| helpers.get("as_object"))
+            .is_some_and(|calls| calls.contains("as_object"));
+        assert_eq!(
+            self_edge, expected,
+            "declarations and real delegation differ"
+        );
+    }
+    Ok(())
+}

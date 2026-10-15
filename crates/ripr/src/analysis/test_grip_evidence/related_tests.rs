@@ -1,8 +1,9 @@
 use super::*;
 use crate::analysis::classify::{
     CallTarget, call_text_may_call_free_function, impl_self_type_name,
-    inherent_receiver_call_resolves, method_call_resolves_to_impl, module_stem,
-    owner_dispatch_trait, requires_inherent_receiver_identity, test_calls_free_function,
+    inherent_owner_call_resolves, inherent_receiver_call_resolves, method_call_resolves_to_impl,
+    module_stem, owner_dispatch_trait, requires_inherent_receiver_identity,
+    test_calls_free_function,
 };
 use crate::analysis::facts::FunctionImplContext;
 use std::sync::Arc;
@@ -79,6 +80,7 @@ pub(super) struct OwnerContext {
     /// receiver or type-path call of its name reaches something else.
     free_function: bool,
     inherent_receiver: bool,
+    inherent_owner_id: Option<String>,
     impl_trait: Option<String>,
     same_name_count: usize,
     identity: Option<std::sync::Arc<crate::analysis::classify::OwnerCallIdentity>>,
@@ -126,6 +128,9 @@ impl OwnerContext {
             impl_type,
             free_function,
             inherent_receiver,
+            inherent_owner_id: owner_fn
+                .filter(|owner| requires_inherent_receiver_identity(owner))
+                .map(|owner| owner.id.0.clone()),
             impl_trait,
             same_name_count,
             identity,
@@ -265,7 +270,12 @@ pub(super) fn match_direct_owner_call(
                 continue;
             };
             if owner.inherent_receiver
-                && !inherent_receiver_call_resolves(indexed.test, &owner.name, impl_type)
+                && !inherent_receiver_call_resolves(
+                    indexed.test,
+                    &owner.name,
+                    impl_type,
+                    Some(context.index),
+                )
             {
                 continue;
             }
@@ -324,6 +334,14 @@ pub(super) fn match_helper_owner_call(
         return;
     };
     for test_index in indices {
+        if owner.inherent_receiver
+            && !owner
+                .inherent_owner_id
+                .as_deref()
+                .is_some_and(|id| context.inherent_helper_reaches_owner(*test_index, id))
+        {
+            continue;
+        }
         insert_related_candidate(
             candidates,
             context,
@@ -363,7 +381,13 @@ pub(super) fn match_target_affinity_owner_call(
         let Some(test) = context.tests.get(*test_index) else {
             continue;
         };
-        if !test_assertion_mentions_any_target_token(test, target_tokens) {
+        if !test_assertion_mentions_any_target_token(test, target_tokens)
+            || (owner.inherent_receiver
+                && !owner
+                    .inherent_owner_id
+                    .as_deref()
+                    .is_some_and(|id| context.inherent_helper_reaches_owner(*test_index, id)))
+        {
             continue;
         }
         insert_related_candidate(

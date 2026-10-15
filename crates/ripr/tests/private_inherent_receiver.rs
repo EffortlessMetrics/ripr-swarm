@@ -411,3 +411,49 @@ fn scope_items_and_assertion_operand_items_cannot_borrow_outer_receiver_type() -
     }
     Ok(())
 }
+
+#[test]
+fn module_assertion_shadow_and_standard_positive_have_consistent_diff_relations()
+-> Result<(), String> {
+    let discarded =
+        include_str!("../../../fixtures/inherent_receiver_macro_discard/input/src/lib.rs");
+    let shadow = "macro_rules! assert_eq { ($($tokens:tt)*) => {}; }";
+    assert!(
+        discarded.contains(shadow),
+        "the control must contain the discarded macro"
+    );
+    for (source, expected) in [
+        (discarded.to_owned(), RelationReason::WeakTokenSubstring),
+        (
+            discarded.replace(shadow, ""),
+            RelationReason::DirectOwnerCall,
+        ),
+    ] {
+        let fixture = Fixture::create()?;
+        std::fs::write(fixture.0.join("src/reader.rs"), source).map_err(|e| e.to_string())?;
+        let diff = include_str!("../../../fixtures/inherent_receiver_macro_discard/diff.patch")
+            .replace("src/lib.rs", "src/reader.rs");
+        std::fs::write(fixture.0.join("diff.patch"), diff).map_err(|e| e.to_string())?;
+        let output = check_workspace(CheckInput {
+            root: fixture.0.clone(),
+            diff_file: Some(fixture.0.join("diff.patch")),
+            mode: Mode::Ready,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        assert!(
+            !output.findings.is_empty(),
+            "changed owner findings must exist"
+        );
+        for finding in &output.findings {
+            let related = finding
+                .related_tests
+                .iter()
+                .find(|test| test.name == "ignored_operand")
+                .ok_or("missing retained macro control")?;
+            assert_eq!(related.relation_reason, Some(expected));
+        }
+    }
+    Ok(())
+}

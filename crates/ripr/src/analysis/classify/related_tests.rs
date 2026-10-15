@@ -3045,6 +3045,7 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
     test: &TestSummary,
     method: &str,
     impl_type: &str,
+    index: Option<&RustIndex>,
 ) -> bool {
     // The legacy text scan cannot be a deny gate: its last `let` can live in
     // an expired sibling block, and it cannot read a qualified unit variant.
@@ -3056,13 +3057,41 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
         return false;
     };
     let syntax = parse.tree().syntax().clone();
+    let pin_syntax = super::OwnerPinSyntax::default();
+    let unit_struct = |name: &str| {
+        index.is_some_and(|index| {
+            super::owner_pin::unit_struct_value(name, &test.file, index, &pin_syntax)
+        })
+    };
     syntax
         .descendants()
-        .any(|node| inherent_call_node_resolves(node, None, method, impl_type))
+        .any(|node| inherent_call_node_resolves(node, None, method, impl_type, &unit_struct))
         || syntax
             .descendants()
             .filter_map(ast::MacroCall::cast)
-            .any(|call| inherent_assertion_arguments_resolve(&call, method, impl_type))
+            .any(|call| {
+                // A function-only parse cannot see enclosing module imports or
+                // macro definitions. Borrow the existing source/module binding
+                // authority before interpreting assertion operands (#8004).
+                let binding_admitted = index.is_none_or(|index| {
+                    let offset = u32::from(call.syntax().text_range().start()) as usize;
+                    let line = test.start_line
+                        + test.body[..offset]
+                            .bytes()
+                            .filter(|byte| *byte == b'\n')
+                            .count();
+                    call.path().is_some_and(|path| {
+                        pin_syntax.targeted_macro_binding_is_unambiguous(
+                            test,
+                            line,
+                            &path.syntax().text().to_string(),
+                            index,
+                        )
+                    })
+                });
+                binding_admitted
+                    && inherent_assertion_arguments_resolve(&call, method, impl_type, &unit_struct)
+            })
 }
 
 fn inherent_call_node_resolves(
@@ -3070,6 +3099,7 @@ fn inherent_call_node_resolves(
     original_scope: Option<&SyntaxNode>,
     method: &str,
     impl_type: &str,
+    unit_struct: &dyn Fn(&str) -> bool,
 ) -> bool {
     if let Some(call) = ast::MethodCallExpr::cast(node.clone()) {
         return call.name_ref().is_some_and(|name| name.text() == method)
@@ -3078,6 +3108,7 @@ fn inherent_call_node_resolves(
                     receiver,
                     original_scope.unwrap_or_else(|| call.syntax()),
                     impl_type,
+                    unit_struct,
                 )
             });
     }
@@ -3099,6 +3130,7 @@ fn inherent_call_node_resolves(
                     receiver,
                     original_scope.unwrap_or_else(|| call.syntax()),
                     impl_type,
+                    unit_struct,
                 )
             })
 }
@@ -3110,6 +3142,7 @@ fn inherent_assertion_arguments_resolve(
     call: &ast::MacroCall,
     method: &str,
     impl_type: &str,
+    unit_struct: &dyn Fn(&str) -> bool,
 ) -> bool {
     let Some(path) = call.path() else {
         return false;
@@ -3166,13 +3199,18 @@ fn inherent_assertion_arguments_resolve(
         }) {
             return false;
         }
-        syntax
-            .descendants()
-            .any(|node| inherent_call_node_resolves(node, Some(call.syntax()), method, impl_type))
+        syntax.descendants().any(|node| {
+            inherent_call_node_resolves(node, Some(call.syntax()), method, impl_type, unit_struct)
+        })
     })
 }
 
-fn scoped_receiver_names_type(mut receiver: ast::Expr, call: &SyntaxNode, impl_type: &str) -> bool {
+fn scoped_receiver_names_type(
+    mut receiver: ast::Expr,
+    call: &SyntaxNode,
+    impl_type: &str,
+    unit_struct: &dyn Fn(&str) -> bool,
+) -> bool {
     // Parentheses and borrows preserve this bounded receiver identity.
     for _ in 0..32 {
         let inner = match &receiver {
@@ -3190,7 +3228,7 @@ fn scoped_receiver_names_type(mut receiver: ast::Expr, call: &SyntaxNode, impl_t
             let name = receiver.syntax().text().to_string();
             let name = name.trim();
             if !name.is_empty() && name.bytes().all(is_ident_byte) {
-                return visible_receiver_binding_names_type(name, call, impl_type);
+                return visible_receiver_binding_names_type(name, call, impl_type, unit_struct);
             }
         }
         ast::Expr::CallExpr(_) | ast::Expr::RecordExpr(_) => {}
@@ -3200,7 +3238,12 @@ fn scoped_receiver_names_type(mut receiver: ast::Expr, call: &SyntaxNode, impl_t
     initializer_is_one_head_expr(&text) && initializer_type_head(&text) == Some(impl_type)
 }
 
-fn visible_receiver_binding_names_type(name: &str, call: &SyntaxNode, impl_type: &str) -> bool {
+fn visible_receiver_binding_names_type(
+    name: &str,
+    call: &SyntaxNode,
+    impl_type: &str,
+    unit_struct: &dyn Fn(&str) -> bool,
+) -> bool {
     for ancestor in call.ancestors().skip(1) {
         // These patterns may bind the receiver. This small admission does not
         // infer their types, and never borrows an outer same-spelled binding.
@@ -3282,7 +3325,10 @@ fn visible_receiver_binding_names_type(name: &str, call: &SyntaxNode, impl_type:
                 return binding.initializer().is_some_and(|initializer| {
                     let text = mask_comments_and_strings(&initializer.syntax().text().to_string());
                     initializer_is_one_head_expr(&text)
-                        && initializer_type_head(&text) == Some(impl_type)
+                        && (initializer_type_head(&text) == Some(impl_type)
+                            // A bare type name is a value only for a verified
+                            // unit struct, not a same-spelled constant/import.
+                            || (text.trim() == impl_type && unit_struct(impl_type)))
                 });
             }
         }
@@ -3291,6 +3337,27 @@ fn visible_receiver_binding_names_type(name: &str, call: &SyntaxNode, impl_type:
         }
     }
     false
+}
+
+/// Helper last hops borrow the direct owner's complete receiver refusal,
+/// including module/type shadowing and source-aware assertion bindings.
+pub(in crate::analysis) fn inherent_owner_call_resolves(
+    caller: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    requires_inherent_receiver_identity(owner)
+        && owner_call_relation_reason(
+            caller,
+            Some(owner),
+            &owner.name,
+            &[],
+            index
+                .files()
+                .get(&caller.file)
+                .map(|facts| facts.data().source.as_ref()),
+            index,
+        ) == RelationReason::DirectOwnerCall
 }
 
 fn owner_call_relation_reason(
@@ -3438,7 +3505,7 @@ fn owner_call_relation_reason(
         return RelationReason::WeakTokenSubstring;
     }
     if requires_inherent_receiver_identity(owner) {
-        return if inherent_receiver_call_resolves(test, owner_name, &impl_type) {
+        return if inherent_receiver_call_resolves(test, owner_name, &impl_type, Some(index)) {
             RelationReason::DirectOwnerCall
         } else {
             RelationReason::WeakTokenSubstring
@@ -9871,7 +9938,7 @@ let r = try_parse_summary(\"x\");",
         ] {
             let summary = test("src/lib.rs", "t", body);
             assert_eq!(
-                inherent_receiver_call_resolves(&summary, method, ty),
+                inherent_receiver_call_resolves(&summary, method, ty, None),
                 expected,
                 "{body}"
             );
