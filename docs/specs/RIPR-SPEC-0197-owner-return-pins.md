@@ -1434,14 +1434,24 @@ and only per pinned call:
    included, never counts.
 3. Every other rule holds unchanged. The predicate twin pins through the
    same gate, as for any bool owner's whole tail.
+4. Propagation (#8037). An admitted chain that is the owner's whole body
+   completes a DirectReturn witness on its line (limitation
+   `short_circuit_owner_tail`), as a constant tail and an admitted
+   iterator-adaptor tail (RIPR-SPEC-0265 rule 3) do: its operands are
+   comparisons of parameters with literals and make no calls, so its value
+   is the owner's return. Before this,
+   an `||` chain had no witness, because the closure-syntax guard reads any
+   paired pipes as an opaque closure, so its return-value probe stayed
+   `weakly_exposed` even when the pin held. Whether a pinned run evaluates
+   every operand stays item 2's run check, not this edge's.
 
 The run check reads values, not mutants: it shows the changed chain runs
 to its end on a pinned input, which is what rule 3 asks of any tail.
 Whether those inputs discriminate a boundary stays the infection stage's
-question. `grid-equality-table` (`day % 7 == 6 || day % 7 == 0` over a
-table) stays below `exposed`: its predicate keeps `infection_unknown` for
-computed operands, and its return value still lacks a complete
-owner-bound propagation witness.
+question. In `grid-equality-table` (`day % 7 == 6 || day % 7 == 0` over a
+table) the predicate keeps `infection_unknown` for computed operands; the
+return value, which before item 4 lacked a complete owner-bound
+propagation witness, is now credited through that witness and the pin.
 
 ### Exact projections
 
@@ -1866,6 +1876,10 @@ assertions. This repair shares the existing callback without that larger migrati
   read `exposed` through table boundary pairing; the pin must not undo it), and
   `trap-short-circuit-skipped-operand` (`x == 0 && 0 == y` pinned only
   with `x != 0`) stays a gap. No other row changes.
+- Short-circuit tail propagation (#8037): `grid-equality-table`
+  (`day % 7 == 6 || day % 7 == 0` over a table whose rows 0, 1 and 5 run
+  both operands) moves from a false actionable gap to `credited`. No other
+  row changes.
 
 ## Acceptance Examples
 
@@ -2052,6 +2066,11 @@ assertions. This repair shares the existing callback without that larger migrati
   mutant fails; `raw_path_shadow_module_keeps_the_mutant_green` (#7098
   review) loads a rival `Unit` from a `#[r#path]`-named non-`.rs` module,
   and the mutant passes while the finding refuses.
+- Short-circuit tail propagation (#8037): `propagation_witness.rs`
+  `short_circuit_owner_tail_completes_only_an_admitted_chain`;
+  `crates/ripr/tests/short_circuit_or_tail.rs`
+  `an_or_tail_run_to_its_end_by_a_table_is_exposed` and
+  `an_or_tail_whose_changed_operand_never_runs_stays_below_exposed`.
 - Short-circuit tails (#7969): `owner_pin/short_circuit.rs` unit tests
   `reads_homogeneous_comparison_chains_over_parameters`,
   `refuses_anything_that_can_call_panic_or_mix_operators`,
