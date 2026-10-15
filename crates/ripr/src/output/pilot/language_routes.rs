@@ -210,8 +210,9 @@ impl PilotLanguageRoutes {
     /// have no command and stay on the none line.
     pub(crate) fn supported_headline_route(&self) -> Option<(&PilotLanguageRoute, &str)> {
         self.required()?.iter().find_map(|route| {
-            (route.enabled)
-                .then(|| route.command.as_deref())
+            route
+                .enabled
+                .then_some(route.command.as_deref())
                 .flatten()
                 .map(|command| (route, command))
         })
