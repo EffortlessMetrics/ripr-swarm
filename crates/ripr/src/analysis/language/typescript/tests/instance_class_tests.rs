@@ -892,6 +892,14 @@ fn instance_pin_looks_through_a_test_local_identity_helper() -> Result<(), Strin
             "  const ns = fakeErrors();\n  errorFor(403);\n  expect(ns.errorFor(404)).toBeInstanceOf(NotFound);",
             0,
         ),
+        // A `\u` escape can spell the shadowing `ns` without the word (the
+        // file-wide escape rule already withholds the helper).
+        (
+            "escaped-shadow-namespace",
+            NAMESPACE_WRAP,
+            "  const \\u006es = fakeErrors();\n  errorFor(403);\n  expect(ns.errorFor(404)).toBeInstanceOf(NotFound);",
+            0,
+        ),
         // A dynamic import binds the namespace in the body; it stays the
         // owner module only as a sole `const` used as a member receiver.
         (

@@ -2745,13 +2745,18 @@ pub(crate) fn owner_namespace_receivers(
 /// body rebinds (`const ns = { owner: () => ... }`): a call through that
 /// local reaches the shadow, not the owner module. A dynamic-import binding
 /// of the owner module is a body declaration by construction, so it stays
-/// only as a [`sole_const_namespace_binding`].
+/// only as a [`sole_const_namespace_binding`]. A body holding a `\u`
+/// escape can declare `ns` without spelling it (`const \u006es = ...`), so
+/// it keeps no namespace receiver.
 pub(crate) fn unshadowed_owner_namespace_receivers(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> Vec<String> {
+    if test.body_text.contains("\\u") {
+        return Vec::new();
+    }
     let dynamic: Vec<String> = dynamic_import_namespace_bindings(&test.body_text)
         .into_iter()
         .filter(|name| {
