@@ -306,9 +306,12 @@ fn attribute_is_closed(attribute: &ast::Attr, allowed: &dyn Fn(&str) -> bool) ->
         .trim_start();
     inner.match_indices("::").all(|(offset, _)| {
         let before = inner[..offset].trim_end();
+        // Step past the whole separator: `→` or `“` is several bytes.
         let root_start = before
-            .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-            .map_or(0, |found| found + 1);
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !(ch.is_alphanumeric() || *ch == '_'))
+            .map_or(0, |(found, ch)| found + ch.len_utf8());
         let root = &before[root_start..];
         let qualified = before[..root_start].trim_end().ends_with("::");
         qualified || (!root.is_empty() && allowed(root))
@@ -1302,6 +1305,25 @@ mod tests {
             return Err(format!("asked {:?}", redefined.prefixes.borrow()));
         }
         Ok(())
+    }
+
+    /// A multi-byte character before a path root is read whole, not
+    /// sliced mid-character (#8059 review).
+    #[test]
+    fn a_multibyte_attribute_character_is_read_whole() {
+        let allowed = |root: &str| root == "std";
+        let closed = |source: &str| {
+            parse_clean_source_file(source).and_then(|parse| {
+                parse
+                    .tree()
+                    .syntax()
+                    .descendants()
+                    .find_map(ast::Attr::cast)
+                    .map(|attribute| attribute_is_closed(&attribute, &allowed))
+            })
+        };
+        assert_eq!(closed("#[doc = \"→std::io\"]\nfn f() {}\n"), Some(true));
+        assert_eq!(closed("#[doc = \"“hack::io\"]\nfn f() {}\n"), Some(false));
     }
 
     #[test]
