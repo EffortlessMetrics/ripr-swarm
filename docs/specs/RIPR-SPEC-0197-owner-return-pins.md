@@ -1410,7 +1410,7 @@ macro stay `snapshot` / medium.
 does. `ExpectFile::assert_eq` reads the committed file (CRLF as LF; a missing
 file as the empty text), compares it with the actual text, and panics on a
 mismatch unless `UPDATE_EXPECT` is set, the same escape the inline form has.
-The rules above apply with three differences:
+The rules above apply with four differences:
 
 1. The macro's one argument is a single string literal naming the file. A
    computed path (`concat!(..)`, a binding) or the inline form's double
@@ -1425,6 +1425,15 @@ The rules above apply with three differences:
    gate admitting any value of the owner's type accepts; a gate that checks
    the expected value (an exact bool, a constructor head, a whole-value
    field literal) refuses it.
+4. The test must not be able to write the file first. A test body that
+   writes, creates, copies or renames a file (`fs::write`, a bare `write(..)`
+   under `use std::fs::write`, `File::create`, `OpenOptions`, `fs::copy`,
+   `fs::rename`), or calls `set_var` / names `UPDATE_EXPECT`, lends no
+   golden-file pin: it could derive the golden from the owner and compare
+   the owner with itself. Read from the test's masked body text, so it also
+   refuses a test that writes some unrelated file; a write hidden in a
+   helper the test calls is not seen (#8097 tracks the same hole for
+   `assert_eq!` against a file read back).
 
 Rejected: reading the golden file into the expected literal. The seam cache
 keys on Rust sources, so a golden edit would not invalidate the reading, and

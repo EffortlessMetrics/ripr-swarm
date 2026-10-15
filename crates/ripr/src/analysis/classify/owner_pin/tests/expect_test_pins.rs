@@ -307,3 +307,40 @@ fn a_nested_expect_comparison_is_not_its_own_snapshot() {
         "{oracles:?}"
     );
 }
+
+/// #6578 review: a test that may write the golden file lends no
+/// golden-file pin; the inline comparison is unaffected.
+#[test]
+fn a_test_that_may_write_files_lends_no_golden_pin() {
+    for body in [
+        "std::fs::write(\"w.txt\", render(4)).unwrap();",
+        "fs::write (\"w.txt\", x);",
+        "write(\"w.txt\", x).unwrap();",
+        "let f = File::create(\"w.txt\");",
+        "OpenOptions::new().write(true).open(\"w.txt\");",
+        "std::fs::copy(\"a\", \"w.txt\");",
+        "unsafe { std::env::set_var(\"UPDATE_EXPECT\", \"1\") };",
+    ] {
+        assert!(test_may_write_files(body), "{body}");
+    }
+    for body in [
+        "expect_file![\"w.txt\"].assert_eq(&render(4));",
+        "let s = format!(\"{}\", 1); write!(out, \"x\").unwrap();",
+        "buffer.write(&bytes);",
+        "std::io::copy(&mut a, &mut b);",
+        "// fs::write(\"w.txt\", x);",
+        "let note = \"fs::write\";",
+        "rewrite(x);",
+    ] {
+        assert!(!test_may_write_files(body), "{body}");
+    }
+    assert!(is_golden_file_comparison(
+        "expect_file![\"w.txt\"].assert_eq(&render(4));"
+    ));
+    assert!(is_golden_file_comparison(
+        "expect_file! [\"w.txt\"].assert_eq(&render(4));"
+    ));
+    assert!(!is_golden_file_comparison(
+        "expect![[\"w12\"]].assert_eq(&render(4));"
+    ));
+}

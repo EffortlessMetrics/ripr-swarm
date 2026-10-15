@@ -2321,6 +2321,13 @@ impl OwnerReturnPin {
             // a mismatch, as `assert_eq!(render_row("alice", 41), "alice: 42")`
             // does.
             expect_operands = operands;
+            // #6578 review: a golden file the test itself writes (from the
+            // owner, say) before comparing fixes nothing, so a test that
+            // writes, copies or renames a file, or sets `UPDATE_EXPECT`,
+            // lends no golden-file pin.
+            if is_golden_file_comparison(&assertion.text) && test_may_write_files(&test.body) {
+                return false;
+            }
             let Some(call) = self.awaited_call_shape(&expect_operands[0], &self.name) else {
                 return false;
             };
@@ -5977,6 +5984,43 @@ pub(in crate::analysis) fn inline_expect_operands(text: &str) -> Option<[String;
         other => other.syntax().text().to_string(),
     };
     Some([actual, literal])
+}
+
+/// Whether an expect-test comparison's receiver is `expect_file!`.
+fn is_golden_file_comparison(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    let compact: String = masked.chars().filter(|c| !c.is_whitespace()).collect();
+    compact.starts_with("expect_file!")
+}
+
+/// #6578 review: whether a test body may write the file a golden-file
+/// comparison reads. Comments and strings are masked; anything that may
+/// create, overwrite, copy or rename a file, or turn on expect-test's
+/// `UPDATE_EXPECT` rewrite, counts. A bare `write(..)`/`create(..)` call
+/// counts too, since `use std::fs::write;` makes it the file write.
+/// Fail-closed: a test that writes some other file also lends no pin.
+fn test_may_write_files(body: &str) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let compact: String = masked.chars().filter(|c| !c.is_whitespace()).collect();
+    const WRITERS: &[&str] = &[
+        "fs::write",
+        "fs::copy",
+        "fs::rename",
+        "fs::hard_link",
+        "File::create",
+        "File::options",
+        "OpenOptions",
+        "UPDATE_EXPECT",
+        "set_var",
+    ];
+    WRITERS.iter().any(|writer| compact.contains(writer))
+        || ["write", "create", "copy", "rename"].iter().any(|name| {
+            compact.match_indices(&format!("{name}(")).any(|(at, _)| {
+                compact[..at].chars().next_back().is_none_or(|before| {
+                    !(before.is_alphanumeric() || matches!(before, '_' | '.' | ':'))
+                })
+            })
+        })
 }
 
 /// RIPR-SPEC-0197: the compared operands of a plain `assert!(lhs == rhs)`
