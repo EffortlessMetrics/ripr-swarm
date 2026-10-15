@@ -1355,6 +1355,20 @@ fn extract_parser_probe_shapes(
                 bin_expr.syntax().text_range().end(),
             );
         }
+        // RIPR-SPEC-0228: a field assignment (`self.f = ..`, `self.f op= ..`)
+        // is a field write, probed as `field_construction` like a
+        // constructed field instead of falling to `static_unknown`.
+        if field_assignment_path(&bin_expr).is_some() {
+            push_probe_shape(
+                &mut shapes,
+                line_index,
+                text,
+                source,
+                ProbeShapeKind::FieldConstruction,
+                bin_expr.syntax().text_range().start(),
+                bin_expr.syntax().text_range().end(),
+            );
+        }
     }
 
     let body = function.body();
@@ -1618,6 +1632,56 @@ fn push_unsafe_boundary_probe_shapes(
             ),
             None,
         );
+    }
+}
+
+/// RIPR-SPEC-0228: the field path after `self` written by an assignment or
+/// compound assignment (`count` for `self.count += 1`, `child.count` for
+/// `self.child.count = 0`). Any other place (a local, `*p`, an index, a
+/// field of a call result or of another binding) gives `None`.
+pub(crate) fn field_assignment_path(bin_expr: &ast::BinExpr) -> Option<String> {
+    let op = bin_expr.op_token()?;
+    if !matches!(
+        op.text(),
+        "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>="
+    ) {
+        return None;
+    }
+    let mut place = bin_expr.lhs()?;
+    let mut segments = Vec::new();
+    loop {
+        match place {
+            ast::Expr::FieldExpr(field) => {
+                // Only plain ASCII names (no `self.0`, `self.r#type` or
+                // non-ASCII names), matching `field_assignment_target`.
+                let name = field.name_ref()?.text().to_string();
+                let plain = name
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+                    && name
+                        .chars()
+                        .all(|ch| ch == '_' || ch.is_ascii_alphanumeric());
+                if !plain {
+                    return None;
+                }
+                segments.push(name);
+                place = field.expr()?;
+            }
+            ast::Expr::PathExpr(path) => {
+                let path = path.path()?;
+                let is_self = path.qualifier().is_none()
+                    && path
+                        .segment()
+                        .is_some_and(|segment| segment.self_token().is_some());
+                if !is_self || segments.is_empty() {
+                    return None;
+                }
+                segments.reverse();
+                return Some(segments.join("."));
+            }
+            _ => return None,
+        }
     }
 }
 

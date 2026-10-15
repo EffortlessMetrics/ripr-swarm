@@ -2120,6 +2120,21 @@ fn missing_field_value_discriminator(
             pushed_collection_compared_whole(owner, path, test, assertion, index)
         })
     };
+    // RIPR-SPEC-0228: a changed field assignment (`self.count += 1`) is
+    // observed by an `assert_eq!` that reads that whole field from the
+    // binding the test called the owner on, after the call, directly or
+    // through a getter whose body returns it, under the same binding rules
+    // as a pushed literal.
+    let assigned =
+        owner_fn.and_then(|owner| assigned_field_of(owner, probe, index).map(|path| (owner, path)));
+    // A default-like expected value (`0`, `false`) cannot tell a deleted
+    // write from a kept one, so it does not confirm the assignment.
+    let assigned_field_observed = |test: &TestSummary, assertion: &OracleFact| {
+        assigned.as_ref().is_some_and(|(owner, path)| {
+            !super::propagation_witness::assertion_expects_default_like(&assertion.text)
+                && pushed_collection_compared_whole(owner, path, test, assertion, index)
+        })
+    };
     let field_already_observed = related_tests.iter().any(|test| {
         test.assertions.iter().any(|assertion| {
             matches!(
@@ -2136,6 +2151,7 @@ fn missing_field_value_discriminator(
                         reads_owner_result_field(&test.body, &assertion.text, read, owner)
                     }))
                 || pushed_literal_observed(test, assertion)
+                || assigned_field_observed(test, assertion)
         })
     });
     if field_already_observed {
@@ -2153,6 +2169,31 @@ fn missing_field_value_discriminator(
             .find(|sink| sink.kind == FlowSinkKind::StructField)
             .cloned(),
     })
+}
+
+/// RIPR-SPEC-0228: the field path `probe`, a changed field assignment in
+/// `owner`, leaves as the owner's last write
+/// ([`super::propagation_witness::assigned_field_path`]); `self` methods
+/// called after it resolve through `owner`'s inherent impl.
+pub(in crate::analysis) fn assigned_field_of(
+    owner: &FunctionSummary,
+    probe: &Probe,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<String> {
+    let impl_type = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
+        .and_then(|call| call.impl_type());
+    super::propagation_witness::assigned_field_path(
+        owner.body.as_str(),
+        owner.start_line,
+        probe.location.line,
+        &probe.expression,
+        &|method| {
+            impl_type.and_then(|impl_type| {
+                super::builder_override::inherent_method_body(index, impl_type, method)
+                    .map(str::to_string)
+            })
+        },
+    )
 }
 
 /// #7131: whether `assertion` compares the whole field collection `path`

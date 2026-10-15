@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A changed Rust field assignment (`self.count += 1`, `self.state = State::Done`) gets a field probe instead of `static_unknown`. It is credited when an `assert_eq!` reads that whole field, directly or through a plain getter, from the binding the test called the owner on. A test that calls the owner and asserts nothing reads `reachable_unrevealed`. Any other reading still abstains. Six Rust corpus cases leave abstention, each to its ideal verdict (RIPR-SPEC-0228, #6485).

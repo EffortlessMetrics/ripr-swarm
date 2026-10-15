@@ -891,14 +891,26 @@ impl ClassifiedProbeEvidence {
         if self.reach_ruled_out {
             return ExposureClass::NoStaticPath;
         }
-        classify(
+        let class = classify(
             &self.reach,
             &self.infect,
             &self.propagate,
             &self.observe,
             &self.discriminate,
             probe,
-        )
+        );
+        // RIPR-SPEC-0228: a field assignment is credited only through a
+        // confirmed read of that field after the owner call. A weak reading
+        // there means ripr could not tell whether a related assertion reads
+        // the field (a helper, a projection, a getter it cannot resolve), so
+        // it abstains as before instead of claiming a gap.
+        if class == ExposureClass::WeaklyExposed
+            && matches!(probe.family, ProbeFamily::FieldConstruction)
+            && crate::analysis::classify::field_assignment_target(&probe.expression).is_some()
+        {
+            return ExposureClass::StaticUnknown;
+        }
+        class
     }
 
     pub(in crate::analysis) fn confidence(&self, class: &ExposureClass) -> f32 {

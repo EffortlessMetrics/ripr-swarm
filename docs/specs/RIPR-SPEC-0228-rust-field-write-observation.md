@@ -345,8 +345,38 @@ changes `self.count += 2` to `self.count += 1`.
   fact. A custom `PartialEq` on the element that ignores the changed field
   is not detected: whole-value equality is taken to compare every field, as
   for RIPR-SPEC-0225 whole-value credit.
-- Field assignments (`self.f = ..`, `self.f op= ..`) are not implemented:
-  their corpus cases read `static_unknown`.
+- Field assignments (`self.f = ..`, `self.f op= ..`, every compound
+  operator) on a field path rooted at `self` are probed as
+  `field_construction` (`field_assignment_path` in `ra.rs`). One is credited
+  through the same read rule as a pushed literal (`assigned_field_of` and
+  `pushed_collection_compared_whole` in `activation.rs`): an `assert_eq!`
+  whose one operand is the whole field, read directly or through a getter
+  whose body returns it, from the binding the test called the owner on,
+  after that call. The assignment must occur once on its line and start a
+  top-level statement of the owner body, and nothing later in the body may
+  write the field (`assigned_field_path` in `propagation_witness.rs`, with
+  the `may_write_field` rule above). Nothing earlier in the body may leave
+  before it (`return`, `?`, `let .. else`, `break`, `continue`, a panicking
+  macro, `assert`, `.unwrap(`, `.expect(`), the right-hand side may not
+  choose between values (`if`, `match`, a comparison, `&&`, `||`), and the
+  asserted value may not be one a field usually holds before any write
+  (`0`, `false`, `None`, `""`, an empty `String` or `Vec`, a `default()`),
+  since deleting the assignment would leave it in place. Only plain ASCII
+  field names are probed (not `self.0`, `self.r#type` or non-ASCII names).
+  A related test that calls the owner and holds no assertion reads
+  `reachable_unrevealed`. Any weaker reading
+  (`assert!(c.f == ..)`, `assert_ne!`, projections, helper assertions,
+  whole-value or `Debug` comparisons of the receiver, a later read through
+  another method) still reads `static_unknown` with `static_probe_unknown`
+  (`ClassifiedProbeEvidence::class` in `classifier/evidence.rs`), so no
+  probe of this kind reads `weakly_exposed`. Writes through `*p`, a local
+  binding or a non-`self` receiver are not probed. Known limits shared with
+  other probe families: a test whose only oracle is a manual
+  `if .. { panic!(..) }` or a `debug_assert_eq!`, or whose owner asserts on
+  the field itself, reads `reachable_unrevealed`; an assertion that only
+  runs in a dead branch, an empty loop or a `#[should_panic]` test still
+  credits; and a non-default pre-call value equal to the asserted one
+  (`self.count = self.count.max(1)` with `count` already 5) still credits.
 
 ## Metrics
 
