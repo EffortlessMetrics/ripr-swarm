@@ -53,6 +53,11 @@ Draft at `57d6d72f864d7b1705f95bcec7052ef854e74c9d`; do not alter it to force ad
   tests passing. Independently challenge missing/stale evidence, readiness drift,
   cancellation after successful dependencies/during finalization, and sequential
   duplicate API reuse. Mocked runs do not prove native delivery or scheduling.
+  The [later test-only review](https://github.com/EffortlessMetrics/ripr-swarm/issues/4987#issuecomment-6184051444)
+  also leaves raw streamed review-page arrays and tied `submitted_at` ordering
+  unproved: existing fixtures use one array and distinct timestamps. Its executor
+  failed provisioning; zero tests ran. This is a coverage gap, not an established
+  production defect or a replacement for the successful evidence-integrity review.
 - [ ] #4987 retains full portfolio ownership; #7827 owns cache continuity,
   #4841 economics, #4988 runner capacity and #4836 actual integration evidence.
   Account for other platform/feature/package/security obligations and unknown
@@ -114,6 +119,13 @@ review; it does not replace it. #8024's reported 45 tests remain owner evidence.
 No new product repair was warranted. This document changes no behavior or
 documentation-system contract; no changelog fragment is needed under
 [Changelog Policy](../CHANGELOG_POLICY.md).
+
+Handoff hygiene attempt: `cargo --offline xtask worktree doctor` exited 101
+before execution (locked tokio-util 0.7.20, cached 0.7.19). A separate locked
+online retry under a 90-second bound exited 124 during dependency/product
+compilation; doctor itself never ran. No doctor, check-fast or precommit pass
+is claimed for this document. Direct focused tests and the docs audit above
+completed independently. Whitespace and the handoff's local-link target pass.
 
 GitHub CLI reads were denied: `POST https://api.github.com/graphql` (PR search)
 and `GET /repos/EffortlessMetrics/ripr-swarm/commits/6902a132eb0366a31bdd1b52a30b189847c1f82f/pulls`
