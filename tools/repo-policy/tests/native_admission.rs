@@ -33,6 +33,15 @@ fn steps(scripts: &[String]) -> String {
     sequence
 }
 fn execute(script: &str, pr: &Value, reviews: &Value, environment: &Value) -> Result<bool, String> {
+    execute_review_stream(script, pr, &reviews.to_string(), environment)
+}
+// `gh api --paginate` writes separate JSON arrays, not one nested array.
+fn execute_review_stream(
+    script: &str,
+    pr: &Value,
+    reviews: &str,
+    environment: &Value,
+) -> Result<bool, String> {
     let temp = std::env::temp_dir().join(format!(
         "ripr-native-admission-{}-{}",
         std::process::id(),
@@ -41,10 +50,13 @@ fn execute(script: &str, pr: &Value, reviews: &Value, environment: &Value) -> Re
     fs::create_dir(&temp).map_err(|e| e.to_string())?;
     let mock = r#"gh() {
       [ "$1" = api ] || return 81; shift
-      [ "$1" != --paginate ] || shift
+      local paginated=false
+      if [ "$1" = --paginate ]; then paginated=true; shift; fi
       case "$1" in
         */pulls/8008) printf '%s\n' "$MOCK_PR";;
-        */pulls/8008/reviews*) printf '%s\n' "$MOCK_REVIEWS";;
+        */pulls/8008/reviews*)
+          if [ "$paginated" = true ]; then printf '%s\n' "$MOCK_REVIEWS";
+          else jq -cs '.[0]' <<< "$MOCK_REVIEWS"; fi;;
         */collaborators/*/permission) printf '%s\n' write;;
         */git/commits/*) printf '%s\n' "$MOCK_COMMIT";;
         */actions/workflows/*) printf '%s\n' 1;;
@@ -77,7 +89,7 @@ fn execute(script: &str, pr: &Value, reviews: &Value, environment: &Value) -> Re
         .env("BASE_SHA", "b".repeat(40))
         .env("SUBJECT_SHA", "c".repeat(40))
         .env("MOCK_PR", pr.to_string())
-        .env("MOCK_REVIEWS", reviews.to_string())
+        .env("MOCK_REVIEWS", reviews)
         .env("GITHUB_OUTPUT", temp.join("out"))
         .env("GITHUB_STEP_SUMMARY", temp.join("summary"));
     for key in [
@@ -395,5 +407,190 @@ fn terminal_cancellation_check_rejects_green_dependencies_and_prior_success() ->
         &live["reviews"],
         &env
     )?);
+    Ok(())
+}
+
+fn paged_review(user: &str, state: &str, head: char, second: u8, id: u64, text: &str) -> Value {
+    json!({"id": id, "user": {"login": user}, "state": state,
+        "commit_id": head.to_string().repeat(40),
+        "submitted_at": format!("2026-10-15T01:00:{second:02}Z"), "body": text})
+}
+fn review_pages(first: Value, tail: Vec<Value>) -> Vec<Value> {
+    // Production asks for 100 reviews per page. The first page is genuinely full;
+    // distinct inert comments keep pagination shape realistic without readiness.
+    let mut page: Vec<_> = (1..100)
+        .map(|id| paged_review("observer", "COMMENTED", 'e', 0, id, "ordinary"))
+        .collect();
+    page.push(first);
+    vec![json!(page), json!(tail)]
+}
+fn review_stream(pages: &[Value]) -> String {
+    pages
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+fn review_boundary_bodies() -> Result<Vec<String>, String> {
+    [
+        "Reconcile native request and current readiness",
+        "Recheck current head and base before result publication",
+    ]
+    .into_iter()
+    .map(body)
+    .collect()
+}
+
+#[test]
+fn streamed_review_pages_preserve_outstanding_and_tied_dispositions() -> Result<(), String> {
+    let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
+    let pr = &vectors["live_drift_cases"][0]["live_pull_request"];
+    let fresh = paged_review("bob", "APPROVED", 'a', 4, 9400, "");
+    // Expected dispositions are literal. Realistic distinct IDs deliberately
+    // decrease across a tie: API/input chronology, not ID sorting, is the contract.
+    for (first, last, last_head, second, positive, expected) in [
+        ("CHANGES_REQUESTED", "APPROVED", 'a', 1, true, true),
+        ("APPROVED", "CHANGES_REQUESTED", 'e', 1, true, false),
+        ("CHANGES_REQUESTED", "DISMISSED", 'e', 1, true, true),
+        ("CHANGES_REQUESTED", "APPROVED", 'e', 1, false, false),
+        ("CHANGES_REQUESTED", "DISMISSED", 'e', 1, false, false),
+        ("CHANGES_REQUESTED", "APPROVED", 'a', 2, true, true),
+        ("APPROVED", "CHANGES_REQUESTED", 'e', 2, true, false),
+    ] {
+        let initial = paged_review("alice", first, 'e', 1, 9300, "");
+        let later = paged_review("alice", last, last_head, second, 9200, "");
+        for marker in ["ordinary follow-up", "SOURCE_REVIEW_READY", "REVIEW_READY"] {
+            // When no fresh positive is intended, keep even the marker stale.
+            let comment = paged_review(
+                "alice",
+                "COMMENTED",
+                if positive { 'a' } else { 'e' },
+                3,
+                9350,
+                marker,
+            );
+            let mut tail = vec![later.clone(), comment];
+            if positive {
+                tail.push(fresh.clone());
+            }
+            let pages = review_pages(initial.clone(), tail);
+            let stream = review_stream(&pages);
+            assert!(
+                serde_json::from_str::<Value>(&stream).is_err(),
+                "stream must contain separate page arrays"
+            );
+            assert_eq!(
+                pages[0].as_array().ok_or("first page not array")?.len(),
+                100
+            );
+            for script in review_boundary_bodies()? {
+                assert_eq!(
+                    execute_review_stream(&script, pr, &stream, &json!({}))?,
+                    expected,
+                    "{first}->{last}, second={second}, positive={positive}, comment={marker}"
+                );
+            }
+        }
+    }
+    // No later decisive state: fresh comments/markers and someone else's fresh
+    // approval must not hide the outstanding first-page change request.
+    for marker in ["ordinary", "SOURCE_REVIEW_READY", "REVIEW_READY"] {
+        let pages = review_pages(
+            paged_review("alice", "CHANGES_REQUESTED", 'e', 1, 9300, ""),
+            vec![
+                paged_review("alice", "COMMENTED", 'a', 3, 9350, marker),
+                fresh.clone(),
+            ],
+        );
+        for script in review_boundary_bodies()? {
+            assert!(!execute_review_stream(
+                &script,
+                pr,
+                &review_stream(&pages),
+                &json!({})
+            )?);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn streamed_review_controls_reject_page_loss_and_first_disposition() -> Result<(), String> {
+    let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
+    let pr = &vectors["live_drift_cases"][0]["live_pull_request"];
+    let fresh = paged_review("bob", "APPROVED", 'a', 4, 9400, "");
+    let requested = paged_review("alice", "CHANGES_REQUESTED", 'e', 1, 9300, "");
+    let repaired = review_pages(
+        requested.clone(),
+        vec![
+            paged_review("alice", "APPROVED", 'a', 1, 9200, ""),
+            fresh.clone(),
+        ],
+    );
+    let outstanding = review_pages(requested, vec![fresh]);
+    for script in review_boundary_bodies()? {
+        assert!(execute_review_stream(
+            &script,
+            pr,
+            &review_stream(&repaired),
+            &json!({})
+        )?);
+        assert!(!execute_review_stream(
+            &script,
+            pr,
+            &review_stream(&outstanding),
+            &json!({})
+        )?);
+        let one_page = script.replace(
+            "gh api --paginate \"repos/$REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100\"",
+            "gh api \"repos/$REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100\"",
+        );
+        assert_ne!(one_page, script, "pagination removal must engage");
+        assert!(
+            !execute_review_stream(&one_page, pr, &review_stream(&repaired), &json!({}))?,
+            "dropping final page loses genuine resolution"
+        );
+        assert!(
+            execute_review_stream(&script, pr, &review_stream(&outstanding[1..]), &json!({}))?,
+            "dropping first page recreates false success; unchanged expected=false rejects it"
+        );
+        let first_only = script.replace(
+            "map(max_by(.submitted_at))) as $dispositions",
+            "map(first)) as $dispositions",
+        );
+        assert_ne!(first_only, script, "wrong disposition mutation must engage");
+        assert!(
+            !execute_review_stream(&first_only, pr, &review_stream(&repaired), &json!({}))?,
+            "selecting first decisive review loses genuine resolution"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn tied_review_order_challenge_pins_input_order_not_review_id() -> Result<(), String> {
+    let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
+    let pr = &vectors["live_drift_cases"][0]["live_pull_request"];
+    for second in [1, 2] {
+        let pages = review_pages(
+            paged_review("alice", "CHANGES_REQUESTED", 'e', 1, 9300, ""),
+            vec![paged_review("alice", "APPROVED", 'a', second, 9200, "")],
+        );
+        for script in review_boundary_bodies()? {
+            assert!(execute_review_stream(
+                &script,
+                pr,
+                &review_stream(&pages),
+                &json!({})
+            )?);
+            let reversed = vec![pages[1].clone(), pages[0].clone()];
+            // Reversed pages violate the expected API chronology. At a tie the
+            // result changes; with genuinely later time max_by still selects it.
+            assert_eq!(
+                execute_review_stream(&script, pr, &review_stream(&reversed), &json!({}))?,
+                second == 2
+            );
+        }
+    }
     Ok(())
 }

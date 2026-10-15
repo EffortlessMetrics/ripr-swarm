@@ -268,3 +268,81 @@ build/replay/receipt/cleanup, API/token/check association, cancellation delivery
 sequential duplicate readback and freshness races remain unrehearsed as described
 above. No workflow is activated, PR opened, protection changed or runtime/release
 qualification claimed by this companion.
+
+## Streamed review-page and timestamp-tie coverage
+
+The admission owner continues from exact reviewed evidence companion
+`6902a132eb0366a31bdd1b52a30b189847c1f82f` (includes `4eebbc6e6`). The separate
+coverage attempt in [#4987 comment 6184051444](https://github.com/EffortlessMetrics/ripr-swarm/issues/4987#issuecomment-6184051444)
+failed container provisioning and made no source changes. Its proposed cases
+are now executable regressions, not an inherited pass. Fresh main was read at
+`d736c39d749f4fabde4e8fe11456ec340bb88e90`; intervening product/Droid-retirement
+changes do not edit this caller or test owner. No unrelated restack is required.
+
+This slice changes the existing test harness and this handoff only. Production
+admission, final readiness, cancellation, H/B/T, required-check naming, source
+receipt, Windows evidence and protected-merge semantics remain byte-for-byte
+unchanged from 6902. Existing changelog fragments cover the production repairs;
+this test-only/internal explanation has no new workflow/API/output behavior and
+needs no additional fragment under CHANGELOG_POLICY.md.
+
+The new harness emits actual newline-separated JSON page arrays to both complete
+production Bash bodies. The first page contains 100 distinct reviews, as requested
+by production `per_page=100`; another page follows. The mock now returns only the
+first array if `--paginate` is removed. This makes lost pagination observable,
+instead of always emitting the entire fixture regardless of the command.
+
+Three additional Cargo subjects cover outstanding older-head changes requests,
+ordinary and source-ready comments, genuine later approval/dismissal, fresh vs
+stale positive evidence, equal timestamps with distinct IDs, and page boundaries.
+The negative controls remove `--paginate`, drop the first page, or select the
+first decisive review. The unchanged expected dispositions reject each wrong
+behavior. Reversing tied pages changes the observed result; reversing pages with
+a genuinely later timestamp does not. These are explicit assumption challenges,
+not reports that GitHub returned reversed pages.
+
+The reducer intentionally retains its current `max_by(submitted_at)` semantics:
+for equal timestamps it selects the last API/input review, not the largest ID.
+Descending distinct IDs in controls prevent accidentally crediting ID order.
+GitHub [documents chronological review ordering](https://docs.github.com/en/rest/pulls/reviews#list-reviews-for-a-pull-request),
+but does not specify an ID-based tie rule. Mocked behavior establishes the
+reducer's input-order dependence; native tied-review ordering/dismissal shapes,
+changes during paginated reads and actual token/API behavior still need native
+rehearsal. This work does not claim that pagination is a snapshot or atomic.
+
+Author-side focused execution uses existing bounded repo-policy Cargo ownership,
+Rust 1.95.0 and jq 1.7 on Linux. The independent reader separately replayed
+immutable 6902 bodies with 14 vectors at both boundaries under jq 1.6 and 1.7
+(56 executions), using the same expectations for the reviewed successor.
+Independent exact-head review and compact source/log hashes bind the final
+published successor; no native Actions, Windows product or timing proof is implied.
+
+### Smallest integration sequence and ownership
+
+1. Keep this admission/evidence candidate as the shared integration basis. Obtain
+   the three owners' reviewed callable leaves for `ci.yml`,
+   `python-wheel-qualification.yml`, and `printed-command-paste.yml`. This task
+   does not edit those files or duplicate their implementations. Reconcile their
+   declared inputs/outputs and selected evidence obligations before wiring calls.
+2. On this owner branch, assemble the accepted leaf commits and the shared caller
+   changes as one coherent source candidate. Route admitted exact H/B/T/tree and
+   workflow generation to the selected calls; preserve mandatory proof identity,
+   independent review, final readiness refresh and cancellation refusal. Add the
+   selected leaf results to the existing aggregate and migrate only the affected
+   trigger/name/policy contracts. Do not land disconnected half-wiring.
+3. Run focused combined-graph contracts and leaf-owned proof, then independent
+   exact-candidate source review. Refresh changed main/owner inputs for content
+   conflicts or changed prerequisites, preserving unrelated valid proof. A branch
+   push/source acceptance still does not activate or qualify production.
+4. Only through a separately admitted cutover/rehearsal transition, exercise the
+   native event/token/check association, controlled drift/cancellation, duplicate
+   readback and Windows evidence/cleanup described above. Final post-green
+   vision/current-state decision and protected squash remain later transitions.
+   No controller, native merge queue, settings change or main-health dependency
+   is added by this sequence; <=20-minute timing remains unmeasured.
+
+Resource custody remains the existing owner worktree, Git history and small
+repo-policy target under `/workspace/windows-subset-proof`; >=8 GiB reserve and
+<=128 MiB additional focused output are retained for this slice (29 GiB free
+observed). Independent pagination artifacts live under `pagination-independent`;
+original and mutation witnesses remain retained for the parent/rehearsal owner.
