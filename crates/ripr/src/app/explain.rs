@@ -290,8 +290,9 @@ mod tests {
         // `bound_root_path` + `root_path_display` for the diff file, then
         // `shell_arg`). Re-deriving the spelling from `Path::display`
         // asserted the renderer's POSIX form against the renderer's own
-        // Windows form (`F:\...` vs the stable-separator `F:/...` bound
-        // spelling), so the pin failed only where it was already honest.
+        // Windows form: a native-separator display spelling versus the
+        // stable-separator bound spelling, so the pin failed only where it
+        // was already honest.
         let root = crate::agent::loop_commands::shell_arg(
             &crate::agent::loop_commands::bound_root(&sample_root().display().to_string()),
         );

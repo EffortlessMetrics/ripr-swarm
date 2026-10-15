@@ -457,9 +457,9 @@ impl ManifestInventory {
     ///
     /// #7937: both resolved forms go through the shared plain-drive
     /// spelling first. `WorkspaceRootAuthority` canonicalizes its root,
-    /// and Windows `fs::canonicalize` returns the verbatim `\\?\F:\...`
+    /// and Windows `fs::canonicalize` returns the verbatim `\\?\` drive
     /// form; carried through here, the anchor's prefix compared as
-    /// verbatim against cargo's plain `F:\...` echoed keys, every lookup
+    /// verbatim against cargo's plain echoed keys, every lookup
     /// missed, and each metadata-owned verdict failed closed (`test =
     /// false` / `required-features` / `harness = false` skips went
     /// unestablished; nested members went uncredited). The two spellings

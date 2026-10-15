@@ -136,9 +136,10 @@ fn relative_stamp_path(relative: &Path) -> Option<String> {
 /// Strip the Windows verbatim prefix from a drive-letter path, comparing it
 /// in the plain spelling every other artifact side spells (#7937): the
 /// gap-ledger CLI resolves the selected root with `fs::canonicalize`, which
-/// on Windows returns `\\?\F:\...`, while the analysis stamp and the records
-/// name plain `F:\...` paths. Both spellings name the same file; other
-/// verbatim forms (`\\?\UNC\..`) have no plain spelling and stay.
+/// on Windows returns the verbatim `\\?\` drive form, while the analysis
+/// stamp and the records name plain drive paths. Both spellings name the
+/// same file; other verbatim forms (`\\?\UNC\..`) have no plain spelling
+/// and stay.
 fn plain_drive_root(path: &Path) -> PathBuf {
     let text = path.to_string_lossy();
     match text.strip_prefix(r"\\?\") {
