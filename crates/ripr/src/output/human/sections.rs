@@ -26,6 +26,14 @@ use unicode_width::UnicodeWidthStr;
 use super::evidence_lines::{JsonPointerWording, evidence_path_lines, weakness_lines};
 use super::{is_wrappable_advisory_prose, wrap_human_prose};
 
+/// #7756: trailing-period rule for the human render — a labelled field line
+/// (`  Label: value`) or a list-item value carries no trailing period;
+/// free-standing prose sentences keep theirs. Applied at the emit boundary so
+/// producer strings stay unchanged for the machine surfaces.
+fn trim_field_period(value: &str) -> &str {
+    value.trim_end_matches('.')
+}
+
 /// #7755: field label for the finding's next-step line. Producer text that
 /// opens with its own "Label:" prefix stacked under "Next step: " reads as a
 /// parse error ("Next step: TypeScript preview advisory: ..."), so a value
@@ -141,7 +149,10 @@ pub(crate) fn render_finding_digest_with_config(
         } else {
             label.to_string()
         };
-        out.push_str(&format!("  {label}: {}\n", one_line(missing)));
+        out.push_str(&format!(
+            "  {label}: {}\n",
+            trim_field_period(&one_line(missing))
+        ));
     }
     if let Some(test) = finding.related_tests.first() {
         // #4320: the digest shows only the first related-test row; carry the
@@ -188,7 +199,10 @@ pub(crate) fn render_finding_digest_with_config(
         // that fits the line budget keeps its single line.
         let next_step = reconcile_next_step(finding);
         let prefix = next_step_prefix(&next_step);
-        let collapsed = next_step.split_whitespace().collect::<Vec<_>>().join(" ");
+        // #7756: labelled field line — no trailing period on the value.
+        let collapsed =
+            trim_field_period(&next_step.split_whitespace().collect::<Vec<_>>().join(" "))
+                .to_string();
         if prefix.chars().count() + collapsed.chars().count() <= LINE_BUDGET {
             out.push_str(&format!("{prefix}{collapsed}\n"));
         } else {
@@ -216,7 +230,8 @@ pub(crate) fn render_finding_digest_with_config(
             compact_discriminator_token(finding),
         ));
         for line in evidence.iter().take(2) {
-            out.push_str(&format!("    - {}\n", one_line(line)));
+            // #7756: list-item values carry no trailing period.
+            out.push_str(&format!("    - {}\n", trim_field_period(&one_line(line))));
         }
         if evidence.len() > 2 {
             out.push_str(&format!(
@@ -472,7 +487,8 @@ pub(super) fn render_finding_with_shared_sections(
     if !weakness.is_empty() {
         out.push_str("\nWeakness\n");
         for line in weakness {
-            out.push_str(&format!("  - {line}\n"));
+            // #7756: list-item values carry no trailing period.
+            out.push_str(&format!("  - {}\n", trim_field_period(&line)));
         }
     }
 
@@ -562,7 +578,11 @@ pub(super) fn render_finding_with_shared_sections(
         if let Some(guidance) = shared.and_then(|shared| shared.guidance.as_deref()) {
             out.push_str(guidance);
         } else {
-            out.push_str(&format!("  {}\n", reconcile_next_step(finding)));
+            // #7756: labelled field line — no trailing period on the value.
+            out.push_str(&format!(
+                "  {}\n",
+                trim_field_period(&reconcile_next_step(finding))
+            ));
         }
     }
 
@@ -579,6 +599,9 @@ pub(super) fn render_finding_with_shared_sections(
 }
 
 pub(super) fn push_evidence_line(out: &mut String, line: &str) {
+    // #7756: list-item values carry no trailing period, matching the sibling
+    // stage lines; free-standing prose keeps its sentence period.
+    let line = trim_field_period(line);
     if is_wrappable_advisory_prose(line) {
         out.push_str(&wrap_human_prose(line, "  - ", "    "));
     } else {
