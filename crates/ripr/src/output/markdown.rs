@@ -1397,11 +1397,19 @@ mod tests {
         );
         // Bash-form text (windows_form = false): the blanket #3625 withhold
         // is unchanged on every host, pinned through the pure core.
-        assert!(has_unsupported_shell_syntax_for(r#"echo "a\b""#, false, false));
+        assert!(has_unsupported_shell_syntax_for(
+            r#"echo "a\b""#,
+            false,
+            false
+        ));
         // Windows console form (windows_form = true): a literal path
         // separator translates, because the running host renders this text
         // and PowerShell reads the token the same way.
-        assert!(!has_unsupported_shell_syntax_for(r#"echo "a\b""#, false, true));
+        assert!(!has_unsupported_shell_syntax_for(
+            r#"echo "a\b""#,
+            false,
+            true
+        ));
         assert_eq!(
             powershell_command("echo \"a\\b\""),
             if cfg!(windows) {
@@ -1419,9 +1427,14 @@ mod tests {
     /// rejects. The twin keeps the double-quoted target as-is (PowerShell
     /// parses it natively) instead of wrapping the quotes into the path.
     #[test]
-    fn powershell_command_translates_windows_form_redirect_with_backslash_target() -> Result<(), String> {
+    fn powershell_command_translates_windows_form_redirect_with_backslash_target()
+    -> Result<(), String> {
         let windows_command = "ripr check --root \"C:\\work space\\repo\" --format repo-exposure-json > \"C:\\work space\\repo\\before.json\"";
-        assert!(!has_unsupported_shell_syntax_for(windows_command, false, true));
+        assert!(!has_unsupported_shell_syntax_for(
+            windows_command,
+            false,
+            true
+        ));
         let translated = powershell_command_for(windows_command, true).ok_or_else(|| {
             "Windows redirect form must translate to the guarded write".to_string()
         })?;
@@ -1433,11 +1446,17 @@ mod tests {
             ));
         }
         if !translated.contains("throw \"ripr exited with code $LASTEXITCODE\"") {
-            return Err(format!("guarded write must keep its fail-loud exit path: {translated}"));
+            return Err(format!(
+                "guarded write must keep its fail-loud exit path: {translated}"
+            ));
         }
         // The same text is bash form off Windows and keeps its conservative
         // withhold there.
-        assert!(has_unsupported_shell_syntax_for(windows_command, false, false));
+        assert!(has_unsupported_shell_syntax_for(
+            windows_command,
+            false,
+            false
+        ));
         // A doubled trailing separator (the renderer's escape for a path
         // ending in `\`) passes through and is un-doubled by the native argv
         // parser at run time.
@@ -1445,7 +1464,11 @@ mod tests {
         assert!(!has_unsupported_shell_syntax_for(trailing, false, true));
         // An odd backslash run before a quote is an argv-escaped quote the
         // shells read differently: withhold in the Windows form too.
-        assert!(has_unsupported_shell_syntax_for(r#"ripr check --root "a\"b""#, false, true));
+        assert!(has_unsupported_shell_syntax_for(
+            r#"ripr check --root "a\"b""#,
+            false,
+            true
+        ));
         // `$` and backtick inside double quotes expand in PowerShell: withheld
         // in both forms.
         assert!(has_unsupported_shell_syntax_for(

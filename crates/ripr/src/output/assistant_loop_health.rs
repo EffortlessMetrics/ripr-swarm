@@ -1390,7 +1390,11 @@ mod tests {
         // trailing separator run the renderer adds before the closing quote
         // collapses back to one. The fail-closed `.` fallback stays
         // unreachable for every path shape this form exists to quote.
-        for root in [r"C:\my repo\work", r"C:\my repo\work\", r"D:\a b\c d\e.json"] {
+        for root in [
+            r"C:\my repo\work",
+            r"C:\my repo\work\",
+            r"D:\a b\c d\e.json",
+        ] {
             let quoted = crate::agent::loop_commands::shell_arg(root);
             let command = format!("ripr agent start --root {quoted} --seam-id s");
             assert_eq!(

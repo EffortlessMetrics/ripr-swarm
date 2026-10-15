@@ -7141,9 +7141,9 @@ fn agent_start_packet_discloses_the_command_shell_assumption()
     } else {
         "Each step includes Bash command forms and, where supported, PowerShell forms; unavailable variants are disclosed."
     };
-    let disclosure = commands_md
-        .find(pinned_disclosure)
-        .ok_or_else(|| format!("commands.md must disclose the command-shell assumption:\n{commands_md}"))?;
+    let disclosure = commands_md.find(pinned_disclosure).ok_or_else(|| {
+        format!("commands.md must disclose the command-shell assumption:\n{commands_md}")
+    })?;
     let first_fence = commands_md
         .find("```bash")
         .ok_or("commands.md must still fence commands as bash")?;

@@ -1345,12 +1345,21 @@ mod tests {
     #[test]
     fn shell_arg_windows_form_doubles_trailing_backslash_before_closing_quote() {
         assert_eq!(shell_arg_for("C:\\repo\\", true), "\"C:\\repo\\\\\"");
-        assert_eq!(shell_arg_for("folder space\\", true), "\"folder space\\\\\"");
-        assert_eq!(shell_arg_for("C:\\tmp\\probe win space", true), "\"C:\\tmp\\probe win space\"");
+        assert_eq!(
+            shell_arg_for("folder space\\", true),
+            "\"folder space\\\\\""
+        );
+        assert_eq!(
+            shell_arg_for("C:\\tmp\\probe win space", true),
+            "\"C:\\tmp\\probe win space\""
+        );
         assert_eq!(shell_arg_for("a\\b\\", true), "\"a\\b\\\\\"");
         // A value ending in a quote is not a backslash case: quote doubling
         // owns the final position and the closing quote still follows.
-        assert_eq!(shell_arg_for("ends with quote\"", true), "\"ends with quote\"\"\"");
+        assert_eq!(
+            shell_arg_for("ends with quote\"", true),
+            "\"ends with quote\"\"\""
+        );
     }
 
     /// Prove the encoding against a real bash, not against an assumed shape.
