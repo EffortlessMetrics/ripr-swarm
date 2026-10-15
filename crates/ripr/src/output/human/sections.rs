@@ -30,8 +30,15 @@ use super::{is_wrappable_advisory_prose, wrap_human_prose};
 /// (`  Label: value`) or a list-item value carries no trailing period;
 /// free-standing prose sentences keep theirs. Applied at the emit boundary so
 /// producer strings stay unchanged for the machine surfaces.
-fn trim_field_period(value: &str) -> &str {
-    value.trim_end_matches('.')
+///
+/// Only a single terminal period is stripped: a value ending in an ellipsis
+/// ("TypeScript preview advisory: ...") or an abbreviation keeps its dots.
+pub(super) fn trim_field_period(value: &str) -> &str {
+    if value.ends_with('.') && !value.ends_with("..") {
+        value.strip_suffix('.').unwrap_or(value)
+    } else {
+        value
+    }
 }
 
 /// #7755: field label for the finding's next-step line. Producer text that
@@ -1476,6 +1483,30 @@ mod classification_hint_tests {
             hint.as_deref(),
             Some(crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_SENTENCE)
         );
+    }
+}
+
+#[cfg(test)]
+mod trim_field_period_tests {
+    use super::trim_field_period;
+
+    #[test]
+    fn strips_a_single_trailing_period() {
+        assert_eq!(
+            trim_field_period("add a co-located test so a discriminator exists."),
+            "add a co-located test so a discriminator exists"
+        );
+    }
+
+    #[test]
+    fn keeps_ellipsis_and_abbreviation_dots() {
+        // Gemini review on #8096: trim_end_matches('.') also ate ellipses.
+        assert_eq!(
+            trim_field_period("TypeScript preview advisory: ..."),
+            "TypeScript preview advisory: ..."
+        );
+        assert_eq!(trim_field_period("ends with two.."), "ends with two..");
+        assert_eq!(trim_field_period("no period"), "no period");
     }
 }
 
