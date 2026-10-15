@@ -2,13 +2,14 @@ use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, EffectStateCarrier,
     HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
-    activation_and_boundary_input, body_contains_owner_call, callee_is_unique,
-    chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
-    confidence_score, contains_as_whole_word, current_path_witness, direct_call_name,
-    fallible_check_receipt, fallible_literal_witness, getter_plainly_reads,
-    has_same_test_boundary_oracle_pairing, helper_only_reach, helper_pins_owner_call,
-    infection_evidence_with_boundary_input, local_flow_sinks, operand_only_pin,
-    oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
+    activation_and_boundary_input, assertion_observes_collection_argument,
+    body_contains_owner_call, callee_is_unique, chain_forwards_to_observed_hops,
+    chain_passes_effect_target_to_observed_hops, classify, confidence_score,
+    contains_as_whole_word, current_path_witness, direct_call_name,
+    direct_collection_mutation_receiver, fallible_check_receipt, fallible_literal_witness,
+    getter_plainly_reads, has_same_test_boundary_oracle_pairing, helper_only_reach,
+    helper_pins_owner_call, infection_evidence_with_boundary_input, local_flow_sinks,
+    operand_only_pin, oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
 };
@@ -573,6 +574,20 @@ impl ClassifiedProbeEvidence {
                 },
                 setter_writes_field: &|impl_type, setter, field| {
                     setter_plainly_writes(context.index, impl_type, setter, field)
+                },
+                collection_argument_observed: &|test, assertion| {
+                    direct_collection_mutation_receiver(&context.probe.expression)
+                        .zip(context.owner_fn)
+                        .is_some_and(|(receiver, owner)| {
+                            assertion_observes_collection_argument(
+                                receiver,
+                                owner,
+                                context.index,
+                                test,
+                                assertion,
+                                pin_syntax,
+                            )
+                        })
                 },
                 getter_reads_field: &|impl_type, getter, field| {
                     getter_plainly_reads(context.index, impl_type, getter, field)

@@ -1,0 +1,9 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,4 +1,4 @@
+ pub struct Bag(pub Vec<u32>, pub Vec<u32>);
+ pub fn add(v: &mut Vec<u32>, x: u32) {
+-    v.push(x);
++    v.push(x * 1);
+ }
