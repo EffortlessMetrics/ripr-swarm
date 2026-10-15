@@ -17825,6 +17825,104 @@ fn pilot_names_no_build_script_when_rust_is_disabled() -> Result<(), String> {
     Ok(())
 }
 
+/// #5604: later lines of normalized match heads follow the real working-tree
+/// change, including a warm inventory, partial tests and both seam caps.
+#[test]
+fn pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps() -> Result<(), String> {
+    let lib = "pub fn first(n: u32) -> bool {\n    n > 10\n}\npub fn target(n: u32) -> u8 {\n    match (\n        n,\n    ) {\n        0\n        | 1\n        => 7,\n        _ => 9,\n    }\n}\n";
+    for partial in [false, true] {
+        let mut files = vec![
+            (
+                "Cargo.toml",
+                "[package]\nname = 'match_fixture'\nversion = '0.1.0'\nedition = '2024'\n",
+            ),
+            ("src/lib.rs", lib),
+        ];
+        if partial {
+            files.push((
+                "tests/partial.rs",
+                "#[test]\nfn smoke_only() { let _ = match_fixture::target(4); }\n",
+            ));
+        }
+        let root = pilot_language_fixture_repo(
+            "pilot-multiline-head",
+            &files,
+            ("NOTES.md", "unrelated change\n"),
+        )?;
+        let out = unique_temp_workspace("pilot-multiline-head-out");
+        // Seed the classified cache with a diff that touches no seam.
+        let (_, _, summary, _) = run_pilot_language_fixture(&root, &out)?;
+        assert_eq!(summary["current_change"]["actionable_seams_in_change"], 0);
+        for (edited, expected_line) in [
+            (lib.replace("        n,", "        n + 1,"), 5),
+            (lib.replace("        | 1", "        | 2"), 10),
+        ] {
+            std::fs::write(root.join("src/lib.rs"), &edited).map_err(|e| e.to_string())?;
+            // Repeat identical bytes to exercise a warm classified cache;
+            // moving the changed line then requires a fresh source identity.
+            for _ in 0..2 {
+                let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out)?;
+                assert_eq!(
+                    summary["top_actionable_seams"][0]["line"], expected_line,
+                    "{summary}"
+                );
+                assert_eq!(
+                    summary["top_actionable_seams"][0]["kind"], "match_arm",
+                    "{summary}"
+                );
+                assert_eq!(
+                    summary["current_change"]["actionable_seams_in_change"], 1,
+                    "{summary}"
+                );
+                assert_eq!(
+                    summary["current_change"]["top_recommendation_in_change"], true,
+                    "{summary}"
+                );
+                assert!(stdout.contains("current change: part of it"), "{stdout}");
+                assert!(md.contains("- Current change: part of it"), "{md}");
+            }
+            let output = run_ripr_with_env(
+                &[
+                    "pilot",
+                    "--root",
+                    &root.display().to_string(),
+                    "--out",
+                    &out.display().to_string(),
+                ],
+                &[
+                    ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1"),
+                    ("RIPR_PILOT_SEAM_BUDGET", "1"),
+                ],
+            );
+            assert_success(&output);
+            let summary: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(out.join("pilot-summary.json"))
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            let md =
+                std::fs::read_to_string(out.join("pilot-summary.md")).map_err(|e| e.to_string())?;
+            assert_eq!(
+                summary["top_actionable_seams"].as_array().map(Vec::len),
+                Some(1),
+                "{summary}"
+            );
+            assert_eq!(
+                summary["top_actionable_seams"][0]["line"], expected_line,
+                "{summary}"
+            );
+            assert_eq!(
+                summary["current_change"]["top_recommendation_in_change"], true,
+                "{summary}"
+            );
+            assert!(md.contains("ranked 1 of 5 seams"), "{md}");
+        }
+        ignore_remove_dir_all(&root);
+        ignore_remove_dir_all(&out);
+    }
+    Ok(())
+}
+
 #[test]
 fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
     let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_digit(byte: u8) -> bool {\n    byte >= b'0' && byte <= b'9'\n}\n";
