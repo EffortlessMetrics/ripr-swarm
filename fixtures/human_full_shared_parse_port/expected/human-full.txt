@@ -4,8 +4,8 @@ root: fixtures/human_full_shared_parse_port/input
 
 Summary: 7 probe(s), 0 exposed, 7 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 7 of 7 finding(s) unsuppressed
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 3 changed line(s), 2 candidate line(s), 7 probe(s), 7 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 3 changed line(s), 2 candidate line(s), 7 probe(s), 7 finding(s)
 
 Shared evidence and guidance
   E1 [findings 1, 4, 6, 7]: reach yes: Related tests appear to reach parse_port: parses_valid_port

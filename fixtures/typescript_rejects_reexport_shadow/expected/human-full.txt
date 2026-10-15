@@ -5,15 +5,15 @@ config: <cwd>/fixtures/typescript_rejects_reexport_shadow/input/ripr.toml
 
 Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
 
-Changed file(s) by language: typescript: 1.
+Changed file(s) by language: typescript = 1
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
 
 Shared evidence and guidance
   E1 [findings 1, 2]: reach yes: 1 related test(s) found for owner `load`
-  E2 [findings 1, 2]: infection unknown: TypeScript preview adapter does not yet model infection.
-  E3 [findings 1, 2]: propagation unknown: TypeScript preview adapter does not yet model propagation.
+  E2 [findings 1, 2]: infection unknown: TypeScript preview adapter does not yet model infection
+  E3 [findings 1, 2]: propagation unknown: TypeScript preview adapter does not yet model propagation
   E4 [findings 1, 2]: observation weak: Strongest extracted oracle kind: `unknown` (rank 0)
   E5 [findings 1, 2]: related test tests/load.test.ts:7 missing token uses unknown unknown oracle
 
@@ -43,11 +43,11 @@ Static exposure
   weakly_exposed (warning, confidence 0.40)
 Evidence
   shared evidence: E1, E2, E3, E4
-  - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws error matching "TOKEN_REQUIRED"`.
+  - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws error matching "TOKEN_REQUIRED"`
   - local flow reaches error variant: throw "TOKEN_REQUIRED"; (line 3)
   shared evidence: E5
 Weakness
-  - Related test reaches `load` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference).
+  - Related test reaches `load` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference)
   - missing discriminator throws error matching "TOKEN_REQUIRED": changed TypeScript thrown or rejected error at line 3 lacks a concrete preview discriminator
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1
@@ -102,11 +102,11 @@ Static exposure
   weakly_exposed (warning, confidence 0.40)
 Evidence
   shared evidence: E1, E2, E3, E4
-  - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `return value == "ready"`.
+  - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `return value == "ready"`
   - local flow reaches returned value: return "ready"; (line 5)
   shared evidence: E5
 Weakness
-  - Related test reaches `load` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference).
+  - Related test reaches `load` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference)
   - missing discriminator return value == "ready": changed TypeScript returned-value at line 5 lacks a concrete preview discriminator
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1
