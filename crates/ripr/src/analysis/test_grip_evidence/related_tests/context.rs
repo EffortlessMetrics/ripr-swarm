@@ -4014,6 +4014,12 @@ fn inherent_helper_path_reaches_owner(
         if visited.contains(&(helper.file.clone(), helper.start_line, helper.name.clone())) {
             continue;
         }
+        // A resolved async call constructs a future; this bounded traversal
+        // does not establish polling. Refuse its body at every helper hop,
+        // while keeping synchronous helpers with dormant async blocks eligible.
+        if crate::analysis::classify::function_declaration_is_async(helper, index) != Some(false) {
+            continue;
+        }
         let entry_resolves = if requires_inherent_receiver_identity(helper) {
             inherent_owner_call_resolves(caller, helper, index)
         } else {

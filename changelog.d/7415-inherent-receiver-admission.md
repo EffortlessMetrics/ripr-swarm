@@ -16,3 +16,7 @@
   parameters cannot borrow same-spelled module or owner-type credit (#7415, #8004).
 - Standard assertion operands also exclude unpolled async bodies from direct
   and free-helper owner credit, while preserving genuine outer calls (#8004).
+- Unpolled async-function helpers no longer lend inherent-owner execution
+  credit at entry, assertion operand, intermediate or last-hop traversal.
+  Genuine synchronous and mixed helper routes retain their bounded credit;
+  polling inference remains unsupported (#7415, #8004).

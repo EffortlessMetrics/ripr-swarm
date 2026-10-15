@@ -3405,13 +3405,19 @@ enum CallShape<'a> {
 /// line. No parse, or no single match, reads as sync: an async owner then
 /// gets no `.await` credit, and its bare call (a future) does not compile.
 fn declares_async(owner: &FunctionSummary, index: &RustIndex) -> bool {
-    let Some(facts) = index.files().get(&owner.file) else {
-        return false;
-    };
+    function_declaration_is_async(owner, index).unwrap_or(false)
+}
+
+/// Read the complete source declaration: indexed body slices start at `fn`
+/// and omit qualifiers such as `async`. Unknown/ambiguous declarations stay
+/// distinct from a synchronous declaration for execution admission.
+pub(in crate::analysis) fn function_declaration_is_async(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> Option<bool> {
+    let facts = index.files().get(&owner.file)?;
     let source: &str = &facts.source;
-    let Some(parse) = parse_clean_source_file(source) else {
-        return false;
-    };
+    let parse = parse_clean_source_file(source)?;
     let line_of = |offset: ra_ap_syntax::TextSize| {
         let at = (u32::from(offset) as usize).min(source.len());
         source.as_bytes()[..at]
@@ -3439,8 +3445,8 @@ fn declares_async(owner: &FunctionSummary, index: &RustIndex) -> bool {
                 .contains(&owner.start_line)
         });
     match (matches.next(), matches.next()) {
-        (Some(function), None) => function.async_token().is_some(),
-        _ => false,
+        (Some(function), None) => Some(function.async_token().is_some()),
+        _ => None,
     }
 }
 

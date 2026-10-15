@@ -280,6 +280,15 @@ call beside that future retains its existing bounded identity. Invoked nested fu
 unresolved by this bounded walk; their native mutation controls can discriminate
 without receiving direct static credit.
 
+A parsed `async fn` helper declaration supplies no execution credit at entry,
+intermediate or last-hop traversal, including calls in standard assertion
+operands. Resolving its declaration establishes identity, not polling. The
+bounded traversal also withholds credit from explicitly polled futures rather
+than inferring activation. Synchronous helper chains and real calls beside
+discarded futures retain their existing admission; a synchronous helper with a
+dormant async block is still eligible. Paired native controls keep unsupported
+activation separate from runtime mutation discrimination.
+
 For the existing bounded same-file helper chain, every admitted entry and
 intermediate free-function hop must contain an executable call bound to the
 candidate's actual module/function declaration. The existing helper-name graph
