@@ -1,0 +1,12 @@
+{
+  "final_count": 316,
+  "preserved_base": 294,
+  "preserved_candidate": 309,
+  "preserved_main": 297,
+  "new_ids": [
+    "rust_repo_inherent_receiver_async_operand",
+    "rust_diff_inherent_receiver_async_operand",
+    "rust_repo_inherent_receiver_async_operand_helper",
+    "rust_diff_inherent_receiver_async_operand_helper"
+  ]
+}

@@ -1,0 +1,38 @@
+[
+  {
+    "path": "/workspace/async8004-evidence/controls/helper-async.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "/workspace/async8004-evidence/controls/helper-async-move.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "/workspace/async8004-evidence/controls/helper-closure.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "/workspace/async8004-evidence/controls/helper-item.rs",
+    "name": "decoy",
+    "relation": null,
+    "native_reaches": false
+  },
+  {
+    "path": "/workspace/async8004-evidence/controls/helper-outer.rs",
+    "name": "actual",
+    "relation": "helper_owner_call",
+    "native_reaches": true
+  },
+  {
+    "path": "/workspace/async8004-evidence/controls/helper-mixed-async.rs",
+    "name": "actual",
+    "relation": "helper_owner_call",
+    "native_reaches": true
+  }
+]

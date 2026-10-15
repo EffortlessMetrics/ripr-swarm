@@ -1,0 +1,11 @@
+test-grip: cargo test -p ripr --lib analysis::test_grip_evidence::tests -- --test-threads=4 
+related-tests: cargo test -p ripr --lib analysis::classify::related_tests -- --test-threads=4 
+owner-pin: cargo test -p ripr --lib analysis::classify::owner_pin -- --test-threads=4 
+call-identity: cargo test -p ripr --lib analysis::classify::call_identity -- --test-threads=4 
+name-scope: cargo test -p ripr --lib analysis::syntax::name_scope -- --test-threads=4 
+cli-rerun-unit: cargo test -p ripr --lib cli::rerun -- --test-threads=4 
+receiver-integration: cargo test -p ripr --test private_inherent_receiver -- --test-threads=4 
+native-path: cargo test -p ripr --test native_path_roots -- --test-threads=4 
+assertion-helper: cargo test -p ripr --test assertion_helper_credit -- --test-threads=4 
+cli-rerun-integration: cargo test -p ripr --test cli_smoke rerun -- --test-threads=4 
+suppression-smoke: cargo test -p ripr --test cli_smoke suppression_notice -- --test-threads=4 

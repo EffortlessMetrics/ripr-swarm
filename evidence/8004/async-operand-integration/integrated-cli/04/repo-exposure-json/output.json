@@ -1,0 +1,123 @@
+{
+  "schema_version": "0.4",
+  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:3ba19d78f2971adb","mode":"ready","profile":"ready","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:2735872795faa399efc9ca2d8597b431b5e4f1f5adcb6e6530949afa24686188","generated_at":"unix_ms:1792072487234","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/workspace/async8004-evidence/integrated-cli/04/repo-exposure-json"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:3ba19d78f2971adb;revision:unavailable"},
+  "source_subject": {"corpus":{"cache_schema_version":"1.77","files_content_hash":"58ea1091d9715f5e","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:b2acac2b43e8aa9b84e740ea8aeea1eedfb36d60cceab24e0bc1a285a796ab51","path":"src/lib.rs"}]},
+  "scope": "repo",
+  "run_status": "complete",
+  "metrics": {
+    "seams_total": 4,
+    "headline_eligible": 4,
+    "strongly_gripped": 0,
+    "weakly_gripped": 4,
+    "ungripped": 0,
+    "reachable_unrevealed": 0,
+    "activation_unknown": 0,
+    "propagation_unknown": 0,
+    "observation_unknown": 0,
+    "discrimination_unknown": 0,
+    "opaque": 0,
+    "intentional": 0,
+    "suppressed": 0
+  },
+  "seams": [
+    {
+      "seam_id": "87333f71c0c4ad19",
+      "kind": "match_arm",
+      "file": "src/lib.rs",
+      "line": 5,
+      "owner": "src/lib.rs::impl JsonValue::as_object",
+      "expression": "match self",
+      "grip_class": "weakly_gripped",
+      "headline_eligible": true,
+      "evidence": {
+        "reach": "weak",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "weak"
+      },
+      "related_tests_total": 1,
+      "related_tests": [
+        {"name": "decoy", "file": "src/lib.rs", "line": 12, "oracle_kind": "relational_check", "oracle_strength": "weak", "evidence_summary": "relational check", "relation_reason": "same_test_file", "relation_confidence": "medium"}
+      ],
+      "observed_values": [],
+      "missing_discriminators": [],
+      "evidence_record": {"actionability":{"class":"static_limitation","has_concrete_guidance":false,"reason":"producer-owned missing discriminator fact: match_arm_taken","signals":{"assertion_shape":false,"candidate_value":false,"missing_discriminator":false,"recommended_test_target":true,"related_test":true,"verification_command":false}},"calibration":{"agreement":"no_runtime_data","availability":"not_imported","confidence":"unknown"},"canonical_gap_group_size":1,"canonical_gap_id":"gap:8b2514b3f95b747f","canonical_gap_reason":"same owner, seam kind, flow sink, missing discriminator, and assertion shape","canonical_item":{"actionability":"static_limitation","canonical_gap_id":"gap:8b2514b3f95b747f","canonical_item_kind":"limitation","command_specs":{"receipt":null,"verify":null},"confidence":{"basis":"static_only","notes":["no imported runtime calibration data","static limitation: missing_discriminator_evidence"]},"evidence_class":"match_arm","gap_state":"static_limitation","group_reason":"same owner, seam kind, flow sink, missing discriminator, and assertion shape","primary_anchor":{"file":"src/lib.rs","kind":"weakly_gripped","line":5,"reason":"canonical_group_primary_raw_finding","source_id":"87333f71c0c4ad19"},"raw_group_size":1,"raw_spans":[{"end_line":5,"file":"src/lib.rs","kind":"weakly_gripped","source_id":"87333f71c0c4ad19","start_line":5}],"receipt_command":null,"recommended_repair":"Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`.","related_test":{"file":"src/lib.rs","line":12,"name":"decoy","reason":"same_test_file"},"repair_command":null,"repair_route":null,"static_limitations":[{"category":"missing_discriminator_evidence","reason":"the repair route is missing evidence: producer-owned missing discriminator fact: match_arm_taken","repair_route":"analysis/producer-evidence-discriminator","stage":"discriminate","state":"unknown"}],"verify_command":null,"why":"producer-owned missing discriminator fact: match_arm_taken"},"evidence_path":{"activate":{"confidence":"medium","state":"yes","summary":"Observed direct owner call for value-insensitive seam `match self`"},"discriminate":{"confidence":"medium","state":"weak","summary":"Strongest oracle for seam kind `match_arm` is `weak` (kind-match true)"},"observe":{"confidence":"medium","state":"yes","summary":"Observation evidence is `yes`"},"propagate":{"confidence":"low","state":"yes","summary":"Static propagation to `return_value` sink is yes"},"reach":{"confidence":"low","state":"weak","summary":"No test is seen calling as_object; tests share only its file or a name token: decoy"}},"grip_class":"weakly_gripped","headline_eligible":true,"location":{"file":"src/lib.rs","line":5},"missing_discriminators":[],"observed_values":[],"owner":"src/lib.rs::impl JsonValue::as_object","presentation_text":null,"raw_findings":[{"evidence_record_ref":"87333f71c0c4ad19","expression":"match self","file":"src/lib.rs","kind":"weakly_gripped","language":"rust","language_status":"stable","line":5,"probe_kind":"match_arm","source_id":"87333f71c0c4ad19"}],"recommendation":{"action":"inspect_static_limitation","assertion_shape":null,"candidate_values":[],"nearest_test_to_imitate":{"evidence_summary":"relational check","file":"src/lib.rs","line":12,"name":"decoy","oracle_kind":"relational_check","oracle_semantics":{"missing":"the exact changed value or boundary discriminator","observes":"a partial relationship or broad predicate about the result","upgrade_suggestion":"assert the exact enum or value produced by the changed match arm"},"oracle_strength":"weak","relation_confidence":"medium","relation_reason":"same_test_file"},"reason":"producer-owned missing discriminator fact: match_arm_taken","recommended_test":null,"verify_command":null},"related_tests":[{"evidence_summary":"relational check","file":"src/lib.rs","line":12,"name":"decoy","oracle_kind":"relational_check","oracle_semantics":{"missing":"the exact changed value or boundary discriminator","observes":"a partial relationship or broad predicate about the result","upgrade_suggestion":"assert the exact enum or value produced by the changed match arm"},"oracle_strength":"weak","relation_confidence":"medium","relation_reason":"same_test_file"}],"related_tests_total":1,"schema_version":"0.1","seam_id":"87333f71c0c4ad19","seam_kind":"match_arm","static_limitations":[{"category":"missing_discriminator_evidence","reason":"the repair route is missing evidence: producer-owned missing discriminator fact: match_arm_taken","repair_route":"analysis/producer-evidence-discriminator","stage":"discriminate","state":"unknown"}]}
+    },
+    {
+      "seam_id": "87224c71c0b64ffd",
+      "kind": "match_arm",
+      "file": "src/lib.rs",
+      "line": 6,
+      "owner": "src/lib.rs::impl JsonValue::as_object",
+      "expression": "Self::Object(value) =>",
+      "grip_class": "weakly_gripped",
+      "headline_eligible": true,
+      "evidence": {
+        "reach": "weak",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "weak"
+      },
+      "related_tests_total": 1,
+      "related_tests": [
+        {"name": "decoy", "file": "src/lib.rs", "line": 12, "oracle_kind": "relational_check", "oracle_strength": "weak", "evidence_summary": "relational check", "relation_reason": "same_test_file", "relation_confidence": "medium"}
+      ],
+      "observed_values": [],
+      "missing_discriminators": [],
+      "evidence_record": {"actionability":{"class":"static_limitation","has_concrete_guidance":false,"reason":"producer-owned missing discriminator fact: match_arm_taken","signals":{"assertion_shape":false,"candidate_value":false,"missing_discriminator":false,"recommended_test_target":true,"related_test":true,"verification_command":false}},"calibration":{"agreement":"no_runtime_data","availability":"not_imported","confidence":"unknown"},"canonical_gap_group_size":1,"canonical_gap_id":"gap:6bc46c739104f6d4","canonical_gap_reason":"same owner, seam kind, flow sink, missing discriminator, and assertion shape","canonical_item":{"actionability":"static_limitation","canonical_gap_id":"gap:6bc46c739104f6d4","canonical_item_kind":"limitation","command_specs":{"receipt":null,"verify":null},"confidence":{"basis":"static_only","notes":["no imported runtime calibration data","static limitation: missing_discriminator_evidence"]},"evidence_class":"match_arm","gap_state":"static_limitation","group_reason":"same owner, seam kind, flow sink, missing discriminator, and assertion shape","primary_anchor":{"file":"src/lib.rs","kind":"weakly_gripped","line":6,"reason":"canonical_group_primary_raw_finding","source_id":"87224c71c0b64ffd"},"raw_group_size":1,"raw_spans":[{"end_line":6,"file":"src/lib.rs","kind":"weakly_gripped","source_id":"87224c71c0b64ffd","start_line":6}],"receipt_command":null,"recommended_repair":"Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`.","related_test":{"file":"src/lib.rs","line":12,"name":"decoy","reason":"same_test_file"},"repair_command":null,"repair_route":null,"static_limitations":[{"category":"missing_discriminator_evidence","reason":"the repair route is missing evidence: producer-owned missing discriminator fact: match_arm_taken","repair_route":"analysis/producer-evidence-discriminator","stage":"discriminate","state":"unknown"}],"verify_command":null,"why":"producer-owned missing discriminator fact: match_arm_taken"},"evidence_path":{"activate":{"confidence":"medium","state":"yes","summary":"Observed direct owner call for value-insensitive seam `Self::Object(value) =>`"},"discriminate":{"confidence":"medium","state":"weak","summary":"Strongest oracle for seam kind `match_arm` is `weak` (kind-match true)"},"observe":{"confidence":"medium","state":"yes","summary":"Observation evidence is `yes`"},"propagate":{"confidence":"low","state":"yes","summary":"Static propagation to `return_value` sink is yes"},"reach":{"confidence":"low","state":"weak","summary":"No test is seen calling as_object; tests share only its file or a name token: decoy"}},"grip_class":"weakly_gripped","headline_eligible":true,"location":{"file":"src/lib.rs","line":6},"missing_discriminators":[],"observed_values":[],"owner":"src/lib.rs::impl JsonValue::as_object","presentation_text":null,"raw_findings":[{"evidence_record_ref":"87224c71c0b64ffd","expression":"Self::Object(value) =>","file":"src/lib.rs","kind":"weakly_gripped","language":"rust","language_status":"stable","line":6,"probe_kind":"match_arm","source_id":"87224c71c0b64ffd"}],"recommendation":{"action":"inspect_static_limitation","assertion_shape":null,"candidate_values":[],"nearest_test_to_imitate":{"evidence_summary":"relational check","file":"src/lib.rs","line":12,"name":"decoy","oracle_kind":"relational_check","oracle_semantics":{"missing":"the exact changed value or boundary discriminator","observes":"a partial relationship or broad predicate about the result","upgrade_suggestion":"assert the exact enum or value produced by the changed match arm"},"oracle_strength":"weak","relation_confidence":"medium","relation_reason":"same_test_file"},"reason":"producer-owned missing discriminator fact: match_arm_taken","recommended_test":null,"verify_command":null},"related_tests":[{"evidence_summary":"relational check","file":"src/lib.rs","line":12,"name":"decoy","oracle_kind":"relational_check","oracle_semantics":{"missing":"the exact changed value or boundary discriminator","observes":"a partial relationship or broad predicate about the result","upgrade_suggestion":"assert the exact enum or value produced by the changed match arm"},"oracle_strength":"weak","relation_confidence":"medium","relation_reason":"same_test_file"}],"related_tests_total":1,"schema_version":"0.1","seam_id":"87224c71c0b64ffd","seam_kind":"match_arm","static_limitations":[{"category":"missing_discriminator_evidence","reason":"the repair route is missing evidence: producer-owned missing discriminator fact: match_arm_taken","repair_route":"analysis/producer-evidence-discriminator","stage":"discriminate","state":"unknown"}]}
+    },
+    {
+      "seam_id": "db956cf6daa5f406",
+      "kind": "return_value",
+      "file": "src/lib.rs",
+      "line": 6,
+      "column": 36,
+      "end_line": 6,
+      "end_column": 48,
+      "owner": "src/lib.rs::impl JsonValue::as_object",
+      "expression": "Some(*value)",
+      "grip_class": "weakly_gripped",
+      "headline_eligible": true,
+      "evidence": {
+        "reach": "weak",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "weak"
+      },
+      "related_tests_total": 1,
+      "related_tests": [
+        {"name": "decoy", "file": "src/lib.rs", "line": 12, "oracle_kind": "relational_check", "oracle_strength": "weak", "evidence_summary": "relational check", "relation_reason": "same_test_file", "relation_confidence": "medium"}
+      ],
+      "observed_values": [],
+      "missing_discriminators": [],
+      "evidence_record": {"actionability":{"class":"static_limitation","has_concrete_guidance":false,"reason":"producer-owned missing discriminator fact: return_value","signals":{"assertion_shape":false,"candidate_value":false,"missing_discriminator":false,"recommended_test_target":true,"related_test":true,"verification_command":false}},"calibration":{"agreement":"no_runtime_data","availability":"not_imported","confidence":"unknown"},"canonical_gap_group_size":1,"canonical_gap_id":"gap:f90eaf71e9afe67b","canonical_gap_reason":"same owner, seam kind, flow sink, missing discriminator, and assertion shape","canonical_item":{"actionability":"static_limitation","canonical_gap_id":"gap:f90eaf71e9afe67b","canonical_item_kind":"limitation","command_specs":{"receipt":null,"verify":null},"confidence":{"basis":"static_only","notes":["no imported runtime calibration data","static limitation: missing_discriminator_evidence"]},"evidence_class":"return_value","gap_state":"static_limitation","group_reason":"same owner, seam kind, flow sink, missing discriminator, and assertion shape","primary_anchor":{"file":"src/lib.rs","kind":"weakly_gripped","line":6,"reason":"canonical_group_primary_raw_finding","source_id":"db956cf6daa5f406"},"raw_group_size":1,"raw_spans":[{"end_line":6,"file":"src/lib.rs","kind":"weakly_gripped","source_id":"db956cf6daa5f406","start_line":6}],"receipt_command":null,"recommended_repair":"Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`.","related_test":{"file":"src/lib.rs","line":12,"name":"decoy","reason":"same_test_file"},"repair_command":null,"repair_route":null,"static_limitations":[{"category":"missing_discriminator_evidence","reason":"the repair route is missing evidence: producer-owned missing discriminator fact: return_value","repair_route":"analysis/producer-evidence-discriminator","stage":"discriminate","state":"unknown"}],"verify_command":null,"why":"producer-owned missing discriminator fact: return_value"},"evidence_path":{"activate":{"confidence":"medium","state":"yes","summary":"Observed direct owner call for value-insensitive seam `Some(*value)`"},"discriminate":{"confidence":"medium","state":"weak","summary":"Strongest oracle for seam kind `return_value` is `weak` (kind-match true)"},"observe":{"confidence":"medium","state":"yes","summary":"Observation evidence is `yes`"},"propagate":{"confidence":"low","state":"yes","summary":"Static propagation to `return_value` sink is yes"},"reach":{"confidence":"low","state":"weak","summary":"No test is seen calling as_object; tests share only its file or a name token: decoy"}},"grip_class":"weakly_gripped","headline_eligible":true,"location":{"file":"src/lib.rs","line":6},"missing_discriminators":[],"observed_values":[],"owner":"src/lib.rs::impl JsonValue::as_object","presentation_text":null,"raw_findings":[{"evidence_record_ref":"db956cf6daa5f406","expression":"Some(*value)","file":"src/lib.rs","kind":"weakly_gripped","language":"rust","language_status":"stable","line":6,"probe_kind":"return_value","source_id":"db956cf6daa5f406"}],"recommendation":{"action":"inspect_static_limitation","assertion_shape":null,"candidate_values":[],"nearest_test_to_imitate":{"evidence_summary":"relational check","file":"src/lib.rs","line":12,"name":"decoy","oracle_kind":"relational_check","oracle_semantics":{"missing":"the exact changed value or boundary discriminator","observes":"a partial relationship or broad predicate about the result","upgrade_suggestion":"add an exact returned-value assertion for the changed output"},"oracle_strength":"weak","relation_confidence":"medium","relation_reason":"same_test_file"},"reason":"producer-owned missing discriminator fact: return_value","recommended_test":null,"verify_command":null},"related_tests":[{"evidence_summary":"relational check","file":"src/lib.rs","line":12,"name":"decoy","oracle_kind":"relational_check","oracle_semantics":{"missing":"the exact changed value or boundary discriminator","observes":"a partial relationship or broad predicate about the result","upgrade_suggestion":"add an exact returned-value assertion for the changed output"},"oracle_strength":"weak","relation_confidence":"medium","relation_reason":"same_test_file"}],"related_tests_total":1,"schema_version":"0.1","seam_id":"db956cf6daa5f406","seam_kind":"return_value","static_limitations":[{"category":"missing_discriminator_evidence","reason":"the repair route is missing evidence: producer-owned missing discriminator fact: return_value","repair_route":"analysis/producer-evidence-discriminator","stage":"discriminate","state":"unknown"}]}
+    },
+    {
+      "seam_id": "6db83e71b27aea52",
+      "kind": "match_arm",
+      "file": "src/lib.rs",
+      "line": 7,
+      "owner": "src/lib.rs::impl JsonValue::as_object",
+      "expression": "_ =>",
+      "grip_class": "weakly_gripped",
+      "headline_eligible": true,
+      "evidence": {
+        "reach": "weak",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "weak"
+      },
+      "related_tests_total": 1,
+      "related_tests": [
+        {"name": "decoy", "file": "src/lib.rs", "line": 12, "oracle_kind": "relational_check", "oracle_strength": "weak", "evidence_summary": "relational check", "relation_reason": "same_test_file", "relation_confidence": "medium"}
+      ],
+      "observed_values": [],
+      "missing_discriminators": [],
+      "evidence_record": {"actionability":{"class":"static_limitation","has_concrete_guidance":false,"reason":"producer-owned missing discriminator fact: match_arm_taken","signals":{"assertion_shape":false,"candidate_value":false,"missing_discriminator":false,"recommended_test_target":true,"related_test":true,"verification_command":false}},"calibration":{"agreement":"no_runtime_data","availability":"not_imported","confidence":"unknown"},"canonical_gap_group_size":1,"canonical_gap_id":"gap:715de0ba33c91a16","canonical_gap_reason":"same owner, seam kind, flow sink, missing discriminator, and assertion shape","canonical_item":{"actionability":"static_limitation","canonical_gap_id":"gap:715de0ba33c91a16","canonical_item_kind":"limitation","command_specs":{"receipt":null,"verify":null},"confidence":{"basis":"static_only","notes":["no imported runtime calibration data","static limitation: missing_discriminator_evidence"]},"evidence_class":"match_arm","gap_state":"static_limitation","group_reason":"same owner, seam kind, flow sink, missing discriminator, and assertion shape","primary_anchor":{"file":"src/lib.rs","kind":"weakly_gripped","line":7,"reason":"canonical_group_primary_raw_finding","source_id":"6db83e71b27aea52"},"raw_group_size":1,"raw_spans":[{"end_line":7,"file":"src/lib.rs","kind":"weakly_gripped","source_id":"6db83e71b27aea52","start_line":7}],"receipt_command":null,"recommended_repair":"Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`.","related_test":{"file":"src/lib.rs","line":12,"name":"decoy","reason":"same_test_file"},"repair_command":null,"repair_route":null,"static_limitations":[{"category":"missing_discriminator_evidence","reason":"the repair route is missing evidence: producer-owned missing discriminator fact: match_arm_taken","repair_route":"analysis/producer-evidence-discriminator","stage":"discriminate","state":"unknown"}],"verify_command":null,"why":"producer-owned missing discriminator fact: match_arm_taken"},"evidence_path":{"activate":{"confidence":"medium","state":"yes","summary":"Observed direct owner call for value-insensitive seam `_ =>`"},"discriminate":{"confidence":"medium","state":"weak","summary":"Strongest oracle for seam kind `match_arm` is `weak` (kind-match true)"},"observe":{"confidence":"medium","state":"yes","summary":"Observation evidence is `yes`"},"propagate":{"confidence":"low","state":"yes","summary":"Static propagation to `return_value` sink is yes"},"reach":{"confidence":"low","state":"weak","summary":"No test is seen calling as_object; tests share only its file or a name token: decoy"}},"grip_class":"weakly_gripped","headline_eligible":true,"location":{"file":"src/lib.rs","line":7},"missing_discriminators":[],"observed_values":[],"owner":"src/lib.rs::impl JsonValue::as_object","presentation_text":null,"raw_findings":[{"evidence_record_ref":"6db83e71b27aea52","expression":"_ =>","file":"src/lib.rs","kind":"weakly_gripped","language":"rust","language_status":"stable","line":7,"probe_kind":"match_arm","source_id":"6db83e71b27aea52"}],"recommendation":{"action":"inspect_static_limitation","assertion_shape":null,"candidate_values":[],"nearest_test_to_imitate":{"evidence_summary":"relational check","file":"src/lib.rs","line":12,"name":"decoy","oracle_kind":"relational_check","oracle_semantics":{"missing":"the exact changed value or boundary discriminator","observes":"a partial relationship or broad predicate about the result","upgrade_suggestion":"assert the exact enum or value produced by the changed match arm"},"oracle_strength":"weak","relation_confidence":"medium","relation_reason":"same_test_file"},"reason":"producer-owned missing discriminator fact: match_arm_taken","recommended_test":null,"verify_command":null},"related_tests":[{"evidence_summary":"relational check","file":"src/lib.rs","line":12,"name":"decoy","oracle_kind":"relational_check","oracle_semantics":{"missing":"the exact changed value or boundary discriminator","observes":"a partial relationship or broad predicate about the result","upgrade_suggestion":"assert the exact enum or value produced by the changed match arm"},"oracle_strength":"weak","relation_confidence":"medium","relation_reason":"same_test_file"}],"related_tests_total":1,"schema_version":"0.1","seam_id":"6db83e71b27aea52","seam_kind":"match_arm","static_limitations":[{"category":"missing_discriminator_evidence","reason":"the repair route is missing evidence: producer-owned missing discriminator fact: match_arm_taken","repair_route":"analysis/producer-evidence-discriminator","stage":"discriminate","state":"unknown"}]}
+    }
+  ]
+}

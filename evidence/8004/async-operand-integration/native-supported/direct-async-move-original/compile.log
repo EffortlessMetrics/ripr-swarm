@@ -1,0 +1,13 @@
+warning: variant `Null` is never constructed
+ --> /workspace/async8004-evidence/native-supported/direct-async-move-original/source.rs:2:42
+  |
+2 | pub(crate) enum JsonValue { Object(u32), Null }
+  |                 ---------                ^^^^
+  |                 |
+  |                 variant in this enum
+  |
+  = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: 1 warning emitted
+

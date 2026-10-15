@@ -1,0 +1,58 @@
+[
+  {
+    "case": "/workspace/async8004-evidence/controls/helper-outer.rs",
+    "surface": "repo",
+    "relation": "same_test_file",
+    "reach": "weak",
+    "expression": "match self"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/helper-outer.rs",
+    "surface": "repo",
+    "relation": "same_test_file",
+    "reach": "weak",
+    "expression": "Self::Object(value) =>"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/helper-outer.rs",
+    "surface": "repo",
+    "relation": "same_test_file",
+    "reach": "weak",
+    "expression": "Some(*value)"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/helper-outer.rs",
+    "surface": "repo",
+    "relation": "same_test_file",
+    "reach": "weak",
+    "expression": "_ =>"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/helper-mixed-async.rs",
+    "surface": "repo",
+    "relation": "same_test_file",
+    "reach": "weak",
+    "expression": "match self"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/helper-mixed-async.rs",
+    "surface": "repo",
+    "relation": "same_test_file",
+    "reach": "weak",
+    "expression": "Self::Object(value) =>"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/helper-mixed-async.rs",
+    "surface": "repo",
+    "relation": "same_test_file",
+    "reach": "weak",
+    "expression": "Some(*value)"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/helper-mixed-async.rs",
+    "surface": "repo",
+    "relation": "same_test_file",
+    "reach": "weak",
+    "expression": "_ =>"
+  }
+]

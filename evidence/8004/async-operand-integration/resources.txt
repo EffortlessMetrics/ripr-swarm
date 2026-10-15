@@ -1,0 +1,8 @@
+Owner: delegated PR8004 repair/integration writer, 2026-10-15.
+Original /workspace/ripr-swarm clean work@9f7d06bf preserved; common git /workspace/ripr-swarm/.git.
+Owned worktree /workspace/async8004; shared serialized Cargo target /workspace/ripr-swarm/target.
+Owned evidence /workspace/async8004-evidence, frozen CLI /workspace/async8004-evidence/bin.
+Observed free overlay30GB, peak additional20GB (build18GB, frozen/source/evidence2GB), reserve8GB. No cleanup assumed.
+Retain source8b CLI and repaired integrated CLI, native controls and raw reports for independent review. No destructive cleanup.
+Setup recovery: rustup default home read-only; use pre-existing /workspace/.cargo and /workspace/.rustup. rustc/cargo1.95.0 GCC14.2.
+Measured re-admission after focused proof:16GB used /15GB free overlay. Distinct xtask/default/test dependency-feature profiles required separate current-source builds. Revised total peak-additional ceiling22GiB; reserve remains8GiB. Next snapshot/final-qualification batch budget5GiB additional, including optional Perl producer and final clean CLI; fits observed free space without reclamation. Existing witnesses remain retained, no cleanup assumed. Stop generation if reserve8GiB would be crossed.

@@ -1,0 +1,7 @@
+0 helper-async.rs ['helper_owner_call']
+1 helper-async-move.rs ['helper_owner_call']
+2 helper-closure.rs ['same_test_file']
+3 helper-item.rs ['same_test_file']
+4 helper-outer.rs ['helper_owner_call']
+5 helper-mixed-async.rs ['helper_owner_call']
+reports 18 violations 8

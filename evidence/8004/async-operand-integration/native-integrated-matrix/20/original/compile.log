@@ -1,0 +1,26 @@
+warning: enum `JsonValue` is never used
+ --> /workspace/async8004-evidence/native-integrated-matrix/20/original/source.rs:2:17
+  |
+2 | pub(crate) enum JsonValue { Object(u32), Null }
+  |                 ^^^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `as_object` is never used
+ --> /workspace/async8004-evidence/native-integrated-matrix/20/original/source.rs:4:19
+  |
+3 | impl JsonValue {
+  | -------------- method in this implementation
+4 |     pub(crate) fn as_object(&self) -> Option<u32> {
+  |                   ^^^^^^^^^
+
+warning: trait method `Object` should have a snake case name
+  --> /workspace/async8004-evidence/native-integrated-matrix/20/original/source.rs:13:20
+   |
+13 | trait Foreign { fn Object(_: u32) -> Alien { Alien } }
+   |                    ^^^^^^ help: convert the identifier to snake case (notice the capitalization): `object`
+   |
+   = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: 3 warnings emitted
+

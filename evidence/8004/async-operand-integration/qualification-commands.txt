@@ -1,0 +1,12 @@
+cli-build: cargo build -p ripr --bin ripr --locked 
+matrix: python /workspace/async8004-evidence/cli-matrix.py /workspace/async8004-evidence/bin/head-ripr head-cli strict fixtures/inherent_receiver_free_helper_identity/cases.json 
+same-line-cli: python /workspace/async8004-evidence/same-line-cli.py /workspace/async8004-evidence/bin/head-ripr 
+check-fast: cargo xtask check-fast 
+precommit: cargo xtask precommit 
+goldens: cargo xtask goldens check 
+corpora-all-preflight: cargo xtask verdict-corpus check-all 
+rust-corpus: cargo xtask verdict-corpus check --language rust 
+python-corpus: cargo xtask verdict-corpus check --language python 
+typescript-corpus: cargo xtask verdict-corpus check --language typescript 
+honesty: cargo xtask check-evidence-promotion-honesty 
+dogfood: cargo xtask dogfood 

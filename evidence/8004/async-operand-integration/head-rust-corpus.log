@@ -1,0 +1,7 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.27s
+     Running `/workspace/ripr-swarm/target/debug/xtask verdict-corpus check --language rust`
+$ cargo build -p ripr
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.78s
+verdict-corpus: 485 cases; false verdicts 0.0433 (21/485), contradictions 0.0000 (0/621); wrote target/ripr/reports/verdict-corpus
+verdict-corpus: spec examples covered 1.0000 (131/131), floor 131
+verdict-corpus: oracle accuracy 1.0000 (44/44), overclaim 0.0000 (0/44); underclaim 0, kind_mismatch 0, unobserved 0

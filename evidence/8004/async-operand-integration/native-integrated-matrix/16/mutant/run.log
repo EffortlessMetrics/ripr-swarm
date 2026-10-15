@@ -1,0 +1,20 @@
+
+running 1 test
+test tests::actual ... FAILED
+
+failures:
+
+---- tests::actual stdout ----
+
+thread 'tests::actual' (9338) panicked at /workspace/async8004-evidence/native-integrated-matrix/16/mutant/source.rs:14:23:
+assertion `left == right` failed
+  left: None
+ right: Some(7)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::actual
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

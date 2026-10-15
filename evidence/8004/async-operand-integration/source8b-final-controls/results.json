@@ -1,0 +1,782 @@
+[
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-async.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/00/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "source_sha256": "76b92b32285463c5dfcc7b64955aecd742212e6c6c8e0b2e4659f532e1de9af6"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-async.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/00/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "source_sha256": "76b92b32285463c5dfcc7b64955aecd742212e6c6c8e0b2e4659f532e1de9af6"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-async.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/00/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/async8004-evidence/source8b-final-controls/00/json/diff.patch"
+    ],
+    "exit": 0,
+    "source_sha256": "76b92b32285463c5dfcc7b64955aecd742212e6c6c8e0b2e4659f532e1de9af6"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-async-move.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/01/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "source_sha256": "0128529f1154af7c94021554006cd99b4d94e33ab3ace896c669a295983030c2"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-async-move.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/01/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "source_sha256": "0128529f1154af7c94021554006cd99b4d94e33ab3ace896c669a295983030c2"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-async-move.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/01/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/async8004-evidence/source8b-final-controls/01/json/diff.patch"
+    ],
+    "exit": 0,
+    "source_sha256": "0128529f1154af7c94021554006cd99b4d94e33ab3ace896c669a295983030c2"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-closure.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/02/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "source_sha256": "cd9292315ac306d7a6421fa9f8ca5152e8fdbfe19abda147f060d78663125d18"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-closure.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/02/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "source_sha256": "cd9292315ac306d7a6421fa9f8ca5152e8fdbfe19abda147f060d78663125d18"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-closure.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/02/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/async8004-evidence/source8b-final-controls/02/json/diff.patch"
+    ],
+    "exit": 0,
+    "source_sha256": "cd9292315ac306d7a6421fa9f8ca5152e8fdbfe19abda147f060d78663125d18"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-item.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/03/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "source_sha256": "ef42b7c438e1fd126401412084c77395af23150e212ed97036f4bb335b3d30f4"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-item.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/03/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "source_sha256": "ef42b7c438e1fd126401412084c77395af23150e212ed97036f4bb335b3d30f4"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-item.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/03/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/async8004-evidence/source8b-final-controls/03/json/diff.patch"
+    ],
+    "exit": 0,
+    "source_sha256": "ef42b7c438e1fd126401412084c77395af23150e212ed97036f4bb335b3d30f4"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-outer.rs",
+      "name": "actual",
+      "relation": "direct_owner_call",
+      "native_reaches": true
+    },
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/04/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "source_sha256": "f5e09924e53193ade31299fadfa7074bbd77d89498f5fa768befcd7183221ea0"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-outer.rs",
+      "name": "actual",
+      "relation": "direct_owner_call",
+      "native_reaches": true
+    },
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/04/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "source_sha256": "f5e09924e53193ade31299fadfa7074bbd77d89498f5fa768befcd7183221ea0"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-outer.rs",
+      "name": "actual",
+      "relation": "direct_owner_call",
+      "native_reaches": true
+    },
+    "format": "json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/04/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/async8004-evidence/source8b-final-controls/04/json/diff.patch"
+    ],
+    "exit": 0,
+    "source_sha256": "f5e09924e53193ade31299fadfa7074bbd77d89498f5fa768befcd7183221ea0"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-mixed-async.rs",
+      "name": "actual",
+      "relation": "direct_owner_call",
+      "native_reaches": true
+    },
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/05/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "source_sha256": "28c26daf9cbf2813701d55b5d172387914e8c8f5ece3607989902f00970e87ba"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-mixed-async.rs",
+      "name": "actual",
+      "relation": "direct_owner_call",
+      "native_reaches": true
+    },
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/05/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "source_sha256": "28c26daf9cbf2813701d55b5d172387914e8c8f5ece3607989902f00970e87ba"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-mixed-async.rs",
+      "name": "actual",
+      "relation": "direct_owner_call",
+      "native_reaches": true
+    },
+    "format": "json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/05/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/async8004-evidence/source8b-final-controls/05/json/diff.patch"
+    ],
+    "exit": 0,
+    "source_sha256": "28c26daf9cbf2813701d55b5d172387914e8c8f5ece3607989902f00970e87ba"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-async.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/06/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "source_sha256": "5be257a85a8d28d23f30986499840eaaeab851e7b457b2349447b4fa17e516cd"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-async.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/06/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "source_sha256": "5be257a85a8d28d23f30986499840eaaeab851e7b457b2349447b4fa17e516cd"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-async.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/06/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/async8004-evidence/source8b-final-controls/06/json/diff.patch"
+    ],
+    "exit": 0,
+    "source_sha256": "5be257a85a8d28d23f30986499840eaaeab851e7b457b2349447b4fa17e516cd"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-async-move.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/07/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "source_sha256": "530d2117c87164d123b8d0f146b3b8bc829f5a5fa2c2d0e95d304c03beed2358"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-async-move.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/07/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "source_sha256": "530d2117c87164d123b8d0f146b3b8bc829f5a5fa2c2d0e95d304c03beed2358"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-async-move.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/07/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/async8004-evidence/source8b-final-controls/07/json/diff.patch"
+    ],
+    "exit": 0,
+    "source_sha256": "530d2117c87164d123b8d0f146b3b8bc829f5a5fa2c2d0e95d304c03beed2358"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-closure.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/08/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "source_sha256": "5e1f9f50d3a3583c7bd643128911f9757ed63ef915144050de1fb8c461df0338"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-closure.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/08/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "source_sha256": "5e1f9f50d3a3583c7bd643128911f9757ed63ef915144050de1fb8c461df0338"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-closure.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/08/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/async8004-evidence/source8b-final-controls/08/json/diff.patch"
+    ],
+    "exit": 0,
+    "source_sha256": "5e1f9f50d3a3583c7bd643128911f9757ed63ef915144050de1fb8c461df0338"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-item.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/09/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "source_sha256": "053269becb84dec9ed84dad18cf20a93c8925db3cdcfa6e1c4f6be859b6f5cc0"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-item.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/09/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "source_sha256": "053269becb84dec9ed84dad18cf20a93c8925db3cdcfa6e1c4f6be859b6f5cc0"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-item.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "format": "json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/09/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/async8004-evidence/source8b-final-controls/09/json/diff.patch"
+    ],
+    "exit": 0,
+    "source_sha256": "053269becb84dec9ed84dad18cf20a93c8925db3cdcfa6e1c4f6be859b6f5cc0"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-outer.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/10/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "source_sha256": "c25c545d2c8438523c2660a2b552a393c21b1f4707760ff1f65b57775acaee22"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-outer.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/10/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "source_sha256": "c25c545d2c8438523c2660a2b552a393c21b1f4707760ff1f65b57775acaee22"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-outer.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "format": "json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/10/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/async8004-evidence/source8b-final-controls/10/json/diff.patch"
+    ],
+    "exit": 0,
+    "source_sha256": "c25c545d2c8438523c2660a2b552a393c21b1f4707760ff1f65b57775acaee22"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-mixed-async.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "format": "repo-exposure-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/11/repo-exposure-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "source_sha256": "1e27c4d74561d38b298071d9c2caaa7177b827724331a0d7f3399a9d77219921"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-mixed-async.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "format": "repo-exposure-summary-json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/11/repo-exposure-summary-json",
+      "--mode",
+      "ready",
+      "--format",
+      "repo-exposure-summary-json"
+    ],
+    "exit": 0,
+    "source_sha256": "1e27c4d74561d38b298071d9c2caaa7177b827724331a0d7f3399a9d77219921"
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-mixed-async.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "format": "json",
+    "argv": [
+      "/workspace/async8004-evidence/bin/source8b-ripr",
+      "check",
+      "--root",
+      "/workspace/async8004-evidence/source8b-final-controls/11/json",
+      "--mode",
+      "ready",
+      "--format",
+      "json",
+      "--diff",
+      "/workspace/async8004-evidence/source8b-final-controls/11/json/diff.patch"
+    ],
+    "exit": 0,
+    "source_sha256": "1e27c4d74561d38b298071d9c2caaa7177b827724331a0d7f3399a9d77219921"
+  }
+]

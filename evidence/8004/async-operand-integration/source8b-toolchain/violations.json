@@ -1,0 +1,138 @@
+[
+  {
+    "case": "/workspace/async8004-evidence/controls/direct-async.rs",
+    "surface": "repo",
+    "relation": "direct_owner_call",
+    "reach": "yes",
+    "expression": "match self"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/direct-async.rs",
+    "surface": "repo",
+    "relation": "direct_owner_call",
+    "reach": "yes",
+    "expression": "Self::Object(value) =>"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/direct-async.rs",
+    "surface": "repo",
+    "relation": "direct_owner_call",
+    "reach": "yes",
+    "expression": "Some(*value)"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/direct-async.rs",
+    "surface": "repo",
+    "relation": "direct_owner_call",
+    "reach": "yes",
+    "expression": "_ =>"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/direct-async.rs",
+    "surface": "diff",
+    "relation": "direct_owner_call",
+    "classification": "weakly_exposed"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/direct-async.rs",
+    "surface": "diff",
+    "relation": "direct_owner_call",
+    "classification": "weakly_exposed"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/direct-async-move.rs",
+    "surface": "repo",
+    "relation": "direct_owner_call",
+    "reach": "yes",
+    "expression": "match self"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/direct-async-move.rs",
+    "surface": "repo",
+    "relation": "direct_owner_call",
+    "reach": "yes",
+    "expression": "Self::Object(value) =>"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/direct-async-move.rs",
+    "surface": "repo",
+    "relation": "direct_owner_call",
+    "reach": "yes",
+    "expression": "Some(*value)"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/direct-async-move.rs",
+    "surface": "repo",
+    "relation": "direct_owner_call",
+    "reach": "yes",
+    "expression": "_ =>"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/direct-async-move.rs",
+    "surface": "diff",
+    "relation": "direct_owner_call",
+    "classification": "weakly_exposed"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/direct-async-move.rs",
+    "surface": "diff",
+    "relation": "direct_owner_call",
+    "classification": "weakly_exposed"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/helper-async.rs",
+    "surface": "repo",
+    "relation": "helper_owner_call",
+    "reach": "yes",
+    "expression": "match self"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/helper-async.rs",
+    "surface": "repo",
+    "relation": "helper_owner_call",
+    "reach": "yes",
+    "expression": "Self::Object(value) =>"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/helper-async.rs",
+    "surface": "repo",
+    "relation": "helper_owner_call",
+    "reach": "yes",
+    "expression": "Some(*value)"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/helper-async.rs",
+    "surface": "repo",
+    "relation": "helper_owner_call",
+    "reach": "yes",
+    "expression": "_ =>"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/helper-async-move.rs",
+    "surface": "repo",
+    "relation": "helper_owner_call",
+    "reach": "yes",
+    "expression": "match self"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/helper-async-move.rs",
+    "surface": "repo",
+    "relation": "helper_owner_call",
+    "reach": "yes",
+    "expression": "Self::Object(value) =>"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/helper-async-move.rs",
+    "surface": "repo",
+    "relation": "helper_owner_call",
+    "reach": "yes",
+    "expression": "Some(*value)"
+  },
+  {
+    "case": "/workspace/async8004-evidence/controls/helper-async-move.rs",
+    "surface": "repo",
+    "relation": "helper_owner_call",
+    "reach": "yes",
+    "expression": "_ =>"
+  }
+]

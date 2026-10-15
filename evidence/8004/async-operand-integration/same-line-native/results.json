@@ -1,0 +1,94 @@
+[
+  {
+    "kind": "original",
+    "name": "actual",
+    "source_sha256": "4e205e34a7fb84c4ee1243b11b4c32c6786fb03791af9a5dd18cffdeb83dd2a6",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/same-line-native/original.rs",
+      "-o",
+      "/workspace/async8004-evidence/same-line-native/original"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/same-line-native/original",
+      "--exact",
+      "tests::actual"
+    ],
+    "run_exit": 0
+  },
+  {
+    "kind": "original",
+    "name": "decoy",
+    "source_sha256": "4e205e34a7fb84c4ee1243b11b4c32c6786fb03791af9a5dd18cffdeb83dd2a6",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/same-line-native/original.rs",
+      "-o",
+      "/workspace/async8004-evidence/same-line-native/original"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/same-line-native/original",
+      "--exact",
+      "tests::decoy"
+    ],
+    "run_exit": 0
+  },
+  {
+    "kind": "mutant",
+    "name": "actual",
+    "source_sha256": "d875ffa8c91eeb02ca8236fe915399344972aaf0156f5714ad2990137f05311d",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/same-line-native/mutant.rs",
+      "-o",
+      "/workspace/async8004-evidence/same-line-native/mutant"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/same-line-native/mutant",
+      "--exact",
+      "tests::actual"
+    ],
+    "run_exit": 101
+  },
+  {
+    "kind": "mutant",
+    "name": "decoy",
+    "source_sha256": "d875ffa8c91eeb02ca8236fe915399344972aaf0156f5714ad2990137f05311d",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/same-line-native/mutant.rs",
+      "-o",
+      "/workspace/async8004-evidence/same-line-native/mutant"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/same-line-native/mutant",
+      "--exact",
+      "tests::decoy"
+    ],
+    "run_exit": 0
+  }
+]

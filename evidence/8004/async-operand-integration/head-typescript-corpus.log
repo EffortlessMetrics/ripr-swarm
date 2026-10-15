@@ -1,0 +1,6 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.29s
+     Running `/workspace/ripr-swarm/target/debug/xtask verdict-corpus check --language typescript`
+$ cargo build -p ripr
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.37s
+verdict-corpus: 169 cases; false verdicts 0.0414 (7/169), contradictions 0.0000 (0/169); wrote target/ripr/reports/verdict-corpus/typescript
+verdict-corpus: spec examples covered 0.9333 (112/120), floor 112

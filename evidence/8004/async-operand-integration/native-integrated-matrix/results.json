@@ -1,0 +1,1770 @@
+[
+  {
+    "case": {
+      "path": "inherent_receiver_module_type_shadow/input/src/lib.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "4725a8daaba7875eb6a9e9cf99f0a28df0d90576de98b7803a1e13cb094fd2d2",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/00/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/00/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/00/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_module_type_shadow/input/src/lib.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "524de32d392e3274e952fc5befce65c961cce438d6c4941097a7c2fc4ca4de57",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/00/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/00/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/00/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_dormant_body/input/src/lib.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "c49baf47107ebc6049a4cf952fc861badf170b6e795a0e3ce8efb81f665a1387",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/01/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/01/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/01/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_dormant_body/input/src/lib.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "14e7a03e038ab468673ac25baa163913c9e951e48d2f4077b310e64d7bf9f4f9",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/01/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/01/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/01/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/input/src/lib.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "8419436399c191ba79e6c33baa2d79d7271a607049dc0246a8828551db516e02",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/02/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/02/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/02/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/input/src/lib.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "5353dba3ce638f478223863a1dd92c4834a41ee5844fd038976cba22ba5f22ec",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/02/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/02/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/02/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_module_type_shadow/controls/genuine-owner.rs",
+      "name": "actual",
+      "relation": "direct_owner_call",
+      "native_reaches": true
+    },
+    "kind": "original",
+    "source_sha256": "d990e2004c79aa07de4c7505c5f0c757b583f351c86ce6f5dac6712d14bf4e9b",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/03/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/03/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/03/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_module_type_shadow/controls/genuine-owner.rs",
+      "name": "actual",
+      "relation": "direct_owner_call",
+      "native_reaches": true
+    },
+    "kind": "mutant",
+    "source_sha256": "3b7e0e9e4ab97cf2310f340663f66349d781338f5d6db67009e99a453def81f0",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/03/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/03/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/03/mutant/test"
+    ],
+    "run_exit": 101
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_dormant_body/controls/dormant-plain.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "b2acac2b43e8aa9b84e740ea8aeea1eedfb36d60cceab24e0bc1a285a796ab51",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/04/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/04/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/04/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_dormant_body/controls/dormant-plain.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "fded3aa8945e8aa9b83331685abeb39dafb2f2c63c31e8bdf4072142bd255693",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/04/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/04/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/04/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_dormant_body/controls/dormant-closure.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "8a2f9c38fc715a603d5a9520705480a4d522ea80c4020270af75e84ac31e33b4",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/05/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/05/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/05/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_dormant_body/controls/dormant-closure.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "53947dc58bb2f9c62680552fe2b6d616ef959e7a30b54811896f166ff37aea05",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/05/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/05/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/05/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_dormant_body/controls/dormant-async.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "dd7a2529fc24eefbd19ad3a768f8942d2fade658b64cf93c05e9a9c0096800e5",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/06/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/06/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/06/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_dormant_body/controls/dormant-async.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "3730a9862ab4476834b798785ee85f3fdbdc41ef1978d7b0cc49559c68d57c6a",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/06/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/06/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/06/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_dormant_body/controls/outer-call.rs",
+      "name": "actual",
+      "relation": "direct_owner_call",
+      "native_reaches": true
+    },
+    "kind": "original",
+    "source_sha256": "6e90fdf991b1b7a26a45b881308ccb5ce69424042f8ac43344a376b756c98047",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/07/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/07/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/07/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_dormant_body/controls/outer-call.rs",
+      "name": "actual",
+      "relation": "direct_owner_call",
+      "native_reaches": true
+    },
+    "kind": "mutant",
+    "source_sha256": "ddb3c3d7f61469ccc5f6d5cdd7eab7c6372929446bfdf355c3300d3100b8d9ad",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/07/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/07/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/07/mutant/test"
+    ],
+    "run_exit": 101
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_dormant_body/controls/nested-invoked.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": true
+    },
+    "kind": "original",
+    "source_sha256": "e4835759d348f90133365d6b6b9d2c73999949279e9f1e007caf6e1f2b46eabe",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/08/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/08/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/08/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_dormant_body/controls/nested-invoked.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": true
+    },
+    "kind": "mutant",
+    "source_sha256": "576372b8fcb218338ac87d73e9524800e2a35e6399c61c5f5fe5f500a23a2dca",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/08/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/08/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/08/mutant/test"
+    ],
+    "run_exit": 101
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/genuine-root.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "original",
+    "source_sha256": "d72480ffc12e8cc01cd325ce9c2c058d6738107fa7debab2e6192578c50fa969",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/09/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/09/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/09/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/genuine-root.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "mutant",
+    "source_sha256": "5f8ed581d90b396506840c80256f22d25437ae468058b84245a8c65bd95089c6",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/09/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/09/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/09/mutant/test"
+    ],
+    "run_exit": 101
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/unique-foreign-value.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "ab164a959f8822f159071aef4eb9902f6568325520dbfe9b08e30db114c27bfb",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/10/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/10/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/10/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/unique-foreign-value.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "592a3a79cb03ef04b260038090876509ea6a67c1e12d0785d0403e86e1658ba2",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/10/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/10/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/10/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/imported-foreign.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "b523baf26bb82dc676b3f9af5fa9f3349c76dfcde2ffd8db3a7092fb66235d6e",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/11/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/11/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/11/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/imported-foreign.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "81edc2b8563ae4b7f4859986b0823d283189985a5b1f9ed160dc5dc54ebad4d6",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/11/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/11/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/11/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/imported-root.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "original",
+    "source_sha256": "a2dbbd631f6e14c6da3cf5d2549f9c771df02708ebcdb7f6fc0bb11bb77d7cd7",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/12/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/12/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/12/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/imported-root.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "mutant",
+    "source_sha256": "0ca1a99fc70f58bb6f4da6b28a0571bab170fdcacd8e35b54faa0fa362bd1c48",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/12/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/12/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/12/mutant/test"
+    ],
+    "run_exit": 101
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/intermediate-foreign.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "68ff31e3b80cd5ae5f358b0e695a728c0a87dc5bb62662c9a1d8bd4c3874a589",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/13/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/13/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/13/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/intermediate-foreign.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "14b27acbcac5ee65955ba3bc27244840472725df4d776bf41388a711dd19e88d",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/13/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/13/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/13/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/intermediate-root.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "original",
+    "source_sha256": "c4c43c74cca856870af60418dea2178eacb0b036af4926b789c42f3cf057b3bf",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/14/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/14/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/14/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/intermediate-root.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "mutant",
+    "source_sha256": "7044aca1c97ca0dbc8fe39a5a03180c08bcd43f4c3ad9e62ce7a1a872bbe1b27",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/14/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/14/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/14/mutant/test"
+    ],
+    "run_exit": 101
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/same-line-foreign.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "1d8a90de7a7ab5af5577ee877193fb7343aa9bb4d861dd88694f2abfae6da014",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/15/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/15/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/15/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/same-line-foreign.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "adb9e6b62c302c4801d0b0436476bfff5ef6ac158cb69805f3a33d4009b383fc",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/15/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/15/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/15/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/generic-root.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "original",
+    "source_sha256": "71c282a5002c77667959b2519bc38ec031b318f78f8a3b544aeab2d074837d72",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/16/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/16/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/16/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/generic-root.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "mutant",
+    "source_sha256": "3969e57be1e1fd9716875d9b3a747aeac0a6efb72a834208de756e987c64fb70",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/16/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/16/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/16/mutant/test"
+    ],
+    "run_exit": 101
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/test-module-helper.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "original",
+    "source_sha256": "c53c15d37cebb72e860d2e7a1f750780f2d7304645512e1391d971ab2420a36b",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/17/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/17/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/17/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/test-module-helper.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "mutant",
+    "source_sha256": "96f03dd947821981b9234f45c69691b2ff60a213a57c8e9d2e90cc60b963ea6b",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/17/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/17/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/17/mutant/test"
+    ],
+    "run_exit": 101
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/qualified-test-module-helper.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "original",
+    "source_sha256": "35f9aa95176b5c83fddc1af2a29d79b993e83a0479293c8e617b44762834e24b",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/18/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/18/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/18/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_free_helper_identity/controls/qualified-test-module-helper.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "mutant",
+    "source_sha256": "540f4d78289b6dd657d6dffcda3ba056b09d67967ee78298854ab875ca223079",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/18/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/18/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/18/mutant/test"
+    ],
+    "run_exit": 101
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_helper_scope_shadow/input/src/lib.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "99951a95d1b26a9eaa8471371ee36a8bf5c2083769f535a08107a5d1f9aedf15",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/19/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/19/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/19/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_helper_scope_shadow/input/src/lib.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "7b761427367eaeec798edec228cae821ffbea1d0e811dd0f09b1e965c56cb04d",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/19/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/19/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/19/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_helper_scope_shadow/controls/receiver-type-parameter.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "94da0848a16cd7fc0768dc790b491a37c4a10c49e8a036fe8ca7849b6a7c356d",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/20/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/20/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/20/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_helper_scope_shadow/controls/receiver-type-parameter.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "82f2eea2e19a9e61cbcc749f62e44a7d7fb87cfd052ee6fa673cb759d19ad70c",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/20/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/20/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/20/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_helper_scope_shadow/controls/genuine-module.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "original",
+    "source_sha256": "0e2c68e05704718dff52baa46b1386a79516a8c35dd2b57046feb38b2ac05a32",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/21/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/21/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/21/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_helper_scope_shadow/controls/genuine-module.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "mutant",
+    "source_sha256": "06d3c7efce235b269bbe4c362e7a592b8029a0eb8e6d8142cbe8a58b14743857",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/21/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/21/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/21/mutant/test"
+    ],
+    "run_exit": 101
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand/input/src/lib.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "76b92b32285463c5dfcc7b64955aecd742212e6c6c8e0b2e4659f532e1de9af6",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/22/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/22/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/22/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand/input/src/lib.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "5d1a0f7ad51ca93b9e72bb714e5b369ef775b2dd0a70adacf21a5fe17129277a",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/22/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/22/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/22/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand/controls/direct-async-move.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "0128529f1154af7c94021554006cd99b4d94e33ab3ace896c669a295983030c2",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/23/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/23/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/23/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand/controls/direct-async-move.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "e4e2d362c912e5c11ed4b939a12a17896613c90f2751811bb3745ce5d8ec55f3",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/23/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/23/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/23/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand/controls/direct-closure.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "cd9292315ac306d7a6421fa9f8ca5152e8fdbfe19abda147f060d78663125d18",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/24/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/24/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/24/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand/controls/direct-closure.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "59b8ce9195ce5aa796aeb19c51f06d6cd17f5b4555bd4c6cb37fee618f51826d",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/24/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/24/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/24/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand/controls/direct-item.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "ef42b7c438e1fd126401412084c77395af23150e212ed97036f4bb335b3d30f4",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/25/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/25/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/25/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand/controls/direct-item.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "4bdcfb17f6ded393b32bbf14fd88d952dd76a3ee30cf5b67b1c86ce47fdab0c9",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/25/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/25/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/25/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand/controls/direct-outer.rs",
+      "name": "actual",
+      "relation": "direct_owner_call",
+      "native_reaches": true
+    },
+    "kind": "original",
+    "source_sha256": "f5e09924e53193ade31299fadfa7074bbd77d89498f5fa768befcd7183221ea0",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/26/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/26/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/26/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand/controls/direct-outer.rs",
+      "name": "actual",
+      "relation": "direct_owner_call",
+      "native_reaches": true
+    },
+    "kind": "mutant",
+    "source_sha256": "5fbd415a435c2e9266eeaf46cc063f9afe384f7ed0c103a781a52e1e2ce2983d",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/26/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/26/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/26/mutant/test"
+    ],
+    "run_exit": 101
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand/controls/direct-mixed-async.rs",
+      "name": "actual",
+      "relation": "direct_owner_call",
+      "native_reaches": true
+    },
+    "kind": "original",
+    "source_sha256": "28c26daf9cbf2813701d55b5d172387914e8c8f5ece3607989902f00970e87ba",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/27/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/27/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/27/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand/controls/direct-mixed-async.rs",
+      "name": "actual",
+      "relation": "direct_owner_call",
+      "native_reaches": true
+    },
+    "kind": "mutant",
+    "source_sha256": "26f539000508bf5e232f0938e4d032e75d87fa90c608c926c289fb47fbb3aefb",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/27/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/27/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/27/mutant/test"
+    ],
+    "run_exit": 101
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand_helper/input/src/lib.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "5be257a85a8d28d23f30986499840eaaeab851e7b457b2349447b4fa17e516cd",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/28/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/28/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/28/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand_helper/input/src/lib.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "9eeb77669f436374f25014237f40e436fee40d73c3216c31eb63116be2e95502",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/28/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/28/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/28/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand_helper/controls/helper-async-move.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "530d2117c87164d123b8d0f146b3b8bc829f5a5fa2c2d0e95d304c03beed2358",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/29/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/29/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/29/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand_helper/controls/helper-async-move.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "f8dacd0f4c3f8b9a4483bd7fdfb487a6d795a12e9251da7c926c812396b233d6",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/29/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/29/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/29/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand_helper/controls/helper-closure.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "5e1f9f50d3a3583c7bd643128911f9757ed63ef915144050de1fb8c461df0338",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/30/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/30/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/30/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand_helper/controls/helper-closure.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "478901e4e99b220f8fba702680ce597ae6a8ad3ba87d06023da66ad82ee6dc2b",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/30/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/30/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/30/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand_helper/controls/helper-item.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "053269becb84dec9ed84dad18cf20a93c8925db3cdcfa6e1c4f6be859b6f5cc0",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/31/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/31/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/31/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand_helper/controls/helper-item.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "fa213ea2780f68e44b089dd29940af718b250fc4400bf4424e4720cb5d27b77c",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/31/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/31/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/31/mutant/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand_helper/controls/helper-outer.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "original",
+    "source_sha256": "c25c545d2c8438523c2660a2b552a393c21b1f4707760ff1f65b57775acaee22",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/32/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/32/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/32/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand_helper/controls/helper-outer.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "mutant",
+    "source_sha256": "b1ecae196ab1cfc8a88c6cb77f1178a77e9232294e55fb59b269a2d64732e9b2",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/32/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/32/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/32/mutant/test"
+    ],
+    "run_exit": 101
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand_helper/controls/helper-mixed-async.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "original",
+    "source_sha256": "1e27c4d74561d38b298071d9c2caaa7177b827724331a0d7f3399a9d77219921",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/33/original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/33/original/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/33/original/test"
+    ],
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "inherent_receiver_async_operand_helper/controls/helper-mixed-async.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "mutant",
+    "source_sha256": "3d85c36046dc65f940885f973b526f9eb783c6440e8cae277b99007e581d29e6",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-integrated-matrix/33/mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-integrated-matrix/33/mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_argv": [
+      "/workspace/async8004-evidence/native-integrated-matrix/33/mutant/test"
+    ],
+    "run_exit": 101
+  }
+]

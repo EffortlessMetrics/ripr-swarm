@@ -1,0 +1,19 @@
+warning: variant `Null` is never constructed
+ --> /workspace/async8004-evidence/native-integrated-matrix/21/original/source.rs:2:42
+  |
+2 | pub(crate) enum JsonValue { Object(u32), Null }
+  |                 ---------                ^^^^
+  |                 |
+  |                 variant in this enum
+  |
+  = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: trait `Foreign` is never used
+  --> /workspace/async8004-evidence/native-integrated-matrix/21/original/source.rs:15:7
+   |
+15 | trait Foreign { fn read_as_object() -> Option<u32> { Some(7) } }
+   |       ^^^^^^^
+
+warning: 2 warnings emitted
+

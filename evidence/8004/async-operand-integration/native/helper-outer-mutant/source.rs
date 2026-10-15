@@ -1,0 +1,16 @@
+#[derive(Clone, Copy)]
+pub(crate) enum JsonValue { Object(u32), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<u32> {
+        match self {
+            Self::Object(value) => None,
+            _ => None,
+        }
+    }
+}
+fn owner_helper() -> Option<u32> { JsonValue::Object(7).as_object() }
+#[cfg(test)] mod tests { use super::*;
+#[test] fn actual() {
+    assert_eq!(owner_helper(), Some(7));
+}
+}

@@ -1,0 +1,13 @@
+0 direct-async.rs ['direct_owner_call']
+1 direct-async-move.rs ['direct_owner_call']
+2 direct-closure.rs ['assertion_target_affinity', 'same_test_file']
+3 direct-item.rs ['assertion_target_affinity', 'same_test_file']
+4 direct-outer.rs ['direct_owner_call']
+5 direct-mixed-async.rs ['direct_owner_call']
+6 helper-async.rs ['same_test_file']
+7 helper-async-move.rs ['same_test_file']
+8 helper-closure.rs ['same_test_file']
+9 helper-item.rs ['same_test_file']
+10 helper-outer.rs ['same_test_file']
+11 helper-mixed-async.rs ['same_test_file']
+reports 36 violations 20

@@ -1,0 +1,554 @@
+[
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-async.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "76b92b32285463c5dfcc7b64955aecd742212e6c6c8e0b2e4659f532e1de9af6",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/direct-async-original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/direct-async-original/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-async.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "5d1a0f7ad51ca93b9e72bb714e5b369ef775b2dd0a70adacf21a5fe17129277a",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/direct-async-mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/direct-async-mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-async-move.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "0128529f1154af7c94021554006cd99b4d94e33ab3ace896c669a295983030c2",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/direct-async-move-original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/direct-async-move-original/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-async-move.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "e4e2d362c912e5c11ed4b939a12a17896613c90f2751811bb3745ce5d8ec55f3",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/direct-async-move-mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/direct-async-move-mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-closure.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "cd9292315ac306d7a6421fa9f8ca5152e8fdbfe19abda147f060d78663125d18",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/direct-closure-original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/direct-closure-original/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-closure.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "59b8ce9195ce5aa796aeb19c51f06d6cd17f5b4555bd4c6cb37fee618f51826d",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/direct-closure-mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/direct-closure-mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-item.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "ef42b7c438e1fd126401412084c77395af23150e212ed97036f4bb335b3d30f4",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/direct-item-original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/direct-item-original/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-item.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "4bdcfb17f6ded393b32bbf14fd88d952dd76a3ee30cf5b67b1c86ce47fdab0c9",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/direct-item-mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/direct-item-mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-outer.rs",
+      "name": "actual",
+      "relation": "direct_owner_call",
+      "native_reaches": true
+    },
+    "kind": "original",
+    "source_sha256": "f5e09924e53193ade31299fadfa7074bbd77d89498f5fa768befcd7183221ea0",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/direct-outer-original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/direct-outer-original/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-outer.rs",
+      "name": "actual",
+      "relation": "direct_owner_call",
+      "native_reaches": true
+    },
+    "kind": "mutant",
+    "source_sha256": "5fbd415a435c2e9266eeaf46cc063f9afe384f7ed0c103a781a52e1e2ce2983d",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/direct-outer-mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/direct-outer-mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 101
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-mixed-async.rs",
+      "name": "actual",
+      "relation": "direct_owner_call",
+      "native_reaches": true
+    },
+    "kind": "original",
+    "source_sha256": "28c26daf9cbf2813701d55b5d172387914e8c8f5ece3607989902f00970e87ba",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/direct-mixed-async-original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/direct-mixed-async-original/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/direct-mixed-async.rs",
+      "name": "actual",
+      "relation": "direct_owner_call",
+      "native_reaches": true
+    },
+    "kind": "mutant",
+    "source_sha256": "26f539000508bf5e232f0938e4d032e75d87fa90c608c926c289fb47fbb3aefb",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/direct-mixed-async-mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/direct-mixed-async-mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 101
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-async.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "5be257a85a8d28d23f30986499840eaaeab851e7b457b2349447b4fa17e516cd",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/helper-async-original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/helper-async-original/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-async.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "9eeb77669f436374f25014237f40e436fee40d73c3216c31eb63116be2e95502",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/helper-async-mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/helper-async-mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-async-move.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "530d2117c87164d123b8d0f146b3b8bc829f5a5fa2c2d0e95d304c03beed2358",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/helper-async-move-original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/helper-async-move-original/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-async-move.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "f8dacd0f4c3f8b9a4483bd7fdfb487a6d795a12e9251da7c926c812396b233d6",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/helper-async-move-mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/helper-async-move-mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-closure.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "5e1f9f50d3a3583c7bd643128911f9757ed63ef915144050de1fb8c461df0338",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/helper-closure-original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/helper-closure-original/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-closure.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "478901e4e99b220f8fba702680ce597ae6a8ad3ba87d06023da66ad82ee6dc2b",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/helper-closure-mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/helper-closure-mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-item.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "original",
+    "source_sha256": "053269becb84dec9ed84dad18cf20a93c8925db3cdcfa6e1c4f6be859b6f5cc0",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/helper-item-original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/helper-item-original/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-item.rs",
+      "name": "decoy",
+      "relation": null,
+      "native_reaches": false
+    },
+    "kind": "mutant",
+    "source_sha256": "fa213ea2780f68e44b089dd29940af718b250fc4400bf4424e4720cb5d27b77c",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/helper-item-mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/helper-item-mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-outer.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "original",
+    "source_sha256": "c25c545d2c8438523c2660a2b552a393c21b1f4707760ff1f65b57775acaee22",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/helper-outer-original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/helper-outer-original/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-outer.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "mutant",
+    "source_sha256": "b1ecae196ab1cfc8a88c6cb77f1178a77e9232294e55fb59b269a2d64732e9b2",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/helper-outer-mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/helper-outer-mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 101
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-mixed-async.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "original",
+    "source_sha256": "1e27c4d74561d38b298071d9c2caaa7177b827724331a0d7f3399a9d77219921",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/helper-mixed-async-original/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/helper-mixed-async-original/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 0
+  },
+  {
+    "case": {
+      "path": "/workspace/async8004-evidence/controls/helper-mixed-async.rs",
+      "name": "actual",
+      "relation": "helper_owner_call",
+      "native_reaches": true
+    },
+    "kind": "mutant",
+    "source_sha256": "3d85c36046dc65f940885f973b526f9eb783c6440e8cae277b99007e581d29e6",
+    "compile_argv": [
+      "/workspace/async8004-evidence/run",
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "--crate-name",
+      "control",
+      "/workspace/async8004-evidence/native-final-controls/helper-mixed-async-mutant/source.rs",
+      "-o",
+      "/workspace/async8004-evidence/native-final-controls/helper-mixed-async-mutant/test"
+    ],
+    "compile_exit": 0,
+    "run_exit": 101
+  }
+]

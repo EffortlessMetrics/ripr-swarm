@@ -1,0 +1,13 @@
+{
+  "selected": 463,
+  "actual": 463,
+  "compared": 463,
+  "equal_sets": true,
+  "drift": 0,
+  "errors": 0,
+  "new_initializations": [
+    "inherent_receiver_async_operand",
+    "inherent_receiver_async_operand_helper"
+  ],
+  "old_rebless": []
+}

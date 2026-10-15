@@ -1,0 +1,6 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.21s
+     Running `/workspace/ripr-swarm/target/debug/xtask verdict-corpus check --language python`
+$ cargo build -p ripr
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.37s
+verdict-corpus: 69 cases; false verdicts 0.0000 (0/69), contradictions 0.0000 (0/69); wrote target/ripr/reports/verdict-corpus/python
+verdict-corpus: spec examples covered 1.0000 (40/40), floor 40

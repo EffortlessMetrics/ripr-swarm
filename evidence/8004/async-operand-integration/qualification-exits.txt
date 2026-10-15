@@ -1,0 +1,12 @@
+cli-build 0
+matrix 0
+same-line-cli 0
+check-fast 0
+precommit 1
+goldens 0
+corpora-all-preflight 73
+rust-corpus 0
+python-corpus 0
+typescript-corpus 0
+honesty 0
+dogfood 0

@@ -1,0 +1,10 @@
+[
+  {
+    "fixture": "inherent_receiver_async_operand",
+    "exact_non_artifact_report_equal": true
+  },
+  {
+    "fixture": "inherent_receiver_async_operand_helper",
+    "exact_non_artifact_report_equal": true
+  }
+]

@@ -1,0 +1,4 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.31s
+     Running `/workspace/ripr-swarm/target/debug/xtask goldens bless inherent_receiver_async_operand --reason 'RIPR-SPEC-0005: initialize discarded unpolled assertion operand regression; no existing snapshot re-bless'`
+$ cargo build -p ripr
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.24s

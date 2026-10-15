@@ -1,0 +1,41 @@
+{
+  "refs": {
+    "base": "67866bc95a72462840c3eedac0f213ed658474b4",
+    "candidate": "8bbc8dd4dead78cdccdb10861fe4848103aac6dd",
+    "main": "a142074061128a85e76c1ac494b9939f3a58428b"
+  },
+  "input_sha256": {
+    "base": "852e13333472348f2fcf7b9208fe86329a1f6a06410e429b685909907d020a11",
+    "candidate": "6d781b83daa204b447ac5d9d53d4db1d83e1f85e239a62f303c4cca049722095",
+    "main": "a725ef7765dcd9c7e36e0f925ded5461831a62ed4ec2f3dd18d9612339847890"
+  },
+  "counts": {
+    "base": 294,
+    "candidate": 309,
+    "main": 297
+  },
+  "combined": 312,
+  "conflicts": [],
+  "candidate_added": [
+    "rust_inherent_receiver_operand_item_shadow",
+    "rust_inherent_receiver_macro_discard_diff",
+    "rust_inherent_receiver_foreign_helper_diff",
+    "rust_repo_inherent_receiver_macro_discard",
+    "rust_repo_inherent_receiver_foreign_helper",
+    "rust_repo_inherent_receiver_local_wrapper",
+    "rust_repo_inherent_receiver_module_type_shadow",
+    "rust_diff_inherent_receiver_module_type_shadow",
+    "rust_repo_inherent_receiver_dormant_body",
+    "rust_diff_inherent_receiver_dormant_body",
+    "rust_repo_inherent_receiver_free_helper_identity",
+    "rust_diff_inherent_receiver_free_helper_identity",
+    "rust_repo_inherent_receiver_helper_scope_shadow",
+    "rust_repo_inherent_receiver_helper_type_parameter",
+    "rust_diff_inherent_receiver_helper_scope_shadow"
+  ],
+  "main_added": [
+    "rust_test_compared_with_non_literal_not_exact",
+    "rust_test_cast_to_integer_not_exact",
+    "ts_test_rewritten_local_whole_result_stays_weakly_exposed"
+  ]
+}

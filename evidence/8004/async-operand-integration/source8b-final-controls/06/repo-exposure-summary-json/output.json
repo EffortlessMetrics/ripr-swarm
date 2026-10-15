@@ -1,0 +1,76 @@
+{
+  "basis": "canonical_actionable_gap",
+  "format": "repo-exposure-summary-json",
+  "limits": {
+    "top_files_limit": 25,
+    "top_files_total": 1,
+    "top_files_truncated": false
+  },
+  "metadata": {
+    "base": null,
+    "head": "HEAD",
+    "mode": "ready",
+    "root": "/workspace/async8004-evidence/source8b-final-controls/06/repo-exposure-summary-json"
+  },
+  "metrics": {
+    "canonical_gap_records": 0,
+    "grip_class": {
+      "activation_unknown": 0,
+      "discrimination_unknown": 0,
+      "intentional": 0,
+      "observation_unknown": 0,
+      "opaque": 0,
+      "propagation_unknown": 0,
+      "reachable_unrevealed": 0,
+      "strongly_gripped": 5,
+      "suppressed": 0,
+      "ungripped": 0,
+      "weakly_gripped": 0
+    },
+    "headline_eligible_seams": 0,
+    "raw_actionable_seam_records": 0,
+    "raw_seams": 5,
+    "suppressed_exposure_gaps": 0,
+    "unsuppressed_exposure_gaps": 0
+  },
+  "reason_breakdown": {
+    "actionability": {},
+    "gap_state": {
+      "already_observed": 5
+    },
+    "grip_class": {
+      "activation_unknown": 0,
+      "discrimination_unknown": 0,
+      "intentional": 0,
+      "observation_unknown": 0,
+      "opaque": 0,
+      "propagation_unknown": 0,
+      "reachable_unrevealed": 0,
+      "strongly_gripped": 5,
+      "suppressed": 0,
+      "ungripped": 0,
+      "weakly_gripped": 0
+    },
+    "seam_kind": {}
+  },
+  "ripr_version": "0.11.0",
+  "schema_version": "0.1",
+  "scope": "repo",
+  "tool": "ripr",
+  "top_files": [
+    {
+      "canonical_gap_records": 0,
+      "file": "src/lib.rs",
+      "headline_eligible_seams": 0,
+      "raw_seams": 5,
+      "reason_breakdown": {
+        "actionability": {},
+        "grip_class": {
+          "strongly_gripped": 5
+        }
+      },
+      "suppressed_exposure_gaps": 0,
+      "unsuppressed_exposure_gaps": 0
+    }
+  ]
+}

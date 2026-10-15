@@ -1,0 +1,150 @@
+{
+  "schema_version": "0.4",
+  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:3ba19d78f2971adb","mode":"ready","profile":"ready","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:33d97da65fa2c7912e95b7b3efe5c004d25f338aafa90bbf087d89cea7b96be6","generated_at":"unix_ms:1792072619892","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/workspace/async8004-evidence/source8b-final-controls/11/repo-exposure-json"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:3ba19d78f2971adb;revision:unavailable"},
+  "source_subject": {"corpus":{"cache_schema_version":"1.74","files_content_hash":"2caece56c0db1a5e","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:1e27c4d74561d38b298071d9c2caaa7177b827724331a0d7f3399a9d77219921","path":"src/lib.rs"}]},
+  "scope": "repo",
+  "run_status": "complete",
+  "metrics": {
+    "seams_total": 5,
+    "headline_eligible": 0,
+    "strongly_gripped": 5,
+    "weakly_gripped": 0,
+    "ungripped": 0,
+    "reachable_unrevealed": 0,
+    "activation_unknown": 0,
+    "propagation_unknown": 0,
+    "observation_unknown": 0,
+    "discrimination_unknown": 0,
+    "opaque": 0,
+    "intentional": 0,
+    "suppressed": 0
+  },
+  "seams": [
+    {
+      "seam_id": "87333f71c0c4ad19",
+      "kind": "match_arm",
+      "file": "src/lib.rs",
+      "line": 5,
+      "owner": "src/lib.rs::impl JsonValue::as_object",
+      "expression": "match self",
+      "grip_class": "strongly_gripped",
+      "headline_eligible": false,
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "yes"
+      },
+      "related_tests_total": 1,
+      "related_tests": [
+        {"name": "actual", "file": "src/lib.rs", "line": 13, "oracle_kind": "whole_object_equality", "oracle_strength": "strong", "evidence_summary": "whole-object equality", "relation_reason": "helper_owner_call", "relation_confidence": "high"}
+      ],
+      "observed_values": [],
+      "missing_discriminators": [],
+      "evidence_record": {"actionability":{"class":"not_policy_relevant","has_concrete_guidance":false,"reason":"seam is already gripped or intentionally non-actionable under current policy","signals":{"assertion_shape":false,"candidate_value":false,"missing_discriminator":false,"recommended_test_target":true,"related_test":true,"verification_command":false}},"calibration":{"agreement":"no_runtime_data","availability":"not_imported","confidence":"unknown"},"canonical_gap_group_size":null,"canonical_gap_id":null,"canonical_gap_reason":null,"canonical_item":{"actionability":"already_observed","canonical_gap_id":null,"canonical_item_kind":"observed","command_specs":{"receipt":null,"verify":null},"confidence":{"basis":"static_only","notes":["no imported runtime calibration data"]},"evidence_class":"match_arm","gap_state":"already_observed","group_reason":null,"primary_anchor":{"file":"src/lib.rs","kind":"strongly_gripped","line":5,"reason":"record_location","source_id":"87333f71c0c4ad19"},"raw_group_size":1,"raw_spans":[{"end_line":5,"file":"src/lib.rs","kind":"strongly_gripped","source_id":"87333f71c0c4ad19","start_line":5}],"receipt_command":null,"recommended_repair":"No new RIPR action; current static evidence already observes this seam.","related_test":{"file":"src/lib.rs","line":13,"name":"actual","reason":"helper_owner_call"},"repair_command":null,"repair_route":null,"static_limitations":[],"verify_command":null,"why":"seam is already gripped or intentionally non-actionable under current policy"},"evidence_path":{"activate":{"confidence":"medium","state":"yes","summary":"Observed helper owner call for value-insensitive seam `match self`"},"discriminate":{"confidence":"medium","state":"yes","summary":"Strongest oracle for seam kind `match_arm` is `strong` (kind-match true)"},"observe":{"confidence":"medium","state":"yes","summary":"Observation evidence is `yes`"},"propagate":{"confidence":"low","state":"yes","summary":"Static propagation to `return_value` sink is yes"},"reach":{"confidence":"medium","state":"yes","summary":"Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: actual"}},"grip_class":"strongly_gripped","headline_eligible":false,"location":{"file":"src/lib.rs","line":5},"missing_discriminators":[],"observed_values":[],"owner":"src/lib.rs::impl JsonValue::as_object","presentation_text":null,"raw_findings":[{"evidence_record_ref":"87333f71c0c4ad19","expression":"match self","file":"src/lib.rs","kind":"strongly_gripped","language":"rust","language_status":"stable","line":5,"probe_kind":"match_arm","source_id":"87333f71c0c4ad19"}],"recommendation":{"action":"no_action","assertion_shape":null,"candidate_values":[],"nearest_test_to_imitate":{"evidence_summary":"whole-object equality","file":"src/lib.rs","line":13,"name":"actual","oracle_kind":"whole_object_equality","oracle_semantics":{"missing":"field-specific intent only if the whole-object assertion is too broad to review","observes":"whole output object equality","upgrade_suggestion":null},"oracle_strength":"strong","relation_confidence":"high","relation_reason":"helper_owner_call"},"reason":"seam is already gripped or intentionally non-actionable under current policy","recommended_test":null,"verify_command":null},"related_tests":[{"evidence_summary":"whole-object equality","file":"src/lib.rs","line":13,"name":"actual","oracle_kind":"whole_object_equality","oracle_semantics":{"missing":"field-specific intent only if the whole-object assertion is too broad to review","observes":"whole output object equality","upgrade_suggestion":null},"oracle_strength":"strong","relation_confidence":"high","relation_reason":"helper_owner_call"}],"related_tests_total":1,"schema_version":"0.1","seam_id":"87333f71c0c4ad19","seam_kind":"match_arm","static_limitations":[]}
+    },
+    {
+      "seam_id": "87224c71c0b64ffd",
+      "kind": "match_arm",
+      "file": "src/lib.rs",
+      "line": 6,
+      "owner": "src/lib.rs::impl JsonValue::as_object",
+      "expression": "Self::Object(value) =>",
+      "grip_class": "strongly_gripped",
+      "headline_eligible": false,
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "yes"
+      },
+      "related_tests_total": 1,
+      "related_tests": [
+        {"name": "actual", "file": "src/lib.rs", "line": 13, "oracle_kind": "whole_object_equality", "oracle_strength": "strong", "evidence_summary": "whole-object equality", "relation_reason": "helper_owner_call", "relation_confidence": "high"}
+      ],
+      "observed_values": [],
+      "missing_discriminators": [],
+      "evidence_record": {"actionability":{"class":"not_policy_relevant","has_concrete_guidance":false,"reason":"seam is already gripped or intentionally non-actionable under current policy","signals":{"assertion_shape":false,"candidate_value":false,"missing_discriminator":false,"recommended_test_target":true,"related_test":true,"verification_command":false}},"calibration":{"agreement":"no_runtime_data","availability":"not_imported","confidence":"unknown"},"canonical_gap_group_size":null,"canonical_gap_id":null,"canonical_gap_reason":null,"canonical_item":{"actionability":"already_observed","canonical_gap_id":null,"canonical_item_kind":"observed","command_specs":{"receipt":null,"verify":null},"confidence":{"basis":"static_only","notes":["no imported runtime calibration data"]},"evidence_class":"match_arm","gap_state":"already_observed","group_reason":null,"primary_anchor":{"file":"src/lib.rs","kind":"strongly_gripped","line":6,"reason":"record_location","source_id":"87224c71c0b64ffd"},"raw_group_size":1,"raw_spans":[{"end_line":6,"file":"src/lib.rs","kind":"strongly_gripped","source_id":"87224c71c0b64ffd","start_line":6}],"receipt_command":null,"recommended_repair":"No new RIPR action; current static evidence already observes this seam.","related_test":{"file":"src/lib.rs","line":13,"name":"actual","reason":"helper_owner_call"},"repair_command":null,"repair_route":null,"static_limitations":[],"verify_command":null,"why":"seam is already gripped or intentionally non-actionable under current policy"},"evidence_path":{"activate":{"confidence":"medium","state":"yes","summary":"Observed helper owner call for value-insensitive seam `Self::Object(value) =>`"},"discriminate":{"confidence":"medium","state":"yes","summary":"Strongest oracle for seam kind `match_arm` is `strong` (kind-match true)"},"observe":{"confidence":"medium","state":"yes","summary":"Observation evidence is `yes`"},"propagate":{"confidence":"low","state":"yes","summary":"Static propagation to `return_value` sink is yes"},"reach":{"confidence":"medium","state":"yes","summary":"Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: actual"}},"grip_class":"strongly_gripped","headline_eligible":false,"location":{"file":"src/lib.rs","line":6},"missing_discriminators":[],"observed_values":[],"owner":"src/lib.rs::impl JsonValue::as_object","presentation_text":null,"raw_findings":[{"evidence_record_ref":"87224c71c0b64ffd","expression":"Self::Object(value) =>","file":"src/lib.rs","kind":"strongly_gripped","language":"rust","language_status":"stable","line":6,"probe_kind":"match_arm","source_id":"87224c71c0b64ffd"}],"recommendation":{"action":"no_action","assertion_shape":null,"candidate_values":[],"nearest_test_to_imitate":{"evidence_summary":"whole-object equality","file":"src/lib.rs","line":13,"name":"actual","oracle_kind":"whole_object_equality","oracle_semantics":{"missing":"field-specific intent only if the whole-object assertion is too broad to review","observes":"whole output object equality","upgrade_suggestion":null},"oracle_strength":"strong","relation_confidence":"high","relation_reason":"helper_owner_call"},"reason":"seam is already gripped or intentionally non-actionable under current policy","recommended_test":null,"verify_command":null},"related_tests":[{"evidence_summary":"whole-object equality","file":"src/lib.rs","line":13,"name":"actual","oracle_kind":"whole_object_equality","oracle_semantics":{"missing":"field-specific intent only if the whole-object assertion is too broad to review","observes":"whole output object equality","upgrade_suggestion":null},"oracle_strength":"strong","relation_confidence":"high","relation_reason":"helper_owner_call"}],"related_tests_total":1,"schema_version":"0.1","seam_id":"87224c71c0b64ffd","seam_kind":"match_arm","static_limitations":[]}
+    },
+    {
+      "seam_id": "db956cf6daa5f406",
+      "kind": "return_value",
+      "file": "src/lib.rs",
+      "line": 6,
+      "column": 36,
+      "end_line": 6,
+      "end_column": 48,
+      "owner": "src/lib.rs::impl JsonValue::as_object",
+      "expression": "Some(*value)",
+      "grip_class": "strongly_gripped",
+      "headline_eligible": false,
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "yes"
+      },
+      "related_tests_total": 1,
+      "related_tests": [
+        {"name": "actual", "file": "src/lib.rs", "line": 13, "oracle_kind": "whole_object_equality", "oracle_strength": "strong", "evidence_summary": "whole-object equality", "relation_reason": "helper_owner_call", "relation_confidence": "high"}
+      ],
+      "observed_values": [],
+      "missing_discriminators": [],
+      "evidence_record": {"actionability":{"class":"not_policy_relevant","has_concrete_guidance":false,"reason":"seam is already gripped or intentionally non-actionable under current policy","signals":{"assertion_shape":false,"candidate_value":false,"missing_discriminator":false,"recommended_test_target":true,"related_test":true,"verification_command":false}},"calibration":{"agreement":"no_runtime_data","availability":"not_imported","confidence":"unknown"},"canonical_gap_group_size":null,"canonical_gap_id":null,"canonical_gap_reason":null,"canonical_item":{"actionability":"already_observed","canonical_gap_id":null,"canonical_item_kind":"observed","command_specs":{"receipt":null,"verify":null},"confidence":{"basis":"static_only","notes":["no imported runtime calibration data"]},"evidence_class":"return_value","gap_state":"already_observed","group_reason":null,"primary_anchor":{"file":"src/lib.rs","kind":"strongly_gripped","line":6,"reason":"record_location","source_id":"db956cf6daa5f406"},"raw_group_size":1,"raw_spans":[{"end_line":6,"file":"src/lib.rs","kind":"strongly_gripped","source_id":"db956cf6daa5f406","start_line":6}],"receipt_command":null,"recommended_repair":"No new RIPR action; current static evidence already observes this seam.","related_test":{"file":"src/lib.rs","line":13,"name":"actual","reason":"helper_owner_call"},"repair_command":null,"repair_route":null,"static_limitations":[],"verify_command":null,"why":"seam is already gripped or intentionally non-actionable under current policy"},"evidence_path":{"activate":{"confidence":"medium","state":"yes","summary":"Observed helper owner call for value-insensitive seam `Some(*value)`"},"discriminate":{"confidence":"medium","state":"yes","summary":"Strongest oracle for seam kind `return_value` is `strong` (kind-match true)"},"observe":{"confidence":"medium","state":"yes","summary":"Observation evidence is `yes`"},"propagate":{"confidence":"low","state":"yes","summary":"Static propagation to `return_value` sink is yes"},"reach":{"confidence":"medium","state":"yes","summary":"Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: actual"}},"grip_class":"strongly_gripped","headline_eligible":false,"location":{"file":"src/lib.rs","line":6},"missing_discriminators":[],"observed_values":[],"owner":"src/lib.rs::impl JsonValue::as_object","presentation_text":null,"raw_findings":[{"evidence_record_ref":"db956cf6daa5f406","expression":"Some(*value)","file":"src/lib.rs","kind":"strongly_gripped","language":"rust","language_status":"stable","line":6,"probe_kind":"return_value","source_id":"db956cf6daa5f406"}],"recommendation":{"action":"no_action","assertion_shape":null,"candidate_values":[],"nearest_test_to_imitate":{"evidence_summary":"whole-object equality","file":"src/lib.rs","line":13,"name":"actual","oracle_kind":"whole_object_equality","oracle_semantics":{"missing":"field-specific intent only if the whole-object assertion is too broad to review","observes":"whole output object equality","upgrade_suggestion":null},"oracle_strength":"strong","relation_confidence":"high","relation_reason":"helper_owner_call"},"reason":"seam is already gripped or intentionally non-actionable under current policy","recommended_test":null,"verify_command":null},"related_tests":[{"evidence_summary":"whole-object equality","file":"src/lib.rs","line":13,"name":"actual","oracle_kind":"whole_object_equality","oracle_semantics":{"missing":"field-specific intent only if the whole-object assertion is too broad to review","observes":"whole output object equality","upgrade_suggestion":null},"oracle_strength":"strong","relation_confidence":"high","relation_reason":"helper_owner_call"}],"related_tests_total":1,"schema_version":"0.1","seam_id":"db956cf6daa5f406","seam_kind":"return_value","static_limitations":[]}
+    },
+    {
+      "seam_id": "6db83e71b27aea52",
+      "kind": "match_arm",
+      "file": "src/lib.rs",
+      "line": 7,
+      "owner": "src/lib.rs::impl JsonValue::as_object",
+      "expression": "_ =>",
+      "grip_class": "strongly_gripped",
+      "headline_eligible": false,
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "yes"
+      },
+      "related_tests_total": 1,
+      "related_tests": [
+        {"name": "actual", "file": "src/lib.rs", "line": 13, "oracle_kind": "whole_object_equality", "oracle_strength": "strong", "evidence_summary": "whole-object equality", "relation_reason": "helper_owner_call", "relation_confidence": "high"}
+      ],
+      "observed_values": [],
+      "missing_discriminators": [],
+      "evidence_record": {"actionability":{"class":"not_policy_relevant","has_concrete_guidance":false,"reason":"seam is already gripped or intentionally non-actionable under current policy","signals":{"assertion_shape":false,"candidate_value":false,"missing_discriminator":false,"recommended_test_target":true,"related_test":true,"verification_command":false}},"calibration":{"agreement":"no_runtime_data","availability":"not_imported","confidence":"unknown"},"canonical_gap_group_size":null,"canonical_gap_id":null,"canonical_gap_reason":null,"canonical_item":{"actionability":"already_observed","canonical_gap_id":null,"canonical_item_kind":"observed","command_specs":{"receipt":null,"verify":null},"confidence":{"basis":"static_only","notes":["no imported runtime calibration data"]},"evidence_class":"match_arm","gap_state":"already_observed","group_reason":null,"primary_anchor":{"file":"src/lib.rs","kind":"strongly_gripped","line":7,"reason":"record_location","source_id":"6db83e71b27aea52"},"raw_group_size":1,"raw_spans":[{"end_line":7,"file":"src/lib.rs","kind":"strongly_gripped","source_id":"6db83e71b27aea52","start_line":7}],"receipt_command":null,"recommended_repair":"No new RIPR action; current static evidence already observes this seam.","related_test":{"file":"src/lib.rs","line":13,"name":"actual","reason":"helper_owner_call"},"repair_command":null,"repair_route":null,"static_limitations":[],"verify_command":null,"why":"seam is already gripped or intentionally non-actionable under current policy"},"evidence_path":{"activate":{"confidence":"medium","state":"yes","summary":"Observed helper owner call for value-insensitive seam `_ =>`"},"discriminate":{"confidence":"medium","state":"yes","summary":"Strongest oracle for seam kind `match_arm` is `strong` (kind-match true)"},"observe":{"confidence":"medium","state":"yes","summary":"Observation evidence is `yes`"},"propagate":{"confidence":"low","state":"yes","summary":"Static propagation to `return_value` sink is yes"},"reach":{"confidence":"medium","state":"yes","summary":"Related tests appear to reach `src/lib.rs::impl JsonValue::as_object`: actual"}},"grip_class":"strongly_gripped","headline_eligible":false,"location":{"file":"src/lib.rs","line":7},"missing_discriminators":[],"observed_values":[],"owner":"src/lib.rs::impl JsonValue::as_object","presentation_text":null,"raw_findings":[{"evidence_record_ref":"6db83e71b27aea52","expression":"_ =>","file":"src/lib.rs","kind":"strongly_gripped","language":"rust","language_status":"stable","line":7,"probe_kind":"match_arm","source_id":"6db83e71b27aea52"}],"recommendation":{"action":"no_action","assertion_shape":null,"candidate_values":[],"nearest_test_to_imitate":{"evidence_summary":"whole-object equality","file":"src/lib.rs","line":13,"name":"actual","oracle_kind":"whole_object_equality","oracle_semantics":{"missing":"field-specific intent only if the whole-object assertion is too broad to review","observes":"whole output object equality","upgrade_suggestion":null},"oracle_strength":"strong","relation_confidence":"high","relation_reason":"helper_owner_call"},"reason":"seam is already gripped or intentionally non-actionable under current policy","recommended_test":null,"verify_command":null},"related_tests":[{"evidence_summary":"whole-object equality","file":"src/lib.rs","line":13,"name":"actual","oracle_kind":"whole_object_equality","oracle_semantics":{"missing":"field-specific intent only if the whole-object assertion is too broad to review","observes":"whole output object equality","upgrade_suggestion":null},"oracle_strength":"strong","relation_confidence":"high","relation_reason":"helper_owner_call"}],"related_tests_total":1,"schema_version":"0.1","seam_id":"6db83e71b27aea52","seam_kind":"match_arm","static_limitations":[]}
+    },
+    {
+      "seam_id": "daa63157ce4f2a59",
+      "kind": "return_value",
+      "file": "src/lib.rs",
+      "line": 11,
+      "column": 72,
+      "end_line": 11,
+      "end_column": 89,
+      "owner": "src/lib.rs::read_as_object",
+      "expression": "value.as_object()",
+      "grip_class": "strongly_gripped",
+      "headline_eligible": false,
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "yes"
+      },
+      "related_tests_total": 1,
+      "related_tests": [
+        {"name": "actual", "file": "src/lib.rs", "line": 13, "oracle_kind": "whole_object_equality", "oracle_strength": "strong", "evidence_summary": "whole-object equality", "relation_reason": "direct_owner_call", "relation_confidence": "high"}
+      ],
+      "observed_values": [],
+      "missing_discriminators": [],
+      "evidence_record": {"actionability":{"class":"not_policy_relevant","has_concrete_guidance":false,"reason":"seam is already gripped or intentionally non-actionable under current policy","signals":{"assertion_shape":false,"candidate_value":false,"missing_discriminator":false,"recommended_test_target":true,"related_test":true,"verification_command":false}},"calibration":{"agreement":"no_runtime_data","availability":"not_imported","confidence":"unknown"},"canonical_gap_group_size":null,"canonical_gap_id":null,"canonical_gap_reason":null,"canonical_item":{"actionability":"already_observed","canonical_gap_id":null,"canonical_item_kind":"observed","command_specs":{"receipt":null,"verify":null},"confidence":{"basis":"static_only","notes":["no imported runtime calibration data"]},"evidence_class":"return_value","gap_state":"already_observed","group_reason":null,"primary_anchor":{"file":"src/lib.rs","kind":"strongly_gripped","line":11,"reason":"record_location","source_id":"daa63157ce4f2a59"},"raw_group_size":1,"raw_spans":[{"end_line":11,"file":"src/lib.rs","kind":"strongly_gripped","source_id":"daa63157ce4f2a59","start_line":11}],"receipt_command":null,"recommended_repair":"No new RIPR action; current static evidence already observes this seam.","related_test":{"file":"src/lib.rs","line":13,"name":"actual","reason":"direct_owner_call"},"repair_command":null,"repair_route":null,"static_limitations":[],"verify_command":null,"why":"seam is already gripped or intentionally non-actionable under current policy"},"evidence_path":{"activate":{"confidence":"medium","state":"yes","summary":"Observed direct owner call for value-insensitive seam `value.as_object()`"},"discriminate":{"confidence":"medium","state":"yes","summary":"Strongest oracle for seam kind `return_value` is `strong` (kind-match true)"},"observe":{"confidence":"medium","state":"yes","summary":"Observation evidence is `yes`"},"propagate":{"confidence":"low","state":"yes","summary":"Static propagation to `return_value` sink is yes"},"reach":{"confidence":"medium","state":"yes","summary":"Related tests appear to reach `src/lib.rs::read_as_object`: actual"}},"grip_class":"strongly_gripped","headline_eligible":false,"location":{"file":"src/lib.rs","line":11},"missing_discriminators":[],"observed_values":[],"owner":"src/lib.rs::read_as_object","presentation_text":null,"raw_findings":[{"evidence_record_ref":"daa63157ce4f2a59","expression":"value.as_object()","file":"src/lib.rs","kind":"strongly_gripped","language":"rust","language_status":"stable","line":11,"probe_kind":"return_value","source_id":"daa63157ce4f2a59"}],"recommendation":{"action":"no_action","assertion_shape":null,"candidate_values":[],"nearest_test_to_imitate":{"evidence_summary":"whole-object equality","file":"src/lib.rs","line":13,"name":"actual","oracle_kind":"whole_object_equality","oracle_semantics":{"missing":"field-specific intent only if the whole-object assertion is too broad to review","observes":"whole output object equality","upgrade_suggestion":null},"oracle_strength":"strong","relation_confidence":"high","relation_reason":"direct_owner_call"},"reason":"seam is already gripped or intentionally non-actionable under current policy","recommended_test":null,"verify_command":null},"related_tests":[{"evidence_summary":"whole-object equality","file":"src/lib.rs","line":13,"name":"actual","oracle_kind":"whole_object_equality","oracle_semantics":{"missing":"field-specific intent only if the whole-object assertion is too broad to review","observes":"whole output object equality","upgrade_suggestion":null},"oracle_strength":"strong","relation_confidence":"high","relation_reason":"direct_owner_call"}],"related_tests_total":1,"schema_version":"0.1","seam_id":"daa63157ce4f2a59","seam_kind":"return_value","static_limitations":[]}
+    }
+  ]
+}

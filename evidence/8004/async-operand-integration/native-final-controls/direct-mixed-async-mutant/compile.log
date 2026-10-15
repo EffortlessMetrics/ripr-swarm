@@ -1,0 +1,21 @@
+warning: unused variable: `value`
+ --> /workspace/async8004-evidence/native-final-controls/direct-mixed-async-mutant/source.rs:6:26
+  |
+6 |             Self::Object(value) => None,
+  |                          ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+  |
+  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `Null` is never constructed
+ --> /workspace/async8004-evidence/native-final-controls/direct-mixed-async-mutant/source.rs:2:42
+  |
+2 | pub(crate) enum JsonValue { Object(u32), Null }
+  |                 ---------                ^^^^
+  |                 |
+  |                 variant in this enum
+  |
+  = note: `JsonValue` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: 2 warnings emitted
+
