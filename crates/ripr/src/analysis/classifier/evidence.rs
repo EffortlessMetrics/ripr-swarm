@@ -11,9 +11,9 @@ use crate::analysis::classify::{
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
     helper_pins_owner_call, infection_evidence_with_boundary_input, local_flow_sinks,
     method_cannot_store, observes_returned_element_field, operand_only_pin,
-    oracle_crediting_relations, owner_may_be_reached_unseen, owner_touches_field_only_at,
-    package_prefix, parameter_rebound, propagation_evidence_with_witness, reach_evidence,
-    reveal_outcome, same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
+    oracle_crediting_relations, owner_touches_field_only_at, package_prefix, parameter_rebound,
+    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
+    same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
     unconditional_owner_insert_field,
 };
 use crate::analysis::extract::mask_comments_and_strings;
@@ -114,7 +114,7 @@ impl ClassifiedProbeEvidence {
         let reach = reach_evidence(&context.related_tests, context.owner_fn, || {
             context
                 .owner_fn
-                .is_none_or(|owner| owner_may_be_reached_unseen(owner, context.index))
+                .is_none_or(|owner| context.owner_may_be_reached_unseen(owner))
         });
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
@@ -652,6 +652,14 @@ impl ClassifiedProbeEvidence {
                 owner_returns_value: context
                     .owner_fn
                     .is_none_or(|function| function_returns_value(function.body.as_str())),
+                owner_may_exit_before_probe: context.owner_fn.is_some_and(|function| {
+                    crate::analysis::classify::owner_may_exit_before_line(
+                        function.body.as_str(),
+                        function.start_line,
+                        context.probe.location.line,
+                        &context.probe.expression,
+                    )
+                }),
                 constructor_starts_empty: &|impl_type, ctor, field| {
                     // Memoized per probe: the derived-`Default` check parses
                     // the files declaring the type, once per question.
@@ -857,7 +865,7 @@ impl ClassifiedProbeEvidence {
         let reach_ruled_out = reach.state == StageState::No
             && context
                 .owner_fn
-                .is_some_and(|owner| !owner_may_be_reached_unseen(owner, context.index));
+                .is_some_and(|owner| !context.owner_may_be_reached_unseen(owner));
         // A weak stage is replaced too: with no reaching test, an
         // unconfirmed oracle (#5830 withholds confirmation from tokens that
         // only coincide with the owner's) is no discriminator at all.

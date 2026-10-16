@@ -1,0 +1,52 @@
+{
+  "case_id": "push-after-early-return-empty-assert",
+  "subject_id": "authored-push-after-early-return",
+  "diff": "cases/push-after-early-return-empty-assert.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 16
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "early_return_path_asserts_empty_collection",
+  "hard_case": "Before #8051, ripr read call_deletion and side_effect as exposed (the line still scored gap through a weakly_exposed field_construction finding): assert_eq!(p.log, vec![]) counted as an exact oracle for the push, though the test takes the early return and never runs it.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.log.push(Entry::Beat { n: 2 });",
+        "mutated_line": "self.log.push(Entry::Beat { n: 2 });",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: an unlocked beat logs Beat { n: 2 }, but the only test beats while locked"
+      },
+      {
+        "replacement": "",
+        "mutated_line": "",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: an unlocked beat logs nothing, but the only test beats while locked"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "locked_beat_logs_nothing sets locked = true, so beat() returns before the push and the log stays empty whatever the push does. An empty-collection expectation cannot confirm a push (#8051).",
+  "labeling_observation": {
+    "ripr_commit": "0d8bae7",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

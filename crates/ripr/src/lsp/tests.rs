@@ -7826,6 +7826,7 @@ fn agent_loop_command_payloads_stay_root_anchored_for_platform_roots() -> Result
     // literally: both build from the same resolution rule).
     let workspace = snapshot.root.to_string_lossy().into_owned();
     let root = shell_arg(&bound_root(&workspace));
+    let base = shell_arg("origin/main with space");
     let anchored = |tail: &str| shell_arg(&anchored_redirect_target(&workspace, tail));
     let commands = code_action_commands(&actions)?;
     let expected_commands = [
@@ -7854,7 +7855,7 @@ fn agent_loop_command_payloads_stay_root_anchored_for_platform_roots() -> Result
             "after_snapshot",
             "target/ripr/pilot/after.repo-exposure.json",
             format!(
-                "ripr check --root {root} --base 'origin/main with space' --mode ready --format repo-exposure-json > {}",
+                "ripr check --root {root} --base {base} --mode ready --format repo-exposure-json > {}",
                 anchored("target/ripr/pilot/after.repo-exposure.json"),
             ),
         ),
@@ -7921,7 +7922,9 @@ fn agent_loop_command_payloads_stay_root_anchored_for_platform_roots() -> Result
         // reproduces the validated location from any working directory; the
         // `--out` receipt form stays root-relative (ripr resolves it).
         if let Some(target) = copied.split("> ").nth(1) {
-            let unquoted = target.trim_matches('\'');
+            // Host-aware quoting (#7729): single quotes off Windows, the
+            // Windows console double-quote form on it.
+            let unquoted = target.trim_matches(|ch| ch == '\'' || ch == '"');
             assert!(
                 Path::new(unquoted).is_absolute(),
                 "redirect target must be absolute, got {copied}"

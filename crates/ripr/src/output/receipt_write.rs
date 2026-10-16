@@ -46,13 +46,17 @@ mod tests {
     #[test]
     fn receipt_write_command_emits_canonical_form_with_out_path() {
         // RIPR-SPEC-0079: receipt_command must start with `ripr receipt write --gap`.
+        // Host-aware quoting (#7729).
         assert_eq!(
             receipt_write_command(
                 "gap:rust:pricing:discount:threshold-boundary",
                 "cargo xtask fixtures boundary_gap",
                 Some("target/ripr/receipts/gap-rust-pricing.json"),
             ),
-            "ripr receipt write --gap gap:rust:pricing:discount:threshold-boundary --verify-command 'cargo xtask fixtures boundary_gap' --status not_run --out target/ripr/receipts/gap-rust-pricing.json"
+            format!(
+                "ripr receipt write --gap gap:rust:pricing:discount:threshold-boundary --verify-command {} --status not_run --out target/ripr/receipts/gap-rust-pricing.json",
+                crate::agent::loop_commands::shell_arg("cargo xtask fixtures boundary_gap")
+            )
         );
     }
 
@@ -64,7 +68,10 @@ mod tests {
                 "cargo xtask fixtures boundary_gap",
                 None,
             ),
-            "ripr receipt write --gap gap:rust:pricing:discount:threshold-boundary --verify-command 'cargo xtask fixtures boundary_gap' --status not_run"
+            format!(
+                "ripr receipt write --gap gap:rust:pricing:discount:threshold-boundary --verify-command {} --status not_run",
+                crate::agent::loop_commands::shell_arg("cargo xtask fixtures boundary_gap")
+            )
         );
     }
 

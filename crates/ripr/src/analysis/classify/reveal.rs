@@ -85,6 +85,12 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// owner (`s.place("A", 0);`) may have returned before its insert, so
     /// only a call whose result is consumed confirms a keyed read.
     pub(in crate::analysis) owner_returns_value: bool,
+    /// #8051: whether the owner body before the changed expression may
+    /// leave early (`if self.locked { return; }`, `?`, a panicking call),
+    /// including a guard sharing the changed line. Only then can a test
+    /// that expects the written collection empty have skipped the changed
+    /// push.
+    pub(in crate::analysis) owner_may_exit_before_probe: bool,
     /// RIPR-SPEC-0228 keyed reads: whether `(type, ctor, field)`, the
     /// constructor a test builds its binding with, leaves that map field
     /// empty (`builder_override::constructor_starts_empty`).
@@ -124,12 +130,55 @@ fn reveal_evidence(
             getter_reads_key: &|_, _, _| None,
             owner_argument_names: &[],
             owner_returns_value: true,
+            owner_may_exit_before_probe: false,
             constructor_starts_empty: &|_, _, _| false,
             call_cannot_store: &|_, _, _, _| None,
         },
         None,
     );
     (observe, discriminate, related)
+}
+
+/// [`reveal_evidence`] with the #8051 early-exit flag under the test's
+/// control, reporting the first related row's oracle strength.
+#[cfg(test)]
+fn reveal_evidence_with_exit(
+    probe: &Probe,
+    test: &TestSummary,
+    owner_may_exit_before_probe: bool,
+) -> (StageEvidence, OracleStrength) {
+    let (_, discriminate, related, _) = reveal_evidence_with_expression(
+        probe,
+        &probe.expression,
+        &[(test, RelationReason::DirectOwnerCall)],
+        &[],
+        &|_, _| false,
+        &|_, _| false,
+        &ReturnOracleAdmission {
+            owner_return_pin: &|_, _| false,
+            assertion_admitted: &|_, _| true,
+            sibling_exclusion_admitted: &|_, _| true,
+            proximity_may_reach_owner: &|_| false,
+            owner_parameters: &[],
+            expected_reaches_owner: &|_, _| false,
+            expected_operand_value: &|_, _| None,
+            effect_state_carried: &|_, _| true,
+            setter_writes_field: &|_, _, _| true,
+            collection_argument_observed: &|_, _| false,
+            getter_reads_field: &|_, _, _| false,
+            getter_reads_key: &|_, _, _| None,
+            owner_argument_names: &[],
+            owner_returns_value: true,
+            owner_may_exit_before_probe,
+            constructor_starts_empty: &|_, _, _| false,
+            call_cannot_store: &|_, _, _, _| None,
+        },
+        None,
+    );
+    let strength = related
+        .first()
+        .map_or(OracleStrength::None, |row| row.oracle_strength.clone());
+    (discriminate, strength)
 }
 
 #[cfg(test)]
@@ -1810,6 +1859,21 @@ fn analyze_related_assertions(
                         (return_admission.expected_operand_value)(test, operand)
                     })
                 });
+            // #8051: when the owner may leave before its push, a test that
+            // passes expecting the written collection empty took that exit,
+            // so it cannot tell a deleted or changed push from a kept one.
+            // Without an earlier exit the push ran, and a test that empties
+            // the collection again (`add(1); remove(1)`) can still catch a
+            // changed argument, so the assertion keeps its strength. Like a
+            // self-computed expected value, it then neither confirms
+            // observation nor pins the owner.
+            let empty_after_skipped_push = matched
+                && return_admission.owner_may_exit_before_probe
+                && is_effect_family(&probe.family)
+                && (field_write.is_some()
+                    || direct_collection_mutation_receiver(&probe.expression).is_some())
+                && super::propagation_witness::assertion_expects_empty_collection(&assertion.text);
+            let self_computed = self_computed || empty_after_skipped_push;
             // #6692: the owner pin is credited only through an assertion
             // that matched, from a test that may supply the oracle, with the
             // pin surviving the reveal-side defeats. The missing-field
@@ -4623,6 +4687,7 @@ mod tests {
             },
             owner_argument_names: &[],
             owner_returns_value: true,
+            owner_may_exit_before_probe: false,
             constructor_starts_empty: &|_, _, _| true,
             call_cannot_store: &|_, _, _, _| Some(EarlierWrite::Reads),
         };
@@ -5259,6 +5324,7 @@ mod tests {
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -5348,6 +5414,7 @@ mod tests {
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
                     owner_returns_value: true,
+                    owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
                 },
@@ -5524,6 +5591,7 @@ mod tests {
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
                     owner_returns_value: true,
+                    owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
                 },
@@ -5627,6 +5695,7 @@ mod tests {
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
                     owner_returns_value: true,
+                    owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
                 },
@@ -5987,6 +6056,7 @@ mod tests {
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -6066,6 +6136,7 @@ mod tests {
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -7723,6 +7794,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -7787,6 +7859,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -7822,6 +7895,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -7876,6 +7950,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -7932,6 +8007,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -8113,6 +8189,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -8151,6 +8228,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -8548,6 +8626,7 @@ return Err(\"typed pin\".into());
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
                     owner_returns_value: true,
+                    owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
                 },
@@ -8832,6 +8911,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -8931,6 +9011,7 @@ return Err(\"typed pin\".into());
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
                     owner_returns_value: true,
+                    owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
                 },
@@ -8973,6 +9054,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -9361,6 +9443,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -9569,6 +9652,93 @@ return Err(\"typed pin\".into());
         }
     }
 
+    /// #8051 / #8141 review: in every recognized form, an assertion
+    /// expecting the written collection empty caps both effect families at
+    /// weak and leaves the observation unconfirmed when the owner may
+    /// leave before the changed push. Without an earlier exit the push
+    /// ran, so the canonical form keeps its strength, and a non-empty
+    /// expectation is never capped. The owner-wide flag is the accepted
+    /// boundary: the cap cannot read which path one test took, so a test
+    /// that bypasses the exit and empties the collection again is capped
+    /// with it (recorded in RIPR-SPEC-0228).
+    #[test]
+    fn empty_collection_expectations_cap_effect_families_only_after_an_early_exit() {
+        let forms = [
+            "assert_eq!(items, vec![]);",
+            "assert_eq!(vec![], items);",
+            "assert_eq!(items, Vec::new());",
+            "assert_eq!(items, Vec::<Entry>::new());",
+            "assert_eq!(&items, &[]);",
+            "assert_eq!(items.len(), 0);",
+            "assert_eq!(0, items.len());",
+            "assert!(items.is_empty());",
+        ];
+        for family in [ProbeFamily::SideEffect, ProbeFamily::CallDeletion] {
+            for text in forms {
+                let probe = probe(family.clone(), "items.push(5)");
+                // The harness labels the assertion strong whole-object
+                // evidence, so only a cap can move the result to weak.
+                let test = test_with_assertions(
+                    "leaves_items_empty",
+                    vec![oracle(
+                        text,
+                        OracleKind::WholeObjectEquality,
+                        OracleStrength::Strong,
+                    )],
+                );
+                let (discriminate, strength) = reveal_evidence_with_exit(&probe, &test, true);
+                assert_eq!(
+                    discriminate.state,
+                    StageState::Weak,
+                    "{text} against {family:?} must not read exposed after a skippable push"
+                );
+                assert_eq!(strength, OracleStrength::Weak, "{text} against {family:?}");
+                assert!(
+                    discriminate.summary.contains("observation_unverified"),
+                    "{text} against {family:?} must not confirm a skipped push: got `{}`",
+                    discriminate.summary
+                );
+                // Without an earlier exit the push ran, and the canonical
+                // form keeps its strength.
+                if text == "assert_eq!(items, vec![]);" {
+                    let (discriminate, strength) = reveal_evidence_with_exit(&probe, &test, false);
+                    assert_eq!(
+                        discriminate.state,
+                        StageState::Yes,
+                        "{text} against {family:?} must stay exposed when the push cannot be skipped"
+                    );
+                    assert_eq!(
+                        strength,
+                        OracleStrength::Strong,
+                        "{text} against {family:?}"
+                    );
+                }
+            }
+            // The cap is about the empty expectation, not about the
+            // early-exit owner: a non-empty equality is never capped.
+            let probe = probe(family.clone(), "items.push(5)");
+            let seeded = test_with_assertions(
+                "logs_the_beat",
+                vec![oracle(
+                    "assert_eq!(items, vec![5]);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            let (discriminate, strength) = reveal_evidence_with_exit(&probe, &seeded, true);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "a non-empty expectation against {family:?} must stay exposed"
+            );
+            assert_eq!(
+                strength,
+                OracleStrength::Strong,
+                "a non-empty expectation against {family:?}"
+            );
+        }
+    }
+
     #[test]
     fn asserting_affected_collection_retains_confirmation_in_either_order() {
         let probe = probe(ProbeFamily::SideEffect, "items.push(5)");
@@ -9724,6 +9894,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },

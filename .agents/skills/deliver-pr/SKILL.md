@@ -20,6 +20,15 @@ One coherent claim has one current candidate, current proof and review for the a
 - `pr_contract:ordinary_squash_merge`
 - `pr_contract:local_commit_not_delivery`
 
+# Lifecycle orientation
+
+For work spanning product learning, ordinary delivery or release handoff, use
+[the lifecycle map](../../../docs/PRODUCT_LIFECYCLE.md). It connects existing
+owners rather than adding a mandatory document chain. Revisit test completeness
+and cost, simplification, documentation and product fit when the affected
+question needs another pass. The map distinguishes the late-CI migration target
+from active machinery; it does not replace current checks or authorize a cutover.
+
 # Procedure
 
 1. Hydrate the selected claim from the current user instruction, root `AGENTS.md`, the issue, governing artifacts, current source, live GitHub state, and any existing PR. Prior summaries and subagent reports are leads until verified.
