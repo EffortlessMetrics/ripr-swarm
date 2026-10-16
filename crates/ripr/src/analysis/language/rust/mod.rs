@@ -538,16 +538,23 @@ fn target_root_package_dir(path: &Path) -> Option<&Path> {
 /// can keep `cargo test` from running its target: `test`, `harness` or
 /// `required-features` (#8016). Cheap gate in front of the Cargo metadata
 /// probe, so a package without such a key never pays for it. An unreadable
-/// or unparsable manifest gates nothing.
+/// or unparsable manifest gates nothing. The probe reads the working tree, so
+/// a manifest whose analyzed bytes differ from the working-tree bytes (a
+/// committed-history run over uncommitted edits) gates nothing either: the
+/// skip decision abstains rather than mixing two snapshots.
 fn manifest_gates_test_targets(
     root: &Path,
     package_dir: &Path,
     cache: &mut BTreeMap<PathBuf, bool>,
 ) -> bool {
     *cache.entry(package_dir.to_path_buf()).or_insert_with(|| {
-        committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
+        let manifest_path = package_dir.join("Cargo.toml");
+        committed_source::read_source_bytes(root, &manifest_path)
             .ok()
             .flatten()
+            .filter(|analyzed| {
+                std::fs::read(root.join(&manifest_path)).is_ok_and(|worktree| &worktree == analyzed)
+            })
             .and_then(|bytes| String::from_utf8(bytes).ok())
             .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
             .and_then(|manifest| {
@@ -7543,6 +7550,52 @@ fn absent_delimiter_boundary_returns_head() {
             );
         }
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_manifest_edited_after_head_abstains_from_the_skip_decision() -> Result<(), String> {
+        // #8016 review: the gate reads the analyzed (HEAD) manifest while
+        // `cargo metadata` reads the working tree. When they differ, in
+        // either direction, the skip decision abstains and keeps the file.
+        use crate::analysis::committed_source::{CommittedSourceOverlay, with_overlay};
+        use std::sync::Arc;
+
+        const OFF: &str = "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n\n[[test]]\nname='x'\ntest=false\n";
+        const ON: &str = "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n\n[[test]]\nname='x'\ntest=true\n";
+        let source = b"#[test]\nfn check() {}\n".to_vec();
+        for (worktree, head, overlay_installed, kept) in [
+            (OFF, ON.as_bytes(), true, 1),
+            (ON, OFF.as_bytes(), true, 1),
+            (OFF, OFF.as_bytes(), true, 0),
+            (OFF, OFF.as_bytes(), false, 0),
+        ] {
+            let root = temp_root("manifest-edited-after-head")?;
+            write(&root.join("Cargo.toml"), worktree)?;
+            write(&root.join("src/lib.rs"), "")?;
+            write(&root.join("tests/x.rs"), "#[test]\nfn check() {}\n")?;
+            let loaded = vec![(PathBuf::from("tests/x.rs"), source.clone())];
+            let context = crate::analysis::workspace::SourceRoleContext::empty();
+            let head: &'static [u8] = Box::leak(head.to_vec().into_boxed_slice());
+            let overlay = overlay_installed.then(|| {
+                Arc::new(CommittedSourceOverlay::from_entries(
+                    &root,
+                    [("Cargo.toml", Some(head))],
+                ))
+            });
+
+            let remaining = with_overlay(overlay, || {
+                super::drop_unreached_test_files(&root, &context, &[], &[], loaded)
+            });
+
+            assert_eq!(
+                remaining.len(),
+                kept,
+                "head_matches_worktree={} overlay={overlay_installed}",
+                head == worktree.as_bytes()
+            );
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
         Ok(())
     }
 
