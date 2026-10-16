@@ -1,0 +1,159 @@
+{
+  "analysis_outcome": null,
+  "ci_artifacts": [
+    {
+      "name": "agent_status",
+      "path": "target/ripr/workflow/agent-status.json",
+      "state": "missing"
+    },
+    {
+      "name": "agent_status_markdown",
+      "path": "target/ripr/workflow/agent-status.md",
+      "state": "missing"
+    },
+    {
+      "name": "agent_workflow",
+      "path": "target/ripr/workflow/workflow.json",
+      "state": "missing"
+    },
+    {
+      "name": "agent_review_summary",
+      "path": "target/ripr/workflow/agent-review-summary.json",
+      "state": "missing"
+    },
+    {
+      "name": "agent_review_summary_markdown",
+      "path": "target/ripr/workflow/agent-review-summary.md",
+      "state": "missing"
+    },
+    {
+      "name": "analysis_outcome",
+      "path": "target/ripr/workflow/analysis-outcome.json",
+      "state": "missing"
+    },
+    {
+      "name": "agent_receipt",
+      "path": "target/ripr/reports/agent-receipt.json",
+      "state": "missing"
+    },
+    {
+      "name": "operator_cockpit",
+      "path": "target/ripr/reports/operator-cockpit.json",
+      "state": "missing"
+    },
+    {
+      "name": "operator_cockpit_markdown",
+      "path": "target/ripr/reports/operator-cockpit.md",
+      "state": "missing"
+    }
+  ],
+  "limits": {
+    "automatic_edits": false,
+    "generated_tests": false,
+    "runtime_mutation_execution": false,
+    "static_artifact_relationship": true
+  },
+  "next_command": {
+    "artifact": "target/ripr/pilot",
+    "command": "ripr pilot --root \"<cwd>/repo root\" --out \"<cwd>/repo root/target/ripr/pilot\"",
+    "reason": "no repair seam is known yet; `ripr pilot` inspects the workspace and selects the seam to repair",
+    "step": "select_seam"
+  },
+  "reviewer_summary": {
+    "evidence": "Run agent receipt after verify to create review evidence.",
+    "headline": "Review packet is incomplete for unknown seam: producer analysis outcome is unavailable.",
+    "remaining": "Run the next command listed by agent status.",
+    "reviewer_should_inspect": [
+      "target/ripr/reports/agent-receipt.json",
+      "target/ripr/workflow/agent-verify.json",
+      "target/ripr/workflow/analysis-outcome.json",
+      "target/ripr/reports/operator-cockpit.json",
+      "target/ripr/reports/repo-exposure.json"
+    ],
+    "what_changed": "No producer-backed completeness result is available; static review evidence cannot be treated as complete."
+  },
+  "root": "repo root",
+  "schema_version": "0.1",
+  "static_movement": {
+    "after_class": null,
+    "before_class": null,
+    "evidence_artifact": null,
+    "grip_class": null,
+    "next_action": {
+      "kind": "missing_artifact",
+      "recommended_action": "Run the next command listed by agent status.",
+      "summary": "Agent receipt is missing."
+    },
+    "state": "missing_artifact",
+    "summary": "Agent receipt is missing; static movement is not available.",
+    "verify_artifact": null
+  },
+  "status": "incomplete",
+  "surfaces": [
+    {
+      "label": "Agent status",
+      "name": "agent_status",
+      "path": "target/ripr/workflow/agent-status.json",
+      "required": true,
+      "state": "computed",
+      "status": "incomplete",
+      "summary": "0 of 7 required artifacts present, 7 missing, 0 warnings. Command: ripr agent status --root \"<cwd>/repo root\" --json > \"<cwd>/repo root/target/ripr/workflow/agent-status.json\""
+    },
+    {
+      "label": "Agent workflow",
+      "name": "agent_workflow",
+      "path": "target/ripr/workflow/workflow.json",
+      "required": false,
+      "state": "optional_missing",
+      "status": "optional_missing",
+      "summary": "Agent workflow artifact is not present."
+    },
+    {
+      "label": "Agent receipt",
+      "name": "agent_receipt",
+      "path": "target/ripr/reports/agent-receipt.json",
+      "required": true,
+      "state": "missing",
+      "status": "missing",
+      "summary": "Agent receipt artifact is missing."
+    },
+    {
+      "label": "Operator cockpit",
+      "name": "operator_cockpit",
+      "path": "target/ripr/reports/operator-cockpit.json",
+      "required": false,
+      "state": "optional_missing",
+      "status": "optional_missing",
+      "summary": "Operator cockpit artifact is not present."
+    },
+    {
+      "label": "Repo exposure",
+      "name": "repo_exposure",
+      "path": "target/ripr/reports/repo-exposure.json",
+      "required": false,
+      "state": "optional_missing",
+      "status": "optional_missing",
+      "summary": "Repo exposure artifact is not present."
+    },
+    {
+      "label": "LSP cockpit",
+      "name": "lsp_cockpit",
+      "path": "target/ripr/reports/lsp-cockpit.json",
+      "required": false,
+      "state": "optional_missing",
+      "status": "optional_missing",
+      "summary": "LSP cockpit artifact is not present."
+    },
+    {
+      "label": "Analysis outcome",
+      "name": "analysis_outcome",
+      "path": "target/ripr/workflow/analysis-outcome.json",
+      "required": true,
+      "state": "missing",
+      "status": "missing",
+      "summary": "Analysis outcome artifact is missing."
+    }
+  ],
+  "target_seam": null,
+  "tool": "ripr"
+}

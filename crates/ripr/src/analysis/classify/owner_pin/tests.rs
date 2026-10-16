@@ -5370,7 +5370,7 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
         ),
     ] {
         let index = index(&files);
-        let (ambiguous, _, _) =
+        let (ambiguous, _, _, _) =
             trusted_macro_sites_in(&index, &TargetRoots::new(&index), &unresolved);
         assert_eq!(ambiguous, full_scan(&index), "{files:?}");
         assert_eq!(
@@ -5408,6 +5408,162 @@ fn saturation_hint_skips_workspace_owned_globs() {
     ] {
         assert_eq!(may_saturate_macro_ambiguity(source), hinted, "{source}");
     }
+}
+
+/// #8255 fixture: every site class the workspace-site selection ranks. The
+/// foreign glob in `src/globs.rs` is a global may-rebind site for every
+/// trusted name and saturates the ambiguity set from the pass's likely
+/// files; the private `matches` definition in `src/lib.rs` is a
+/// crate-local rebinding there; and the two `tests/*.rs` files are
+/// separate test-target roots the crate-local site must not reach.
+const CONVERGENCE_GLOB: &str = "src/globs.rs";
+const CONVERGENCE_OTHER_TESTS: &str = "tests/other_tests.rs";
+
+fn convergence_index() -> RustIndex {
+    index(&[
+        (
+            CONVERGENCE_GLOB,
+            "use std::io::prelude::*;\npub fn drain(input: &mut Vec<u8>) {\n    input.clear();\n}\n",
+        ),
+        (
+            LIB,
+            "macro_rules! matches { ($($tokens:tt)*) => {} }\npub fn gate(value: u32) -> bool {\n    10 <= value\n}\n",
+        ),
+        (
+            TESTS,
+            "use demo::gate;\n\n#[test]\nfn pins() {\n    assert_eq!(gate(10), true);\n}\n",
+        ),
+        (
+            CONVERGENCE_OTHER_TESTS,
+            "use demo::gate;\n\n#[test]\nfn pins_elsewhere() {\n    assert_eq!(gate(11), true);\n}\n",
+        ),
+    ])
+}
+
+/// #8255: a refused assertion names its site from the single ambiguity
+/// pass. For every trusted name and every asking root — including a test
+/// with no recognized root — the retained lookup answers exactly what the
+/// replaced per-(name, test root) workspace scan answered.
+#[test]
+fn a_refusal_site_lookup_matches_the_replaced_scan_for_every_name_and_root() {
+    let index = convergence_index();
+    let syntax = OwnerPinSyntax::default();
+    let roots = syntax.target_roots(&index);
+    let resolved_modules = syntax.resolved_module_declarations(&index);
+    let resolved = move |path: &Path, line: usize, declaration: &str| {
+        resolved_modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
+    };
+    for name in assertion_context_macros() {
+        for test_root in [
+            None,
+            Some(Path::new(TESTS)),
+            Some(Path::new(CONVERGENCE_OTHER_TESTS)),
+            Some(Path::new(LIB)),
+            Some(Path::new("tests/unindexed_root.rs")),
+        ] {
+            assert_eq!(
+                syntax.workspace_macro_site(name, test_root, &index),
+                workspace_macro_binding_site(name, test_root, &index, roots, &resolved),
+                "{name} at {test_root:?}"
+            );
+        }
+    }
+    // A rebinding outranks a may-rebind site wherever each sits: the
+    // crate-local `matches` definition in src/lib.rs beats the earlier
+    // foreign glob for a test with no recognized root, while a test root
+    // sees only the glob.
+    let site = |test_root: Option<&Path>| {
+        syntax
+            .workspace_macro_site("matches", test_root, &index)
+            .map(|(path, site)| (path, site.kind))
+    };
+    assert_eq!(
+        site(None),
+        Some((PathBuf::from(LIB), MacroBindingKind::Definition))
+    );
+    for test_root in [
+        Some(Path::new(TESTS)),
+        Some(Path::new(CONVERGENCE_OTHER_TESTS)),
+    ] {
+        let located = site(test_root);
+        assert!(located.is_some(), "{test_root:?} must still be ambiguous");
+        let Some((path, kind)) = located else {
+            continue;
+        };
+        assert_eq!(path, Path::new(CONVERGENCE_GLOB));
+        assert!(
+            matches!(kind, MacroBindingKind::ForeignGlob(_)),
+            "{test_root:?}: {kind:?}"
+        );
+    }
+}
+
+/// #8255: the site lookup is bounded. The ambiguity pass saturates on the
+/// foreign glob and skips the rest of the index; the first site lookup
+/// completes that pass once, and however many (name, test root) refusals
+/// follow — across both test-target roots — this run pays at most two
+/// full-index passes instead of one per (name, test root).
+#[test]
+fn refusal_site_lookups_pay_at_most_two_full_index_passes() {
+    let index = convergence_index();
+    let syntax = OwnerPinSyntax::default();
+    assert!(
+        syntax.workspace_site_scan.borrow().as_ref().is_none(),
+        "no scan may run before a consumer asks"
+    );
+    for name in assertion_context_macros() {
+        for test_root in [
+            None,
+            Some(Path::new(TESTS)),
+            Some(Path::new(CONVERGENCE_OTHER_TESTS)),
+        ] {
+            let _ = syntax.workspace_macro_site(name, test_root, &index);
+        }
+    }
+    assert!(
+        syntax
+            .workspace_site_scan
+            .borrow()
+            .as_ref()
+            .is_some_and(|scan| scan.complete),
+        "the retained scan must complete on demand"
+    );
+    assert!(
+        syntax.workspace_scan_passes() <= 2,
+        "{} full-index passes for 96 lookups",
+        syntax.workspace_scan_passes()
+    );
+    // The production refusal path pays the same bound: a predicate probe's
+    // refused disclosures across both test roots add no third pass.
+    let owner = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "gate" && function.file == Path::new(LIB));
+    assert!(owner.is_some(), "the owner must be indexed from {LIB}");
+    let owner = owner.unwrap_or(index.functions().at(0));
+    let probe = predicate_probe(owner, "10 <= value");
+    for tests_path in [TESTS, CONVERGENCE_OTHER_TESTS] {
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(tests_path));
+        assert!(test.is_some(), "{tests_path} must be indexed");
+        let Some(test) = test else { continue };
+        let refusal = syntax.equality_assertion_refusal(&probe, test, &test.assertions[0], &index);
+        assert!(
+            matches!(
+                &refusal,
+                Some(AssertionRefusal::MacroBinding { name, site: Some((path, _)) })
+                    if name == "assert_eq" && path.as_path() == Path::new(CONVERGENCE_GLOB)
+            ),
+            "{tests_path}: {refusal:?}"
+        );
+    }
+    assert!(
+        syntax.workspace_scan_passes() <= 2,
+        "{} full-index passes after the refusal disclosures",
+        syntax.workspace_scan_passes()
+    );
 }
 
 const GAUGE_LIB: &str = "pub trait Gauge {\n    fn base(&self) -> usize;\n\n    fn tally(&self) -> usize {\n        self.base() + 1\n    }\n}\n\npub struct Meter;\n\nimpl Meter {\n    pub fn new() -> Self {\n        Meter\n    }\n}\n\nimpl Gauge for Meter {\n    fn base(&self) -> usize {\n        0\n    }\n}\n";

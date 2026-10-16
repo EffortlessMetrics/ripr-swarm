@@ -212,6 +212,14 @@ fn read_json(path: &Path) -> Result<Value, String> {
 }
 
 fn repo_inventory(fixture: &Fixture, cache: &Path) -> Result<Value, String> {
+    repo_inventory_with_first_file(fixture, cache, "src/lib.rs")
+}
+
+fn repo_inventory_with_first_file(
+    fixture: &Fixture,
+    cache: &Path,
+    first_file: &str,
+) -> Result<Value, String> {
     let root_arg = fixture.root.display().to_string();
     let output = run_subject(
         fixture,
@@ -239,8 +247,8 @@ fn repo_inventory(fixture: &Fixture, cache: &Path) -> Result<Value, String> {
         );
         assert_eq!(seams.len(), 1, "{report:#}");
         assert_eq!(
-            seams[0]["file"], "src/lib.rs",
-            "fixture cap must cut the changed files: {report:#}"
+            seams[0]["file"], first_file,
+            "fixture cap selected an unexpected first file: {report:#}"
         );
     } else {
         assert_eq!(report["run_status"], "complete", "{report:#}");
@@ -693,6 +701,244 @@ fn pilot_does_not_name_intentionally_deleted_file_as_absent() -> Result<(), Stri
             "{text}"
         );
     }
+    Ok(())
+}
+
+fn generated_policy_fixture() -> Result<Fixture, String> {
+    let fixture = fixture("pilot-capped-generated-policy", true)?;
+    // Reuse the bounded Git/process harness, then establish the exact nine-file
+    // baseline independently of the simpler missing-file fixtures above.
+    std::fs::remove_dir_all(fixture.root.join("src")).map_err(|error| error.to_string())?;
+    let paths = [
+        "present.rs",
+        "absent.rs",
+        "generated.rs",
+        "gen/ordinary.rs",
+        "explicit.rs",
+        "third_party/dependency.rs",
+        "vendorish.rs",
+        "percent%name.rs",
+        "header.rs",
+    ];
+    let mut lib = String::from(
+        "pub fn first(n: u32) -> bool { n > 100 }\npub fn second(n: u32) -> bool { n > 200 }\n",
+    );
+    for (index, relative) in paths.iter().enumerate() {
+        let path = fixture.root.join("src").join(relative);
+        let parent = path.parent().ok_or("source path has no parent")?;
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        let header = if *relative == "header.rs" {
+            "// @generated\n"
+        } else {
+            ""
+        };
+        std::fs::write(&path, format!("{header}{HIDDEN_BASE}"))
+            .map_err(|error| error.to_string())?;
+        lib.push_str(&format!("#[path = \"{relative}\"] pub mod item_{index};\n"));
+    }
+    std::fs::write(fixture.root.join("src/lib.rs"), lib).map_err(|error| error.to_string())?;
+    std::fs::write(
+        fixture.root.join("ripr.toml"),
+        "[languages.rust]\ngenerated_file_patterns = [\"src/explicit.rs\"]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    run_git(&fixture.root, &["add", "-A"])?;
+    run_git(
+        &fixture.root,
+        &["commit", "-m", "generated-policy baseline"],
+    )?;
+    run_git(
+        &fixture.root,
+        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+    )?;
+    for relative in paths {
+        let header = if relative == "header.rs" {
+            "// @generated\n"
+        } else {
+            ""
+        };
+        std::fs::write(
+            fixture.root.join("src").join(relative),
+            format!("{header}{HIDDEN_CHANGE}"),
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    std::fs::write(
+        fixture.root.join("src/third_party/.cargo-checksum.json"),
+        "{}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    run_git(&fixture.root, &["add", "."])?;
+    run_git(
+        &fixture.root,
+        &["commit", "-m", "nine predicates and vendor marker"],
+    )?;
+    Ok(fixture)
+}
+
+fn assert_absent_paths(pilot: &Pilot, expected: &[&str]) {
+    assert_eq!(
+        pilot.summary["current_change"]["absent_changed_files"],
+        json!(expected),
+        "{:#}",
+        pilot.summary
+    );
+    for text in [&pilot.stdout, &pilot.md] {
+        let warnings: Vec<_> = text
+            .lines()
+            .filter(|line| line.contains("changed_file_absent_from_worktree"))
+            .collect();
+        let mut paths: Vec<_> = warnings
+            .iter()
+            .filter_map(|line| {
+                line.split_once("changed_file_absent_from_worktree: ")
+                    .and_then(|(_, tail)| tail.split_once(';'))
+                    .map(|(path, _)| path.trim_matches('`'))
+            })
+            .collect();
+        assert_eq!(paths.len(), warnings.len(), "unparsed warning: {text}");
+        paths.sort_unstable();
+        assert_eq!(paths, expected, "wrong human absence population: {text}");
+    }
+}
+
+#[test]
+fn pilot_capped_absence_matches_uncapped_generated_policy_and_recovers() -> Result<(), String> {
+    let mut fixture = generated_policy_fixture()?;
+    let identity = committed_identity(&fixture.root)?;
+    assert_eq!(
+        identity.1.replace("\r\n", "\n"),
+        "src/absent.rs\nsrc/explicit.rs\nsrc/gen/ordinary.rs\nsrc/generated.rs\nsrc/header.rs\nsrc/percent%name.rs\nsrc/present.rs\nsrc/third_party/.cargo-checksum.json\nsrc/third_party/dependency.rs\nsrc/vendorish.rs\n"
+    );
+    run_git(&fixture.root, &["sparse-checkout", "init", "--no-cone"])?;
+    run_git(
+        &fixture.root,
+        &[
+            "sparse-checkout",
+            "set",
+            "--no-cone",
+            "/*",
+            "!/src/absent.rs",
+            "!/src/explicit.rs",
+            "!/src/gen/ordinary.rs",
+            "!/src/generated.rs",
+            "!/src/header.rs",
+            "!/src/percent%name.rs",
+            "!/src/third_party/dependency.rs",
+            "!/src/third_party/.cargo-checksum.json",
+            "!/src/vendorish.rs",
+        ],
+    )?;
+    assert!(fixture.root.join("src/present.rs").is_file());
+    for path in identity.1.lines().filter(|path| *path != "src/present.rs") {
+        assert!(!fixture.root.join(path).exists(), "not sparse: {path}");
+    }
+    assert_eq!(committed_identity(&fixture.root)?, identity);
+    let four = [
+        "src/absent.rs",
+        "src/header.rs",
+        "src/percent%name.rs",
+        "src/vendorish.rs",
+    ];
+    fixture.seam_limit = None;
+    let uncapped = pilot(&fixture, &fixture.scratch.join("uncapped-cache"), 9)?;
+    assert_absent_paths(&uncapped, &four);
+    fixture.seam_limit = Some("1");
+    let cache = fixture.scratch.join("capped-cache");
+    let ordinary = repo_inventory(&fixture, &fixture.scratch.join("ordinary-cache"))?;
+    let capped = pilot(&fixture, &cache, 9)?;
+    assert_absent_paths(&capped, &four);
+    assert_eq!(
+        capped.summary["current_change"]["top_recommendation_in_change"],
+        true
+    );
+    let warm = pilot(&fixture, &cache, 9)?;
+    assert_absent_paths(&warm, &four);
+    assert_cache_hit(&warm);
+    assert_eq!(semantic_summary(&warm), semantic_summary(&capped));
+    let cold = pilot(&fixture, &fixture.scratch.join("cold-cache"), 9)?;
+    assert_absent_paths(&cold, &four);
+    assert_eq!(semantic_summary(&cold), semantic_summary(&capped));
+    assert_eq!(repo_inventory(&fixture, &cache)?, ordinary);
+    std::fs::write(fixture.root.join("ripr.toml"), "[languages.rust]\ngenerated_file_patterns = [\"src/explicit.rs\"]\nhandwritten_files = [\"src/generated.rs\", \"src/gen/ordinary.rs\", \"src/explicit.rs\", \"src/third_party/dependency.rs\"]\n")
+        .map_err(|error| error.to_string())?;
+    let opted_in = pilot(&fixture, &cache, 9)?;
+    let six = [
+        "src/absent.rs",
+        "src/gen/ordinary.rs",
+        "src/generated.rs",
+        "src/header.rs",
+        "src/percent%name.rs",
+        "src/vendorish.rs",
+    ];
+    assert_absent_paths(&opted_in, &six);
+    assert!(
+        opted_in.stderr.contains("phase=cache_load status=miss "),
+        "{}",
+        opted_in.stderr
+    );
+    let opted_warm = pilot(&fixture, &cache, 9)?;
+    assert_absent_paths(&opted_warm, &six);
+    assert_cache_hit(&opted_warm);
+    std::fs::write(
+        fixture.root.join("ripr.toml"),
+        "[languages.rust]\ngenerated_file_patterns = [\"src/explicit.rs\"]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    run_git(&fixture.root, &["sparse-checkout", "disable"])?;
+    assert_eq!(committed_identity(&fixture.root)?, identity);
+    let ordinary_restored = repo_inventory_with_first_file(
+        &fixture,
+        &fixture.scratch.join("restored-ordinary"),
+        "src/absent.rs",
+    )?;
+    let restored = pilot(&fixture, &cache, 9)?;
+    assert_absent_paths(&restored, &[]);
+    assert!(
+        restored.stderr.contains("phase=cache_load status=miss "),
+        "{}",
+        restored.stderr
+    );
+    assert_eq!(
+        restored.summary["current_change"]["top_recommendation_in_change"], true,
+        "{:#}",
+        restored.summary
+    );
+    let restored_top = restored.summary["top_actionable_seams"]
+        .as_array()
+        .ok_or("missing restored ranking")?;
+    assert!(!restored_top.is_empty(), "restored ranking is empty");
+    for seam in restored_top {
+        assert!(
+            ![
+                "src/generated.rs",
+                "src/gen/ordinary.rs",
+                "src/explicit.rs",
+                "src/third_party/dependency.rs",
+                "src/header.rs"
+            ]
+            .iter()
+            .any(|path| seam["file"] == *path),
+            "{seam:#}"
+        );
+    }
+    let restored_warm = pilot(&fixture, &cache, 9)?;
+    assert_absent_paths(&restored_warm, &[]);
+    assert_cache_hit(&restored_warm);
+    assert_eq!(
+        semantic_summary(&restored_warm),
+        semantic_summary(&restored)
+    );
+    let restored_cold = pilot(&fixture, &fixture.scratch.join("restored-cold"), 9)?;
+    assert_absent_paths(&restored_cold, &[]);
+    assert_eq!(
+        semantic_summary(&restored_cold),
+        semantic_summary(&restored)
+    );
+    assert_eq!(
+        repo_inventory_with_first_file(&fixture, &cache, "src/absent.rs")?,
+        ordinary_restored
+    );
     Ok(())
 }
 

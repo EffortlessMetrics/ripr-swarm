@@ -123,6 +123,14 @@ If neither spelling represents the selected root losslessly in a portable comman
 and names the UTF-8-parent/alias remedy. A lossless absolute UTF-8 alias to a physical root
 with non-UTF-8 bytes still provides a usable command spelling.
 
+Existing-file refusals also print complete retry commands bound to the selected
+root. The config overwrite resets customizations; its dry-run preview writes
+nothing, and the `--ci github --force` alternative keeps the config while
+refreshing the workflow. These commands can be pasted from another directory.
+If the root cannot be represented losslessly, the refusal omits executable
+retries and names the UTF-8-parent/alias remedy; existing files remain intact.
+Where quoting differs, a labeled PowerShell form accompanies the command.
+
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `--root PATH` | current directory | Workspace root where `ripr.toml` should be written. |

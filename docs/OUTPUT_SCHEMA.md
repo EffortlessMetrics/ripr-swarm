@@ -1100,6 +1100,12 @@ projection and is not a reuse source. The artifact is a local, disposable
 derivative of one check run — it must never feed a support-tier row, gate,
 badge, or proof route, and it is not portable between machines.
 
+An `unsupported_input` outcome exits `2` with its ordinary incomplete report
+and direct-input navigation, without creating or replacing the artifact.
+Existing valid and advisory `partial_with_limitations` artifact behavior is
+unchanged. Older v1 artifacts do not record the producing outcome; regenerate
+an artifact if it may have come from an unsupported-input run.
+
 Envelope (`schema_version = "ripr-check-artifact-v1"`):
 
 ```json
@@ -3235,12 +3241,14 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
 {
   "version": "1.0",
   "tool": "ripr",
+  "canonical_gap_id": "gap:rust:src/lib.rs:discount:predicate_boundary:predicate:amount>=discount_threshold",
   "probe": {
     "id": "probe:src_lib.rs:predicate:bbaa2c25",
     "family": "predicate",
     "delta": "control",
     "file": "src/lib.rs",
     "line": 88,
+    "owner_signature": "discount(amount: u32, threshold: u32) -> Option<u32>",
     "changed_expression": "if amount >= discount_threshold {"
   },
   "ripr": {
@@ -3304,10 +3312,23 @@ producer-owned facts: `fix_site` and `oracle_location` are absent when the
 producer cannot identify them, and `suggested_assertion` remains `null` until
 the producer supplies a symbol-resolved assertion template. `limitations[]`
 names unavailable evidence; renderers must not infer it from paths, lines,
-classes, or prose. `source_currentness` (RIPR-SPEC-0152) mirrors the finding's
+classes, or prose. `probe.owner_signature` (#7796) carries the changed
+function's observed call shape — the same producer-owned signature `ripr
+agent stub` reads — so an agent can write the call without opening the
+source. It is optional and absent whenever the shape cannot be honestly
+named: the finding is not `candidate_current`, the source file is missing or
+unparses, no function covers the changed line, or the owner takes a typed
+`self` receiver, declares unbound type generics, or otherwise cannot be
+named and called from a test. It is observed source data only; no assertion
+value is synthesized. `source_currentness` (RIPR-SPEC-0152) mirrors the finding's
 disposition: agent consumers must not treat a `base_deleted`,
 `moved_or_renamed`, or `unresolved_subject` packet as a candidate edit
-target.
+target. `canonical_gap_id` is additive: it is present exactly when the
+finding carries a canonical gap and carries the same stable class-scoped
+value as `finding_alignment.items[].canonical_gap_id` and the finding-level
+`canonical_gap_id`, so packet consumers share one gap identity with
+`ripr receipt write --gap` and the gap ledger instead of inventing a second
+one. It is emitted between `tool` and `source_currentness`.
 
 ## Repo Seam Inventory
 
@@ -10087,6 +10108,7 @@ JSON shape:
       "suppressed": 0,
       "not_applicable": 0,
       "malformed": 0,
+      "fallback_only": 0,
       "other": 0
     }
   },
@@ -10103,6 +10125,7 @@ JSON shape:
       "path": "src/pricing.rs",
       "line": 88,
       "static_class": "weakly_gripped",
+      "root": null,
       "decision": "advisory",
       "severity": "warning",
       "source": "pr_guidance",
@@ -10139,6 +10162,23 @@ identity loss as resolved debt (issue #7421). It is `null` when the source
 report predates build identity, and `baseline create` warns loudly about
 that absence; baselines written before this field existed stay valid inputs
 and fail safe toward stale disclosure on later diffs.
+
+`root` records the repository/root identity carried by the source
+gate-decision report (issue #1964). It appears at the top level and is copied
+onto every `entries[]` item, so one entry stays interpretable if the ledger
+is ever split or relocated. The root distinguishes same-path entries across
+checkouts, and `baseline diff` refuses delta joins across mismatched roots as
+stale rather than reading them as resolved or new debt. It is `null` when the
+source report carries no root. Shrink-only `baseline update` preserves the
+root members already on the ledger it refreshes.
+
+`summary.skipped.fallback_only` counts gate decisions that were refused
+because only the legacy `path:line:static_class` fallback identity was
+available (issue #1964). Fallback identity is compatibility evidence only,
+never primary authority, so no new baseline entry is written for these
+decisions; each refusal is also loud in `warnings`. A reviewer diffing
+`summary.skipped` against this contract can therefore account for every
+nonzero counter.
 
 The `entries[].review` object is additive review metadata for later RIPR Zero
 reporting. New ledgers include `owner`, `created_at`, `review_after`, and
@@ -16240,12 +16280,17 @@ the observation found no absent requested files; it does not assert that every
 changed seam was classified. Intentionally deleted files are excluded by the
 shared diff parser.
 
-When no successful supplement supplied the observation, pilot applies the shared
+Both the fallback and a successful current-change supplement apply the shared
 diff-aware generated-source exclusions before checking presence, including exact
-handwritten opt-ins and changed vendor checksum markers. Source known to be
-excluded is not named as absent by that fallback. Header-only exclusions require
-available worktree bytes or an active committed-source overlay; pilot creates
-no new overlay and does not establish the header of a sparse missing file.
+handwritten opt-ins, stronger explicit patterns and changed vendor checksum
+markers. The supplement keeps all changed paths as policy context, including
+an absent changed marker, while classifying only the changed Rust subjects.
+Source known to be excluded receives no missing-source warning under either
+inventory cap. The supplement observes absence before classification and carries
+that observation only on success; classification errors retain their caveat.
+Header-only exclusions require available worktree bytes or an active
+committed-source overlay; pilot creates no new overlay and does not establish
+the header of a sparse missing file.
 
 The terminal and Markdown "Inspected" block names each absent path, the
 `changed_file_absent_from_worktree` category, and the producer's recovery
