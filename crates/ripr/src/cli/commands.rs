@@ -1321,10 +1321,12 @@ enum SnapshotCaptureKind {
     CargoMutants,
 }
 
-fn snapshot_capture_hint(kind: SnapshotCaptureKind, displayed_path: &str) -> String {
-    // Quote after `display_path`: the NotFound prefix stays human-readable,
-    // but the pasted redirect must remain one shell token (#7349, #5188).
-    let quoted_path = crate::agent::loop_commands::shell_arg(displayed_path);
+fn snapshot_capture_hint(kind: SnapshotCaptureKind, path: &Path) -> String {
+    // Keep display-only normalization out of executable operands: on Unix a
+    // literal backslash is part of the filename, not a directory separator.
+    // CLI path arguments are UTF-8; retain their native spelling and quote it
+    // as one shell token (#7349, #5188).
+    let quoted_path = crate::agent::loop_commands::shell_arg(&path.to_string_lossy());
     match kind {
         SnapshotCaptureKind::Outcome => format!(
             "Run `ripr check --format repo-exposure-json > {quoted_path}` first, or pass a `ripr check --json` output."
@@ -1345,7 +1347,7 @@ fn read_calibration_text(path: &Path, kind: SnapshotCaptureKind) -> Result<Strin
         if err.kind() == std::io::ErrorKind::NotFound {
             format!(
                 "read {displayed} failed: not found. {}",
-                snapshot_capture_hint(kind, &displayed)
+                snapshot_capture_hint(kind, path)
             )
         } else {
             format!("read {displayed} failed: {err}")

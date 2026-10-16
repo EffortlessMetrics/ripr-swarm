@@ -67,6 +67,9 @@ mod recall_tradeoff;
 #[cfg(unix)]
 #[path = "cli_smoke/receipt_recovery_root.rs"]
 mod receipt_recovery_root;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/snapshot_recovery.rs"]
+mod snapshot_recovery;
 #[path = "cli_smoke/related_test_count.rs"]
 mod related_test_count;
 #[cfg(feature = "lang-rust")]
