@@ -357,6 +357,13 @@ fn drop_unreached_test_files(
                 .map(|path| workspace::normalize_path(path)),
         );
     }
+    orphans.extend(cargo_skipped_test_files(
+        root,
+        source_role_context,
+        &loaded_files,
+        &holds_tests,
+        &mut manifests,
+    ));
     if orphans.is_empty() {
         return loaded_files;
     }
@@ -364,6 +371,72 @@ fn drop_unreached_test_files(
         .into_iter()
         .filter(|(path, _)| !orphans.contains(&workspace::normalize_path(path)))
         .collect()
+}
+
+/// Whether a manifest declares a `[[test]]` entry that `cargo test` may not
+/// run: `test = false`, `harness = false` or `required-features`. Only such a
+/// manifest is worth a `cargo metadata` probe (#8016).
+fn manifest_declares_skippable_test_target(manifest: &toml::Value) -> bool {
+    manifest
+        .get("test")
+        .and_then(toml::Value::as_array)
+        .is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                entry.get("test").and_then(toml::Value::as_bool) == Some(false)
+                    || entry.get("harness").and_then(toml::Value::as_bool) == Some(false)
+                    || entry.get("required-features").is_some()
+            })
+        })
+}
+
+/// Test-holding files of a `[[test]]` target `cargo test` never runs
+/// (#8016): `test = false`, `required-features` unmet under cargo defaults
+/// (both read from `cargo metadata`), or `harness = false` with no validated
+/// custom-harness registration for the file. Their `#[test]` functions are not
+/// collected, so they are not evidence. Unavailable metadata is not a skip, and
+/// the probe runs only for packages whose manifest declares a skippable target.
+fn cargo_skipped_test_files(
+    root: &Path,
+    source_role_context: &workspace::SourceRoleContext,
+    loaded_files: &[(PathBuf, Vec<u8>)],
+    holds_tests: &dyn Fn(&[u8]) -> bool,
+    manifests: &mut BTreeMap<PathBuf, bool>,
+) -> BTreeSet<String> {
+    let mut gated: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    let mut inventory: Option<workspace::ManifestInventory> = None;
+    let mut skipped = BTreeSet::new();
+    for (path, bytes) in loaded_files {
+        if !holds_tests(bytes) {
+            continue;
+        }
+        let Some(package_dir) = owning_manifest_dir(root, path, manifests) else {
+            continue;
+        };
+        let declares = *gated.entry(package_dir.clone()).or_insert_with(|| {
+            committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
+                .ok()
+                .flatten()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+                .is_some_and(|manifest| manifest_declares_skippable_test_target(&manifest))
+        });
+        if !declares {
+            continue;
+        }
+        let normalized = workspace::normalize_path(path);
+        let inventory = inventory.get_or_insert_with(workspace::ManifestInventory::default);
+        let harness_disabled_unregistered = !source_role_context
+            .harness_targets
+            .contains(Path::new(&normalized))
+            && matches!(
+                inventory.verdict(root, path),
+                workspace::CargoHarnessVerdict::HarnessDisabled
+            );
+        if harness_disabled_unregistered || inventory.cargo_test_collection_skipped(root, path) {
+            skipped.insert(normalized);
+        }
+    }
+    skipped
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
@@ -7358,6 +7431,57 @@ fn absent_delimiter_boundary_returns_head() {
                 .any(|name| name == "discount_applies_unbuilt"),
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_test_targets_cargo_test_never_runs() -> Result<(), String> {
+        // #8016: `test = false`, unmet `required-features` and an
+        // unregistered `harness = false` target are declared `[[test]]`
+        // entries `cargo test` never runs, so their `#[test]` functions are
+        // not evidence. `plain` (no key) and `met` (feature in the default
+        // set) are controls that must still relate.
+        let root = temp_root("module-graph-skipped-test-targets")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n\n\
+             [features]\ndefault=['on']\non=[]\nnever=[]\n\n\
+             [[test]]\nname='off'\ntest=false\n\n\
+             [[test]]\nname='gated'\nrequired-features=['never']\n\n\
+             [[test]]\nname='bare'\nharness=false\n\n\
+             [[test]]\nname='met'\nrequired-features=['on']\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        for name in ["off", "gated", "bare", "met", "plain"] {
+            write(
+                &root.join(format!("tests/{name}.rs")),
+                &format!(
+                    "use shop::used::discount;\n\n#[test]\nfn discount_applies_{name}() {{\n    assert_eq!(discount(150), 140);\n}}\n"
+                ),
+            )?;
+        }
+
+        let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+        let related = related_test_names(&root, &result, "src/used.rs");
+        for kept in ["met", "plain"] {
+            assert!(
+                related
+                    .iter()
+                    .any(|name| name == &format!("discount_applies_{kept}")),
+                "the runnable `{kept}` target must relate: {related:?}"
+            );
+        }
+        for dropped in ["off", "gated", "bare"] {
+            assert!(
+                !related
+                    .iter()
+                    .any(|name| name == &format!("discount_applies_{dropped}")),
+                "a `{dropped}` target cargo test never runs must not relate: {related:?}"
+            );
+        }
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
