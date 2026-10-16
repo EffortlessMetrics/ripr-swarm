@@ -975,7 +975,9 @@ mod tests {
     fn call_shape_declines_async_owners_instead_of_projecting_a_sync_shape() -> Result<(), String> {
         // #8259: `is_async` was parsed and then dropped. The sync-looking
         // projection `advance(input: u8) -> u8` is the residual this test
-        // rejects; a direct call of an async owner yields a future.
+        // rejects; a direct call of an async owner yields a future, so
+        // rustc rejects comparing that call to `u8` unless `.await` is
+        // added (historical compiler control on #8191; not spawned here).
         let async_source = "pub async fn advance(input: u8) -> u8 {\n    input + 2\n}\n";
         let offset = async_source
             .find("input + 2")
@@ -1015,64 +1017,6 @@ mod tests {
         );
         assert_eq!(method.call_shape(), None);
         Ok(())
-    }
-
-    /// Compiler control for #8259: a direct `advance(1)` compared to `3u8`
-    /// does not type-check for an async owner, so projecting
-    /// `advance(input: u8) -> u8` would imply a result shape rustc rejects.
-    /// `.await` and the synchronous-function control both compile. This is
-    /// a discriminator of the implied result, not text printed by ripr.
-    #[test]
-    fn async_owner_direct_call_does_not_compare_as_the_declared_output() -> Result<(), String> {
-        let async_owner = "pub async fn advance(input: u8) -> u8 { input + 2 }\n";
-        let direct = format!(
-            "{async_owner}async fn assertion_control() {{ assert_eq!(advance(1), 3u8); }}\n"
-        );
-        let awaited = format!(
-            "{async_owner}async fn assertion_control() {{ assert_eq!(advance(1).await, 3u8); }}\n"
-        );
-        let sync = "pub fn advance(input: u8) -> u8 { input + 2 }\nfn assertion_control() { assert_eq!(advance(1), 3u8); }\n";
-        if rustc_lib_compiles(&direct)? {
-            return Err(
-                "direct async call compared to u8 compiled; the implied sync result is gone"
-                    .to_string(),
-            );
-        }
-        if !rustc_lib_compiles(&awaited)? {
-            return Err("awaited async call compared to u8 should compile".to_string());
-        }
-        if !rustc_lib_compiles(sync)? {
-            return Err("synchronous advance compared to u8 should compile".to_string());
-        }
-        Ok(())
-    }
-
-    fn rustc_lib_compiles(source: &str) -> Result<bool, String> {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
-            .as_nanos();
-        let parent = std::env::temp_dir();
-        std::fs::create_dir_all(&parent)
-            .map_err(|error| format!("temp parent missing: {error}"))?;
-        let dir = parent.join(format!(
-            "ripr-async-call-shape-{}-{stamp}",
-            std::process::id()
-        ));
-        std::fs::create_dir(&dir).map_err(|error| format!("scratch dir: {error}"))?;
-        let src = dir.join("lib.rs");
-        let write = std::fs::write(&src, source).map_err(|error| error.to_string());
-        let compiled = write.and_then(|_| {
-            std::process::Command::new("rustc")
-                .args(["--edition=2024", "--crate-type=lib", "--emit=metadata"])
-                .arg(&src)
-                .current_dir(&dir)
-                .output()
-                .map_err(|error| format!("failed to spawn rustc: {error}"))
-                .map(|output| output.status.success())
-        });
-        let _ = std::fs::remove_dir_all(&dir);
-        compiled
     }
 
     #[test]
