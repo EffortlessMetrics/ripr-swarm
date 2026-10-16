@@ -481,7 +481,7 @@ fn may_be_unreached(
     path: &Path,
     mentioned: &MentionedModules,
     manifests: &mut BTreeMap<PathBuf, bool>,
-    discovery_off: &mut BTreeMap<PathBuf, Option<bool>>,
+    discovery_off: &mut BTreeMap<PathBuf, Option<(bool, BTreeSet<PathBuf>)>>,
 ) -> bool {
     let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
@@ -509,34 +509,37 @@ fn may_be_unreached(
         // `None`: no manifest beside the directory, so it is not a target
         // directory. Read through the committed-source overlay, as the walk
         // does, so a committed-history diff sees the committed manifest.
-        let discovery = *discovery_off
+        let discovery = discovery_off
             .entry(package_dir.to_path_buf())
             .or_insert_with(|| {
                 // The same reading `evidence_roots` applies: only an explicit
-                // `auto* = false` turns discovery off. An unparsable manifest
-                // leaves the walk nothing to prove.
+                // `auto* = false` turns discovery off, and a `[[test]]` that
+                // `cargo test` never runs (#8016) is unreached whatever its
+                // spelling. An unparsable manifest leaves the walk nothing
+                // to prove.
                 committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
                     .ok()
                     .flatten()
-                    .map(|bytes| {
+                    .and_then(|bytes| {
                         String::from_utf8(bytes)
                             .ok()
                             .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
-                            .is_some_and(|manifest| {
-                                let package = manifest.get("package");
-                                ["autotests", "autobenches", "autoexamples"]
-                                    .iter()
-                                    .any(|key| {
-                                        package
-                                            .and_then(|package| package.get(*key))
-                                            .and_then(toml::Value::as_bool)
-                                            == Some(false)
-                                    })
-                            })
+                    })
+                    .map(|manifest| {
+                        let package = manifest.get("package");
+                        let off = ["autotests", "autobenches", "autoexamples"]
+                            .iter()
+                            .any(|key| {
+                                package
+                                    .and_then(|package| package.get(*key))
+                                    .and_then(toml::Value::as_bool)
+                                    == Some(false)
+                            });
+                        (off, workspace::unrun_test_roots(&manifest, package_dir))
                     })
             });
-        if let Some(off) = discovery {
-            return off;
+        if let Some((off, unrun)) = discovery {
+            return *off || workspace::is_unrun_test_root(unrun, path);
         }
     }
     if parent_name == Some("bin") && grandparent_name == Some("src") {
@@ -7319,6 +7322,61 @@ fn absent_delimiter_boundary_returns_head() {
                 "registered={registered}"
             );
         }
+    }
+
+    #[test]
+    fn diff_analysis_ignores_test_targets_cargo_never_runs() -> Result<(), String> {
+        // #8016: `test = false` and unmet `required-features` leave a
+        // declared `[[test]]` unrun by `cargo test`, even though
+        // autodiscovery would reach `tests/<name>.rs`. `live` and
+        // `featured` (feature on by default) are the controls.
+        let root = temp_root("module-graph-unrun-test-targets")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n\
+             [features]\ndefault=['on']\non=[]\noff=[]\n\n\
+             [[test]]\nname='live'\n\n\
+             [[test]]\nname='featured'\nrequired-features=['on']\n\n\
+             [[test]]\nname='skipped'\ntest=false\n\n\
+             [[test]]\nname='gated'\nrequired-features=['off']\n\n\
+             [[test]]\nname='pathed'\npath='tests/other/pathed.rs'\ntest=false\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        for name in ["live", "featured", "skipped", "gated"] {
+            write(
+                &root.join(format!("tests/{name}.rs")),
+                &format!(
+                    "use shop::used::discount;\n\n#[test]\nfn discount_applies_{name}() {{\n    assert_eq!(discount(150), 140);\n}}\n"
+                ),
+            )?;
+        }
+        write(
+            &root.join("tests/other/pathed.rs"),
+            "use shop::used::discount;\n\n#[test]\nfn discount_applies_pathed() {\n    assert_eq!(discount(150), 140);\n}\n",
+        )?;
+
+        let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+        let related = related_test_names(&root, &result, "src/used.rs");
+        for name in ["live", "featured"] {
+            assert!(
+                related
+                    .iter()
+                    .any(|n| n == &format!("discount_applies_{name}")),
+                "a target cargo runs must relate ({name}): {related:?}"
+            );
+        }
+        for name in ["skipped", "gated", "pathed"] {
+            assert!(
+                !related
+                    .iter()
+                    .any(|n| n == &format!("discount_applies_{name}")),
+                "a target cargo never runs must not relate ({name}): {related:?}"
+            );
+        }
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
     }
 
     #[test]

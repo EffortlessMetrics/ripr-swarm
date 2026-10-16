@@ -50,8 +50,8 @@ use std::path::{Path, PathBuf};
 use rayon::prelude::*;
 
 use super::cargo_targets::{
-    collect_explicit_paths, declared_targets_from_manifest, lexical, nearest_manifest_dir,
-    normalize, owning_package_dir,
+    collect_explicit_paths, declared_targets_from_manifest, expand_default_features, lexical,
+    nearest_manifest_dir, normalize, owning_package_dir,
 };
 use super::source_role::SourceRoleContext;
 use crate::analysis::syntax::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
@@ -698,10 +698,90 @@ fn evidence_roots(
             roots.extend(named_default_roots(manifest.get(section), &dir));
         }
     }
-    roots
+    let roots: BTreeSet<PathBuf> = roots
         .into_iter()
         .map(|root| lexical(&normalize(&root)))
+        .collect();
+    // A `[[test]]` that `cargo test` never runs is no evidence, even when
+    // autodiscovery or a `path` would otherwise reach it (#8016).
+    let unrun = unrun_test_roots(manifest, package_dir);
+    roots
+        .into_iter()
+        .filter(|root| !unrun.contains(root))
         .collect()
+}
+
+/// Whether `path` is a root in an [`unrun_test_roots`] set.
+pub(crate) fn is_unrun_test_root(unrun: &BTreeSet<PathBuf>, path: &Path) -> bool {
+    unrun.contains(&lexical(&normalize(path)))
+}
+
+/// Roots of `[[test]]` entries `cargo test` never runs as libtest: `test =
+/// false` or a `required-features` entry outside the default feature set. A malformed
+/// `required-features` fails closed like the metadata probe does.
+/// `harness = false` is not read here: a registered custom harness keeps its
+/// evidence role (#3532), so that key stays with the harness registry.
+pub(crate) fn unrun_test_roots(manifest: &toml::Value, package_dir: &Path) -> BTreeSet<PathBuf> {
+    let mut unrun = BTreeSet::new();
+    let Some(entries) = manifest.get("test").and_then(toml::Value::as_array) else {
+        return unrun;
+    };
+    let features: BTreeMap<String, Vec<String>> = manifest
+        .get("features")
+        .and_then(toml::Value::as_table)
+        .map(|table| {
+            table
+                .iter()
+                .filter_map(|(name, enables)| {
+                    let items = enables.as_array()?;
+                    let items = items
+                        .iter()
+                        .filter_map(toml::Value::as_str)
+                        .map(str::to_string)
+                        .collect();
+                    Some((name.clone(), items))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let enabled = expand_default_features(&features);
+    let flag_false = |entry: &toml::Value, key: &str| {
+        entry.get(key).and_then(toml::Value::as_bool) == Some(false)
+    };
+    for entry in entries {
+        let required_unmet = match entry.get("required-features") {
+            None => false,
+            Some(toml::Value::Array(items)) => !items
+                .iter()
+                .all(|item| item.as_str().is_some_and(|name| enabled.contains(name))),
+            Some(_) => true,
+        };
+        if !(flag_false(entry, "test") || required_unmet) {
+            continue;
+        }
+        let dir = package_dir.join("tests");
+        let paths = match entry
+            .get("path")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+        {
+            Some(path) if !path.is_empty() => vec![package_dir.join(path)],
+            _ => entry
+                .get("name")
+                .and_then(toml::Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(|name| {
+                    vec![
+                        dir.join(format!("{name}.rs")),
+                        dir.join(name).join("main.rs"),
+                    ]
+                })
+                .unwrap_or_default(),
+        };
+        unrun.extend(paths.iter().map(|path| lexical(&normalize(path))));
+    }
+    unrun
 }
 
 /// The default paths of declared targets that name no `path`:
