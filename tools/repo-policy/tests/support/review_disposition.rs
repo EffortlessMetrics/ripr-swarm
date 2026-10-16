@@ -11,3 +11,30 @@ pub fn program(workflow: &str) -> String {
         })
         .unwrap_or_default()
 }
+
+pub fn block_boundary_cases() -> Result<Vec<(String, String, bool)>, String> {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../fixtures/convergence/native-late-admission/block-boundary-rendering.json"
+    ))
+    .map_err(|e| e.to_string())?;
+    let cases = fixture["cases"].as_array().ok_or("block cases missing")?;
+    if cases.len() != 42 {
+        return Err("expected 42 nonempty renderer-backed block controls".into());
+    }
+    cases
+        .iter()
+        .map(|case| {
+            Ok((
+                case["case"]
+                    .as_str()
+                    .ok_or("case name missing")?
+                    .to_string(),
+                case["body"]
+                    .as_str()
+                    .ok_or("Markdown body missing")?
+                    .to_string(),
+                case["expected"].as_bool().ok_or("expectation missing")?,
+            ))
+        })
+        .collect()
+}

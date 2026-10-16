@@ -1,0 +1,424 @@
+{
+  "oracle": "commonmark-py 0.9.1 (local proof tool only; not a production dependency)",
+  "reference": "https://spec.commonmark.org/0.31.2/#appendix-a-parsing-strategy",
+  "method": "Parse original Markdown; collect explicit disposition text from paragraph/heading text nodes while excluding code and HTML nodes. rendered_fields and HTML are retained for independent inspection. No complete CommonMark conformance is claimed for the production parser.",
+  "cases": [
+    {
+      "case": "paragraph-conflict",
+      "body": "disposition: SOURCE_REVIEW_READY\n\nExample: `unclosed\n\ndisposition: REPAIR_REQUIRED\n\nLater `",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Example: `unclosed</p>\n<p>disposition: REPAIR_REQUIRED</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "paragraph-positive",
+      "body": "Example: `unclosed\n\ndisposition: SOURCE_REVIEW_READY\n\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "spaces-conflict",
+      "body": "disposition: SOURCE_REVIEW_READY\n\nExample: `unclosed\n   \ndisposition: REPAIR_REQUIRED\n\nLater `",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Example: `unclosed</p>\n<p>disposition: REPAIR_REQUIRED</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "spaces-positive",
+      "body": "Example: `unclosed\n   \ndisposition: SOURCE_REVIEW_READY\n\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "tab-conflict",
+      "body": "disposition: SOURCE_REVIEW_READY\n\nExample: `unclosed\n\t\ndisposition: REPAIR_REQUIRED\n\nLater `",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Example: `unclosed</p>\n<p>disposition: REPAIR_REQUIRED</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "tab-positive",
+      "body": "Example: `unclosed\n\t\ndisposition: SOURCE_REVIEW_READY\n\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "mixed-whitespace-conflict",
+      "body": "disposition: SOURCE_REVIEW_READY\n\nExample: `unclosed\n \t \ndisposition: REPAIR_REQUIRED\n\nLater `",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Example: `unclosed</p>\n<p>disposition: REPAIR_REQUIRED</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "mixed-whitespace-positive",
+      "body": "Example: `unclosed\n \t \ndisposition: SOURCE_REVIEW_READY\n\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "atx-heading-conflict",
+      "body": "disposition: SOURCE_REVIEW_READY\n\nExample: `unclosed\n# Heading\ndisposition: REPAIR_REQUIRED\n\nLater `",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Example: `unclosed</p>\n<h1>Heading</h1>\n<p>disposition: REPAIR_REQUIRED</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "atx-heading-positive",
+      "body": "Example: `unclosed\n# Heading\ndisposition: SOURCE_REVIEW_READY\n\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<h1>Heading</h1>\n<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "indented-atx-heading-conflict",
+      "body": "disposition: SOURCE_REVIEW_READY\n\nExample: `unclosed\n   ## Heading\ndisposition: REPAIR_REQUIRED\n\nLater `",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Example: `unclosed</p>\n<h2>Heading</h2>\n<p>disposition: REPAIR_REQUIRED</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "indented-atx-heading-positive",
+      "body": "Example: `unclosed\n   ## Heading\ndisposition: SOURCE_REVIEW_READY\n\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<h2>Heading</h2>\n<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "setext-heading-conflict",
+      "body": "disposition: SOURCE_REVIEW_READY\n\nExample: `unclosed\n===\ndisposition: REPAIR_REQUIRED\n\nLater `",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>disposition: SOURCE_REVIEW_READY</p>\n<h1>Example: `unclosed</h1>\n<p>disposition: REPAIR_REQUIRED</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "setext-heading-positive",
+      "body": "Example: `unclosed\n===\ndisposition: SOURCE_REVIEW_READY\n\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<h1>Example: `unclosed</h1>\n<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "setext-dash-heading-conflict",
+      "body": "disposition: SOURCE_REVIEW_READY\n\nExample: `unclosed\n---\ndisposition: REPAIR_REQUIRED\n\nLater `",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>disposition: SOURCE_REVIEW_READY</p>\n<h2>Example: `unclosed</h2>\n<p>disposition: REPAIR_REQUIRED</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "setext-dash-heading-positive",
+      "body": "Example: `unclosed\n---\ndisposition: SOURCE_REVIEW_READY\n\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<h2>Example: `unclosed</h2>\n<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "thematic-break-conflict",
+      "body": "disposition: SOURCE_REVIEW_READY\n\nExample: `unclosed\n* * *\ndisposition: REPAIR_REQUIRED\n\nLater `",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Example: `unclosed</p>\n<hr />\n<p>disposition: REPAIR_REQUIRED</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "thematic-break-positive",
+      "body": "Example: `unclosed\n* * *\ndisposition: SOURCE_REVIEW_READY\n\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<hr />\n<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "backtick-fence-conflict",
+      "body": "disposition: SOURCE_REVIEW_READY\n\nExample: `unclosed\n```text\nexample\n```\ndisposition: REPAIR_REQUIRED\n\nLater `",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Example: `unclosed</p>\n<pre><code class=\"language-text\">example\n</code></pre>\n<p>disposition: REPAIR_REQUIRED</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "backtick-fence-positive",
+      "body": "Example: `unclosed\n```text\nexample\n```\ndisposition: SOURCE_REVIEW_READY\n\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<pre><code class=\"language-text\">example\n</code></pre>\n<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "tilde-fence-conflict",
+      "body": "disposition: SOURCE_REVIEW_READY\n\nExample: `unclosed\n~~~text\nexample\n~~~\ndisposition: REPAIR_REQUIRED\n\nLater `",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Example: `unclosed</p>\n<pre><code class=\"language-text\">example\n</code></pre>\n<p>disposition: REPAIR_REQUIRED</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "tilde-fence-positive",
+      "body": "Example: `unclosed\n~~~text\nexample\n~~~\ndisposition: SOURCE_REVIEW_READY\n\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<pre><code class=\"language-text\">example\n</code></pre>\n<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "html-comment-conflict",
+      "body": "disposition: SOURCE_REVIEW_READY\n\nExample: `unclosed\n<!-- example -->\ndisposition: REPAIR_REQUIRED\n\nLater `",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Example: `unclosed</p>\n<!-- example -->\n<p>disposition: REPAIR_REQUIRED</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "html-comment-positive",
+      "body": "Example: `unclosed\n<!-- example -->\ndisposition: SOURCE_REVIEW_READY\n\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<!-- example -->\n<p>disposition: SOURCE_REVIEW_READY</p>\n<p>Later `</p>\n"
+    },
+    {
+      "case": "heading-inline-opener",
+      "body": "# Example: `unclosed\ndisposition: SOURCE_REVIEW_READY\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<h1>Example: `unclosed</h1>\n<p>disposition: SOURCE_REVIEW_READY\nLater `</p>\n"
+    },
+    {
+      "case": "heading-inline-opener-negative",
+      "body": "disposition: SOURCE_REVIEW_READY\n\n# Example: `unclosed\ndisposition: REPAIR_REQUIRED\nLater `",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>disposition: SOURCE_REVIEW_READY</p>\n<h1>Example: `unclosed</h1>\n<p>disposition: REPAIR_REQUIRED\nLater `</p>\n"
+    },
+    {
+      "case": "same-paragraph-code",
+      "body": "Example: `unclosed\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n"
+    },
+    {
+      "case": "same-paragraph-code-positive",
+      "body": "Example: `unclosed\ndisposition: SOURCE_REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed disposition: SOURCE_REVIEW_READY Later </code></p>\n"
+    },
+    {
+      "case": "hash-literal-negative-code",
+      "body": "Example: `unclosed\n#not-heading\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed #not-heading disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n"
+    },
+    {
+      "case": "hash-literal-positive-code",
+      "body": "Example: `unclosed\n#not-heading\ndisposition: SOURCE_REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed #not-heading disposition: SOURCE_REVIEW_READY Later </code></p>\n"
+    },
+    {
+      "case": "seven-hashes-negative-code",
+      "body": "Example: `unclosed\n####### Heading\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ####### Heading disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n"
+    },
+    {
+      "case": "seven-hashes-positive-code",
+      "body": "Example: `unclosed\n####### Heading\ndisposition: SOURCE_REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ####### Heading disposition: SOURCE_REVIEW_READY Later </code></p>\n"
+    },
+    {
+      "case": "mixed-markers-negative-code",
+      "body": "Example: `unclosed\n*-*\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed *-* disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n"
+    },
+    {
+      "case": "mixed-markers-positive-code",
+      "body": "Example: `unclosed\n*-*\ndisposition: SOURCE_REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed *-* disposition: SOURCE_REVIEW_READY Later </code></p>\n"
+    },
+    {
+      "case": "dash-text-negative-code",
+      "body": "Example: `unclosed\n--- text\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed --- text disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n"
+    },
+    {
+      "case": "dash-text-positive-code",
+      "body": "Example: `unclosed\n--- text\ndisposition: SOURCE_REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed --- text disposition: SOURCE_REVIEW_READY Later </code></p>\n"
+    },
+    {
+      "case": "ordered-not-one-negative-code",
+      "body": "Example: `unclosed\n2. ordinary item\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed 2. ordinary item disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n"
+    },
+    {
+      "case": "ordered-not-one-positive-code",
+      "body": "Example: `unclosed\n2. ordinary item\ndisposition: SOURCE_REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed 2. ordinary item disposition: SOURCE_REVIEW_READY Later </code></p>\n"
+    },
+    {
+      "case": "indent-continuation-negative-code",
+      "body": "Example: `unclosed\n    continuation\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed continuation disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n"
+    },
+    {
+      "case": "indent-continuation-positive-code",
+      "body": "Example: `unclosed\n    continuation\ndisposition: SOURCE_REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed continuation disposition: SOURCE_REVIEW_READY Later </code></p>\n"
+    },
+    {
+      "case": "short-tilde-negative-code",
+      "body": "Example: `unclosed\n~~\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ~~ disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n"
+    },
+    {
+      "case": "short-tilde-positive-code",
+      "body": "Example: `unclosed\n~~\ndisposition: SOURCE_REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ~~ disposition: SOURCE_REVIEW_READY Later </code></p>\n"
+    }
+  ]
+}

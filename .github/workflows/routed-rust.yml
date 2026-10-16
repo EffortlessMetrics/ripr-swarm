@@ -22,6 +22,12 @@ env:
   # Partial #8157 mitigation: interpret current attestations, not narrative tokens.
   # This does not authenticate a publisher or establish referenced proof custody.
   REVIEW_DISPOSITION_JQ: |
+    def review_html_blocks:
+      "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul";
+    # Block indicators precede inline parsing. A code span can cross a soft
+    # line break, never a blank line or an interrupting heading/fence/block.
+    def review_inline_end:
+      "[ \t]*(?:\n|\\z)| {0,3}(?:#{1,6}(?:[ \t]|$)|`{3,}|~{3,}|(?:=+|-+)[ \t]*$|(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$|>|[-+*][ \t]+\\S|1[.)][ \t]+\\S|<(?:!--|!\\[CDATA\\[|\\?|![A-Z]|/?(?:" + review_html_blocks + "|pre|script|style|textarea)(?=[\\s/>])))";
     # Match opaque regions together, in source order: syntax inside an earlier
     # code/HTML region cannot open a different region outside it. Keep newlines
     # and a nonblank sentinel so masking never invents a first-line declaration.
@@ -31,11 +37,12 @@ env:
         "|^ {0,3}(?<tilde>~{3,})(?!~)[^\n]*\n.*?(?:(?<tilde_end>^ {0,3}\\k<tilde>~*[ \t]*)(?=\n|\\z)|\\z)" +
         "|^(?: {4}|\t)[^\n]*(?:\n(?:(?: {4}|\t)[^\n]*|[ \t]*(?=\n)))*" +
         "|^ {0,3}>[^\n]*(?:\n(?![ \t]*(?:\n|\\z))[^\n]+)*" +
-        "|(?<![\\\\`])(?:\\\\\\\\)*(?<ticks>`+)(?!`).*?(?<!`)\\k<ticks>(?!`)" +
+        "|^ {0,3}#{1,6}(?:[ \t]+[^\n]*|(?=\n|\\z))" +
+        "|(?<![\\\\`])(?:\\\\\\\\)*(?<ticks>`+)(?!`)(?:[^\n]|\n(?!" + review_inline_end + "))*?(?<!`)\\k<ticks>(?!`)" +
         "|(?<!\\\\)(?:\\\\\\\\)*(?:<!--.*?(?:-->|\\z)|<!\\[CDATA\\[.*?(?:\\]\\]>|\\z)|<\\?.*?(?:\\?>|\\z))" +
         "|(?<!\\\\)(?:\\\\\\\\)*<![A-Z].*?(?:>|\\z)" +
         "|(?<!\\\\)(?:\\\\\\\\)*<(?<tag>pre|code|script|style|textarea|xmp|iframe|noembed|noframes)(?=[\\s>])[^>]*>.*?(?:</\\k<tag>[ \t]*>|\\z)" +
-        "|^ {0,3}</?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?=[\\s/>]).*?(?=\n[ \t]*\n|\\z)" +
+        "|^ {0,3}</?(?:" + review_html_blocks + ")(?=[\\s/>]).*?(?=\n[ \t]*\n|\\z)" +
         "|^ {0,3}</?[A-Z][A-Z0-9-]*(?:[ \t]+[^<>\n]*)?/?>[ \t]*(?:\n.*?(?=\n[ \t]*\n|\\z)|\\z)" +
         ")";
         if (.bt != null and .bt_end == null) or (.tilde != null and .tilde_end == null)

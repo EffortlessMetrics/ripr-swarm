@@ -76,6 +76,12 @@ so example contents cannot open a competing region outside that example. Quoted
 negative fields are ignored just like quoted positives; an outside disposition
 still governs. HTML blocks that end at a blank line require that separation
 before a subsequent standalone field.
+Inline-code matching stops at paragraph breaks (including whitespace-only
+lines), interrupting headings, fences and other recognized block starts. An
+unclosed backtick in an earlier block cannot hide a later real disposition.
+Multiline spans inside one paragraph remain examples. The renderer-backed
+`block-boundary-rendering.json` fixture retains Markdown, visible fields and
+HTML for independent inspection of both admission and refusal controls.
 A source-ready declaration may separately report overall `REVIEW_INCOMPLETE`
 while qualification remains outstanding. Both admission and the final refresh,
 including diagnostics, use the same parser.

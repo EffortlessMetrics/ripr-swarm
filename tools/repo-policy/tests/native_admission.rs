@@ -344,6 +344,24 @@ fn current_attestation_rejects_narrative_readiness_without_changing_native_revie
 }
 
 #[test]
+fn inline_examples_cannot_hide_dispositions_in_other_blocks() -> Result<(), String> {
+    let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
+    let pr = &vectors["live_drift_cases"][0]["live_pull_request"];
+    for (name, body, expected) in review_disposition::block_boundary_cases()? {
+        let review = json!({"id":1,"user":{"login":"author"},"state":"COMMENTED",
+            "commit_id":"a".repeat(40),"submitted_at":"2026-10-15T01:00:00Z","body":body});
+        for script in review_boundary_bodies()? {
+            assert_eq!(
+                execute(&script, pr, &json!([review.clone()]), &json!({}))?,
+                expected,
+                "{name}: {body}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn observed_producer_review_bodies_reach_both_actual_consumers() -> Result<(), String> {
     let reviews: Value = serde_json::from_str(include_str!(
         "../../../fixtures/convergence/native-late-admission/observed-review-bodies.json"

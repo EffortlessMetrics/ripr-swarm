@@ -303,6 +303,28 @@ fn quoted_negative_fields_do_not_withdraw_outside_current_disposition() -> Resul
 }
 
 #[test]
+fn diagnostics_preserve_real_dispositions_across_block_boundaries() -> Result<(), String> {
+    for (name, text, expected) in review_disposition::block_boundary_cases()? {
+        let mut case = positive();
+        let mut reviews: Value = serde_json::from_str(&case.reviews).map_err(|e| e.to_string())?;
+        reviews[0]["body"] = json!(text);
+        case.reviews = reviews.to_string();
+        let (result, _) = run(&body()?, &case)?;
+        assert_eq!(result.status.success(), expected, "{name}: {text}");
+        let stderr = String::from_utf8(result.stderr).map_err(|e| e.to_string())?;
+        if !expected {
+            let detail = stderr
+                .lines()
+                .find_map(|line| line.strip_prefix("readiness_detail="))
+                .ok_or("diagnostic missing")?;
+            let detail: Value = serde_json::from_str(detail).map_err(|e| e.to_string())?;
+            assert_eq!(detail["checks"]["current_head_marker"], false, "{name}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn every_pr_comparison_reports_false_null_and_missing_without_relaxing() -> Result<(), String> {
     let fields = [
         ("state", "open"),
