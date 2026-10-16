@@ -471,12 +471,14 @@ impl OwnerSignature {
     /// methods are qualified by their self type and keep the receiver slot
     /// (`Bag::push(&mut self, value: i32) -> bool`), and `()`-returning
     /// functions omit the arrow. This is observed source data for drill-in
-    /// surfaces, not a synthesized call: a typed `self` receiver, unbound
-    /// type/const generics, or an owner that cannot be named and called
-    /// from a test (`OwnerContainer::Unsupported` / `GenericImpl`) decline
-    /// with `None` (#7796).
+    /// surfaces, not a synthesized call: a typed `self` receiver, an `async`
+    /// owner, unbound type/const generics, or an owner that cannot be named
+    /// and called from a test (`OwnerContainer::Unsupported` / `GenericImpl`)
+    /// decline with `None` (#7796, #8259). An `async fn` call yields a
+    /// future, not the declared output; projecting `advance(input: u8) -> u8`
+    /// would make explain/context look like a direct call returns `u8`.
     pub(crate) fn call_shape(&self) -> Option<String> {
-        if self.receiver == Some(OwnerReceiver::Typed) || self.has_type_generics {
+        if self.receiver == Some(OwnerReceiver::Typed) || self.has_type_generics || self.is_async {
             return None;
         }
         let name = match &self.container {
@@ -966,6 +968,54 @@ mod tests {
         let offset = source.find("value\n").ok_or("fixture has a body")?;
         let signature = owner_signature_at(source, offset).ok_or("signature parses")?;
         assert_eq!(signature.call_shape(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn call_shape_declines_async_owners_instead_of_projecting_a_sync_shape() -> Result<(), String> {
+        // #8259: `is_async` was parsed and then dropped. The sync-looking
+        // projection `advance(input: u8) -> u8` is the residual this test
+        // rejects; a direct call of an async owner yields a future, so
+        // rustc rejects comparing that call to `u8` unless `.await` is
+        // added (historical compiler control on #8191; not spawned here).
+        let async_source = "pub async fn advance(input: u8) -> u8 {\n    input + 2\n}\n";
+        let offset = async_source
+            .find("input + 2")
+            .ok_or("async fixture has a body")?;
+        let signature = owner_signature_at(async_source, offset).ok_or("async signature parses")?;
+        assert!(signature.is_async, "producer still records the async token");
+        assert_eq!(signature.name, "advance");
+        assert_eq!(signature.container, OwnerContainer::Free);
+        assert_eq!(signature.call_shape(), None);
+        // The same line lookup feeds explain/context; it must decline too.
+        let at_line = owner_signature_at_line(async_source, 2).ok_or("line 2 is the body")?;
+        assert!(at_line.is_async);
+        assert_eq!(at_line.call_shape(), None);
+
+        let sync_source = "pub fn advance(input: u8) -> u8 {\n    input + 2\n}\n";
+        let offset = sync_source
+            .find("input + 2")
+            .ok_or("sync fixture has a body")?;
+        let sync = owner_signature_at(sync_source, offset).ok_or("sync signature parses")?;
+        assert!(!sync.is_async);
+        assert_eq!(
+            sync.call_shape().as_deref(),
+            Some("advance(input: u8) -> u8")
+        );
+
+        let async_method = "struct Client;\nimpl Client {\n    pub async fn advance(&self, input: u8) -> u8 {\n        input + 2\n    }\n}\n";
+        let offset = async_method
+            .find("input + 2")
+            .ok_or("method fixture has a body")?;
+        let method = owner_signature_at(async_method, offset).ok_or("method signature parses")?;
+        assert!(method.is_async);
+        assert_eq!(
+            method.container,
+            OwnerContainer::Inherent {
+                self_type: "Client".to_string()
+            }
+        );
+        assert_eq!(method.call_shape(), None);
         Ok(())
     }
 

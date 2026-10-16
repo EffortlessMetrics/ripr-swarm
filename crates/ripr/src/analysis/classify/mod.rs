@@ -96,6 +96,7 @@ pub(in crate::analysis) use related_tests::{
     manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem, owner_call_text,
     owner_dispatch_trait, package_prefix, test_calls_free_function,
 };
+pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::reveal_outcome;
 pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;

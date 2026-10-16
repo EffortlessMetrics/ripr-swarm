@@ -9139,6 +9139,38 @@
       ]
     },
     {
+      "id": "rust_field_snapshot_wrong_receiver_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-wrong-receiver.json",
+      "vector": "snapshot_field_name_without_expected_value_and_owner_receiver_binding",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::make_record",
+          "expression": "items: count + 0",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_field_snapshot_missing_expected_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-missing-expected.json",
+      "vector": "snapshot_field_name_without_expected_value_and_owner_receiver_binding",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::make_record",
+          "expression": "items: count + 0",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
       "id": "rust_preseeded_first_element_side_effect",
       "language": "rust",
       "tier": "pure",
@@ -9257,6 +9289,62 @@
           "kind": "unknown",
           "strength": "unknown"
         }
+      ]
+    },
+    {
+      "id": "rust_map_overwrite_count_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_map_overwrite_count",
+      "vector": "len_count_cannot_confirm_insert_overwriting_preexisting_key",
+      "probe_family": "call_deletion",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_map_overwrite_count_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_map_overwrite_count",
+      "vector": "len_count_cannot_confirm_insert_overwriting_preexisting_key",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_map_insert_count_empty_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_map_insert_count_empty",
+      "vector": "len_count_confirms_insert_into_empty_map",
+      "probe_family": "call_deletion",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_map_insert_count_empty_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_map_insert_count_empty",
+      "vector": "len_count_cannot_confirm_changed_insert_value",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" }
       ]
     }
   ]

@@ -1,0 +1,58 @@
+schema_version = "2.0"
+id = "ripr.slice.map-overwrite-count.v1"
+generation = 1
+
+source_issue = "issue:8204"
+design_reference = "RIPR-SPEC-0228#collection-writes-on-a-field-path"
+change_class = "behavior_change"
+
+claim_boundary = """
+A count-only read (len(), is_empty()) of a field map written by an
+insert no longer confirms deleting that insert when the test may
+already hold the inserted key, because overwriting a pre-existing
+key leaves the count unchanged; the pre-existing-key fixture stays
+weakly_exposed in the RIPR-SPEC-0108 honesty corpus. An empty-start
+insert confirmed by its count still reads exposed, and push counts
+are unaffected. No new classification vocabulary, probe family,
+schema, or runtime execution.
+"""
+
+non_goals = [
+  "proving a map started empty through a seeding constructor",
+  "new classification vocabulary or probe families",
+  "runtime execution, coverage, or mutation-score framing",
+  "changes to keyed-getter or first-element confirmation",
+]
+
+return_conditions = [
+  "Return to root if an empty-start insert count must stop confirming.",
+  "Return to root if a golden outside the two new fixtures flips class because of this rule.",
+]
+
+owned_seams = [
+  "seam:ripr:analysis:collection-observer-map-count",
+  "seam:ripr:fixtures:map-overwrite-count",
+]
+
+shared_seams = [
+  "seam:ripr:fixtures:evidence-promotion-honesty-corpus",
+  "seam:ripr:xtask:check-evidence-promotion-honesty",
+]
+
+forbidden_seams = [
+  "seam:ripr:domain:classification-vocabulary",
+  "seam:ripr:output:schema",
+]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0228#collection-writes-on-a-field-path"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"

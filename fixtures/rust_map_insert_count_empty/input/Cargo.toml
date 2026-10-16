@@ -1,0 +1,4 @@
+[package]
+name = "rust_map_insert_count_empty"
+version = "0.1.0"
+edition = "2024"

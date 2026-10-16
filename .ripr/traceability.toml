@@ -410,6 +410,12 @@ id = "RIPR-SPEC-0005"
 name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
+  "crates/ripr/tests/snapshot_field_admission.rs::snapshot_of_another_receiver_cannot_close_the_owner_field",
+  "crates/ripr/tests/snapshot_field_admission.rs::snapshot_without_an_expected_file_cannot_close_the_owner_field",
+  "crates/ripr/tests/snapshot_field_admission.rs::snapshot_only_expected_edits_do_not_invent_field_discrimination",
+  "crates/ripr/tests/snapshot_field_admission.rs::independent_literal_field_assertion_remains_strong_beside_a_snapshot",
+  "crates/ripr/tests/snapshot_field_admission.rs::inline_expect_test_field_comparison_keeps_its_existing_grade",
+  "crates/ripr/tests/snapshot_field_admission.rs::inline_snapshot_expected_text_cannot_borrow_another_receiver_field",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::effective_oracle_policy_invalidates_classified_cache",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::effective_snapshot_policy_invalidates_full_and_compact_caches",
   "crates/ripr/tests/cache_clear_safety.rs::full_directory_swap_cache_matches_cold_after_restart",
@@ -599,7 +605,7 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::local_owner_name_binding_stays_non_ready",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::same_name_owner_result_binding_completes_canonical_route",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::nested_field_receiver_token_collision_stays_non_ready",
-  "crates/ripr/src/analysis/test_grip_evidence.rs::tests::medium_snapshot_owner_result_field_stays_already_gripped",
+  "crates/ripr/src/analysis/test_grip_evidence.rs::tests::unbound_snapshot_owner_result_field_stays_weak",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::unrelated_strong_assertion_on_other_object_stays_non_ready",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::changed_test_bytes_invalidate_target_admission",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::changed_production_bytes_invalidate_target_admission",
@@ -1546,6 +1552,9 @@ tests = [
   "crates/ripr/tests/task_first_facade.rs::facade_argument_errors_stay_usage_errors",
   "crates/ripr/tests/task_first_facade.rs::continue_on_unsuccessful_terminal_attempts_refuses_without_completion",
   "crates/ripr/tests/task_first_facade.rs::repair_skips_severity_off_seams_with_named_omission",
+  "crates/ripr/tests/task_first_facade.rs::repair_explicit_eligible_seam_starts_one_attempt",
+  "crates/ripr/tests/task_first_facade.rs::repair_explicit_ineligible_seam_refuses_without_attempt_or_lock",
+  "crates/ripr/tests/task_first_facade.rs::repair_explicit_policy_omitted_gap_and_seam_refuse_without_attempt_or_lock",
   "crates/ripr/tests/task_first_facade.rs::continue_on_unconfirmed_ready_to_finish_refuses_without_completion",
   "crates/ripr/src/app/task_first.rs::tests::decide_zero_visible_seams_yields_setup_outcome",
   "crates/ripr/src/app/task_first.rs::tests::decide_zero_eligible_seams_yields_limitation_outcome",
@@ -8025,6 +8034,8 @@ id = "RIPR-SPEC-0108"
 name = "evidence-promotion honesty meta-gate"
 spec = "docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md"
 tests = [
+  "crates/ripr/tests/snapshot_field_admission.rs::snapshot_of_another_receiver_cannot_close_the_owner_field",
+  "crates/ripr/tests/snapshot_field_admission.rs::snapshot_without_an_expected_file_cannot_close_the_owner_field",
   "crates/ripr/tests/owner_pin_execution.rs::trait_shadow_corpus_matches_compiled_owner_dispatch",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::error_path_operand_error_lexeme_does_not_confirm_observation",
   "xtask/src/tests.rs::evidence_promotion_human_oracle_line_matches_real_rust_evidence",
@@ -14641,10 +14652,13 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::empty_collection_expectations_cap_effect_families_only_after_an_early_exit",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::seeded_collection_expectations_restate_the_pre_call_state",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::seeded_collection_expectations_cap_effect_families_only_after_an_early_exit",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::field_collection_count_read_refuses_a_preexisting_key",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::assertion_field_collection_reads_name_binding_and_getter",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::collection_subject_must_end_after_root_index_or_value_read",
 ]
 fixtures = [
+  "fixtures/rust_map_overwrite_count",
+  "fixtures/rust_map_insert_count_empty",
   "fixtures/rust_preseeded_first_element",
   "fixtures/rust_pushed_element_last",
 ]
