@@ -1139,6 +1139,7 @@ tests = [
   "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_mixed_missing_changed_file_without_inventory_limit",
   "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_uncapped_absence_honors_generated_policy_and_handwritten_opt_in",
   "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_uncapped_absence_retains_changed_missing_vendor_marker_context",
+  "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_capped_absence_matches_uncapped_generated_policy_and_recovers",
   "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_does_not_name_intentionally_deleted_file_as_absent",
   "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_does_not_probe_absent_rust_source_when_rust_is_disabled",
   "crates/ripr/src/output/pilot/tests.rs::pilot_current_change_preserves_absent_file_coverage_through_empty_and_mixed_supplements",

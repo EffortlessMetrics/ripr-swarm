@@ -451,15 +451,20 @@ fn classify_change_past_seam_limit(
         );
     }
     let (root, config, change) = (root.to_path_buf(), config.clone(), change.clone());
+    let changed_paths = change.changed_files();
     Some(
         match run_pilot_analysis_with_timeout(
             remaining_ms,
             None,
             || {},
             move || {
-                analysis::classify_seams_in_files_at_with_config(&root, &config, &files, &|seam| {
-                    change.touches_seam(seam)
-                })
+                analysis::classify_seams_in_files_at_with_config(
+                    &root,
+                    &config,
+                    &files,
+                    &changed_paths,
+                    &|seam| change.touches_seam(seam),
+                )
             },
         ) {
             Ok(PilotAnalysisResult::Complete(classified)) => Ok(classified),
