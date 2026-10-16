@@ -358,7 +358,13 @@ rejected alternative. Any can be reversed later without touching the rest.
      rebinding of the macro, an unresolved module composition or an escape
      the oracle scan models refuses it);
    - it is `assert_eq!(recv[k].f, literal)`, in either order, with `k` an
-     integer literal; or `assert!(recv.iter().any(|r| r.f == literal))`
+     integer literal, or the same read through one alias the test binds
+     right after the receiver: `let r = &recv[k];` then
+     `assert_eq!(r.f, literal)` (a plain immutable binding, a shared borrow
+     at the probed element's literal index of the receiver or a direct owner
+     call, named neither like the owner nor like the receiver, and bound
+     nowhere else in the test; `&mut`, `mut r`, a move out of the index and
+     another element's index give no credit); or `assert!(recv.iter().any(|r| r.f == literal))`
      (`into_iter`, literal first, no message), where every other element
      builds `f` from a decimal integer literal different from `literal`,
      every literal in range for `f`'s type (an out-of-range literal under
