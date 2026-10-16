@@ -598,6 +598,87 @@ fork or otherwise untrusted PR:
   GitHub-hosted only
 ```
 
+#### Deployed main behavior before staged activation
+
+Label events are not an implicit full-gate refresh, and Draft iteration does not
+allocate the heavy required gate (#4986):
+
+```text
+opened / reopened / synchronize while Draft:
+  no Routed Rust Small run; existing early advisory events remain separate
+
+ready_for_review (Draft -> Ready):
+  the sole pull-request qualification request; validates the exact Ready head
+
+labeled / unlabeled (any label):
+  no Routed Rust Small run; labels never create or refresh the required context
+
+push to main / workflow_dispatch:
+  launch under their own authorities, unchanged
+```
+
+`windows-ci` continues to opt into `.github/workflows/windows-advisory.yml` only.
+`cancel-in-progress` is `github.event_name == 'pull_request'` and the concurrency
+group is qualified by `github.event_name`, so a second Ready transition replaces
+the prior admission attempt while independent main and manual work cannot replace
+each other. No run posts a pseudo-result, so a Draft PR with no required check
+blocks rather than inheriting stale proof. The result job keeps its static
+`Ripr Rust Small Result` name on every run. One gap is not enforced: a
+`workflow_dispatch` of `routed-rust.yml` on a PR branch also posts that context
+on the branch head, without the `pull_request`-scoped PR-evidence steps.
+Do not dispatch on PR branches; #5394 tracks enforcing this.
+
+What this means for authors and agents:
+
+UB retains early review on `opened`, `synchronize`, and `reopened`, including
+Drafts. It does not subscribe to `ready_for_review` (#4987), so Ready neither
+cancels active UB review nor repeats completed advisory work. Its existing
+same-repository guard and concurrency remain unchanged. Automatic Droid PR
+review is retired under #5086; manual `@droid` commands and scheduled security
+scans retain their separate triggers and safeguards. UB explicitly lists all
+three early passes in
+`.ub-review.toml`'s `gate.post_review_on`: action pin
+`55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8` otherwise permits publication only on
+opened and Ready. Removing Ready admission alone would leave repaired-head
+reviews unable to publish. This does not suppress repeated Draft synchronize
+review or complete the broader #4987 acceptance.
+
+Retain advisory run IDs, candidate head, observed base and synthetic merge SHA,
+action/config identity, and review receipts. The same PR head with a changed
+base or merge tree is a different review identity; this event change supplies
+no cache hit or integration re-review. Before merge, inspect material integration
+changes and obtain applicable fresh review through the existing review route.
+Material findings return the candidate to Draft for repair. An unavailable,
+failed, or skipped provider remains missing review evidence after Ready; no
+synthetic success replaces it. Runner-minute savings remain unmeasured until a
+natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
+checks parsed event/config contracts, not hosted provider execution.
+
+UB Review prepares the locked `owner_return_pin_fallible_literal/input` fixture
+before invoking the action, matching required Rust CI. Its offline identity
+probe needs `anyhow = 1.0.100` in the runner's default Cargo home. The pinned
+action sanitizes sensor environments and drops `HOME` and `CARGO_HOME`; this
+workflow therefore must not redirect those homes. A custom sensor-home route
+needs separate preparation and verification. Fetch failures remain failures;
+a green advisory wrapper does not make failed or missing sensor evidence pass.
+Historical run `38859874238` retains its `cargo-test` exit 101 and separate
+invalid command/timeout evidence. Adding preparation does not reclassify that
+run or establish recovery of every sensor; the repaired hosted producer still
+needs its own evidence.
+
+- Open PRs as Draft (`gh pr create --draft`), then follow the
+  [Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff) before
+  requesting qualification. A PR opened directly as Ready never receives a
+  `ready_for_review` event and never gets the required check.
+- A push after Ready leaves the new head without the required check. Return to
+  Draft and refresh affected proof and review through the same handoff before
+  another Ready transition. Reassess exact-head merge prerequisites before
+  rearming auto-merge.
+- Labels such as `full-ci` take effect at the next Ready transition, not when
+  they are added.
+
+#### Staged exact-subject candidate; activation held
+
 Ordinary Draft/open/synchronize/Ready activity does not launch the routed gate.
 The explicit request is `pull_request:labeled` with event label `merge-ready`,
 for a currently reviewed non-Draft H. Live preflight binds H/base B/integration T
@@ -628,18 +709,6 @@ operations are not atomic. Protected expected-head squash and landed-tree readba
 retain current server enforcement, without a native merge queue or added settings.
 The known required mapping remains `Ripr Rust Small Result`, app15368; complete
 classic strictness is unreadable, not assumed absent and not a new settings gate.
-
-UB Review prepares the locked `owner_return_pin_fallible_literal/input` fixture
-before invoking the action, matching required Rust CI. Its offline identity
-probe needs `anyhow = 1.0.100` in the runner's default Cargo home. The pinned
-action sanitizes sensor environments and drops `HOME` and `CARGO_HOME`; this
-workflow therefore must not redirect those homes. A custom sensor-home route
-needs separate preparation and verification. Fetch failures remain failures;
-a green advisory wrapper does not make failed or missing sensor evidence pass.
-Historical run `38859874238` retains its `cargo-test` exit 101 and separate
-invalid command/timeout evidence. Adding preparation does not reclassify that
-run or establish recovery of every sensor; the repaired hosted producer still
-needs its own evidence.
 
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and

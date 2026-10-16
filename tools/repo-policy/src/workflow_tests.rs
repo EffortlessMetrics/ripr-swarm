@@ -1037,54 +1037,6 @@ fn routed_rust_request_event_matrix_and_context_regressions() {
 }
 
 #[test]
-fn routed_rust_contract_catches_deadline_bypass_with_stray_occurrences() {
-    // #2230 review: a global `timeout-minutes:` occurrence count passes even
-    // when a named job lost its deadline but stray tokens (comments, other
-    // jobs, duplicates) keep the total at eight. The per-job check must fire
-    // on the job that lost its deadline.
-    let workflow = r#"
-name: Routed Rust Small
-jobs:
-  route:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-  detect-docs-only:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-  rust-cx43:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    # timeout-minutes: 60 (stray occurrence in a comment)
-  rust-cpx42:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    timeout-minutes: 60
-  rust-cx53:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-  rust-github:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-  docs-gate:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-  result:
-    runs-on: ubuntu-latest
-"#;
-    let violations = routed_rust_workflow_contract_violations(workflow, None, None);
-    assert!(
-        violations.iter().any(|violation| violation
-            .contains("job `result` must set an explicit `timeout-minutes` job deadline")),
-        "missing per-job deadline must fire even with 8 stray occurrences: {violations:?}"
-    );
-    assert!(
-        !violations
-            .iter()
-            .any(|violation| violation.contains("job `route` must set an explicit")),
-        "a job that kept its deadline must not be flagged: {violations:?}"
-    );
-}
-#[test]
 fn staged_self_hosted_conditions_reject_missing_status_and_header_decoys() -> Result<(), String> {
     let workflow = include_str!("../../../.github/workflows/routed-rust.yml");
     let reusable = include_str!("../../../.github/workflows/rust-gates.yml");
@@ -1162,6 +1114,55 @@ fn staged_self_hosted_conditions_reject_missing_status_and_header_decoys() -> Re
         Some("false")
     );
     Ok(())
+}
+
+#[test]
+fn routed_rust_contract_catches_deadline_bypass_with_stray_occurrences() {
+    // #2230 review: a global `timeout-minutes:` occurrence count passes even
+    // when a named job lost its deadline but stray tokens (comments, other
+    // jobs, duplicates) keep the total at eight. The per-job check must fire
+    // on the job that lost its deadline.
+    let workflow = r#"
+name: Routed Rust Small
+jobs:
+  route:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+  detect-docs-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+  rust-cx43:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # timeout-minutes: 60 (stray occurrence in a comment)
+  rust-cpx42:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    timeout-minutes: 60
+  rust-cx53:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+  rust-github:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+  docs-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+  result:
+    runs-on: ubuntu-latest
+"#;
+    let violations = routed_rust_workflow_contract_violations(workflow, None, None);
+    assert!(
+        violations.iter().any(|violation| violation
+            .contains("job `result` must set an explicit `timeout-minutes` job deadline")),
+        "missing per-job deadline must fire even with 8 stray occurrences: {violations:?}"
+    );
+    assert!(
+        !violations
+            .iter()
+            .any(|violation| violation.contains("job `route` must set an explicit")),
+        "a job that kept its deadline must not be flagged: {violations:?}"
+    );
 }
 
 #[test]
