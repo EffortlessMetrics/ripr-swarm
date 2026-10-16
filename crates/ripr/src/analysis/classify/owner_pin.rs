@@ -2611,6 +2611,13 @@ impl OwnerReturnPin {
             (true, None) => return false,
             (false, _) => expected,
         };
+        // #8097: a test that writes a file and reads one back may compare
+        // the owner with a file it just wrote from the owner, which fixes
+        // nothing. Fail-closed on the pair, whatever file the expected
+        // operand names.
+        if test_may_read_files(&test.body) && test_may_write_files(&test.body) {
+            return false;
+        }
         // `assert_eq!(f(4), f(2) + f(2))` compares the owner with itself.
         if expected_reaches_owner(test, &assertion.text, expected, &self.name)
             || expected_reaches_fixture(test, expected)
@@ -6677,21 +6684,43 @@ fn test_may_write_files(body: &str) -> bool {
             "rename::<",
         ]
         .iter()
-        .any(|call| {
-            // A turbofish (`write::<_, _>(..)`) is the same call.
-            compact.match_indices(call).any(|(at, _)| {
-                let before = &compact[..at];
-                // A bare or path-qualified call (`save::write(`, `<File>::create(`,
-                // `fs_err::write(`) may write; a method call or `io::copy(`
-                // between readers and writers does not.
-                if before.ends_with("::") {
-                    return !before.ends_with("io::");
-                }
-                before.chars().next_back().is_none_or(|previous| {
-                    !(previous.is_alphanumeric() || matches!(previous, '_' | '.' | ':'))
-                })
-            })
+        .any(|call| names_free_call(&compact, call))
+}
+
+/// Whether `compact` (whitespace-free, masked) names `call` as a bare or
+/// path-qualified call (`save::write(`, `<File>::create(`, `fs_err::write(`),
+/// not as a method call or an `io::copy(` between readers and writers. A
+/// turbofish (`write::<_, _>(..)`) is the same call.
+fn names_free_call(compact: &str, call: &str) -> bool {
+    compact.match_indices(call).any(|(at, _)| {
+        let before = &compact[..at];
+        if before.ends_with("::") {
+            return !before.ends_with("io::");
+        }
+        before.chars().next_back().is_none_or(|previous| {
+            !(previous.is_alphanumeric() || matches!(previous, '_' | '.' | ':'))
         })
+    })
+}
+
+/// #8097: whether a test body may read a file: `fs::read_to_string`,
+/// `File::open`, `OpenOptions`, or a bare `read(..)`/`open(..)` a `use`
+/// brought in. Comments and strings are masked. Fail-closed: any file read
+/// counts, whichever value later reaches the comparison.
+fn test_may_read_files(body: &str) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let compact: String = masked.chars().filter(|c| !c.is_whitespace()).collect();
+    const READERS: &[&str] = &[
+        "read_to_string",
+        "read_to_end",
+        "fs::read",
+        "File::open",
+        "OpenOptions",
+    ];
+    READERS.iter().any(|reader| compact.contains(reader))
+        || ["read(", "open(", "read::<", "open::<"]
+            .iter()
+            .any(|call| names_free_call(&compact, call))
 }
 
 /// RIPR-SPEC-0197: the compared operands of a plain `assert!(lhs == rhs)`

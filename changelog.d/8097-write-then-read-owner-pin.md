@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- An owner-return pin no longer credits a test that writes a file and reads one back, such as `fs::write("w.txt", render(4))` followed by `assert_eq!(render(4), fs::read_to_string("w.txt").unwrap())`. The expected value may come from the owner itself, so the comparison fixes nothing. The refusal is fail-closed on the pair and also covers a file read bound to a name first (#8097).

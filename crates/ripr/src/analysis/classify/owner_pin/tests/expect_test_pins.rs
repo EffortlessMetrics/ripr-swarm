@@ -402,3 +402,60 @@ fn a_golden_path_stays_in_tree_and_fs_renames_refuse() {
         None
     );
 }
+
+/// #8097: the file-read side of the write-then-read refusal.
+#[test]
+fn test_may_read_files_names_file_reads_not_look_alikes() {
+    for body in [
+        "let w = std::fs::read_to_string(\"w.txt\").unwrap();",
+        "let w = fs::read(\"w.txt\").unwrap();",
+        "let mut f = File::open(\"w.txt\").unwrap();",
+        "let f = OpenOptions::new().read(true).open(\"w.txt\");",
+        "let w = read(\"w.txt\").unwrap();",
+        "let w = fs_err::read::<_>(\"w.txt\").unwrap();",
+        "reader.read_to_end(&mut buffer).unwrap();",
+    ] {
+        assert!(test_may_read_files(body), "{body}");
+    }
+    for body in [
+        "assert_eq!(render(4), \"w12\");",
+        "// fs::read_to_string(\"w.txt\")",
+        "let note = \"File::open\";",
+        "let already = thread(x);",
+        "socket.read(&mut buffer);",
+    ] {
+        assert!(!test_may_read_files(body), "{body}");
+    }
+}
+
+/// #8097: a test that writes a file from the owner and compares the owner
+/// with the file it reads back fixes nothing, so it lends no owner pin.
+/// Each half alone, and an unrelated literal comparison beside a write,
+/// keep their pin.
+#[test]
+fn a_test_that_writes_then_reads_a_file_lends_no_owner_pin() {
+    let admitted = |body: &str| render_admitted(&render_test("", body), None).len();
+    let write = "std::fs::write(\"w.txt\", render(4)).unwrap();";
+    let read = "std::fs::read_to_string(\"w.txt\").unwrap()";
+    let compare = format!("assert_eq!(render(4), {read});");
+    // Positive controls: the stimulus really admits a pin without the pair.
+    assert_eq!(admitted("assert_eq!(render(4), \"w12\");"), 1);
+    assert_eq!(
+        admitted(&format!("{write}\n    assert_eq!(render(4), \"w12\");")),
+        1
+    );
+    assert_eq!(
+        admitted(&format!(
+            "let w = {read};\n    assert_eq!(render(4), \"w12\");"
+        )),
+        1
+    );
+    // The write-then-read pair refuses, directly and through a binding.
+    assert_eq!(admitted(&format!("{write}\n    {compare}")), 0);
+    assert_eq!(
+        admitted(&format!(
+            "{write}\n    let want = {read};\n    assert_eq!(render(4), want);"
+        )),
+        0
+    );
+}
