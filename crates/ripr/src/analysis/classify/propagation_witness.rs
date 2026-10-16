@@ -1016,11 +1016,23 @@ fn receiver_starts_empty_in_body(body: &str, receiver: &str) -> bool {
     let name_ends = |at: usize| masked[at..].chars().next().is_none_or(|next| !ident(next));
     let empty_start = |expr: &str| {
         let expr = expr.trim().trim_start_matches('&').trim();
-        expr.starts_with("Vec::new()")
-            || expr.starts_with("vec![]")
+        // The construction must be the whole right-hand side, not the head
+        // of a method chain that could seed the collection afterwards.
+        let whole = |pat: &str| {
+            expr.strip_prefix(pat).is_some_and(|after| {
+                let after = after.trim_start();
+                after.is_empty()
+                    || after.starts_with(';')
+                    || after.starts_with(',')
+                    || after.starts_with(')')
+                    || after.starts_with('}')
+            })
+        };
+        whole("Vec::new()")
+            || whole("vec![]")
             || expr.starts_with("Vec::with_capacity(")
-            || expr.starts_with("Vec::default()")
-            || expr.starts_with("VecDeque::new()")
+            || whole("Vec::default()")
+            || whole("VecDeque::new()")
     };
     let mut saw_empty_assignment = false;
     let mut mutable_escapes = 0usize;
@@ -1028,7 +1040,11 @@ fn receiver_starts_empty_in_body(body: &str, receiver: &str) -> bool {
         if !bound_at(at) || !name_ends(at + receiver.len()) {
             continue;
         }
-        if masked[..at].trim_end().ends_with("&mut") || masked[..at].trim_end().ends_with("& mut") {
+        let before = masked[..at].trim_end();
+        let deref_escape = before.strip_suffix('*').is_some_and(|head| {
+            head.trim_end().ends_with("&mut") || head.trim_end().ends_with("& mut")
+        });
+        if before.ends_with("&mut") || before.ends_with("& mut") || deref_escape {
             mutable_escapes += 1;
             if mutable_escapes > 1 {
                 return false;
@@ -1103,8 +1119,10 @@ fn reads_only_first_element(subject: &str, receiver: &str) -> bool {
         return true;
     }
     let zero = |inner: &str| {
-        inner == "0"
-            || inner.strip_prefix('0').is_some_and(|suffix| {
+        let cleaned: String = inner.chars().filter(|ch| *ch != '_').collect();
+        cleaned == "0"
+            || cleaned == "0x0"
+            || cleaned.strip_prefix('0').is_some_and(|suffix| {
                 matches!(
                     suffix,
                     "usize"
@@ -1122,14 +1140,50 @@ fn reads_only_first_element(subject: &str, receiver: &str) -> bool {
                 )
             })
     };
+    let one = |inner: &str| {
+        let cleaned: String = inner.chars().filter(|ch| *ch != '_').collect();
+        cleaned == "1"
+            || cleaned.strip_prefix('1').is_some_and(|suffix| {
+                matches!(
+                    suffix,
+                    "usize"
+                        | "isize"
+                        | "u8"
+                        | "u16"
+                        | "u32"
+                        | "u64"
+                        | "u128"
+                        | "i8"
+                        | "i16"
+                        | "i32"
+                        | "i64"
+                        | "i128"
+                )
+            })
+    };
+    // A range that ends at the first element (`..1`, `0..1`, `..=0`,
+    // `0..=0`) reads only element zero, like an index of zero.
+    let first_range = |inner: &str| {
+        if let Some(end) = inner.strip_prefix("..=") {
+            zero(end)
+        } else if let Some(end) = inner.strip_prefix("..") {
+            !end.is_empty() && one(end)
+        } else if let Some((start, end)) = inner.split_once("..=") {
+            (start.is_empty() || zero(start)) && zero(end)
+        } else if let Some((start, end)) = inner.split_once("..") {
+            (start.is_empty() || zero(start)) && one(end)
+        } else {
+            false
+        }
+    };
     compact
         .strip_prefix(".get(")
         .and_then(|inner| inner.strip_suffix(')'))
-        .is_some_and(zero)
+        .is_some_and(|inner| zero(inner) || first_range(inner))
         || compact
             .strip_prefix('[')
             .and_then(|inner| inner.strip_suffix(']'))
-            .is_some_and(zero)
+            .is_some_and(|inner| zero(inner) || first_range(inner))
 }
 
 /// The field path of a collection write on `self` (`log` for
@@ -3989,12 +4043,21 @@ mod tests {
             "assert_eq!(inv.log.first(), Some(&9));",
             "assert_eq!(inv.log.get(0), Some(&9));",
             "assert_eq!(inv.log.get(0usize), Some(&9));",
+            "assert_eq!(inv.log.get(0_usize), Some(&9));",
             "assert_eq!(&inv.log[0], &9);",
             "assert_eq!(&inv.log[0usize], &9);",
+            "assert_eq!(&inv.log[0_usize], &9);",
+            "assert_eq!(&inv.log[..1], &[9]);",
+            "assert_eq!(&inv.log[0..1], &[9]);",
+            "assert_eq!(inv.log.get(..1), Some(&[9]));",
+            "assert_eq!(inv.log.get(0..=0), Some(&[9]));",
             "assert_eq!(inv.history().first(), Some(&9));",
         ] {
             assert!(reads(first).is_empty(), "{first}");
         }
+        // A range covering the pushed element still reads it.
+        assert_eq!(reads("assert_eq!(&inv.log[0..2], &[9, 1]);"), direct("inv"));
+        assert_eq!(reads("assert_eq!(&inv.log[..], &[9, 1]);"), direct("inv"));
         // An insert write is not an append: element zero can be the
         // inserted element itself, so the read keeps its credit.
         assert_eq!(
@@ -4139,6 +4202,14 @@ mod tests {
             !assertion_observes_direct_collection("assert_eq!(items.first(), Some(&5));", "items"),
             "a first-element read may predate the push and must not confirm it (#8203)"
         );
+        assert!(
+            !assertion_observes_direct_collection("assert_eq!(items[0_usize], 5);", "items"),
+            "a typed-zero index may predate the push and must not confirm it (#8203)"
+        );
+        assert!(
+            !assertion_observes_direct_collection("assert_eq!(&items[..1], &[5]);", "items"),
+            "a first-element slice may predate the push and must not confirm it (#8203)"
+        );
         // #8203: a provably empty start makes element zero the pushed
         // element, so first-element reads keep their credit there.
         for body in [
@@ -4163,6 +4234,8 @@ mod tests {
             "let mut items = Vec::new(); items.push(9); record(&mut items, 20);",
             "let mut items = Vec::new(); items.extend([9]); record(&mut items, 20);",
             "let mut items = Vec::new(); seed(&mut items); record(&mut items, 20);",
+            "let mut items = Vec::new(); seed(&mut *items); record(&mut items, 20);",
+            "let mut items = Vec::new().into_iter().chain([9]).collect(); record(&mut items, 20);",
             "let mut items = other; record(&mut items, 20);",
             "record(&mut items, 20);",
         ] {
