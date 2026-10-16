@@ -460,6 +460,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     let mut candidate_tree: Option<String> = None;
     let mut candidate_base: Option<String> = None;
     let mut quiet = false;
+    let mut help_all = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -564,12 +565,21 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 quiet = true;
             }
             "--help" | "-h" => {
-                help::print_check_help();
+                if help_all || args[i + 1..].iter().any(|arg| arg == "--all") {
+                    help::print_check_help();
+                } else {
+                    help::print_check_help_summary();
+                }
                 return Ok(());
             }
+            // `--all` only widens `--help`; alone it is not a check option.
+            "--all" => help_all = true,
             other => return Err(unknown_argument("check", other)),
         }
         i += 1;
+    }
+    if help_all {
+        return Err(unknown_argument("check", "--all"));
     }
     // #6834: refusal-envelope context for every failure below. Argv usage
     // errors above return before this snapshot exists and stay prose-only.

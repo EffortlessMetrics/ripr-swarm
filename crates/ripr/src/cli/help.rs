@@ -217,8 +217,14 @@ pub(super) fn print_workflow(name: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
+/// Exhaustive `check` reference (`ripr check --help --all`).
 pub(super) fn print_check_help() {
     println!("{CHECK_HELP}");
+}
+
+/// One-screen default for `ripr check --help`.
+pub(super) fn print_check_help_summary() {
+    println!("{CHECK_HELP_SUMMARY}");
 }
 
 pub(super) fn print_config_help() {

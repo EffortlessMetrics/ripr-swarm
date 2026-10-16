@@ -509,7 +509,7 @@ fn help_index_routes_agent_repair_to_repair_help() -> Result<(), String> {
 #[test]
 fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), String> {
     for command in ["check", "context"] {
-        let help = normalized(&rendered_help(&[command, "--help"])?);
+        let help = normalized(&rendered_help(&[command, "--help", "--all"])?);
         for needle in [
             "instant (changed files only, cheapest)",
             "deep and ready (whole workspace, slowest)",
@@ -526,7 +526,7 @@ fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), Stri
 /// base through the same authority (#3952), so its help states the same order.
 #[test]
 fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
-    let check = normalized(&rendered_help(&["check", "--help"])?);
+    let check = normalized(&rendered_help(&["check", "--help", "--all"])?);
     for needle in [
         "the local origin/HEAD ref, then origin/main, origin/master, main, and master in order",
         "when none of those resolves, the analysis does not run",
@@ -556,7 +556,7 @@ fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
 /// the group list. Each task below must keep exactly its recommended path.
 #[test]
 fn check_help_chooses_one_format_per_task() -> Result<(), String> {
-    let check = normalized(&rendered_help(&["check", "--help"])?);
+    let check = normalized(&rendered_help(&["check", "--help", "--all"])?);
     for needle in [
         "Choose by task:",
         "eye review -> human",
@@ -633,4 +633,66 @@ fn doc_flag_guard_rejects_removed_flags_and_accepts_prose() -> Result<(), String
         return Err(format!("guard rejected valid prose: {drift:?}"));
     }
     Ok(())
+}
+
+/// #8158 queue item 2: `check --help` is one screen that answers the first
+/// task (what do I run, what do the exit codes mean) and points at the
+/// exhaustive reference; `--help --all` and `help check --all` keep every
+/// option reachable.
+#[test]
+fn check_help_default_is_one_screen_and_all_is_exhaustive() -> Result<(), String> {
+    let summary = rendered_help(&["check", "--help"])?;
+    let short = rendered_help(&["check", "-h"])?;
+    let full = rendered_help(&["check", "--help", "--all"])?;
+    let via_help = rendered_help(&["help", "check", "--all"])?;
+    if summary != short {
+        return Err("`check -h` must match `check --help`".to_string());
+    }
+    if full != via_help {
+        return Err("`help check --all` must match `check --help --all`".to_string());
+    }
+    if summary.lines().count() > 40 {
+        return Err(format!(
+            "default check help must fit one screen, got {} lines",
+            summary.lines().count()
+        ));
+    }
+    for needle in [
+        "--base REV",
+        "--diff PATH",
+        "--json",
+        "Exit status:",
+        "ripr check --help --all",
+    ] {
+        assert_contains("default check help", &summary, needle)?;
+    }
+    // Negative control: reference-only material stays behind `--all`.
+    for needle in [
+        "RIPR_MAX_DIFF_CHANGED_RUST_LINES",
+        "repo-badge-plus-shields",
+    ] {
+        if summary.contains(needle) {
+            return Err(format!(
+                "default check help leaked reference text: {needle}"
+            ));
+        }
+        assert_contains("check help --all", &full, needle)?;
+    }
+    Ok(())
+}
+
+/// `--all` only widens `--help`; on its own it is a usage error, not a
+/// silently ignored flag.
+#[test]
+fn check_all_without_help_is_a_usage_error() -> Result<(), String> {
+    let output = run_ripr(&["check", "--all"])?;
+    if output.status.success() {
+        return Err("`ripr check --all` must not succeed".to_string());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_contains(
+        "`ripr check --all` stderr",
+        &stderr,
+        "unknown check argument",
+    )
 }

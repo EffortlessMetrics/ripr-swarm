@@ -122,6 +122,41 @@ including the `repo-exposure.json` that `ripr pilot` writes, carries no head;
 ripr then says so and cannot verify the pair came from the same repository or
 adjacent commits. Matching heads still do not mean matching working trees.
 "#;
+/// The one-screen default for `ripr check --help` (#8158 queue item 2). The
+/// exhaustive reference below stays reachable as `ripr check --help --all` and
+/// remains the text flag suggestions and parity gates read.
+pub(super) const CHECK_HELP_SUMMARY: &str = r#"Analyze the current diff and name where nearby tests may not catch the
+changed behavior. Static and advisory: it does not run mutants.
+
+Usage: ripr check [OPTIONS]
+
+Common options:
+  --base REV        Compare against REV. When omitted, ripr uses origin/HEAD,
+                    then origin/main, origin/master, main, master.
+  --diff PATH       Read a unified diff file instead of running git diff
+                    (`--diff -` reads stdin).
+  --worktree        Include uncommitted tracked edits (already the default
+                    when the tree has them).
+  --committed       Analyze committed history only (base...HEAD).
+  --format FORMAT   human (default), human-full, json, github, sarif.
+  --json            Shortcut for --format json.
+  --root PATH       Workspace root. Defaults to the current directory, then
+                    walks up to the Cargo workspace.
+  --quiet           Suppress progress on stderr.
+
+Exit status: 0 for complete and partial reports regardless of findings;
+2 for unsupported input and usage or operational errors. Read the typed
+outcome; a successful exit alone does not establish a complete scope.
+
+Examples:
+  ripr check
+  ripr check --base origin/main
+  ripr check --json
+
+More: `ripr check --help --all` lists every option, output format, analysis
+mode, and environment variable.
+"#;
+
 pub(super) const CHECK_HELP: &str = r#"Analyze a diff or workspace and emit findings in human, JSON, SARIF, or badge form.
 
 Usage: ripr check [OPTIONS]
@@ -255,6 +290,8 @@ Options:
   --quiet                  Suppress analysis progress and heartbeats on
                            stderr. Does not change machine stdout, exit
                            codes, or error reporting.
+  --all                    With --help, print this exhaustive reference
+                           instead of the one-screen default.
 
 Exit status:
   Complete and partial_with_limitations reports exit 0, regardless of findings.
