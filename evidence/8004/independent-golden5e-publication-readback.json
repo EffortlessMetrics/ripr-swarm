@@ -1,0 +1,30 @@
+{
+  "at": "2026-10-16T08:21:50.734248+00:00",
+  "packet_commit": "64b9110f7cdf1348d99a7f03116f9aa8982f0330",
+  "reviewed_head": "5e34bad2a9d066387d72777f37d1134987c27698",
+  "actual_merge": "740b6da9b2cc9fd402b9f588fe1c1f972d64745a",
+  "route": "fresh network bare filtered single-branch clone, no local alternates; lazy exact blob recovery",
+  "all_five_public_files_byte_equal": {
+    "README.md": "5faeb41221e119d7340d58f745d51fa12c7dbe7b518b1304e6d302927c26b2aa",
+    "receipt.json": "9ad058acd25cd19bc89ce21f6bd33106f50b0d136dcd87c15f3ffa5f2bfe0471",
+    "MANIFEST.json": "596a9c8e151ec71b7311fc6d62a5b2e54a7f8b004617bbb0b3529b5a37a652b8",
+    "raw.tar.xz": "3cc26f7544e0795cd144612f8be000b8bececf8a8b285f0c566d91aa32df1b5a",
+    "SHA256SUMS": "26e77cc328ef296a738c9085adaa9bca6a44d2ddc0b3b335960c51d3c75d98c1"
+  },
+  "archive_members_complete_bytes_sizes_modes_inventory": 1789,
+  "transport_incident": {
+    "at_approx": "2026-10-16T08:20:00Z",
+    "action": "local archive verification/stage/commit command process creation",
+    "error": "exec-server transport disconnected",
+    "read_only_reconciliation": "executor responded; unchanged detached HEAD740, evidence untracked, new remote branch absent; operation had not executed",
+    "retry": "same scoped command succeeded; no duplicate push or source action"
+  },
+  "resources": {
+    "review_worktree": "remove after publication/readback",
+    "publication_worktree": "remove after sibling readback",
+    "target": "/workspace/review8004-target retained for parent",
+    "native_witnesses": "/workspace/review8004-raw/native retained for parent",
+    "raw": "/workspace/review8004-raw retained for parent",
+    "inherited_root": "/workspace/ripr-swarm preserved"
+  }
+}
