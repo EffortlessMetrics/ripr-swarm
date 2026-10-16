@@ -6016,6 +6016,7 @@ fn code_action_response_emitted_kinds_stay_within_the_advertised_set() -> Result
             code_action_response(&gap_params, Some(&gap_snapshot), &vscode),
         ),
     ];
+    let mut emitted_kinds = Vec::new();
     for (scenario, actions) in &scenarios {
         if actions.len() < 2 {
             return Err(format!(
@@ -6029,6 +6030,23 @@ fn code_action_response_emitted_kinds_stay_within_the_advertised_set() -> Result
                     "{scenario}: emitted kind {kind} is not in the advertised code-action kinds"
                 ));
             }
+            emitted_kinds.push(kind);
+        }
+    }
+    // Reverse parity (#7773): an advertised kind must be emitted or be the
+    // dot-segment parent of an emitted kind, so no advertised leaf kind is a
+    // promise the server never keeps.
+    for advertised in ADVERTISED_CODE_ACTION_KINDS {
+        let covered = emitted_kinds.iter().any(|kind| {
+            kind == advertised
+                || kind
+                    .strip_prefix(advertised)
+                    .is_some_and(|rest| rest.starts_with('.'))
+        });
+        if !covered {
+            return Err(format!(
+                "advertised kind {advertised} is neither emitted nor a parent of an emitted kind"
+            ));
         }
     }
     Ok(())

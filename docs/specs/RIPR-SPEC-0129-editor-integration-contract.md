@@ -111,7 +111,7 @@ Consumes everything in Layer 1, plus:
   `ripr.copyAgentPacket`, `ripr.openRelatedTest`, etc.)
 - `ripr.collectWorkspaceStatus` / `collectRepairPacket` (legacy execute-command surface)
 - `codeAction` kinds: `quickfix.ripr.inspect`, `quickfix.ripr.navigate`,
-  `quickfix.ripr.verify`, `source.ripr.refresh`
+  `source.ripr.refresh`
 - Managed server provisioning (#1624)
 - Workspace Trust enforcement (#1623)
 
@@ -407,18 +407,21 @@ client supports:
 - `experimental.riprEditor` negotiation (#1628, delivered in #1776) filters
   client-command code actions to clients that advertise support.
 - Code action kinds are advertised as `quickfix.ripr`,
-  `quickfix.ripr.inspect`, `quickfix.ripr.navigate`, `quickfix.ripr.verify`
-  and `source.ripr.refresh` (#1750, landed). Per-diagnostic actions that act
-  on one finding (inspect, navigate, and the reserved verify family) use
+  `quickfix.ripr.inspect`, `quickfix.ripr.navigate` and
+  `source.ripr.refresh` (#1750, landed). Per-diagnostic actions that act
+  on one finding (inspect and navigate) use
   `quickfix.ripr.*` kinds because VS Code's lightbulb / Ctrl+. Quick Fix
   menu never lists `source.*` actions — they appear only under "Source
   Action...", so a `source.ripr.inspect` action on a gap diagnostic left
   Quick Fix reporting "No code actions available". The workspace-level
   Refresh Analysis action is not a fix for one diagnostic, so it stays the
-  `source.ripr.refresh` source action. `quickfix.ripr` itself and
-  `quickfix.ripr.verify` are advertised-but-unemitted (reserved). Every
-  kind the server emits stays within
-  the advertised set (parity-pinned by
+  `source.ripr.refresh` source action. `quickfix.ripr` is advertised
+  only as the hierarchical parent of the emitted `quickfix.ripr.*` kinds.
+  `quickfix.ripr.verify` is reserved and not advertised until an emitter
+  exists (#7773), so no advertised leaf kind is a promise the server never
+  keeps. Every kind the server emits stays within the advertised set, and
+  every advertised kind is emitted or a parent of an emitted kind (both
+  parity-pinned by
   `tests.rs::code_action_response_emitted_kinds_stay_within_the_advertised_set`
   against the shared `ADVERTISED_CODE_ACTION_KINDS` constant).
 - `textDocument/codeAction` honors `CodeActionContext.only` (#1750): with

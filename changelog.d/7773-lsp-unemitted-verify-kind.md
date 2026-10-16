@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The LSP `initialize` result no longer advertises the never-emitted `quickfix.ripr.verify` code-action kind, so a client filtering on it is not promised actions the server never produces. `quickfix.ripr` stays advertised as the hierarchical parent of the emitted `quickfix.ripr.*` kinds, and a reverse parity test now requires every advertised kind to be emitted or a parent of an emitted kind (#7773).
