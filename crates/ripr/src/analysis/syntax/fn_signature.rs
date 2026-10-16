@@ -970,6 +970,23 @@ mod tests {
     }
 
     #[test]
+    fn call_shape_declines_impl_generic_methods_even_without_own_generics() -> Result<(), String> {
+        // The unbound generic belongs to the impl, not the method's own
+        // parameter list: `has_type_generics` alone would miss it, so the
+        // container fact must decline the shape too (review thread on #8191;
+        // parity with `ripr agent stub`'s owner_generic_impl refusal).
+        let source = "pub struct Bag<T>(T);\nimpl<T: Copy> Bag<T> {\n    pub fn get(&self, value: T, flag: bool) -> T {\n        if !flag { value } else { self.0 }\n    }\n}\n";
+        let offset = source.find("if !flag").ok_or("fixture has a body")?;
+        let signature = owner_signature_at(source, offset).ok_or("signature parses")?;
+        assert_eq!(
+            signature.container,
+            OwnerContainer::GenericImpl("owner impl declares type or const generics")
+        );
+        assert_eq!(signature.call_shape(), None);
+        Ok(())
+    }
+
+    #[test]
     fn owner_signature_at_line_finds_the_innermost_covering_function() -> Result<(), String> {
         let source = "pub fn outer() -> u8 {\n    fn inner(flag: bool) -> u8 {\n        if flag { 1 } else { 2 }\n    }\n    inner(true)\n}\n";
         let signature = owner_signature_at_line(source, 3).ok_or("line 3 sits inside `inner`")?;
