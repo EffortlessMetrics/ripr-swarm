@@ -688,5 +688,17 @@ fn check_help_default_is_one_screen_and_all_is_exhaustive() -> Result<(), String
     if output.status.success() {
         return Err("`ripr check --all` without --help must stay an unknown argument".to_string());
     }
+    // `--help` consumed as `--diff`'s value is not a help request, so `--all`
+    // stays unknown there too (Devin review on #8175).
+    let output = run_ripr(&["check", "--diff", "--help", "--all"])?;
+    if output.status.success() || !String::from_utf8_lossy(&output.stderr).contains("--all") {
+        return Err("`check --diff --help --all` must reject --all".to_string());
+    }
+    // The short screen teaches the real default-base order, origin/HEAD first.
+    assert_contains(
+        "check --help (short)",
+        &normalized(&short),
+        "local origin/HEAD, then origin/main, origin/master, main and master",
+    )?;
     Ok(())
 }

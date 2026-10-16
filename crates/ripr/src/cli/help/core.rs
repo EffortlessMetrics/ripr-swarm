@@ -129,14 +129,15 @@ pub(super) const CHECK_HELP_SHORT: &str = r#"Analyze the current diff and name t
 Usage: ripr check [OPTIONS]
 
 Zero-config: run it inside a Cargo workspace with local changes. The base
-defaults to origin/main (then origin/master, main, master); the diff ends at
-your working tree when you have uncommitted edits, otherwise at HEAD.
+defaults to the local origin/HEAD, then origin/main, origin/master, main and
+master; the diff ends at your working tree when you have uncommitted edits, otherwise at HEAD.
 
 Common options:
   --base REV        Compare against REV instead of the default base.
   --diff PATH       Read a unified diff file instead of running git; `-` is stdin.
   --root PATH       Workspace root. Defaults to the current directory, then walks
-                    up to the nearest Cargo.toml inside the git repository.
+                    up (never leaving the git repository) to find the workspace;
+                    stderr discloses a moved root.
   --worktree        Include uncommitted edits (already the default when present).
   --committed       Only committed history (base...HEAD); ignore uncommitted edits.
   --format FORMAT   human (default), human-full, json, github, sarif.
