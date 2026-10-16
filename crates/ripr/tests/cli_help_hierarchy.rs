@@ -674,3 +674,29 @@ fn check_help_is_one_screen_with_an_all_escape_hatch() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// `--all` widens a parsed `--help` only. A help-shaped value consumed by
+/// another flag must not unlock it (Devin review on #8173).
+#[test]
+fn check_all_is_not_unlocked_by_a_help_shaped_value() -> Result<(), String> {
+    for args in [
+        &["check", "--base", "--help", "--all"][..],
+        &["check", "--all", "--base", "-h"][..],
+    ] {
+        let output = run_ripr(args)?;
+        if output.status.success() {
+            return Err(format!("{args:?} must be rejected"));
+        }
+        assert_contains(
+            "stray --all",
+            &String::from_utf8_lossy(&output.stderr),
+            "unknown check argument \"--all\"",
+        )?;
+    }
+    let reversed = rendered_help(&["check", "--all", "--help"])?;
+    let forward = rendered_help(&["check", "--help", "--all"])?;
+    if reversed != forward {
+        return Err("`--all --help` must equal `--help --all`".to_string());
+    }
+    Ok(())
+}

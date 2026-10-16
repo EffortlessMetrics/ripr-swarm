@@ -501,7 +501,9 @@ const PORTABLE_TESTS: &[&str] = &[
     "agent_status_help_names_the_selected_store_and_exact_attempt_selection",
     "help_index_routes_agent_repair_to_repair_help",
     "mode_help_names_index_scope_and_points_at_the_mode_table",
+    "check_all_is_not_unlocked_by_a_help_shaped_value",
     "check_and_diff_help_state_the_real_base_default",
+    "check_help_is_one_screen_with_an_all_escape_hatch",
     "check_help_chooses_one_format_per_task",
     "doc_flag_guard_rejects_removed_flags_and_accepts_prose",
 ];
