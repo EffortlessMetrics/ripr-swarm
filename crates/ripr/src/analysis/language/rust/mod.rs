@@ -361,8 +361,15 @@ fn drop_unreached_test_files(
     // `test = false`, unmet `required-features`, or `harness = false` (whose
     // `#[test]` functions sit beside a `fn main`). Cargo's own metadata is
     // the authority; unavailable metadata establishes nothing and keeps the
-    // file. A registered harness may collect a `harness = false` target
-    // itself, so only a package without registrations drops that one.
+    // file. A registration for this exact target may collect a
+    // `harness = false` file itself, so only an unregistered one drops. A
+    // file another loaded file names as a module or `#[path]` string may be
+    // compiled by a live target (a `#[path]` import into the library test
+    // harness), so it keeps its tests: a miss costs credit, never a verdict.
+    let registered = test_harnesses
+        .iter()
+        .map(|harness| workspace::normalize_path(&harness.target))
+        .collect::<BTreeSet<_>>();
     let mut gated = BTreeMap::new();
     let mut inventory = workspace::ManifestInventory::default();
     for (path, bytes) in &loaded_files {
@@ -373,10 +380,26 @@ fn drop_unreached_test_files(
             continue;
         }
         let skipped = inventory.cargo_test_collection_skipped(root, path)
-            || (test_harnesses.is_empty()
+            || (!registered.contains(&workspace::normalize_path(path))
                 && inventory.verdict(root, path)
                     == workspace::CargoHarnessVerdict::HarnessDisabled);
-        if skipped {
+        if !skipped {
+            continue;
+        }
+        let module_name = match path.file_name().and_then(|name| name.to_str()) {
+            Some("main.rs") => path
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str()),
+            Some(name) => Some(name.trim_end_matches(".rs")),
+            None => None,
+        };
+        let mentioned = mentioned
+            .get_or_insert_with(|| mentioned_module_names(root, &loaded_files, &mut manifests));
+        let reached = module_name.is_none_or(|name| {
+            mentioned.mentions(&owning_manifest_dir(root, path, &mut manifests), name)
+        });
+        if !reached {
             orphans.insert(workspace::normalize_path(path));
         }
     }
@@ -7520,6 +7543,82 @@ fn absent_delimiter_boundary_returns_head() {
             );
         }
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_registration_keeps_only_its_own_harness_false_target() -> Result<(), String> {
+        // #8016 review: a registration identifies one exact target, so a
+        // sibling `harness = false` target without one is still dropped.
+        let root = temp_root("harness-false-sibling")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n\n\
+             [[test]]\nname='custom'\nharness=false\n\n[[test]]\nname='other'\nharness=false\n",
+        )?;
+        write(&root.join("src/lib.rs"), "")?;
+        let source = b"#[test]\nfn check() {}\nfn main() {}\n".to_vec();
+        for name in ["custom", "other"] {
+            write(
+                &root.join(format!("tests/{name}.rs")),
+                "#[test]\nfn check() {}\nfn main() {}\n",
+            )?;
+        }
+        let loaded = ["tests/custom.rs", "tests/other.rs"]
+            .map(|name| (PathBuf::from(name), source.clone()))
+            .to_vec();
+        let harness = crate::config::TestHarnessRegistration {
+            registration_id: "custom".to_string(),
+            target: PathBuf::from("tests/custom.rs"),
+            kind: crate::config::TestHarnessKind::RegisteredAttribute,
+            adapter: crate::config::TestHarnessAdapter::ExactAttributeV1,
+            marker: "test".to_string(),
+        };
+        let context = crate::analysis::workspace::SourceRoleContext::empty();
+
+        let kept = super::drop_unreached_test_files(&root, &context, &[], &[harness], loaded);
+
+        let names = kept
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec![PathBuf::from("tests/custom.rs")], "{names:?}");
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_skipped_target_a_live_root_includes_by_path_keeps_its_tests() -> Result<(), String> {
+        // #8016 review: `cargo test --lib` still runs a `#[test]` in a file
+        // the library includes through `#[path]`, even though its own
+        // `[[test]]` target has `test = false`. The standalone control drops.
+        let source = b"#[test]\nfn check() {}\n".to_vec();
+        for (lib, kept) in [
+            ("#[cfg(test)]\n#[path = \"../tests/off.rs\"]\nmod off;\n", 1),
+            ("", 0),
+        ] {
+            let root = temp_root("skipped-target-path-import")?;
+            write(
+                &root.join("Cargo.toml"),
+                "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n\n\
+                 [[test]]\nname='off'\ntest=false\n",
+            )?;
+            write(&root.join("src/lib.rs"), lib)?;
+            write(&root.join("tests/off.rs"), "#[test]\nfn check() {}\n")?;
+            let loaded = vec![
+                (PathBuf::from("src/lib.rs"), lib.as_bytes().to_vec()),
+                (PathBuf::from("tests/off.rs"), source.clone()),
+            ];
+            let context = crate::analysis::workspace::SourceRoleContext::empty();
+
+            let remaining = super::drop_unreached_test_files(&root, &context, &[], &[], loaded);
+
+            let has_off = remaining
+                .iter()
+                .any(|(path, _)| path == Path::new("tests/off.rs"));
+            assert_eq!(usize::from(has_off), kept, "lib={lib:?}");
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
         Ok(())
     }
 
