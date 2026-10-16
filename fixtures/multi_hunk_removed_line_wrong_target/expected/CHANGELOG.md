@@ -429,6 +429,18 @@ Updated:
 ## Pending — multi_hunk_removed_line_wrong_target (18)
 
 Reason:
+RIPR-SPEC-0001: output contract changed - 7798 collapse tautological unknown-sink flow row when sink text restates the kind label
+
+Command:
+`cargo xtask goldens bless multi_hunk_removed_line_wrong_target --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — multi_hunk_removed_line_wrong_target (19)
+
+Reason:
 RIPR-SPEC-0122: #7643 hidden-block bullets append each finding's currentness category when the omitted set mixes categories, connecting the count line's clauses to its rows
 
 Command:

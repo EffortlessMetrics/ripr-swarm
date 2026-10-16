@@ -15858,3 +15858,56 @@ outputs = [
   "fixtures/rust-verdict-corpus/expected/rows/rust-guarded-push-unentered-branch.json",
 ]
 metrics = ["unit_test_pass_rate"]
+
+[[behavior]]
+id = "RIPR-SPEC-0267"
+name = "Owner call shape projection for drill-in surfaces"
+spec = "docs/specs/RIPR-SPEC-0267-owner-call-shape-projection.md"
+tests = [
+  "crates/ripr/src/analysis/syntax/fn_signature.rs::tests::call_shape_renders_observed_params_and_return",
+  "crates/ripr/src/analysis/syntax/fn_signature.rs::tests::call_shape_includes_receiver_slot_for_methods",
+  "crates/ripr/src/analysis/syntax/fn_signature.rs::tests::call_shape_omits_arrow_for_unit_return",
+  "crates/ripr/src/analysis/syntax/fn_signature.rs::tests::call_shape_declines_unbound_type_generics",
+  "crates/ripr/src/analysis/syntax/fn_signature.rs::tests::owner_signature_at_line_finds_the_innermost_covering_function",
+  "crates/ripr/src/analysis/syntax/fn_signature.rs::tests::owner_signature_at_line_declines_outside_any_function",
+  "crates/ripr/src/analysis/syntax/fn_signature.rs::tests::owner_signature_at_line_declines_sibling_functions_sharing_a_line",
+  "crates/ripr/src/domain/context_packet.rs::tests::context_packet_projects_owner_signature_when_source_names_the_call_shape",
+  "crates/ripr/src/domain/context_packet.rs::tests::context_packet_declines_owner_signature_when_source_is_missing",
+  "crates/ripr/src/domain/context_packet.rs::tests::context_packet_declines_owner_signature_when_source_is_not_candidate_current",
+  "crates/ripr/src/output/json/context_packet.rs::tests::context_packet_renders_owner_signature_when_source_names_the_call_shape",
+  "crates/ripr/src/output/json/context_packet.rs::tests::context_packet_omits_owner_signature_when_source_is_unavailable",
+  "crates/ripr/src/output/human/explain.rs::tests::verdict_change_recipe_carries_the_observed_call_shape_when_known",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/syntax/fn_signature.rs",
+  "crates/ripr/src/output/human.rs",
+  "crates/ripr/src/output/human/explain.rs",
+  "crates/ripr/src/domain/context_packet.rs",
+  "crates/ripr/src/output/json/context_packet.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0267-owner-call-shape-projection.md",
+  "docs/OUTPUT_SCHEMA.md",
+]
+metrics = ["unit_test_pass_rate"]
+
+[[behavior]]
+id = "RIPR-SPEC-0268"
+name = "Flow-sink evidence row collapses restated labels"
+spec = "docs/specs/RIPR-SPEC-0268-flow-sink-row-collapse.md"
+tests = [
+  "crates/ripr/src/output/flow_sink_line.rs::tests::distinct_text_keeps_label_text_tail",
+  "crates/ripr/src/output/flow_sink_line.rs::tests::text_restating_label_collapses_duplication",
+  "crates/ripr/src/output/json/report.rs::tests::unknown_sink_text_restating_label_renders_once",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/output/flow_sink_line.rs",
+  "crates/ripr/src/output/human/evidence_lines.rs",
+  "crates/ripr/src/output/json/report.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0268-flow-sink-row-collapse.md",
+]
+metrics = ["unit_test_pass_rate"]

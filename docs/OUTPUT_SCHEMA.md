@@ -3241,6 +3241,7 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
     "delta": "control",
     "file": "src/lib.rs",
     "line": 88,
+    "owner_signature": "discount(amount: u32, threshold: u32) -> Option<u32>",
     "changed_expression": "if amount >= discount_threshold {"
   },
   "ripr": {
@@ -3304,7 +3305,15 @@ producer-owned facts: `fix_site` and `oracle_location` are absent when the
 producer cannot identify them, and `suggested_assertion` remains `null` until
 the producer supplies a symbol-resolved assertion template. `limitations[]`
 names unavailable evidence; renderers must not infer it from paths, lines,
-classes, or prose. `source_currentness` (RIPR-SPEC-0152) mirrors the finding's
+classes, or prose. `probe.owner_signature` (#7796) carries the changed
+function's observed call shape — the same producer-owned signature `ripr
+agent stub` reads — so an agent can write the call without opening the
+source. It is optional and absent whenever the shape cannot be honestly
+named: the finding is not `candidate_current`, the source file is missing or
+unparses, no function covers the changed line, or the owner takes a typed
+`self` receiver, declares unbound type generics, or otherwise cannot be
+named and called from a test. It is observed source data only; no assertion
+value is synthesized. `source_currentness` (RIPR-SPEC-0152) mirrors the finding's
 disposition: agent consumers must not treat a `base_deleted`,
 `moved_or_renamed`, or `unresolved_subject` packet as a candidate edit
 target.
