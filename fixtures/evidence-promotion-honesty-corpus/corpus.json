@@ -9115,35 +9115,6 @@
       ]
     },
     {
-      "id": "ts_caught_assertion_cannot_confirm_rejection",
-      "language": "typescript",
-      "tier": "pure",
-      "source_fixture": "fixtures/typescript_caught_assertion",
-      "vector": "catch_swallows_awaited_rejection_matcher_failure",
-      "probe_family": "error_path",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "expected_oracle",
-          "kind": "unknown",
-          "strength": "unknown"
-        }
-      ]
-    },
-    {
       "id": "rust_preseeded_first_element_side_effect",
       "language": "rust",
       "tier": "pure",
@@ -9234,6 +9205,35 @@
         }
       ],
       "control": "must_stay_exposed"
+    },
+    {
+      "id": "ts_caught_assertion_cannot_confirm_rejection",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_caught_assertion",
+      "vector": "catch_swallows_awaited_rejection_matcher_failure",
+      "probe_family": "error_path",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "unknown"
+        }
+      ]
     }
   ]
 }
