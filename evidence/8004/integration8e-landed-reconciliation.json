@@ -1,0 +1,36 @@
+{
+  "at": "2026-10-16T05:32:11.669609+00:00",
+  "landed_repair": "d08c77d144c016078364fcc1fcf2fa593d21cefc",
+  "candidate": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+  "current_main_plus_head_tree": "024d04e46de6ac531ca7485d9b7b6b4e7dafc2e4",
+  "equals_tested_prospective_tree": true,
+  "new_tests_required_for_changed_bytes": false,
+  "checks_reused": "71 main+8e tests with verified product-byte parity; five exact-tree prospective archive/inventory tests",
+  "landed_paths": [
+    "Cargo.lock",
+    "xtask/Cargo.toml",
+    "xtask/src/main.rs",
+    "xtask/src/reports/release_server.rs",
+    "xtask/src/tests.rs"
+  ],
+  "landed_canonical_tested_blobs_equal": {
+    "Cargo.lock": "ef5d298aafe25b25107fa9c7d9aaa792016b2a7f",
+    "xtask/Cargo.toml": "4d5bf508f299958b8af38b621cd98e3a58533f67",
+    "xtask/src/main.rs": "81daa402493777ce8a8c817f40e3ecdf9659cee0",
+    "xtask/src/reports/release_server.rs": "07e776fcf111e9ba903362e5706cf7cfc834c7a1",
+    "xtask/src/tests.rs": "601488d70d31b528884253c54986d306ba487c4f"
+  },
+  "actual_merge": {
+    "commit": "086e9012f13d6ed1bcdfdb26b89796c38404e5f9",
+    "tree": "aa1da91442e93efce823769a1951d4e63ccf63c9",
+    "parents": [
+      "97cc171257fd76a1b3b9e79cc41ad949e0ecc861",
+      "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+    ],
+    "still_missing_landed_repair": true
+  },
+  "ready_disposition": "HOLD: dependency has landed and current-main composition bytes are supported; actual GitHub merge ref still stale zip8 subject, so Draft-to-Ready material-prerequisite check remains blocked. No new hosted checkout or qualification inferred.",
+  "technical_comment": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004#issuecomment-6208812547",
+  "prior_evidence_commit": "c13aaeab0f11177f25a3db78e497c6c1319515f3",
+  "prior_remote_readback_commit": "180c41c4576c5111b4ebd63c98505632db12795c"
+}
