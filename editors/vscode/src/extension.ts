@@ -6,6 +6,7 @@ import {
   RiprRelatedTestTarget,
   RiprSuggestedAssertionTarget,
   RiprTargetedTestBriefTarget,
+  RIPR_DOCUMENT_SELECTORS,
 } from './client';
 import {
   DEFAULT_LIFECYCLE_SETTLE_BUDGET_MS,
@@ -48,6 +49,37 @@ export async function startAfterWorkspaceTrust(
   await startServerOnce(currentController);
 }
 
+export async function startAfterFirstWorkspaceFolder(
+  currentController: RiprClientController | undefined
+): Promise<void> {
+  currentController?.allowWorkspaceRootRecovery();
+  await startServerOnce(currentController);
+}
+
+/** Shared entry point for the active-editor listener and controller tests. */
+export async function synchronizeWorkspaceRootOnce(
+  currentController: RiprClientController | undefined
+): Promise<void> {
+  if (!currentController?.prepareWorkspaceRootChange()) {
+    return;
+  }
+  do {
+    await restartServerOnce(currentController);
+  } while (currentController.workspaceRootNeedsRestart());
+}
+
+/** Shared entry point for the bound-folder removal listener. */
+export async function pauseRemovedWorkspaceRootOnce(
+  currentController: RiprClientController | undefined,
+  removed: readonly vscode.WorkspaceFolder[]
+): Promise<void> {
+  if (currentController?.sessionRootRemoved(removed)) {
+    currentController.quarantineRemovedWorkspaceRoot();
+    await lifecycleCoordinator.pause(currentController);
+    currentController.completeWorkspaceRootRemoval();
+  }
+}
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const output = vscode.window.createOutputChannel('ripr', { log: true });
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -65,6 +97,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     attemptStatus,
     vscode.commands.registerCommand('ripr.restartServer', async () => {
       try {
+        controller?.allowWorkspaceRootRecovery();
         await restartServerOnce(controller);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -218,11 +251,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(async (event) => {
       if (controller?.sessionRootRemoved(event.removed)) {
-        output.appendLine('ripr workspace folder for the running session was removed; restarting to re-resolve the root.');
+        output.appendLine('ripr selected workspace folder was removed; pausing until explicit root recovery.');
         try {
-          await restartServerOnce(controller);
+          await pauseRemovedWorkspaceRootOnce(controller, event.removed);
         } catch (error) {
-          output.appendLine(`ripr server restart after workspace folder removal failed: ${String(error)}`);
+          output.appendLine(`ripr server pause after workspace folder removal failed: ${String(error)}`);
         }
         return;
       }
@@ -264,7 +297,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (zeroToFolderTransition && !controller?.isRunning()) {
         output.appendLine('ripr workspace folder added; starting server session.');
         try {
-          await startServerOnce(controller);
+          await startAfterFirstWorkspaceFolder(controller);
         } catch (error) {
           output.appendLine(`ripr server start after workspace folder added failed: ${String(error)}`);
         }
@@ -275,13 +308,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.window.onDidChangeActiveTextEditor(async (editor) => {
       if (
         !editor
-        || !controller?.awaitingWorkspaceRoot()
+        || !RIPR_DOCUMENT_SELECTORS.some(selector =>
+          selector.scheme === editor.document.uri.scheme && selector.language === editor.document.languageId
+        )
         || !vscode.workspace.getWorkspaceFolder(editor.document.uri)
       ) {
         return;
       }
       try {
-        await startServerOnce(controller);
+        await synchronizeWorkspaceRootOnce(controller);
       } catch (error) {
         output.appendLine(`ripr server start after selecting a workspace file failed: ${String(error)}`);
       }

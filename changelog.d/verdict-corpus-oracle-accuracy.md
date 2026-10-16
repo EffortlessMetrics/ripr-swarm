@@ -3,13 +3,13 @@
   line verdict. A case may label the related-test oracle kind and strength
   a spec adopts (`expected_oracle`); the report's new `oracle_accuracy`
   section scores ripr's strongest reported entry as match, overclaim,
-  underclaim, kind_mismatch or unobserved. All 37 RIPR-SPEC-0231 cases and
-  six RIPR-SPEC-0227 `is_err()`/`unwrap_err()` cases are labeled: 43/43
-  match, 0/43 overclaim and 0/43 underclaim today; the five RIPR-SPEC-0231 rule 1 inequality
+  underclaim, kind_mismatch or unobserved. All 38 RIPR-SPEC-0231 cases and
+  six RIPR-SPEC-0227 `is_err()`/`unwrap_err()` cases are labeled: 44/44
+  match, 0/44 overclaim and 0/44 underclaim today; the five RIPR-SPEC-0231 rule 1 inequality
   overclaims were fixed by #6670 and reblessed in #7631, the `ensure!`
   disjunction overclaim by #7558, the `matches!` conjunct overclaim by
   #7695, the nested `matches!` overclaim by #7715, the bool-compared
-  inequality overclaim by #7598, and its method spelling by #7931. `cargo xtask verdict-corpus check` fails
+  inequality overclaim by #7598, its method spelling by #7931, and the kind a relation-only conjunct lent a pinning chain by #7947. `cargo xtask verdict-corpus check` fails
   when matches fall below or overclaims rise above the `[oracle]` floor and
   ceiling in `spec-coverage.toml`, and the dx-scoreboard trust board tracks
   `trust.verdict_corpus_oracle_accuracy` (target 1.0) and

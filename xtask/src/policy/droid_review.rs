@@ -372,76 +372,8 @@ pub(crate) fn check_droid_security_scan_config(
 pub(crate) fn check_droid_review_config() -> Result<(), String> {
     let mut violations = Vec::new();
 
-    let droid_review_path = ".github/workflows/droid-review.yml";
     let droid_path = ".github/workflows/droid.yml";
     let droid_security_scan_path = ".github/workflows/droid-security-scan.yml";
-
-    if let Ok(text) = crate::read_text_lossy(Path::new(droid_review_path)) {
-        let lines = active_yaml_lines(&text);
-
-        let mut types = repo_policy::routed_rust_pull_request_types(&text).unwrap_or_default();
-        types.sort();
-        if types != ["labeled", "opened", "reopened", "synchronize", "unlabeled"] {
-            violations.push(format!(
-                "{droid_review_path}: pull_request types must be opened, synchronize, reopened, labeled, unlabeled; Ready must not repeat advisory computation (#4987)"
-            ));
-        }
-
-        if lines
-            .iter()
-            .any(|line| line.to_ascii_lowercase().contains("draft"))
-            && lines
-                .iter()
-                .any(|line| line.contains("if:") && line.to_ascii_lowercase().contains("draft"))
-        {
-            violations.push(format!(
-                "{droid_review_path}: must not filter out draft PRs"
-            ));
-        }
-
-        if !has_active_line(&lines, "cancel-in-progress: false") {
-            violations.push(format!(
-                "{droid_review_path}: concurrency cancel-in-progress must be false"
-            ));
-        }
-
-        if !has_active_line(
-            &lines,
-            "droid-review-${{ github.repository }}-${{ github.event.pull_request.number }}",
-        ) {
-            violations.push(format!(
-                "{droid_review_path}: concurrency group must be per repository and PR number"
-            ));
-        }
-
-        if !has_active_line(&lines, "automatic_review: true") {
-            violations.push(format!(
-                "{droid_review_path}: automatic_review must be true"
-            ));
-        }
-
-        if !has_active_line(&lines, "automatic_security_review: true") {
-            violations.push(format!(
-                "{droid_review_path}: automatic_security_review must be true"
-            ));
-        }
-
-        if !has_active_line(&lines, "review_depth: shallow") {
-            violations.push(format!(
-                "{droid_review_path}: review_depth must be shallow unless intentionally changed"
-            ));
-        }
-
-        if !has_active_line(&lines, "MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}") {
-            violations.push(format!(
-                "{droid_review_path}: MINIMAX_API_KEY must be job-level env"
-            ));
-        }
-
-        check_droid_common(&mut violations, droid_review_path, &text, true, true);
-    } else {
-        violations.push(format!("{droid_review_path}: file not found or unreadable"));
-    }
 
     if let Ok(text) = crate::read_text_lossy(Path::new(droid_path)) {
         let lines = active_yaml_lines(&text);
@@ -500,6 +432,40 @@ mod tests {
         check_droid_docs_required_contents_write, check_droid_job_permissions,
         lists_contents_write_as_required_permission,
     };
+
+    #[test]
+    fn retained_manual_workflow_keeps_its_safeguards() {
+        let source = include_str!("../../../.github/workflows/droid.yml");
+        let mut violations = Vec::new();
+        super::check_droid_common(&mut violations, "droid.yml", source, true, true);
+        assert!(violations.is_empty(), "{violations:?}");
+
+        let changed = source.replace("contents: read", "contents: write");
+        assert_ne!(changed, source, "permission mutation must engage");
+        super::check_droid_common(&mut violations, "droid.yml", &changed, true, true);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("must not grant contents: write"))
+        );
+    }
+
+    #[test]
+    fn retained_security_scan_keeps_its_schedule_and_safeguards() {
+        let source = include_str!("../../../.github/workflows/droid-security-scan.yml");
+        let mut violations = Vec::new();
+        super::check_droid_security_scan_config(&mut violations, "security.yml", source);
+        assert!(violations.is_empty(), "{violations:?}");
+
+        let changed = source.replace("security_scan_days: 7", "security_scan_days: 30");
+        assert_ne!(changed, source, "scan-window mutation must engage");
+        super::check_droid_security_scan_config(&mut violations, "security.yml", &changed);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("security_scan_days must be 7"))
+        );
+    }
 
     fn permission_violations(yaml: &str) -> Vec<String> {
         let mut violations = Vec::new();

@@ -111,6 +111,7 @@ fn smoke_assertion() -> TypeScriptAssertion {
         oracle_confidence: OracleConfidence::Low,
         rendered_call: None,
         loose_number_expected: false,
+        expected_object_const: None,
         compares_reference_identity: false,
     }
 }
@@ -126,6 +127,8 @@ fn weak_direct_test_for(owner_name: &str) -> TypeScriptTest {
         assertions: vec![smoke_assertion()],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/lib".to_string(),
@@ -180,10 +183,13 @@ fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
             oracle_confidence: OracleConfidence::Medium,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/lib".to_string(),
@@ -224,10 +230,13 @@ fn direct_test_with_assertion(
             oracle_confidence: OracleConfidence::Unknown,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/lib".to_string(),
@@ -262,10 +271,13 @@ fn heuristic_name_test_for(owner_name: &str) -> TypeScriptTest {
             oracle_confidence: OracleConfidence::Medium,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: Vec::new(),
     }
@@ -1783,6 +1795,8 @@ fn find_related_tests_matches_by_call_name() {
             assertions: Vec::new(),
             mocks_in_file: Vec::new(),
             scope_bindings: Vec::new(),
+            identity_helpers_in_file: Vec::new(),
+            mock_factories_in_file: Vec::new(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
             imports_in_file: Vec::new(),
         },
@@ -1797,6 +1811,8 @@ fn find_related_tests_matches_by_call_name() {
             assertions: Vec::new(),
             mocks_in_file: Vec::new(),
             scope_bindings: Vec::new(),
+            identity_helpers_in_file: Vec::new(),
+            mock_factories_in_file: Vec::new(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
             imports_in_file: Vec::new(),
         },
@@ -1835,6 +1851,8 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: Vec::new(),
     }];
@@ -2959,6 +2977,8 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: Vec::new(),
     }];
@@ -2998,6 +3018,8 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
             assertions: Vec::new(),
             mocks_in_file: Vec::new(),
             scope_bindings: Vec::new(),
+            identity_helpers_in_file: Vec::new(),
+            mock_factories_in_file: Vec::new(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
             imports_in_file: Vec::new(),
         },
@@ -3011,6 +3033,8 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
             assertions: Vec::new(),
             mocks_in_file: Vec::new(),
             scope_bindings: Vec::new(),
+            identity_helpers_in_file: Vec::new(),
+            mock_factories_in_file: Vec::new(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
             imports_in_file: Vec::new(),
         },
@@ -3219,6 +3243,8 @@ fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: Vec::new(),
     };
@@ -3558,6 +3584,8 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: Vec::new(),
     };
@@ -3628,6 +3656,8 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             assertions: Vec::new(),
             mocks_in_file: Vec::new(),
             scope_bindings: Vec::new(),
+            identity_helpers_in_file: Vec::new(),
+            mock_factories_in_file: Vec::new(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
             imports_in_file: Vec::new(),
         },
@@ -3641,6 +3671,8 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             assertions: Vec::new(),
             mocks_in_file: Vec::new(),
             scope_bindings: Vec::new(),
+            identity_helpers_in_file: Vec::new(),
+            mock_factories_in_file: Vec::new(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
             imports_in_file: Vec::new(),
         },
@@ -4386,10 +4418,13 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
             oracle_confidence: OracleConfidence::Medium,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/lib".to_string(),
@@ -4467,10 +4502,13 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/lib".to_string(),
@@ -6334,6 +6372,8 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             assertions: Vec::new(),
             mocks_in_file: vec!["./api".to_string()],
             scope_bindings: Vec::new(),
+            identity_helpers_in_file: Vec::new(),
+            mock_factories_in_file: Vec::new(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
             imports_in_file: vec![TypeScriptImport {
                 source: "../src/lib".to_string(),
@@ -6352,6 +6392,8 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             assertions: Vec::new(),
             mocks_in_file: vec!["./api".to_string()],
             scope_bindings: Vec::new(),
+            identity_helpers_in_file: Vec::new(),
+            mock_factories_in_file: Vec::new(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
             imports_in_file: vec![TypeScriptImport {
                 source: "../src/lib".to_string(),
@@ -6394,6 +6436,8 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         assertions: Vec::new(),
         mocks_in_file: vec!["./api".to_string()],
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: Vec::new(),
     }];
@@ -6430,6 +6474,8 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         assertions: Vec::new(),
         mocks_in_file: vec!["./api".to_string()],
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: Vec::new(),
     }];
@@ -6467,6 +6513,8 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
         assertions: Vec::new(),
         mocks_in_file: vec!["./api".to_string()],
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: Vec::new(),
     }];
@@ -6552,6 +6600,8 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         assertions: Vec::new(),
         mocks_in_file: vec!["./work".to_string()],
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: Vec::new(),
     }];
@@ -6675,10 +6725,13 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
             oracle_confidence: OracleConfidence::Medium,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: vec!["./api".to_string()],
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: Vec::new(),
     }];
@@ -6770,10 +6823,13 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
             oracle_confidence: OracleConfidence::Low,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: Vec::new(),
     }];
@@ -7022,10 +7078,13 @@ fn named_limitation_oracle_based_not_emitted_for_heuristic_only_relation() -> Re
             oracle_confidence: OracleConfidence::Medium,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: Vec::new(),
     };
@@ -7103,6 +7162,73 @@ fn oracle_metadata_emitted_for_literal_expected_value() {
             .any(|l| l.starts_with("typescript_oracle_evidence_ref: tests/clamp.test.ts:")),
         "expected evidence_ref line, got: {lines:?}"
     );
+}
+
+/// oxc represents `-1` / `+1` as unary operators over a NumericLiteral, not as
+/// a negative NumericLiteral node. Those signed numeric literals are
+/// compile-time constants, so `toBe(-1)` must not be reported as a dynamic
+/// matcher argument (#7647).
+#[test]
+fn oracle_metadata_treats_signed_numeric_literal_as_literal_expected() {
+    for (source, expected) in [
+        ("expect(add(2, 3)).toBe(-1);", "-1"),
+        ("expect(add(2, 3)).toBe(+1);", "+1"),
+    ] {
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(source),
+            None,
+        );
+        assert_eq!(assertions.len(), 1, "{source}");
+        let assertion = &assertions[0];
+        assert_eq!(
+            assertion.expected_value_or_variant.as_deref(),
+            Some(expected),
+            "{source}"
+        );
+        assert!(
+            !assertion.has_dynamic_matcher_arg,
+            "{source}: {assertion:?}"
+        );
+        assert_eq!(
+            assertion.oracle_confidence,
+            OracleConfidence::High,
+            "{source}"
+        );
+    }
+}
+
+/// Unary forms that are not a sign applied directly to a numeric literal stay
+/// dynamic: a negated identifier, a negated call, and boolean not (#7647).
+#[test]
+fn oracle_metadata_keeps_non_literal_unary_matcher_args_dynamic() {
+    for source in [
+        "expect(add(2, 3)).toBe(-x);",
+        "expect(add(2, 3)).toBe(-f());",
+        "expect(flag()).toBe(!true);",
+    ] {
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(source),
+            None,
+        );
+        assert_eq!(assertions.len(), 1, "{source}");
+        let assertion = &assertions[0];
+        assert!(assertion.has_dynamic_matcher_arg, "{source}: {assertion:?}");
+        assert!(
+            assertion.expected_value_or_variant.is_none(),
+            "{source}: {assertion:?}"
+        );
+        assert_eq!(
+            assertion.oracle_confidence,
+            OracleConfidence::Medium,
+            "{source}"
+        );
+    }
 }
 
 /// Oracle metadata: `has_dynamic_matcher_arg = true` and no expected value when
@@ -7453,10 +7579,13 @@ fn named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg() -> Resul
             oracle_confidence: OracleConfidence::Medium,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/clamp".to_string(),
@@ -7524,10 +7653,13 @@ fn named_limitation_table_case_emitted_for_table_dynamic_matcher_arg() -> Result
             oracle_confidence: OracleConfidence::Medium,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/clamp".to_string(),
@@ -7597,10 +7729,13 @@ fn named_limitation_dynamic_assertion_not_emitted_for_heuristic_only_relation() 
             oracle_confidence: OracleConfidence::Medium,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: Vec::new(),
     };
@@ -7777,6 +7912,8 @@ fn package_local_filter_selects_same_package_test() {
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/work".to_string(),
@@ -7852,6 +7989,8 @@ fn package_local_filter_rejects_cross_package_test() {
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: Vec::new(),
     };
@@ -7893,6 +8032,8 @@ fn package_local_filter_admits_cross_package_test_importing_owner_file() -> Resu
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../../../packages/utils/src/helpers".into(),
@@ -7953,6 +8094,8 @@ fn cross_package_constructor_requires_owner_class_import() -> Result<(), String>
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/cart".into(),
@@ -8139,10 +8282,13 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: Vec::new(),
     };
@@ -8157,6 +8303,8 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
@@ -8228,6 +8376,8 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![import],
     };
@@ -8327,6 +8477,8 @@ fn named_limitation_target_unresolved_not_emitted_for_same_package() -> Result<(
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: Vec::new(),
     };
@@ -8403,6 +8555,7 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
                 oracle_confidence: OracleConfidence::High,
                 rendered_call: None,
                 loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
             },
             TypeScriptAssertion {
@@ -8419,11 +8572,14 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
                 oracle_confidence: OracleConfidence::High,
                 rendered_call: None,
                 loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
             },
         ],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
@@ -8517,10 +8673,13 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
@@ -8606,10 +8765,13 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
@@ -8695,10 +8857,13 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
@@ -8782,10 +8947,13 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
@@ -8869,10 +9037,13 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
@@ -8958,6 +9129,7 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
                 oracle_confidence: OracleConfidence::High,
                 rendered_call: None,
                 loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
             },
             TypeScriptAssertion {
@@ -8975,11 +9147,14 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
                 oracle_confidence: OracleConfidence::High,
                 rendered_call: None,
                 loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
             },
         ],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
@@ -9058,10 +9233,13 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/config".to_string(),
@@ -9146,10 +9324,13 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/config".to_string(),
@@ -9304,10 +9485,13 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
@@ -9393,10 +9577,13 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/tracker".to_string(),
@@ -9456,6 +9643,7 @@ fn strong_be_assertion() -> TypeScriptAssertion {
         oracle_confidence: OracleConfidence::High,
         rendered_call: None,
         loose_number_expected: false,
+        expected_object_const: None,
         compares_reference_identity: false,
     }
 }
@@ -9517,6 +9705,8 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "@/owner".to_string(),
@@ -9592,6 +9782,8 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "@/owner".to_string(),
@@ -9669,6 +9861,8 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: source.to_string(),
@@ -9817,6 +10011,8 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "@/owner".to_string(),
@@ -9888,6 +10084,8 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "lodash".to_string(),
@@ -9952,6 +10150,8 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "react".to_string(),
@@ -10013,6 +10213,8 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "@/owner".to_string(),
@@ -10075,6 +10277,8 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "@/owner".to_string(),
@@ -10153,6 +10357,8 @@ fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "@/owner".to_string(),
@@ -10232,6 +10438,8 @@ fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "@/owner".to_string(),
@@ -10320,6 +10528,8 @@ fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "@/owner".to_string(),
@@ -10407,10 +10617,13 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
             oracle_confidence: OracleConfidence::Medium,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
@@ -10442,10 +10655,13 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
             oracle_confidence: OracleConfidence::Low,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
@@ -10532,10 +10748,13 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
@@ -10617,10 +10836,13 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
@@ -10715,6 +10937,7 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
                 oracle_confidence: OracleConfidence::Medium,
                 rendered_call: None,
                 loose_number_expected: false,
+                expected_object_const: None,
                 compares_reference_identity: false,
             },
             // Assertion 2: return-value observer (family-matching for ReturnValue seam).
@@ -10732,11 +10955,14 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
                 oracle_confidence: OracleConfidence::High,
                 rendered_call: None,
                 loose_number_expected: false,
+                expected_object_const: None,
                 compares_reference_identity: false,
             },
         ],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
@@ -11253,12 +11479,12 @@ fn delta5_verify_command_stays_in_missing_list_when_runner_unresolved() -> Resul
 
 /// Mocha fail-closed control: a detected mocha framework has NO file-target
 /// command mapping, so with no lockfile/runner evidence the inferred command
-/// is `None`. The evidence MUST carry
-/// `typescript_package_limitation: typescript_test_runner_unresolved` (the
-/// limitation fires whenever the command is unresolved — even though a
-/// framework WAS detected) and MUST NOT invent a `typescript_verify_command`.
+/// is `None`. The evidence MUST NOT invent a `typescript_verify_command`.
+/// The runner is known (`typescript_test_runner: mocha`), so
+/// `typescript_test_runner_unresolved` must stay omitted (#7646): that
+/// limitation names a missing runner, not a missing file-target command.
 #[test]
-fn mocha_no_lockfile_emits_runner_unresolved_limitation() -> Result<(), String> {
+fn mocha_no_lockfile_omits_runner_unresolved_when_mocha_detected() -> Result<(), String> {
     let root = ts_unique_tempdir("mocha-no-lockfile")?;
 
     // package.json with mocha in devDependencies; NO lockfile → no runner
@@ -11340,19 +11566,181 @@ fn mocha_no_lockfile_emits_runner_unresolved_limitation() -> Result<(), String> 
         ));
     }
 
-    // The unresolved limitation MUST fire even though a framework was detected.
+    // The runner-unresolved limitation must NOT fire: mocha was detected.
     let has_limitation = finding
         .evidence
         .iter()
         .any(|ev| ev == "typescript_package_limitation: typescript_test_runner_unresolved");
-    if !has_limitation {
+    if has_limitation {
         return Err(format!(
-            "expected typescript_test_runner_unresolved limitation when the inferred command is None; evidence={:?}",
+            "mocha was detected, so typescript_test_runner_unresolved must not appear beside typescript_test_runner: mocha; evidence={:?}",
             finding.evidence
         ));
     }
 
     Ok(())
+}
+
+const RUNNER_UNRESOLVED_LIMITATION: &str =
+    "typescript_package_limitation: typescript_test_runner_unresolved";
+
+/// #7646: vitest resolved, no related test → no verify command, and do not
+/// stamp `typescript_test_runner_unresolved` next to `typescript_test_runner:
+/// vitest`. The missing related test is not an unknown runner.
+#[test]
+fn vitest_without_related_test_omits_runner_unresolved_limitation() -> Result<(), String> {
+    let root = ts_unique_tempdir("vitest-no-related-test")?;
+
+    ts_write_file(
+        &root.join("package.json"),
+        r#"{"name":"pkg","scripts":{"test":"vitest"},"devDependencies":{"vitest":"^1.0.0"}}"#,
+    )?;
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function applyDiscount(amount: number, threshold: number): number {\n  if (amount >= threshold) {\n    return amount - 10;\n  }\n  return amount;\n}\n",
+    )?;
+
+    let finding = analyze_ts_probe_at_threshold(&root)?;
+    let _ = std::fs::remove_dir_all(&root);
+
+    if !finding.related_tests.is_empty() {
+        return Err(format!(
+            "setup: expected no related tests; got {:?}",
+            finding.related_tests
+        ));
+    }
+
+    let has_runner_name = finding
+        .evidence
+        .iter()
+        .any(|ev| ev == "typescript_test_runner: vitest");
+    if !has_runner_name {
+        return Err(format!(
+            "expected typescript_test_runner: vitest; evidence={:?}",
+            finding.evidence
+        ));
+    }
+
+    if finding
+        .evidence
+        .iter()
+        .any(|ev| ev.starts_with("typescript_verify_command:"))
+    {
+        return Err(format!(
+            "no related test: no verify command should be invented; evidence={:?}",
+            finding.evidence
+        ));
+    }
+
+    if finding
+        .evidence
+        .iter()
+        .any(|ev| ev == RUNNER_UNRESOLVED_LIMITATION)
+    {
+        return Err(format!(
+            "vitest was detected with no related test: typescript_test_runner_unresolved must not contradict typescript_test_runner: vitest; evidence={:?}",
+            finding.evidence
+        ));
+    }
+
+    Ok(())
+}
+
+/// #7646 negative control: no framework and no package-manager runner. The
+/// limitation still names the missing runner even when a related test exists
+/// (so a no-op that always omits the limitation cannot pass).
+#[test]
+fn unknown_runner_emits_runner_unresolved_limitation() -> Result<(), String> {
+    let root = ts_unique_tempdir("unknown-runner")?;
+
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function applyDiscount(amount: number, threshold: number): number {\n  if (amount >= threshold) {\n    return amount - 10;\n  }\n  return amount;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/lib.test.ts"),
+        "import { applyDiscount } from '../src/lib';\ntest('stub', () => {\n  applyDiscount(50, 100);\n});\n",
+    )?;
+
+    let finding = analyze_ts_probe_at_threshold(&root)?;
+    let _ = std::fs::remove_dir_all(&root);
+
+    if finding.related_tests.is_empty() {
+        return Err("setup: expected a related test so command inference actually ran".to_string());
+    }
+
+    if finding
+        .evidence
+        .iter()
+        .any(|ev| ev.starts_with("typescript_test_runner: "))
+    {
+        return Err(format!(
+            "setup: runner must be unknown; evidence={:?}",
+            finding.evidence
+        ));
+    }
+
+    if finding
+        .evidence
+        .iter()
+        .any(|ev| ev.starts_with("typescript_verify_command:"))
+    {
+        return Err(format!(
+            "unknown runner: no command should be invented; evidence={:?}",
+            finding.evidence
+        ));
+    }
+
+    if !finding
+        .evidence
+        .iter()
+        .any(|ev| ev == RUNNER_UNRESOLVED_LIMITATION)
+    {
+        return Err(format!(
+            "expected typescript_test_runner_unresolved when the runner is unknown; evidence={:?}",
+            finding.evidence
+        ));
+    }
+
+    Ok(())
+}
+
+fn analyze_ts_probe_at_threshold(root: &Path) -> Result<crate::domain::Finding, String> {
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.to_path_buf(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("src/lib.ts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "  if (amount >= threshold) {".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files)?;
+    result.findings.into_iter().next().ok_or_else(|| {
+        format!(
+            "expected at least one finding; got none (changed_files={})",
+            result.changed_files
+        )
+    })
 }
 
 /// Control 3 (cockpit delta #5, issue #1245 — unchanged-case guard):
@@ -11451,10 +11839,13 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/limiter".to_string(),
@@ -11553,10 +11944,13 @@ fn exact_value_test(owner_name: &str, observed: &str, expected: &str) -> TypeScr
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
             loose_number_expected: false,
+            expected_object_const: None,
             compares_reference_identity: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/lib".to_string(),
@@ -13647,6 +14041,138 @@ fn expected_side_is_live_unique_line_still_folds_liveness() {
             "999",
         ),
         Some(false)
+    );
+}
+
+/// Signed matcher text (`-1`, `+1`) is a numeric expected value. On the
+/// discount boundary it matches neither 90 nor 100, so it is dead rather
+/// than an unparsed `None` that would leave the witness standing (#7647).
+#[test]
+fn expected_side_is_live_treats_signed_numeric_literals_as_numbers() {
+    let owner = boundary_witness_owner();
+    for expected in ["-1", "+1"] {
+        assert_eq!(
+            expected_side_is_live(
+                &owner,
+                "  if (total >= 100) {",
+                "total",
+                "100",
+                &["100".to_string()],
+                expected,
+            ),
+            Some(false),
+            "{expected}"
+        );
+    }
+}
+
+/// A changed branch that returns `-1` is live when the matcher pins that
+/// same signed literal.
+#[test]
+fn expected_side_is_live_credits_a_signed_live_expected_value() {
+    let owner = TypeScriptOwner {
+        name: "polarity".to_string(),
+        file: PathBuf::from("src/lib.ts"),
+        start_line: 1,
+        end_line: 6,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        exported_as_default: false,
+        class_default_export: false,
+        module_entries: Vec::new(),
+        imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+        arity: Some(1),
+        params: vec!["n".to_string()],
+        source_text: Some(
+            concat!(
+                "export function polarity(n: number): number {\n",
+                "    if (n <= 0) {\n",
+                "        return -1;\n",
+                "    }\n",
+                "    return 1;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    if (n <= 0) {",
+            "n",
+            "0",
+            &["0".to_string()],
+            "-1",
+        ),
+        Some(true)
+    );
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    if (n <= 0) {",
+            "n",
+            "0",
+            &["0".to_string()],
+            "1",
+        ),
+        Some(false)
+    );
+}
+
+/// Jest `toBe` uses `Object.is`, so `toBe(-0)` does not pass against a
+/// `return 0` branch even though IEEE equality treats the zeros as equal.
+#[test]
+fn expected_side_is_live_does_not_equate_negative_zero_with_zero() {
+    let owner = TypeScriptOwner {
+        name: "gate".to_string(),
+        file: PathBuf::from("src/lib.ts"),
+        start_line: 1,
+        end_line: 6,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        exported_as_default: false,
+        class_default_export: false,
+        module_entries: Vec::new(),
+        imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+        arity: Some(1),
+        params: vec!["n".to_string()],
+        source_text: Some(
+            concat!(
+                "export function gate(n: number): number {\n",
+                "    if (n <= 0) {\n",
+                "        return 0;\n",
+                "    }\n",
+                "    return 1;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    if (n <= 0) {",
+            "n",
+            "0",
+            &["0".to_string()],
+            "-0",
+        ),
+        Some(false)
+    );
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    if (n <= 0) {",
+            "n",
+            "0",
+            &["0".to_string()],
+            "0",
+        ),
+        Some(true)
     );
 }
 
@@ -15960,6 +16486,8 @@ fn unresolved_workspace_package_import_names_the_manifest() -> Result<(), String
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         imports_in_file: vec![TypeScriptImport {
             source: "bundle".into(),

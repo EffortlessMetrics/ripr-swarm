@@ -1309,6 +1309,13 @@ impl Backend {
         self.refresh_scheduler.is_current_generation(generation)
     }
 
+    #[cfg(test)]
+    pub(super) fn refresh_telemetry_for_test(
+        &self,
+    ) -> super::refresh_scheduler::RefreshTelemetrySnapshot {
+        self.refresh_scheduler.telemetry()
+    }
+
     pub(super) fn workspace_revision(&self) -> u64 {
         self.workspace_revision
             .lock()
@@ -2984,6 +2991,57 @@ impl Backend {
             .lock()
             .ok()
             .map(|mut documents| (uri, documents.open(params)))
+    }
+
+    /// Whether the document opened by the just-processed `didOpen` already
+    /// matches the persisted saved bytes the store recorded for it. A failed
+    /// store lock is treated as a changed input: the conservative route is
+    /// the interactive refresh, never silently skipping it.
+    fn open_document_matches_saved_content(&self, uri: &Uri) -> bool {
+        self.documents
+            .lock()
+            .ok()
+            .map(|documents| documents.open_matches_persisted_saved_content(uri))
+            .unwrap_or(false)
+    }
+
+    /// Whether a clean open still carries an input the committed snapshot
+    /// never analyzed: the file may have changed on disk while it was closed
+    /// and no watch event arrived, so the buffer matches the persisted bytes
+    /// while both differ from the bytes behind the session's seam evidence.
+    /// The opened Rust file's saved digest is compared with the digest the
+    /// committed snapshot captured for the same path; a captured mismatch
+    /// keeps the interactive refresh. An absent commitment (the file is
+    /// outside the committed snapshot, or the snapshot holds no captured
+    /// bytes for it) preserves the clean-open skip.
+    fn opened_file_differs_from_committed_snapshot(&self, uri: &Uri) -> bool {
+        let committed = self.latest_analysis.lock().ok().and_then(|latest| {
+            let snapshot = latest.as_ref()?;
+            let relative = super::uri::file_uri_relative_to_root(&snapshot.root, uri)?;
+            let analyzed_digest = snapshot.rust_consumed_sources.digest(&relative);
+            Some((relative, analyzed_digest))
+        });
+        let Some((_relative, Some(analyzed_digest))) = committed else {
+            return false;
+        };
+        let saved_digest_matches = self
+            .documents
+            .lock()
+            .ok()
+            .and_then(|documents| {
+                documents
+                    .state_for_uri(uri)
+                    .map(|state| state.saved_digest.as_deref() == Some(analyzed_digest.as_str()))
+            })
+            .unwrap_or(false);
+        !saved_digest_matches
+    }
+
+    /// Whether the refresh scheduler already holds analysis state (active,
+    /// pending, or completed). A failed lock reads as state present so the
+    /// conservative route is the interactive refresh.
+    fn refresh_scheduler_has_analysis_state(&self) -> bool {
+        self.refresh_scheduler.has_analysis_state()
     }
 
     fn change_document(
@@ -5352,9 +5410,34 @@ impl LanguageServer for Backend {
                 .await;
             return;
         };
-        self.advance_workspace_revision();
+        // #1908's principle applied to open: a didOpen whose buffer already
+        // matches the persisted saved bytes recorded at open carries no new
+        // saved-workspace input (the analysis reads persisted bytes). When
+        // the session already holds refresh state, such an open neither
+        // advances the workspace revision nor schedules an interactive
+        // refresh: superseding a completed full-seam snapshot with a
+        // same-input deferred snapshot withdrew real seam evidence
+        // mid-journey and made every subsequent evidence-reading command
+        // (collectContext, rooted copies) disclose staleness (#7408 matrix).
+        // A fresh session still refreshes so the first opened document
+        // establishes the session's analysis, and a diverging recovered
+        // buffer, an unreadable saved identity, or a failed store lock all
+        // keep today's interactive refresh. A buffer matching the persisted
+        // bytes but differing from the digest the committed snapshot
+        // captured for the same Rust path keeps the refresh too: the file
+        // changed on disk while closed, so the session's committed evidence
+        // predates the input it would otherwise keep serving.
+        let open_matches_saved = self.open_document_matches_saved_content(&uri);
+        let session_has_analysis = self.refresh_scheduler_has_analysis_state();
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
             .await;
+        if open_matches_saved
+            && session_has_analysis
+            && !self.opened_file_differs_from_committed_snapshot(&uri)
+        {
+            return;
+        }
+        self.advance_workspace_revision();
         // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
         // Diff-scoped findings are complete; seams run on explicit refresh only.
         self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::DidOpen)
@@ -6160,7 +6243,22 @@ impl Backend {
             && health.attempt_id.is_none()
             && health.reason.is_none()
             && health.current_input_identity.is_none();
-        if !legacy_test_snapshot && !health.allows_current_repairs() {
+        // A same-input refresh that is merely queued or in flight does not
+        // make the committed snapshot's evidence stale: the snapshot's
+        // evidence describes exactly the input the running refresh is
+        // re-deriving, so the copy serves current evidence instead of a
+        // staleness disclosure (#7408 matrix — the save's debounced refresh
+        // racing the context copy read the just-committed full-seam snapshot
+        // as stale). Staleness stays for inputs that genuinely moved.
+        let same_input_refresh_in_flight = matches!(
+            health.state,
+            AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+        ) && health.current_input_identity.is_some()
+            && health.current_input_identity == snapshot.input_identity_id();
+        if !same_input_refresh_in_flight
+            && !legacy_test_snapshot
+            && !health.allows_current_repairs()
+        {
             return Some("analysis input is no longer current; refresh the workspace evidence");
         }
         if snapshot.seams_deferred {

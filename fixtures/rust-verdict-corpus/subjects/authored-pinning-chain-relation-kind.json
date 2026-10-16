@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-pinning-chain-relation-kind",
+  "origin": "authored",
+  "version_label": "authored 2026-10-15 for #7947 (RIPR-SPEC-0231 rule 1: a relation-only conjunct beside a pinning == lends no kind)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "046a24f2faa30d98ccd0f5cdb6512d7573ead30604633197de9e9699423c0031"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "d31fb0a24a23e88cb859b6dc24f2975312ec27554ab647f65a77db6326649fbf"
+    }
+  ]
+}

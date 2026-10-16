@@ -2,15 +2,19 @@ use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, EffectStateCarrier,
     HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
-    activation_and_boundary_input, body_contains_owner_call, callee_is_unique,
+    activation_and_boundary_input, assertion_observes_collection_argument,
+    body_contains_owner_call, call_parameter_names, callee_is_unique,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
-    confidence_score, contains_as_whole_word, current_path_witness, direct_call_name,
-    fallible_check_receipt, fallible_literal_witness, getter_plainly_reads,
-    has_same_test_boundary_oracle_pairing, helper_only_reach, helper_pins_owner_call,
-    infection_evidence_with_boundary_input, local_flow_sinks, operand_only_pin,
-    oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
-    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
-    same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
+    confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
+    direct_call_name, direct_collection_mutation_receiver, expected_operand_value,
+    fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
+    getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
+    helper_pins_owner_call, infection_evidence_with_boundary_input, local_flow_sinks,
+    method_cannot_store, observes_returned_element_field, operand_only_pin,
+    oracle_crediting_relations, owner_may_be_reached_unseen, owner_touches_field_only_at,
+    package_prefix, parameter_rebound, propagation_evidence_with_witness, reach_evidence,
+    reveal_outcome, same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
+    unconditional_owner_insert_field,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -126,66 +130,70 @@ impl ClassifiedProbeEvidence {
             }
             _ => None,
         };
-        let propagation_witness = current_path_witness(context.probe, &flow_sinks)
-            .or_else(|| {
-                fallible_checks.iter().find_map(|receipt| {
-                    fallible_literal_witness(context.probe, &flow_sinks, receipt)
-                })
+        let propagation_witness = current_path_witness_with(context.probe, &flow_sinks, &|path| {
+            context.owner_fn.is_some_and(|owner| {
+                crate::analysis::classify::owner_builds_declared_error_variant(
+                    path,
+                    owner,
+                    context.index,
+                )
             })
-            .or_else(|| {
-                context.owner_fn.and_then(|owner| {
-                    crate::analysis::classify::constant_tail_witness(
-                        context.probe,
-                        owner,
-                        &flow_sinks,
-                    )
-                })
+        })
+        .or_else(|| {
+            fallible_checks
+                .iter()
+                .find_map(|receipt| fallible_literal_witness(context.probe, &flow_sinks, receipt))
+        })
+        .or_else(|| {
+            context.owner_fn.and_then(|owner| {
+                crate::analysis::classify::constant_tail_witness(context.probe, owner, &flow_sinks)
             })
-            .or_else(|| {
-                context.owner_fn.and_then(|owner| {
-                    crate::analysis::classify::format_tail_witness(
-                        context.probe,
-                        owner,
-                        context
-                            .index
-                            .files()
-                            .get(&owner.file)
-                            .map(|facts| facts.data().source.as_ref()),
-                        &flow_sinks,
-                    )
-                })
-            })
-            .or_else(|| {
-                returned_ledger.as_ref().and_then(|_| {
-                    crate::analysis::classify::returned_ledger_witness(context.probe, &flow_sinks)
-                })
-            })
-            .map(|mut witness| {
-                if let (Some(owner), Some(ledger)) = (context.owner_fn, returned_ledger.as_ref()) {
-                    crate::analysis::classify::retain_returned_ledger(
-                        &mut witness,
-                        &owner.id,
-                        &ledger.parameter,
-                        &ledger.caller,
-                        &ledger.local,
-                    );
-                    if let Some(helper) = context
+        })
+        .or_else(|| {
+            context.owner_fn.and_then(|owner| {
+                crate::analysis::classify::format_tail_witness(
+                    context.probe,
+                    owner,
+                    context
                         .index
-                        .functions()
-                        .iter()
-                        .find(|function| function.id == ledger.caller)
-                    {
-                        witness.selected_helper_calls =
-                            crate::analysis::classify::selected_inherent_calls(
-                                helper,
-                                context.index,
-                                context.workspace_complete,
-                            );
-                        witness.semantic_digest = witness.compute_semantic_digest();
-                    }
+                        .files()
+                        .get(&owner.file)
+                        .map(|facts| facts.data().source.as_ref()),
+                    &flow_sinks,
+                )
+            })
+        })
+        .or_else(|| {
+            returned_ledger.as_ref().and_then(|_| {
+                crate::analysis::classify::returned_ledger_witness(context.probe, &flow_sinks)
+            })
+        })
+        .map(|mut witness| {
+            if let (Some(owner), Some(ledger)) = (context.owner_fn, returned_ledger.as_ref()) {
+                crate::analysis::classify::retain_returned_ledger(
+                    &mut witness,
+                    &owner.id,
+                    &ledger.parameter,
+                    &ledger.caller,
+                    &ledger.local,
+                );
+                if let Some(helper) = context
+                    .index
+                    .functions()
+                    .iter()
+                    .find(|function| function.id == ledger.caller)
+                {
+                    witness.selected_helper_calls =
+                        crate::analysis::classify::selected_inherent_calls(
+                            helper,
+                            context.index,
+                            context.workspace_complete,
+                        );
+                    witness.semantic_digest = witness.compute_semantic_digest();
                 }
-                PropagationWitnessDiagnostic::from_witness(witness)
-            });
+            }
+            PropagationWitnessDiagnostic::from_witness(witness)
+        });
         let mut gathered = activation_and_boundary_input(
             context.probe,
             context.owner_fn,
@@ -472,6 +480,47 @@ impl ClassifiedProbeEvidence {
             .owner_fn
             .map(owner_parameter_names)
             .unwrap_or_default();
+        // RIPR-SPEC-0228 keyed reads: only a map insert reads these names,
+        // and only one at the owner's top level (not under a branch, loop or
+        // closure), in an owner that touches that map nowhere else but to
+        // read it. An earlier `return` can still skip it; the reveal side's
+        // consumed-result and empty-start rules cover that. A
+        // parameter the owner rebinds in its body (`let sku = "LAST"`) may
+        // not be what a later use of its name holds, so it keys nothing.
+        let constructor_memo: RefCell<BTreeMap<(String, String, String), bool>> =
+            RefCell::new(BTreeMap::new());
+        let owner_argument_names: Vec<String> = context
+            .owner_fn
+            .filter(|function| {
+                unconditional_owner_insert_field(
+                    function.body.as_str(),
+                    function.start_line,
+                    context.probe.location.line,
+                )
+                .is_some_and(|field| {
+                    owner_touches_field_only_at(
+                        context.index,
+                        &function.id.0,
+                        function.body.as_str(),
+                        function.start_line,
+                        context.probe.location.line,
+                        &field,
+                    )
+                })
+            })
+            .map(|function| {
+                call_parameter_names(function)
+                    .into_iter()
+                    .map(|name| {
+                        if name.is_empty() || parameter_rebound(function.body.as_str(), &name) {
+                            String::new()
+                        } else {
+                            name
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         // #5830/#7024: names of functions that transitively call the owner,
         // computed once per owner per run through the attached memo and only
         // when an assertion asks. The memo answers under its borrow without
@@ -566,6 +615,11 @@ impl ClassifiedProbeEvidence {
                 },
                 owner_parameters: &owner_parameters,
                 expected_reaches_owner: &expected_reaches_owner,
+                expected_operand_value: &|test, operand| {
+                    context.owner_fn.and_then(|owner| {
+                        expected_operand_value(context.index, test, operand, owner)
+                    })
+                },
                 effect_state_carried: &|test, assertion| {
                     effect_carrier
                         .as_ref()
@@ -574,8 +628,51 @@ impl ClassifiedProbeEvidence {
                 setter_writes_field: &|impl_type, setter, field| {
                     setter_plainly_writes(context.index, impl_type, setter, field)
                 },
+                collection_argument_observed: &|test, assertion| {
+                    direct_collection_mutation_receiver(&context.probe.expression)
+                        .zip(context.owner_fn)
+                        .is_some_and(|(receiver, owner)| {
+                            assertion_observes_collection_argument(
+                                receiver,
+                                owner,
+                                context.index,
+                                test,
+                                assertion,
+                                pin_syntax,
+                            )
+                        })
+                },
                 getter_reads_field: &|impl_type, getter, field| {
                     getter_plainly_reads(context.index, impl_type, getter, field)
+                },
+                getter_reads_key: &|impl_type, getter, field| {
+                    getter_plainly_reads_key(context.index, impl_type, getter, field)
+                },
+                owner_argument_names: &owner_argument_names,
+                owner_returns_value: context
+                    .owner_fn
+                    .is_none_or(|function| function_returns_value(function.body.as_str())),
+                owner_may_exit_before_probe: context.owner_fn.is_some_and(|function| {
+                    crate::analysis::classify::owner_may_exit_before_line(
+                        function.body.as_str(),
+                        function.start_line,
+                        context.probe.location.line,
+                        &context.probe.expression,
+                    )
+                }),
+                constructor_starts_empty: &|impl_type, ctor, field| {
+                    // Memoized per probe: the derived-`Default` check parses
+                    // the files declaring the type, once per question.
+                    let key = (impl_type.to_string(), ctor.to_string(), field.to_string());
+                    if let Some(known) = constructor_memo.borrow().get(&key) {
+                        return *known;
+                    }
+                    let empty = constructor_starts_empty(context.index, impl_type, ctor, field);
+                    constructor_memo.borrow_mut().insert(key, empty);
+                    empty
+                },
+                call_cannot_store: &|impl_type, method, field, expected| {
+                    method_cannot_store(context.index, impl_type, method, field, expected)
                 },
             },
             arm_selector.as_ref(),
@@ -593,8 +690,42 @@ impl ClassifiedProbeEvidence {
         // gates (a name-only relation next to a reach-bearing test, a
         // foreign same-name import, a cross-package same-name definition);
         // a token match never does.
+        // #7858: a field built inside an array the owner returns is observed
+        // by a test that pins that element alone, by its literal index or by
+        // an `.any(..)` membership no other element can satisfy. The same
+        // name defeats as reveal's owner pins apply to the owner call.
+        let element_field_pinned = matches!(context.probe.family, ProbeFamily::FieldConstruction)
+            && activation.missing_discriminators.iter().any(|fact| {
+                fact.flow_sink
+                    .as_ref()
+                    .is_some_and(|sink| sink.kind == FlowSinkKind::StructField)
+            })
+            && context.owner_fn.is_some_and(|owner| {
+                // The pin matches the owner call by name. A second indexed
+                // function of that name (a nested module's `super::rows`, a
+                // test file's local `fn rows`) may be the one the test
+                // calls, so only a unique name is read (#8059 review).
+                context
+                    .index
+                    .functions()
+                    .iter()
+                    .filter(|function| function.name == owner.name)
+                    .count()
+                    == 1
+                    && context.related_tests.iter().any(|(test, _)| {
+                        !import_defeats(test, &owner.name)
+                            && !cross_package_defeats(test, &owner.name)
+                            && observes_returned_element_field(
+                                context.probe,
+                                owner,
+                                test,
+                                context.index,
+                                pin_syntax,
+                            )
+                    })
+            });
         if matches!(context.probe.family, ProbeFamily::FieldConstruction)
-            && reveal.owner_pin_credited
+            && (reveal.owner_pin_credited || element_field_pinned)
         {
             activation.missing_discriminators.retain(|fact| {
                 fact.flow_sink
@@ -607,6 +738,12 @@ impl ClassifiedProbeEvidence {
             tuple_match::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);
         let discriminate =
             side_flip::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);
+        // RIPR-SPEC-0227 rule 3 pairs its own oracles: both sides of the
+        // guard's edge are asserted in one test, so the #4828 same-test
+        // pairing below has nothing left to establish.
+        let guard_side_flip = side_flip::guard::discrimination(context, &observe, &discriminate);
+        let guard_side_flip_paired = guard_side_flip.is_some();
+        let discriminate = guard_side_flip.unwrap_or(discriminate);
         // #4828: a boundary-class probe may not read `exposed` by taking a
         // boundary input from one test and a discriminating oracle from
         // another. Infection and discrimination stay independently scored;
@@ -632,6 +769,7 @@ impl ClassifiedProbeEvidence {
         let discriminate = if matches!(context.probe.family, ProbeFamily::Predicate)
             && infect.state == StageState::Yes
             && discriminate.state == StageState::Yes
+            && !guard_side_flip_paired
             && !has_same_test_boundary_oracle_pairing(
                 context.probe,
                 context.owner_fn,
@@ -869,14 +1007,26 @@ impl ClassifiedProbeEvidence {
         if self.reach_ruled_out {
             return ExposureClass::NoStaticPath;
         }
-        classify(
+        let class = classify(
             &self.reach,
             &self.infect,
             &self.propagate,
             &self.observe,
             &self.discriminate,
             probe,
-        )
+        );
+        // RIPR-SPEC-0228: a field assignment is credited only through a
+        // confirmed read of that field after the owner call. A weak reading
+        // there means ripr could not tell whether a related assertion reads
+        // the field (a helper, a projection, a getter it cannot resolve), so
+        // it abstains as before instead of claiming a gap.
+        if class == ExposureClass::WeaklyExposed
+            && matches!(probe.family, ProbeFamily::FieldConstruction)
+            && crate::analysis::classify::field_assignment_target(&probe.expression).is_some()
+        {
+            return ExposureClass::StaticUnknown;
+        }
+        class
     }
 
     pub(in crate::analysis) fn confidence(&self, class: &ExposureClass) -> f32 {

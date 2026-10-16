@@ -10,6 +10,9 @@ use crate::domain::{FlowSinkFact, FlowSinkKind, Probe, ProbeFamily, SymbolId};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod collection_argument;
+pub(in crate::analysis) use collection_argument::assertion_observes_collection_argument;
+
 const SCHEMA_VERSION: u16 = 1;
 
 /// A versioned internal witness.  This type is intentionally scoped to the
@@ -125,9 +128,27 @@ impl PathCompleteness {
 /// exact owner, has a family-compatible kind, and shares a semantic token with
 /// the changed expression.  In particular, a compatible oracle or a sibling
 /// sink is not enough to manufacture a witness.
+///
+/// Test callers read it with no declared error variant
+/// ([`current_path_witness_with`]).
+#[cfg(test)]
 pub(in crate::analysis) fn current_path_witness(
     probe: &Probe,
     flow_sinks: &[FlowSinkFact],
+) -> Option<PropagationWitnessV1> {
+    current_path_witness_with(probe, flow_sinks, &|_| false)
+}
+
+/// [`current_path_witness`] with `declared_error_variant`: for an error
+/// variant path (`ConfigError::MissingEquals`), whether its qualifier
+/// resolves, in the owner's file, to a declared workspace enum that declares
+/// that variant. Only such a construction completes the #7063 on-line error
+/// witness ([`constructs_its_error_on_its_line`]); an alias, a `type` alias,
+/// `Self::` or a module path keeps the candidate witness.
+pub(in crate::analysis) fn current_path_witness_with(
+    probe: &Probe,
+    flow_sinks: &[FlowSinkFact],
+    declared_error_variant: &dyn Fn(&str) -> bool,
 ) -> Option<PropagationWitnessV1> {
     let owner = probe.owner.clone()?;
     // #6695: a statement-level `.ok_or(Type::Variant)?` returns exactly
@@ -164,13 +185,19 @@ pub(in crate::analysis) fn current_path_witness(
                     && source_sink_tokens_overlap(&probe.expression, &sink.text)
                     && !opaque_path_text(&probe.expression)
                     && !opaque_path_text(&sink.text)
-                    || unchanged_closure_tail(probe, sink)))
+                    || unchanged_closure_tail(probe, sink)
+                    // #7063: the payload-carrying source and its
+                    // variant-named sink share no path identity.
+                    || constructs_its_error_on_its_line(probe, sink, declared_error_variant)))
     })?;
 
     let edge_kind = edge_kind_for_sink(&sink.kind)?;
     let source_identity = normalize_semantic_text(&probe.expression);
     let sink_identity = normalize_semantic_text(&sink.text);
-    let edge_status = if is_question_mark_sink(sink) || returns_itself_on_its_line(probe, sink) {
+    let edge_status = if is_question_mark_sink(sink)
+        || returns_itself_on_its_line(probe, sink)
+        || constructs_its_error_on_its_line(probe, sink, declared_error_variant)
+    {
         EdgeStatus::Established
     } else {
         edge_status_for_kind(&edge_kind, &source_identity, &sink_identity)
@@ -303,14 +330,24 @@ pub(in crate::analysis) fn constant_tail_witness(
     // owner's whole body is, like a constant tail, the value the owner
     // returns; whether the pinned input runs its closure is the owner pin's
     // question (rule 2), not this edge's.
+    // RIPR-SPEC-0197 short-circuit tails (#8037): an admitted `&&`/`||`
+    // chain that is the owner's whole body is likewise the value the owner
+    // returns; whether a pinned run evaluates every operand is the owner
+    // pin's run check, not this edge's.
     let (tail_line, limitation) = match constant_owner_tail_line(owner, &identity) {
         Some(line) => (line, "constant_owner_tail"),
-        None => (
-            super::owner_pin::closure_adaptor::owner_adaptor_tail(owner)
-                .filter(|tail| tail.tail_is(&probe.expression))
-                .map(|tail| owner.start_line + tail.tail_line_offset)?,
-            "iterator_adaptor_owner_tail",
-        ),
+        None => match super::owner_pin::closure_adaptor::owner_adaptor_tail(owner)
+            .filter(|tail| tail.tail_is(&probe.expression))
+        {
+            Some(tail) => (
+                owner.start_line + tail.tail_line_offset,
+                "iterator_adaptor_owner_tail",
+            ),
+            None => (
+                short_circuit_owner_tail_line(owner, &probe.expression, &identity)?,
+                "short_circuit_owner_tail",
+            ),
+        },
     };
     if tail_line != probe.location.line {
         return None;
@@ -353,6 +390,32 @@ pub(in crate::analysis) fn constant_tail_witness(
     };
     witness.semantic_digest = witness.compute_semantic_digest();
     Some(witness)
+}
+
+/// The line of the owner's tail when the owner's whole body is one
+/// admitted short-circuit chain (`ShortCircuitTail`) whose normalized text
+/// is `identity`. Its operands are comparisons of parameters with literals
+/// and make no calls, so the chain's value is the owner's return.
+fn short_circuit_owner_tail_line(
+    owner: &crate::analysis::facts::FunctionSummary,
+    changed: &str,
+    identity: &str,
+) -> Option<usize> {
+    use ra_ap_syntax::{AstNode, ast};
+    super::owner_pin::short_circuit::ShortCircuitTail::parse(&owner.body, changed)?;
+    let parse = crate::analysis::syntax::parse_clean_source_file(&owner.body)?;
+    let function = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let list = function.body()?.stmt_list()?;
+    if list.statements().next().is_some() {
+        return None;
+    }
+    let tail = list.tail_expr()?;
+    if normalize_semantic_text(&tail.syntax().text().to_string()) != identity {
+        return None;
+    }
+    let offset = usize::from(tail.syntax().text_range().start());
+    let before = owner.body.get(..offset)?;
+    Some(owner.start_line + before.matches('\n').count())
 }
 
 /// The line of the owner's body when that body is exactly one constant
@@ -701,6 +764,44 @@ fn returns_itself_on_its_line(probe: &Probe, sink: &FlowSinkFact) -> bool {
         })
 }
 
+/// #7063: `return Err(E::V { line: idx + 1 });` on the changed line is one
+/// expression whose error-variant sink the flow producer names by its variant
+/// alone (`Result::Err(E::V)`), so the payload-carrying source and the sink
+/// never share an identity. The edge is established exactly as for
+/// [`returns_itself_on_its_line`]: the sink is the error variant on the
+/// probe's own line, the source is one `Err(..)` constructor (optionally
+/// after `return`) whose exact variant is the sink's, and its payload is
+/// call-free (no call, macro, closure or `?` that may drop the changed
+/// value). Whether a test observes the payload is reveal's question: a
+/// variant-only oracle does not (`payload_pin_required` in reveal).
+fn constructs_its_error_on_its_line(
+    probe: &Probe,
+    sink: &FlowSinkFact,
+    declared_error_variant: &dyn Fn(&str) -> bool,
+) -> bool {
+    if sink.kind != FlowSinkKind::ErrorVariant || sink.line != probe.location.line {
+        return false;
+    }
+    let source = normalize_semantic_text(&probe.expression);
+    let source = source.trim().trim_end_matches(';').trim_end();
+    let payload = source.strip_prefix("return ").unwrap_or(source).trim();
+    let Some(inner) = payload
+        .strip_prefix("Err(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    else {
+        return false;
+    };
+    let call_free = !inner.trim().is_empty()
+        && !inner.contains(['(', ')', '!', '|', '?', ';', '"', '\''])
+        && inner.matches('{').count() <= 1
+        && inner.matches('{').count() == inner.matches('}').count();
+    call_free
+        && super::text::exact_error_variant(payload).is_some_and(|variant| {
+            normalize_semantic_text(&sink.text) == format!("Result::Err({variant})")
+                && declared_error_variant(&variant)
+        })
+}
+
 fn canonical_error_identity(text: &str) -> String {
     let normalized_text = normalize_semantic_text(text);
     let normalized = without_err_turbofish(normalized_text.trim_start_matches("return "));
@@ -910,6 +1011,25 @@ pub(in crate::analysis) fn assertion_field_collection_reads(
     path: &str,
     count_reads: bool,
 ) -> Vec<FieldCollectionRead> {
+    let subjects = compared_sides(assertion_text);
+    subjects
+        .iter()
+        .enumerate()
+        .filter(|(_, subject)| count_reads || !reads_only_count(subject))
+        .filter_map(|(index, subject)| {
+            let read = subject_field_collection_read(subject, path)?;
+            let other = subjects
+                .get(1 - index.min(1))
+                .filter(|_| subjects.len() == 2);
+            (!other.is_some_and(|other| names_ident(other, &read.binding))).then_some(read)
+        })
+        .collect()
+}
+
+/// The compared sides of `assertion_text`: its primary subject
+/// (`assert_eq!(subject, ..)`, `assert!(subject)`) and, for `assert_eq!`,
+/// the second operand too, since either side may hold the actual value.
+fn compared_sides(assertion_text: &str) -> Vec<String> {
     let mut subjects: Vec<String> = assertion_primary_subject(assertion_text)
         .into_iter()
         .collect();
@@ -925,17 +1045,102 @@ pub(in crate::analysis) fn assertion_field_collection_reads(
         }
     }
     subjects
+}
+
+/// A compared side that reads one entry of a field collection through a
+/// one-argument method of a local binding: `inv.on_hand("BOLT-M8")` gives
+/// binding `inv`, getter `on_hand` and key `"BOLT-M8"`. Whether `on_hand`
+/// really looks that key up in the written field is for the caller to
+/// verify (`builder_override::getter_plainly_reads_key`).
+#[derive(Debug, PartialEq, Eq)]
+pub(in crate::analysis) struct KeyedFieldRead {
+    pub(in crate::analysis) binding: String,
+    pub(in crate::analysis) getter: String,
+    pub(in crate::analysis) key: String,
+    /// The other `assert_eq!` operand: the value the read is expected to
+    /// equal.
+    pub(in crate::analysis) expected: String,
+}
+
+/// RIPR-SPEC-0228 keyed reads: the `assert_eq!` sides of `assertion_text`
+/// that are exactly `binding.getter(key)`, with one argument, compared with
+/// an operand that does not name the same binding. A projection of the
+/// result (`inv.on_hand("A") + 1`, `inv.on_hand("A").max(1)`) reads
+/// nothing, and neither does `assert!` or `assert_ne!`: only an equality
+/// says which value the entry must hold.
+pub(in crate::analysis) fn assertion_keyed_getter_reads(
+    assertion_text: &str,
+) -> Vec<KeyedFieldRead> {
+    let subjects = compared_sides(assertion_text);
+    // Only `assert_eq!` has a second side; without one `get` gives `None`.
+    subjects
         .iter()
         .enumerate()
-        .filter(|(_, subject)| count_reads || !reads_only_count(subject))
         .filter_map(|(index, subject)| {
-            let read = subject_field_collection_read(subject, path)?;
-            let other = subjects
-                .get(1 - index.min(1))
-                .filter(|_| subjects.len() == 2);
-            (!other.is_some_and(|other| names_ident(other, &read.binding))).then_some(read)
+            let (binding, getter, key) = subject_keyed_getter_read(subject)?;
+            let other = subjects.get(1 - index.min(1))?;
+            (!names_ident(other, &binding)).then(|| KeyedFieldRead {
+                binding,
+                getter,
+                key,
+                expected: other.trim().to_string(),
+            })
         })
         .collect()
+}
+
+fn subject_keyed_getter_read(subject: &str) -> Option<(String, String, String)> {
+    let bare = subject.trim();
+    let (binding, after) = bare.split_once('.')?;
+    let (getter, arguments) = after.split_once('(')?;
+    if !is_bare_ident(binding) || !is_bare_ident(getter) {
+        return None;
+    }
+    let inner = balanced_inner(arguments)?;
+    // The call must be the whole side: nothing may follow its `)`.
+    if arguments
+        .get(inner.len() + 1..)
+        .is_none_or(|tail| !tail.trim().is_empty())
+    {
+        return None;
+    }
+    let key = first_call_argument(inner)?;
+    (key == inner.trim() && !names_ident(&key, binding))
+        .then(|| (binding.to_string(), getter.to_string(), key))
+}
+
+/// RIPR-SPEC-0228 keyed reads: the owner parameter that keys a field-path
+/// map insert, `self.<path>.insert(KEY, value)`, when `KEY` is that
+/// parameter itself or an owned copy of it (`sku`, `sku.to_string()`,
+/// `sku.to_owned()`, `sku.clone()`, `sku.into()`, `String::from(sku)`).
+/// Any other key gives `None`.
+pub(in crate::analysis) fn field_collection_insert_key(expression: &str) -> Option<String> {
+    let trimmed = expression.trim().trim_end_matches([';', ',']).trim();
+    let rest = trimmed.strip_prefix("self.")?;
+    let (target, arguments) = rest.split_once('(')?;
+    let (path, method) = target.rsplit_once('.')?;
+    if method.trim() != "insert" || !path.split('.').all(|segment| is_bare_ident(segment.trim())) {
+        return None;
+    }
+    let inner = balanced_inner(arguments)?;
+    if arguments
+        .get(inner.len() + 1..)
+        .is_none_or(|tail| !tail.trim().is_empty())
+    {
+        return None;
+    }
+    let key = first_call_argument(inner)?;
+    let parameter = key
+        .strip_prefix("String::from(")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .or_else(|| {
+            [".to_string()", ".to_owned()", ".clone()", ".into()"]
+                .iter()
+                .find_map(|suffix| key.strip_suffix(suffix))
+        })
+        .unwrap_or(&key)
+        .trim();
+    is_bare_ident(parameter).then(|| parameter.to_string())
 }
 
 /// Whether `subject` ends in a count of a collection (`.len()`,
@@ -1053,6 +1258,259 @@ pub(in crate::analysis) fn pushed_literal_collection_path(
             (!may_write_field(&masked[call_end..], path, method_body, &mut visited))
                 .then(|| path.to_string())
         })
+}
+
+/// RIPR-SPEC-0228: the field path a changed field assignment writes
+/// (`count` for `self.count += 1`, `child.count` for `self.child.count = 0`).
+/// Anything that is not `self.<path>` followed by `=` or a compound
+/// assignment operator gives `None`.
+pub(in crate::analysis) fn field_assignment_target(expression: &str) -> Option<&str> {
+    let rest = expression.trim().strip_prefix("self.")?;
+    let path_len = rest
+        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.'))
+        .unwrap_or(rest.len());
+    let (path, after) = rest.split_at(path_len);
+    let after = after.trim_start();
+    let op_len = after.find('=')?;
+    let assigns = matches!(
+        &after[..op_len],
+        "" | "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>"
+    ) && !after[op_len + 1..].starts_with(['=', '>']);
+    (assigns && !path.is_empty() && path.split('.').all(is_bare_ident)).then_some(path)
+}
+
+/// RIPR-SPEC-0228: the field path `self.<path>` that the changed assignment
+/// `expression` on `line` of `body` (the owner body, from its `fn`, starting
+/// at `start_line`) leaves as the owner's last word on that field. `None`
+/// unless the assignment occurs once on its line, starts a top-level
+/// statement of the body (not in a branch, loop, block or closure, which a
+/// test may never run), its right-hand side does not branch, nothing before
+/// it may leave the body early ([`may_exit_early`]), and nothing after that
+/// statement may write the field again ([`may_write_field`]: a use of
+/// `self.<path>` other than a `push` onto it, a parent field, a bare `self`,
+/// or a `self.m(..)` call whose body, from `method_body` and followed
+/// through further `self` calls, may do so; an unresolved method counts as
+/// a write).
+pub(in crate::analysis) fn assigned_field_path(
+    body: &str,
+    start_line: usize,
+    line: usize,
+    expression: &str,
+    method_body: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let path = field_assignment_target(expression)?;
+    if rhs_may_branch(expression) {
+        return None;
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let line_start = masked
+        .split_inclusive('\n')
+        .take(line.checked_sub(start_line)?)
+        .map(str::len)
+        .sum::<usize>();
+    let line_text = body.get(line_start..)?.lines().next()?;
+    let expression = expression.trim();
+    if expression.is_empty() || line_text.matches(expression).count() != 1 {
+        return None;
+    }
+    let at = line_start + line_text.find(expression)?;
+    let statement_start = masked[..at]
+        .rfind([';', '{', '}'])
+        .map_or(0, |index| index + 1);
+    if !masked[statement_start..at].trim().is_empty()
+        || !top_level_statement(&masked, at)
+        || may_exit_early(&masked[masked.find('{')?..at])
+    {
+        return None;
+    }
+    let end = at + masked[at..].find(';')? + 1;
+    let mut visited = Vec::new();
+    (!may_write_field(&masked[end..], path, method_body, &mut visited)).then(|| path.to_string())
+}
+
+/// RIPR-SPEC-0228: whether the right-hand side of a changed field assignment
+/// chooses between values (`if`, `match`, a comparison or a boolean
+/// operator). A test can then read the field without ever taking the changed
+/// arm or crossing the changed boundary, so the read does not confirm the
+/// change.
+fn rhs_may_branch(expression: &str) -> bool {
+    let Some(at) = expression.find('=') else {
+        return true;
+    };
+    // Mask strings and comments so `self.label = "if"` keeps its credit.
+    let masked = crate::analysis::extract::mask_comments_and_strings(&expression[at + 1..]);
+    let rhs = masked.as_str();
+    let words = rhs
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .any(|word| {
+            matches!(
+                word,
+                "if" | "match" | "loop" | "while" | "for" | "return" | "break" | "continue"
+            )
+        });
+    words
+        || ["==", "!=", "<", ">", "&&", "||", "?"]
+            .iter()
+            .any(|op| rhs.contains(op))
+}
+
+/// RIPR-SPEC-0228: whether the owner body before a changed assignment
+/// (masked, from the body's `{`) may leave before reaching it: a `return`,
+/// a `?`, a `let .. else`, a `break` or `continue`, or a panicking macro or
+/// call. A test can then exercise the early exit and still read the field.
+fn may_exit_early(before: &str) -> bool {
+    let words = before
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .any(|word| matches!(word, "return" | "else" | "break" | "continue"));
+    // Any macro call may expand to an early exit (`guard!`, `bail!`,
+    // `ensure!`).
+    let macro_call = before.match_indices('!').any(|(at, _)| {
+        before[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+            && before[at + 1..].trim_start().starts_with(['(', '[', '{'])
+    });
+    words
+        || macro_call
+        || before.contains('?')
+        || [
+            "panic!",
+            "unreachable!",
+            "todo!",
+            "unimplemented!",
+            "assert",
+            ".unwrap(",
+            ".expect(",
+        ]
+        .iter()
+        .any(|exit| before.contains(exit))
+}
+
+/// RIPR-SPEC-0228: whether an `assert_eq!` compares against a value a field
+/// most often holds before any write (`0`, `false`, `None`, `""`, an empty
+/// `String` or `Vec`, a `default()`). Deleting the assignment then leaves
+/// that value in place, so the read cannot tell a deleted write from a
+/// kept one.
+pub(in crate::analysis) fn assertion_expects_default_like(assertion: &str) -> bool {
+    let Some(at) = assertion.find("assert_eq!") else {
+        return false;
+    };
+    let rest = assertion[at + "assert_eq!".len()..].trim_end();
+    super::reveal::macro_arguments(rest.strip_suffix(';').unwrap_or(rest))
+        .iter()
+        .take(2)
+        .any(|operand| is_default_like(operand))
+}
+
+/// #8051: whether an assertion expects a collection to be empty
+/// (`assert_eq!(p.log, vec![])`, `assert!(p.log.is_empty())`,
+/// `assert_eq!(p.log.len(), 0)`). A test that passes with an empty
+/// collection after the owner call never ran the owner's push on that path,
+/// so deleting or changing the push leaves the test passing: the assertion
+/// cannot discriminate it.
+pub(in crate::analysis) fn assertion_expects_empty_collection(assertion: &str) -> bool {
+    let text = assertion.trim().trim_end_matches(';').trim_end();
+    if let Some(at) = text.find("assert_eq!") {
+        let operands = super::reveal::macro_arguments(&text[at + "assert_eq!".len()..]);
+        let empty = |operand: &str| {
+            is_empty_collection_literal(operand.trim().trim_start_matches('&').trim())
+        };
+        let zero_len =
+            |pair: [&str; 2]| pair[0].trim().ends_with(".len()") && pair[1].trim() == "0";
+        return match operands.as_slice() {
+            [left, right, ..] => {
+                empty(left) || empty(right) || zero_len([left, right]) || zero_len([right, left])
+            }
+            _ => false,
+        };
+    }
+    let Some(at) = text.find("assert!") else {
+        return false;
+    };
+    super::reveal::macro_arguments(&text[at + "assert!".len()..])
+        .first()
+        .is_some_and(|condition| {
+            let condition = condition.trim();
+            !condition.starts_with('!')
+                && condition
+                    .strip_suffix(".is_empty()")
+                    .is_some_and(|receiver| !receiver.contains(['&', '|', '=', '<', '>']))
+        })
+}
+
+/// An empty `Vec` or slice literal: `vec![]`, `Vec::new()`,
+/// `Vec::<T>::new()`, `[]`.
+fn is_empty_collection_literal(operand: &str) -> bool {
+    matches!(operand, "vec![]" | "Vec::new()" | "[]")
+        || (operand.starts_with("Vec::<") && operand.ends_with(">::new()"))
+}
+
+/// #8051: whether the owner whose source text `owner_body` starts at file
+/// line `owner_start_line` may leave before the changed `expression` on file
+/// line `line` (see [`may_exit_early`]). The scan runs to the expression's
+/// first occurrence on that line, so a guard sharing the line
+/// (`if self.locked { return; } self.log.push(1);`) still counts; when the
+/// expression does not appear on the line, only the lines before it do.
+pub(in crate::analysis) fn owner_may_exit_before_line(
+    owner_body: &str,
+    owner_start_line: usize,
+    line: usize,
+    expression: &str,
+) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(owner_body);
+    let Some(lines_before) = line.checked_sub(owner_start_line) else {
+        return false;
+    };
+    let line_at: usize = masked
+        .split_inclusive('\n')
+        .take(lines_before)
+        .map(str::len)
+        .sum();
+    let line_end = masked[line_at..]
+        .find('\n')
+        .map_or(masked.len(), |nl| line_at + nl);
+    // #8141 review: a guard on the changed line but before the changed
+    // expression still lets the owner skip it. The mask blanks string and
+    // comment bytes in place (one space per byte), so the expression is
+    // located in the owner body itself and its offset reads the same in
+    // `masked`; a candidate whose first byte the mask blanked sits inside
+    // a string or comment and is skipped, and no executable occurrence on
+    // the line keeps the line-start scan.
+    let owner_line = &owner_body[line_at..line_end];
+    let masked_line = &masked[line_at..line_end];
+    let at = owner_line
+        .match_indices(expression)
+        .find(|(at, _)| owner_line.as_bytes()[*at] == masked_line.as_bytes()[*at])
+        .map_or(line_at, |(at, _)| line_at + at);
+    masked
+        .find('{')
+        .filter(|open| *open < at)
+        .is_some_and(|open| may_exit_early(&masked[open..at]))
+}
+
+fn is_default_like(operand: &str) -> bool {
+    let operand = operand.trim().trim_start_matches('&').trim();
+    // `0 as u32` reads as its value.
+    let operand = operand
+        .split_once(" as ")
+        .map_or(operand, |(value, _)| value.trim());
+    if operand.ends_with("::MIN") || operand.ends_with("::ZERO") {
+        return true;
+    }
+    if matches!(operand, "false" | "None" | "\"\"" | "String::new()")
+        || is_empty_collection_literal(operand)
+        || operand.ends_with("default()")
+    {
+        return true;
+    }
+    // `0`, `0.0`, `0_u32`, `0usize`: the digits before any type suffix.
+    let number = operand
+        .find(|ch: char| ch.is_ascii_alphabetic())
+        .map_or(operand, |suffix| &operand[..suffix]);
+    !number.is_empty()
+        && number.starts_with('0')
+        && number.chars().all(|ch| matches!(ch, '0' | '.' | '_'))
 }
 
 /// Whether the statement at `at` in a body (masked, from its `fn`) sits
@@ -1850,6 +2308,73 @@ mod tests {
         Ok(())
     }
 
+    /// #7063: `return Err(E::V { line: n });` on the changed line reaches its
+    /// own error-variant sink, which the flow producer names by the variant
+    /// alone. A sink on another line, a sibling variant, or a payload that
+    /// calls, closes over or `?`s something stays a candidate.
+    #[test]
+    fn a_payload_carrying_err_on_its_own_line_completes_the_error_witness() {
+        let complete_if = |expression: &str, sink_text: &str, sink_line: usize, declared: bool| {
+            current_path_witness_with(
+                &probe(ProbeFamily::ErrorPath, expression),
+                &[sink(FlowSinkKind::ErrorVariant, sink_text, sink_line)],
+                &|_| declared,
+            )
+            .is_some_and(|witness| {
+                witness.completeness == PathCompleteness::Complete
+                    && complete_direct_witness(
+                        &probe(ProbeFamily::ErrorPath, expression),
+                        Some(&witness),
+                    )
+            })
+        };
+        let complete = |expression: &str, sink_text: &str, sink_line: usize| {
+            complete_if(expression, sink_text, sink_line, true)
+        };
+        // A qualifier that names no declared workspace enum (an alias,
+        // `Self::`, a module path) keeps the candidate witness.
+        assert!(!complete_if(
+            "return Err(CE::MissingEquals { line: idx + 1 });",
+            "Result::Err(CE::MissingEquals)",
+            10,
+            false
+        ));
+        for expression in [
+            "return Err(ConfigError::MissingEquals { line: idx + 1 });",
+            "return Err(ConfigError::MissingEquals { line: line_no });",
+            "Err(ConfigError::MissingEquals { line: idx + 1 })",
+        ] {
+            assert!(
+                complete(expression, "Result::Err(ConfigError::MissingEquals)", 10),
+                "{expression}"
+            );
+        }
+        let changed = "return Err(ConfigError::MissingEquals { line: idx + 1 });";
+        // The same variant returned on another line is a different exit.
+        assert!(!complete(
+            changed,
+            "Result::Err(ConfigError::MissingEquals)",
+            11
+        ));
+        // A sibling variant's sink is not this construction's.
+        assert!(!complete(changed, "Result::Err(ConfigError::EmptyKey)", 10));
+        for expression in [
+            "return Err(ConfigError::MissingEquals { line: next(idx) });",
+            "return Err(ConfigError::MissingEquals { line: m!(idx) });",
+            "return Err(ConfigError::MissingEquals { line: f()? });",
+            "return Err(ConfigError::MissingEquals { line: (|| idx)() });",
+            "return Err(ConfigError::Bad { inner: Inner { line: idx } });",
+            // A tuple payload's parentheses read as a call: not established.
+            "return Err(ConfigError::MissingEquals(idx + 1));",
+            "return Err(error);",
+        ] {
+            assert!(
+                !complete(expression, "Result::Err(ConfigError::MissingEquals)", 10),
+                "{expression}"
+            );
+        }
+    }
+
     /// The owner-checked `ok_or?` bypass keys on the probe line having no
     /// literal `Err(..)`; a line with both must use the ordinary edge rule.
     #[test]
@@ -2037,6 +2562,64 @@ mod tests {
         let sinks = super::super::local_flow_sinks(&other, Some(&owner));
         assert!(!sinks.is_empty());
         assert!(constant_tail_witness(&other, &owner, &sinks).is_none());
+    }
+
+    /// #8037: an admitted short-circuit chain that is the owner's whole body
+    /// completes a DirectReturn witness; anything `ShortCircuitTail` refuses
+    /// does not.
+    #[test]
+    fn short_circuit_owner_tail_completes_only_an_admitted_chain() {
+        let body = "fn is_weekend(day: u8) -> bool {\n    day % 7 == 6 || day % 7 == 0\n}";
+        let owner = constant_owner(body);
+        let probe = probe_at(ProbeFamily::ReturnValue, "day % 7 == 6 || day % 7 == 0", 2);
+        let sinks = super::super::local_flow_sinks(&probe, Some(&owner));
+        let witness = constant_tail_witness(&probe, &owner, &sinks);
+        assert!(
+            complete_direct_witness(&probe, witness.as_ref()),
+            "{witness:?} {sinks:?}"
+        );
+        assert!(witness.as_ref().is_some_and(|w| {
+            w.limitations
+                .iter()
+                .any(|l| l == "short_circuit_owner_tail")
+        }));
+        for (body, expression) in [
+            // A closure operand, mixed operators, a call, an earlier statement.
+            (
+                "fn f(x: u8, y: u8) -> bool {\n    g(|| x) || y == 1\n}",
+                "g(|| x) || y == 1",
+            ),
+            (
+                "fn f(a: bool, b: bool, c: bool) -> bool {\n    a && b || c\n}",
+                "a && b || c",
+            ),
+            (
+                "fn f(s: &str, y: u8) -> bool {\n    s.len() == 0 || y == 1\n}",
+                "s.len() == 0 || y == 1",
+            ),
+            (
+                "fn f(x: u8, y: u8) -> bool {\n    let x = x + 1;\n    x == 0 || y == 1\n}",
+                "x == 0 || y == 1",
+            ),
+            // The changed expression is one operand, not the whole tail.
+            (
+                "fn f(x: u8, y: u8) -> bool {\n    x == 0 || y == 1\n}",
+                "y == 1",
+            ),
+        ] {
+            let owner = constant_owner(body);
+            let line = if body.contains("let x") { 3 } else { 2 };
+            let probe = probe_at(ProbeFamily::ReturnValue, expression, line);
+            let sinks = super::super::local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                constant_tail_witness(&probe, &owner, &sinks).is_none(),
+                "{body}"
+            );
+        }
+        // A predicate-family probe on the admitted chain gets nothing.
+        let predicate = probe_at(ProbeFamily::Predicate, "day % 7 == 6 || day % 7 == 0", 2);
+        let sinks = super::super::local_flow_sinks(&predicate, Some(&owner));
+        assert!(constant_tail_witness(&predicate, &owner, &sinks).is_none());
     }
 
     /// #6578: a `format!` tail writes every argument into the `String` the
@@ -2690,6 +3273,280 @@ mod tests {
         }
     }
 
+    #[test]
+    fn field_assignment_target_reads_self_field_assignments_only() {
+        for (expression, path) in [
+            ("self.count += 1", "count"),
+            ("self.count = self.count + 1;", "count"),
+            ("self.child.count <<= 2", "child.count"),
+            ("self.state = State::Done", "state"),
+        ] {
+            assert_eq!(
+                field_assignment_target(expression),
+                Some(path),
+                "{expression}"
+            );
+        }
+        for other in [
+            "sum += w",
+            "*p = v",
+            "self.count == 1",
+            "self.count >= 1",
+            "self.items[0] = 1",
+            "self.f() = 1",
+            "other.count = 1",
+            "self = Self::new()",
+            "count: 1",
+        ] {
+            assert_eq!(field_assignment_target(other), None, "{other}");
+        }
+    }
+
+    #[test]
+    fn assigned_field_path_requires_a_last_top_level_write() {
+        let none = |_: &str| None;
+        let reset = |name: &str| {
+            (name == "reset").then(|| "fn reset(&mut self) { self.count = 0; }".to_string())
+        };
+        let label = |name: &str| {
+            (name == "touch").then(|| "fn touch(&mut self) { self.label = 1; }".to_string())
+        };
+        let body = |statements: &str| format!("fn tick(&mut self) {{\n{statements}\n}}");
+        let at = |code: &str, method: &dyn Fn(&str) -> Option<String>| {
+            assigned_field_path(&body(code), 1, 2, "self.count += 1", method)
+        };
+        assert_eq!(at("self.count += 1;", &none).as_deref(), Some("count"));
+        assert_eq!(
+            at("self.count += 1; let n = self.limit;", &none).as_deref(),
+            Some("count")
+        );
+        assert_eq!(
+            at("self.count += 1; self.touch();", &label).as_deref(),
+            Some("count")
+        );
+        for (code, method) in [
+            (
+                "self.count += 1; self.count = 0;",
+                &none as &dyn Fn(&str) -> Option<String>,
+            ),
+            ("self.count += 1; self.reset();", &reset),
+            ("self.count += 1; self.unknown();", &none),
+            ("self.count += 1; zero(self);", &none),
+            ("if go { self.count += 1; }", &none),
+            ("for _ in 0..2 { self.count += 1; }", &none),
+            ("self.count += 1; self.count += 1;", &none),
+            ("if self.locked { return; } self.count += 1;", &none),
+            (
+                "let Some(_) = self.next else { loop {} }; self.count += 1;",
+                &none,
+            ),
+            ("self.check()?; self.count += 1;", &none),
+            ("assert!(self.ready); self.count += 1;", &none),
+            ("guard!(self.locked); self.count += 1;", &none),
+            ("let n = self.next.unwrap(); self.count += 1;", &none),
+            ("let n = self.next.expect(\"n\"); self.count += 1;", &none),
+            ("loop { break; } self.count += 1;", &none),
+            ("for _ in 0..1 { continue; } self.count += 1;", &none),
+        ] {
+            assert_eq!(at(code, method), None, "{code}");
+        }
+        for changed in [
+            "self.locked = self.count >= 4",
+            "self.count = if self.locked { 2 } else { 5 }",
+            "self.count = match self.locked { true => 1, false => 2 }",
+            "self.ok = self.a && self.b",
+            "self.ok = self.a || self.b",
+            "self.ok = self.a == self.b",
+            "self.ok = self.a != self.b",
+            "self.ok = self.a < self.b",
+            "self.count = { let Some(n) = self.next else { return }; n }",
+        ] {
+            let body = format!("fn tick(&mut self) {{\n{changed};\n}}");
+            assert_eq!(
+                assigned_field_path(&body, 1, 2, changed, &none),
+                None,
+                "{changed}"
+            );
+        }
+    }
+
+    #[test]
+    fn assigned_field_path_reads_branch_words_inside_strings_as_text() {
+        let none = |_: &str| None;
+        // #8061 review: a quoted `if` or `==` is a value, not a branch.
+        for (changed, field) in [
+            ("self.label = \"if\"", "label"),
+            ("self.label = \"a == b\"", "label"),
+        ] {
+            let body = format!("fn tick(&mut self) {{\n{changed};\n}}");
+            assert_eq!(
+                assigned_field_path(&body, 1, 2, changed, &none).as_deref(),
+                Some(field),
+                "{changed}"
+            );
+        }
+    }
+
+    #[test]
+    fn assigned_field_path_requires_the_changed_text_once_on_its_line() {
+        let none = |_: &str| None;
+        // The changed text appears twice on its line, the second time inside
+        // a string, so `may_write_field` (which reads masked text) would not
+        // refuse it.
+        let body = "fn tick(&mut self) {\nself.count += 1; let s = \"self.count += 1\";\n}";
+        assert_eq!(
+            assigned_field_path(body, 1, 2, "self.count += 1", &none),
+            None
+        );
+        // The same line without the repeat is accepted.
+        let body = "fn tick(&mut self) {\nself.count += 1; let s = \"x\";\n}";
+        assert_eq!(
+            assigned_field_path(body, 1, 2, "self.count += 1", &none).as_deref(),
+            Some("count")
+        );
+    }
+
+    #[test]
+    fn empty_collection_expectations_cannot_confirm_a_push() {
+        for assertion in [
+            "assert_eq!(p.log, vec![]);",
+            "assert_eq!(vec![], p.log)",
+            "assert_eq!(p.log, Vec::new());",
+            "assert_eq!(p.log, Vec::<Entry>::new());",
+            "assert_eq!(&p.log, &[]);",
+            "assert_eq!(p.log.len(), 0);",
+            "assert_eq!(0, p.log.len());",
+            "assert!(p.log.is_empty());",
+            "assert!(p.history().is_empty())",
+        ] {
+            assert!(assertion_expects_empty_collection(assertion), "{assertion}");
+        }
+        for assertion in [
+            "assert_eq!(p.log, vec![Entry::Beat { n: 1 }]);",
+            "assert_eq!(p.log.len(), 1);",
+            "assert_eq!(p.count, 0);",
+            "assert!(!p.log.is_empty());",
+            "assert!(p.log.is_empty() || p.locked);",
+            "assert!(p.locked || p.log.is_empty());",
+            "assert_ne!(p.log, vec![]);",
+            "assert!(p.log == vec![Entry::Beat { n: 1 }]);",
+        ] {
+            assert!(
+                !assertion_expects_empty_collection(assertion),
+                "{assertion}"
+            );
+        }
+    }
+
+    #[test]
+    fn owner_may_exit_before_line_reads_everything_before_the_changed_expression() {
+        let owner = "fn beat(&mut self) {\n    if self.locked {\n        return;\n    }\n    self.log.push(1);\n}";
+        assert!(owner_may_exit_before_line(
+            owner,
+            10,
+            14,
+            "self.log.push(1)"
+        ));
+        // The guard sits after line 11, so the first statement cannot skip.
+        assert!(!owner_may_exit_before_line(owner, 10, 11, "self.locked"));
+        let plain = "fn add(&mut self, x: u32) {\n    self.items.push(x);\n}";
+        assert!(!owner_may_exit_before_line(
+            plain,
+            10,
+            11,
+            "self.items.push(x)"
+        ));
+        let fallible = "fn ship(&mut self) -> Result<(), E> {\n    let n = self.next()?;\n    self.log.push(n);\n    Ok(())\n}";
+        assert!(owner_may_exit_before_line(
+            fallible,
+            10,
+            12,
+            "self.log.push(n)"
+        ));
+        // A line before the owner starts reads nothing.
+        assert!(!owner_may_exit_before_line(
+            plain,
+            10,
+            9,
+            "self.items.push(x)"
+        ));
+        // #8141 review: a guard sharing the changed line still lets the
+        // owner skip the push, so the prefix before the expression counts.
+        let inline = "fn beat(&mut self) { if self.locked { return; } self.log.push(1); }";
+        assert!(owner_may_exit_before_line(
+            inline,
+            10,
+            10,
+            "self.log.push(1)"
+        ));
+        // A guard after the push on the same line cannot skip it.
+        let guarded_after = "fn beat(&mut self) { self.log.push(1); if self.locked { return; } }";
+        assert!(!owner_may_exit_before_line(
+            guarded_after,
+            10,
+            10,
+            "self.log.push(1)"
+        ));
+        // A string literal is blanked in the masked body, so the expression
+        // is located in the owner body itself: a same-line guard before a
+        // quoted-argument push is still found.
+        let quoted_inline =
+            "fn tag(&mut self) { if self.locked { return; } self.log.push(\"x\"); }";
+        assert!(owner_may_exit_before_line(
+            quoted_inline,
+            10,
+            10,
+            "self.log.push(\"x\")"
+        ));
+        // A quoted argument without an earlier exit keeps the rule off.
+        let quoted = "fn tag(&mut self) {\n    self.log.push(\"x\");\n}";
+        assert!(!owner_may_exit_before_line(
+            quoted,
+            10,
+            11,
+            "self.log.push(\"x\")"
+        ));
+        // An earlier string containing the expression is skipped: only the
+        // executable occurrence after the guard positions the scan.
+        let decoy = "fn beat(&mut self) { let s = \"self.log.push(1)\"; if self.locked { return; } self.log.push(1); }";
+        assert!(owner_may_exit_before_line(
+            decoy,
+            10,
+            10,
+            "self.log.push(1)"
+        ));
+    }
+
+    #[test]
+    fn default_like_expected_values_do_not_confirm_a_field_assignment() {
+        for assertion in [
+            "assert_eq!(c.count, 0);",
+            "assert_eq!(c.count, 0_u32)",
+            "assert_eq!(0.0, c.ratio);",
+            "assert_eq!(c.locked, false);",
+            "assert_eq!(c.next, None);",
+            "assert_eq!(c.name, \"\");",
+            "assert_eq!(c.items, Vec::new());",
+            "assert_eq!(c.items, vec![]);",
+            "assert_eq!(c.state, State::default());",
+            "assert_eq!(&c.name, &String::new(), \"named\");",
+            "assert_eq!(c.count, 0 as u32);",
+            "assert_eq!(c.count, u32::MIN);",
+        ] {
+            assert!(assertion_expects_default_like(assertion), "{assertion}");
+        }
+        for assertion in [
+            "assert_eq!(c.count, 1);",
+            "assert_eq!(c.count, 10)",
+            "assert_eq!(c.locked, true);",
+            "assert_eq!(c.state, State::Done);",
+            "assert_eq!(c.ratio, 0.5);",
+            "assert!(c.count == 0);",
+        ] {
+            assert!(!assertion_expects_default_like(assertion), "{assertion}");
+        }
+    }
+
     /// #7131: a field credits through a pushed collection only when its
     /// literal is the whole `push` argument on a field path of `self` and
     /// nothing after the push writes that field again.
@@ -2837,6 +3694,80 @@ mod tests {
             "assert_eq!(inv.stock, vec![]);",
         ] {
             assert!(whole(other).is_empty(), "{other}");
+        }
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: a compared side that is exactly
+    /// `binding.getter(key)` names its binding, getter and key.
+    #[test]
+    fn assertion_keyed_getter_reads_take_one_argument_calls_only() {
+        let read = |binding: &str, getter: &str, key: &str, expected: &str| {
+            vec![KeyedFieldRead {
+                binding: binding.to_string(),
+                getter: getter.to_string(),
+                key: key.to_string(),
+                expected: expected.to_string(),
+            }]
+        };
+        assert_eq!(
+            assertion_keyed_getter_reads("assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);"),
+            read("inv", "on_hand", "\"BOLT-M8\"", "7")
+        );
+        assert_eq!(
+            assertion_keyed_getter_reads("assert_eq!(7, inv.on_hand(sku));"),
+            read("inv", "on_hand", "sku", "7")
+        );
+        assert_eq!(
+            assertion_keyed_getter_reads("assert_eq!(inv.on_hand(&key(\"a,b\")), Some(&7));"),
+            read("inv", "on_hand", "&key(\"a,b\")", "Some(&7)")
+        );
+        for other in [
+            // A projection of the entry, two arguments or none, a chained
+            // receiver, a key naming the binding, a comparison with the
+            // same binding.
+            "assert_eq!(inv.on_hand(\"A\") + 1, 8);",
+            "assert_eq!(inv.on_hand(\"A\").max(1), 7);",
+            "assert_eq!(inv.at(\"A\", 1), 7);",
+            "assert_eq!(inv.total(), 7);",
+            "assert_eq!(make().on_hand(\"A\"), 7);",
+            "assert_eq!(inv.on_hand(inv.first()), 7);",
+            "assert_eq!(inv.on_hand(\"A\"), inv.on_hand(\"B\"));",
+            // No equality: nothing says which value the entry holds.
+            "assert!(inv.on_hand(\"A\"));",
+            "assert_ne!(inv.on_hand(\"A\"), 0);",
+        ] {
+            assert!(assertion_keyed_getter_reads(other).is_empty(), "{other}");
+        }
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: a field-map insert names the owner
+    /// parameter its key comes from.
+    #[test]
+    fn field_collection_insert_key_names_the_key_parameter() {
+        for (expression, key) in [
+            ("self.stock.insert(sku.to_string(), remaining)", "sku"),
+            ("self.stock.insert(sku.to_owned(), remaining);", "sku"),
+            ("self.stock.insert(sku, n)", "sku"),
+            ("self.a.b.insert(id.clone(), n)", "id"),
+            ("self.stock.insert(id.into(), n)", "id"),
+            ("self.stock.insert(String::from(name), n)", "name"),
+        ] {
+            assert_eq!(
+                field_collection_insert_key(expression).as_deref(),
+                Some(key),
+                "{expression}"
+            );
+        }
+        for other in [
+            "self.stock.push(sku)",
+            "stock.insert(sku, n)",
+            "self.stock.insert(format!(\"{sku}\"), n)",
+            "self.stock.insert(sku.trim().to_string(), n)",
+            "self.stock.insert(\"fixed\", n)",
+            "self.stock.insert(sku, n).unwrap()",
+            "self.stock.entry(sku).or_insert(n)",
+        ] {
+            assert_eq!(field_collection_insert_key(other), None, "{other}");
         }
     }
 

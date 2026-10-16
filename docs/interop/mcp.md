@@ -216,7 +216,10 @@ identity and the caller filters, so a refresh between pages fails closed with `s
 instead of silently mixing snapshots; walking `next_offset` covers the
 selection exactly once. Pages are sized so the complete structured result
 (`structuredContent`, per the tool's advertised `outputSchema`) measures
-under the 128-KiB response bound. Only a listing that cannot fit even one
+under the 128-KiB response bound, including empty pages whose echoed filters
+can overflow the structured envelope while the raw document still fits.
+Those pages return the existing typed `result_too_large` refusal with the
+current snapshot identity. Only a listing that cannot fit even one
 page — an omission disclosure alone over the ceiling — fails closed with
 `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the identity
 route. Other tool responses carry the document once at full fidelity:
@@ -411,12 +414,19 @@ correlated. Messages are capped at 256 KiB and response envelopes at
 128 KiB; the 1-byte newline delimiter is appended after the cap check, so a
 wire frame is at most 128 KiB+1 (pinned by
 `exactly_max_response_bytes_passes_and_one_more_falls_back`). The bound is
-enforced on the final serialized envelope — the document is measured again
-after the tool or resource wrapper adds its text and structured-content
-representations — so an over-bound response fails closed with
-`result_too_large` before the wire cap is reached. If even a
-correlated fallback cannot fit its readable ID, the service terminates with
-the bounded stderr reason `MCP output limit`, without substituting an ID.
+enforced against the complete serialized response: the tool or resource
+envelope is measured in its final form — after the wrapper adds its text
+and structured-content representations — and compared against the
+response bound minus the JSON-serialized request id of the call being
+answered and a fixed reserve for the JSON-RPC frame fields and the
+`resultType` field a `2026-07-28` peer keeps, so an over-bound response
+fails closed with `result_too_large` before the wire cap is reached for
+any legal request id, however much client-controlled id escaping adds
+(#7768). A request id so large that even the typed `result_too_large`
+refusal cannot fit its ID falls back to the correlated generic error; if
+even a correlated fallback cannot fit its readable ID, the service
+terminates with the bounded stderr reason `MCP output limit`, without
+substituting an ID.
 Partial reads and writes retain their state across cancellation. EOF closes
 the SDK service, so scripted clients must await replies before closing stdin.
 Stdout carries only protocol messages; operational errors go to stderr, and

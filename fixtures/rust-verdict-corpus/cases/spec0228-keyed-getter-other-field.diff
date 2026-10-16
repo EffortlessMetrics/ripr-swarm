@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 50c378b..da1fdef 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -72,7 +72,7 @@ pub struct Ledger {
+ impl Ledger {
+     /// Records received stock for `sku`; the test reads the held map only.
+     pub fn receive(&mut self, sku: &str, qty: u32) {
+-        self.stock.insert(sku.to_string(), qty);
++        self.stock.insert(sku.to_owned(), qty);
+     }
+ 
+     pub fn held(&self, sku: &str) -> u32 {

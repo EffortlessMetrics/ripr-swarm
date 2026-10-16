@@ -305,16 +305,26 @@ revision
 `0b038c45bb6b2fa25faf8708c57cf41e58522e6d`. Removing the two added sample fields
 reconstructs the original baseline bytes (SHA256
 `2df8bc3f48d6ec1384464d7baacfe8e31a24553dcfc019c6b4f9dfbacf667ea5`). All original
-values, source details, revision and thresholds are preserved. The same evidence enriches the five original Rust operational samples; removing
-those added fields likewise restores every original byte. The public-proof
-scoreboard copy receives only that metadata. A rate refresh needs its own policy
-decision and attributable observation provenance. #7555 proposed a conflicting
-refresh, then returned to Draft and held further baseline edits pending that
-decision; this repair accepts no refreshed values. The later
+values, source details, revision and thresholds are preserved. #7552 enriched
+the five original Rust operational samples with the same evidence and accepted
+no refreshed values: a rate refresh needs its own policy decision and
+attributable observation provenance. #7555 proposed a refresh and was held for
+that decision. The later
 `3961078c56b8c89258af56068fdf989f97b7d776` report has eight differing rows and is
 not a replacement. Historical per-case contradiction denominators are absent
 and were not reconstructed. Legacy TypeScript/Python observations still lack
-attributable population evidence and fail comparison explicitly.
+attributable population evidence and fail comparison explicitly (#8035).
+
+#7325 is that policy decision: the owner accepted the retained Rust abstention
+rise, and the five Rust verdict-corpus entries of the operational baseline
+now hold the trust-board observation at
+`2af3f38a1de75ca48d5d84555a839d50710159b6` (false verdicts 29/477, false
+actionable 26/236, abstention 177/477, false silent 0/241, false exposed
+3/241). Each refreshed sample carries `population_provenance` with kind
+`committed_expected_rows`, that revision, the `corpus.json` blob and the
+`expected/rows` tree. The witness file above is unchanged; a test pins the
+operational baseline to it in every other field, and the public-proof
+scoreboard copy to the operational baseline byte for byte.
 
 `testdata/7552-rust-abstention.json` freezes committed expected records at
 `6da363f9b630845d82d8a073c42429d90cd03732`, rather than executing the analyzer.

@@ -84,7 +84,19 @@ impl MockCallFacts {
     /// on a mock made in `test_body` under the parameter's own name, passed
     /// to the owner's one call in the test at the parameter's position, and
     /// mentioned nowhere else but `expect(...)`.
+    #[cfg(test)]
     pub(crate) fn credits(&self, payload: &TypeScriptMockPayload, test_body: &str) -> bool {
+        self.credits_with_factories(payload, test_body, &[])
+    }
+
+    /// [`Self::credits`], also reading `const p = f();` through the test
+    /// file's mock factories (`TypeScriptTest::mock_factories_in_file`).
+    pub(crate) fn credits_with_factories(
+        &self,
+        payload: &TypeScriptMockPayload,
+        test_body: &str,
+        factories: &[(String, String)],
+    ) -> bool {
         // Jest's recursive equality treats a property set to `undefined` as
         // absent, so an object payload does not pin every field.
         if payload.kind != TypeScriptMockPayloadKind::CalledWith
@@ -121,7 +133,7 @@ impl MockCallFacts {
         };
         let made_in_test = match &call.method {
             None => test_local_mock_binding(scope, local),
-            Some(method) => test_local_mock_property(scope, local, method),
+            Some(method) => test_local_mock_property(scope, local, method, factories),
         };
         made_in_test
             && identifier_mentions_outside_expect(test_body, local) == 2
@@ -423,8 +435,16 @@ fn test_local_mock_binding(body: &str, name: &str) -> bool {
 /// `const db = { write: jest.fn() }`: `object` is bound to an object literal
 /// in the test whose `property` is a mock factory call. A spread, a second
 /// `property` key or a key that is not a plain identifier could replace the
-/// factory, so any of them refuses.
-fn test_local_mock_property(body: &str, object: &str, property: &str) -> bool {
+/// factory, so any of them refuses. `const db = makeDb();` reads the literal
+/// a test-file mock factory returns (`factories`, RIPR-SPEC-0247 rule 1,
+/// amended 2026-10-15): the call is the whole initializer and every call
+/// builds a fresh object.
+fn test_local_mock_property(
+    body: &str,
+    object: &str,
+    property: &str,
+    factories: &[(String, String)],
+) -> bool {
     let masked = ts_mask_literals_and_comments(body);
     ["const", "let", "var"].iter().any(|keyword| {
         masked.match_indices(keyword).any(|(at, _)| {
@@ -441,32 +461,67 @@ fn test_local_mock_property(body: &str, object: &str, property: &str) -> bool {
             let Some(rest) = rest.trim_start().strip_prefix('=') else {
                 return false;
             };
-            let Some(literal) = rest.trim_start().strip_prefix('{') else {
-                return false;
-            };
-            let Some(literal) = literal_body(literal) else {
-                return false;
-            };
-            // Every entry is `key: value` with a plain key, the property is
-            // keyed once, and no spread or other key can replace it.
-            let mut entries = Vec::new();
-            for entry in top_level_entries(literal) {
-                let Some((key, value)) = entry.split_once(':') else {
-                    return false;
-                };
-                let key = key.trim();
-                if !key.starts_with(is_identifier_start) || !key.chars().all(is_identifier_part) {
-                    return false;
-                }
-                entries.push((key, value.trim_start()));
+            let rest = rest.trim_start();
+            if let Some(literal) = rest.strip_prefix('{') {
+                return literal_body(literal).is_some_and(|literal| {
+                    keys_mock_once(literal, property, starts_with_mock_factory)
+                });
             }
-            let mut keyed = entries.iter().filter(|(key, _)| *key == property);
-            matches!(
-                (keyed.next(), keyed.next()),
-                (Some((_, value)), None) if starts_with_mock_factory(value)
-            )
+            factories.iter().any(|(name, returned)| {
+                factory_call_is_initializer(rest, name)
+                    && ts_mask_literals_and_comments(returned)
+                        .strip_prefix('{')
+                        .and_then(literal_body)
+                        .is_some_and(|literal| {
+                            keys_mock_once(literal, property, is_bare_mock_factory)
+                        })
+            })
         })
     })
+}
+
+/// `true` when `rest` opens with `name()` and an explicit `;` (or the
+/// block's end) closes the statement there. A line break alone does not:
+/// a next line opening with `.`, `[`, `&&` or `?` continues the
+/// expression, so `db` would not be the factory's fresh object.
+fn factory_call_is_initializer(rest: &str, name: &str) -> bool {
+    rest.strip_prefix(name)
+        .and_then(|rest| rest.strip_prefix("()"))
+        .is_some_and(|rest| {
+            let rest = rest.trim_start();
+            rest.is_empty() || rest.starts_with([';', '}'])
+        })
+}
+
+/// `true` when a factory literal's value is exactly a bare `jest.fn()` /
+/// `vi.fn()`: an implementation argument can call the mock through `this`
+/// and a trailing operator (`jest.fn() && shared`) can hand back another
+/// mock, so the factory path admits neither.
+fn is_bare_mock_factory(value: &str) -> bool {
+    MOCK_FACTORIES
+        .iter()
+        .any(|factory| value.trim_end().strip_prefix(factory) == Some("()"))
+}
+
+/// `true` when every entry of a flat literal body is `key: value` with a
+/// plain key and `property` is keyed exactly once, to a mock factory call.
+fn keys_mock_once(literal: &str, property: &str, is_mock: fn(&str) -> bool) -> bool {
+    let mut entries = Vec::new();
+    for entry in top_level_entries(literal) {
+        let Some((key, value)) = entry.split_once(':') else {
+            return false;
+        };
+        let key = key.trim();
+        if !key.starts_with(is_identifier_start) || !key.chars().all(is_identifier_part) {
+            return false;
+        }
+        entries.push((key, value.trim_start()));
+    }
+    let mut keyed = entries.iter().filter(|(key, _)| *key == property);
+    matches!(
+        (keyed.next(), keyed.next()),
+        (Some((_, value)), None) if is_mock(value)
+    )
 }
 
 /// The non-empty comma-separated entries of a flat literal body, split only
@@ -834,10 +889,11 @@ fn trailing_identifier(text: &str) -> &str {
 
 /// RIPR-SPEC-0256 rule 1: the masked changed line occurs once in the masked
 /// owner `body`, outside every brace, parenthesis and bracket, right after
-/// the start of the body, a `;` or a `}`, and holds no `=>`, `function` or
-/// method-like block (see [`has_method_like_block`]).
-/// A line after `=>` (an expression-bodied arrow), after `if (...)` or
-/// `else` without a block, or inside a callback refuses.
+/// the start of the body, a `;`, a `}` or the head of a top-level braceless
+/// `if (...)` / `else` (see [`follows_braceless_if_or_else`]), and holds no
+/// `=>`, `function` or method-like block (see [`has_method_like_block`]).
+/// A line after `=>` (an expression-bodied arrow) or inside a callback
+/// refuses.
 fn changed_line_is_top_level_statement(body: &str, line_text: &str) -> bool {
     let masked_line = ts_mask_literals_and_comments(line_text);
     let statement = masked_line.trim();
@@ -866,12 +922,50 @@ fn changed_line_is_top_level_statement(body: &str, line_text: &str) -> bool {
             _ => {}
         }
     }
+    let before = body[..at].trim_end();
     depth == 0
-        && body[..at]
-            .trim_end()
+        && (before
             .chars()
             .next_back()
             .is_none_or(|c| matches!(c, ';' | '}'))
+            || follows_braceless_if_or_else(before))
+}
+
+/// RIPR-SPEC-0256 rule 1 (2026-10-15): `true` when `before`, the masked
+/// body text before a top-level changed line with its trailing space
+/// trimmed, ends with the head of a braceless branch that runs the line at
+/// most once: `if (...)` whose `if` starts a statement (after the start of
+/// the body, a `;` or a `}`), or `else` after a `;` or a `}`. That position
+/// rule also refuses a word that ends a property access (`cfg.if (x)`,
+/// `cfg.else`), since a `.` precedes it. The caller has
+/// already placed the line outside every brace, parenthesis and bracket, so
+/// the `if` / `else` sits directly in the owner body, not in a nested
+/// function. A nested `if (a) if (b)`, an `else if (...)`, a labelled `if`,
+/// an `else` right after a `)` and any other word before `(...)` refuse,
+/// which under-credits rather than guess.
+fn follows_braceless_if_or_else(before: &str) -> bool {
+    if before.ends_with(')') {
+        let Some(open) = matching_open_paren(before) else {
+            return false;
+        };
+        let head = before[..open].trim_end();
+        let word = trailing_identifier(head);
+        if word != "if" {
+            return false;
+        }
+        return head[..head.len() - word.len()]
+            .trim_end()
+            .chars()
+            .next_back()
+            .is_none_or(|c| matches!(c, ';' | '}'));
+    }
+    let word = trailing_identifier(before);
+    word == "else"
+        && before[..before.len() - word.len()]
+            .trim_end()
+            .chars()
+            .next_back()
+            .is_some_and(|c| matches!(c, ';' | '}'))
 }
 
 /// `true` when `statement` cannot continue the expression on the line before

@@ -9146,6 +9146,300 @@ async fn did_close_clears_the_saved_content_digest() -> Result<(), String> {
     Ok(())
 }
 
+#[tokio::test]
+async fn did_open_matching_persisted_content_skips_revision_and_refresh() -> Result<(), String> {
+    let root = unique_lsp_test_root("did-open-matching-open")?;
+    let file = root.path().join("lib.rs");
+    std::fs::write(&file, "fn persisted() {}\n")
+        .map_err(|error| format!("write fixture: {error}"))?;
+    let uri = crate::lsp::uri::file_uri_for_path(&file)?;
+    let (service, _socket) =
+        LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+    let backend = service.inner();
+    // Phase 1 runs deliberately authority-uninitialized: the fresh-session
+    // contract under test is the revision advance, and the uninitialized
+    // authority keeps the scheduled analysis from running inline on this
+    // bare temp root.
+
+    // Fresh session: the first matching open must keep today's refresh path
+    // — the first opened document establishes the session's analysis — so
+    // the revision advances even though the buffer matches persisted bytes.
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(
+                uri.clone(),
+                "rust".to_string(),
+                1,
+                "fn persisted() {}\n".to_string(),
+            ),
+        })
+        .await;
+    if backend.workspace_revision() != 1 {
+        return Err(format!(
+            "a fresh session's first matching open must keep the refresh path: revision {}",
+            backend.workspace_revision()
+        ));
+    }
+
+    // The workspace-root authority is initialized here so phase 2's
+    // scheduler assertion is meaningful: with the authority selected, a
+    // regressed matching open WOULD reach RefreshScheduler through
+    // refresh_diagnostics.
+    backend.initialize_test_workspace_root();
+    let did_open_requests_baseline = backend.refresh_telemetry_for_test().did_open_requests;
+
+    // With session analysis state (a completed refresh record), the same
+    // matching open adds no saved-workspace input: it must not advance the
+    // workspace revision or supersede the snapshot evidence readers cite.
+    let state_request = backend.refresh_scheduler_for_test().request(
+        root.path().to_path_buf(),
+        crate::lsp::config::LspAnalysisConfig::default(),
+        1,
+        0,
+        RefreshScope::Full,
+        RefreshReason::ExplicitRefresh,
+    );
+    let RefreshDecision::Start(active) = state_request else {
+        return Err("fabricated state request should start".to_string());
+    };
+    backend.refresh_scheduler_for_test().finish(&active, true);
+
+    let other = root.path().join("other.rs");
+    std::fs::write(&other, "pub fn other() {}\n")
+        .map_err(|error| format!("write second fixture: {error}"))?;
+    let other_uri = crate::lsp::uri::file_uri_for_path(&other)?;
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(
+                other_uri,
+                "rust".to_string(),
+                1,
+                "pub fn other() {}\n".to_string(),
+            ),
+        })
+        .await;
+    if backend.workspace_revision() != 1 {
+        return Err(format!(
+            "a matching open with analysis state advanced the revision to {}",
+            backend.workspace_revision()
+        ));
+    }
+    if backend.refresh_telemetry_for_test().did_open_requests != did_open_requests_baseline {
+        return Err(format!(
+            "a matching open with analysis state reached the scheduler: did_open_requests={} \
+             baseline={}",
+            backend.refresh_telemetry_for_test().did_open_requests,
+            did_open_requests_baseline
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn did_open_matching_disk_bytes_with_stale_committed_snapshot_keeps_refresh()
+-> Result<(), String> {
+    let root = unique_lsp_test_root("did-open-stale-snapshot-open")?;
+    let file = root.path().join("lib.rs");
+    let original = "fn persisted() {}\n";
+    let changed_later = "fn persisted() {}\nfn added_while_closed() {}\n";
+    std::fs::write(&file, original).map_err(|error| format!("write fixture: {error}"))?;
+    let uri = crate::lsp::uri::file_uri_for_path(&file)?;
+    let (service, _socket) =
+        LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+    let backend = service.inner();
+
+    // The refresh path under test would run a real analysis on this bare
+    // temp root; this proof's oracle is the scheduler REQUEST, not the
+    // analysis outcome. The backend's own analysis config (the minimum
+    // deadline applied through initialization) makes the fabricated
+    // completion record's input identity match the request a regressed or
+    // fixed open produces, so the scheduled interactive refresh takes the
+    // deterministic deduplicated return instead of running an analysis.
+    let initialize_params = InitializeParams {
+        initialization_options: Some(serde_json::json!({
+            "refreshDeadlineMs": super::config::MIN_LSP_REFRESH_DEADLINE_MS,
+        })),
+        ..InitializeParams::default()
+    };
+    backend
+        .initialize(initialize_params)
+        .await
+        .map_err(|error| format!("initialize failed: {error}"))?;
+    let analysis_config = backend
+        .analysis_config()
+        .ok_or_else(|| "initialized analysis config must be present".to_string())?;
+
+    // The committed snapshot names the bytes it analyzed: the file's
+    // pre-change content. Preparation must never mint that claim from a
+    // later disk read.
+    let mut rust_consumed_sources =
+        crate::analysis::consumed_source::ConsumedRustSources::default();
+    rust_consumed_sources.record(Path::new("lib.rs"), Some(original.as_bytes()));
+    let snapshot = AnalysisSnapshot {
+        root: root.path().to_path_buf(),
+        rust_consumed_sources,
+        input_identity: None,
+        base: None,
+        mode: Mode::Draft,
+        refresh: RefreshMetadata::generated_now(),
+        findings: Vec::new(),
+        analysis_outcome: None,
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+        classified_seams: Vec::new(),
+        repair_card_candidate_seams: None,
+        gap_artifacts: Vec::new(),
+        gap_artifact_rejections: Vec::new(),
+        harness_facts: HarnessFactsOnSnapshot::NotRegistered,
+        diagnostics_by_uri: BTreeMap::new(),
+        diagnostic_uri_index: None,
+        delivery_selection: None,
+        seams_deferred: false,
+        partial_scope: None,
+        component_outcomes: Vec::new(),
+        out_of_scope_test_file_findings: 0,
+        unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+    };
+    backend
+        .refresh_plan(WorkspaceDiagnostics {
+            snapshot,
+            batches: Vec::new(),
+        })
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    // Session analysis state exists (a completed refresh record), so the
+    // matching-open skip is reachable; the authority is initialized so a
+    // regressed open would reach the scheduler through refresh_diagnostics.
+    let state_request = backend.refresh_scheduler_for_test().request(
+        root.path().to_path_buf(),
+        analysis_config.clone(),
+        backend.workspace_revision(),
+        0,
+        RefreshScope::Full,
+        RefreshReason::ExplicitRefresh,
+    );
+    let RefreshDecision::Start(active) = state_request else {
+        return Err("fabricated state request should start".to_string());
+    };
+    backend.refresh_scheduler_for_test().finish(&active, true);
+    backend.initialize_test_workspace_root();
+    let baseline_requests = backend.refresh_telemetry_for_test().did_open_requests;
+
+    // Control: a clean open whose buffer, persisted bytes, and committed
+    // snapshot digest all agree carries no new input and stays skipped.
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(
+                uri.clone(),
+                "rust".to_string(),
+                1,
+                original.to_string(),
+            ),
+        })
+        .await;
+    if backend.workspace_revision() != 0 {
+        return Err(format!(
+            "a clean open over matching committed snapshot bytes must stay skipped: revision {}",
+            backend.workspace_revision()
+        ));
+    }
+    if backend.refresh_telemetry_for_test().did_open_requests != baseline_requests {
+        return Err(
+            "a clean open over matching committed snapshot bytes reached the scheduler".into(),
+        );
+    }
+
+    // The file changed on disk while it was closed and no watch event
+    // arrived. The reopened buffer matches the new persisted bytes, so the
+    // saved-content matcher alone would skip; the committed snapshot still
+    // holds the pre-change digest, so this open must keep the interactive
+    // refresh instead of silently serving stale seam evidence. The
+    // completed Full record below matches the request this open produces
+    // after its revision advance (same root, config, revision 1), so the
+    // scheduled refresh deduplicates against it and no analysis body runs;
+    // the request telemetry and revision advance remain the oracle.
+    let dedup_request = backend.refresh_scheduler_for_test().request(
+        root.path().to_path_buf(),
+        analysis_config,
+        1,
+        0,
+        RefreshScope::Full,
+        RefreshReason::ExplicitRefresh,
+    );
+    let RefreshDecision::Start(dedup_active) = dedup_request else {
+        return Err("fabricated dedup request should start".to_string());
+    };
+    backend
+        .refresh_scheduler_for_test()
+        .finish(&dedup_active, true);
+    std::fs::write(&file, changed_later).map_err(|error| format!("rewrite fixture: {error}"))?;
+    let stale_open = backend.did_open(DidOpenTextDocumentParams {
+        text_document: TextDocumentItem::new(uri, "rust".to_string(), 2, changed_later.to_string()),
+    });
+    if tokio::time::timeout(std::time::Duration::from_secs(15), stale_open)
+        .await
+        .is_err()
+    {
+        return Err(
+            "the stale-snapshot open must return after its scheduler request; the scheduled \
+             refresh must not run a real analysis in this proof"
+                .into(),
+        );
+    }
+    if backend.workspace_revision() != 1 {
+        return Err(format!(
+            "a clean open over stale committed snapshot bytes must keep the refresh path: \
+             revision {}",
+            backend.workspace_revision()
+        ));
+    }
+    if backend.refresh_telemetry_for_test().did_open_requests != baseline_requests + 1 {
+        return Err(format!(
+            "a clean open over stale committed snapshot bytes did not reach the scheduler: \
+             did_open_requests={} baseline={}",
+            backend.refresh_telemetry_for_test().did_open_requests,
+            baseline_requests
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn did_open_diverging_persisted_content_keeps_the_interactive_refresh() -> Result<(), String>
+{
+    let root = unique_lsp_test_root("did-open-diverging-open")?;
+    let file = root.path().join("lib.rs");
+    std::fs::write(&file, "fn persisted() {}\n")
+        .map_err(|error| format!("write fixture: {error}"))?;
+    let uri = crate::lsp::uri::file_uri_for_path(&file)?;
+    let (service, _socket) =
+        LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+    let backend = service.inner();
+    // The backend is deliberately authority-uninitialized: the conservative
+    // contract under test is the handler-owned revision advance, and the
+    // uninitialized authority keeps the scheduled analysis from running
+    // inline on this bare temp root.
+
+    // Control: a diverging (recovered dirty) buffer keeps today's
+    // interactive refresh path, including the revision advance.
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(
+                uri,
+                "rust".to_string(),
+                2,
+                "fn diverged() {}\n".to_string(),
+            ),
+        })
+        .await;
+    if backend.workspace_revision() != 1 {
+        return Err(format!(
+            "a diverging open did not advance the revision exactly once: {}",
+            backend.workspace_revision()
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn document_store_tracks_open_change_and_close() -> Result<(), String> {
     let uri = test_uri("file:///workspace/src/lib.rs")?;
@@ -15562,9 +15856,18 @@ fn execute_command_collect_context_returns_packet_for_known_finding() -> Result<
         // that diff source with the session root — re-running it re-selects
         // the finding the packet ships with, instead of exiting 2 with "no
         // finding matched" against the committed default-branch diff.
+        // #7937: the root spelling comes from the same binding owner the
+        // packet builder uses (`bound_root` + `shell_arg`), not a hardcoded
+        // POSIX literal — a rooted `/workspace` binds to the process drive
+        // on Windows and renders the bound drive-absolute form, and the
+        // pin must accept the producer's own replayable form on every host.
         if let Some(witness) = expected_context_packet.witness.as_mut() {
-            witness.explain_command =
-                "ripr explain --root /workspace --worktree probe:pricing:88:predicate".to_string();
+            witness.explain_command = format!(
+                "ripr explain --root {} --worktree probe:pricing:88:predicate",
+                crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+                    "/workspace"
+                )),
+            );
         }
         let expected_json =
             crate::output::json::render_context_packet_dto(&expected_context_packet);

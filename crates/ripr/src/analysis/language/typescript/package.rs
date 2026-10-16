@@ -5,8 +5,8 @@
 //!
 //! - `package_root` — nearest ancestor directory containing `package.json`
 //! - `workspace_root` — nearest ancestor with `pnpm-workspace.yaml`, OR a
-//!   `package.json` with a `"workspaces"` field; falls back to `package_root`
-//!   when no monorepo indicator is found.
+//!   `package.json` with an array or object `"workspaces"` field; falls back to
+//!   `package_root` when no monorepo indicator is found.
 //! - `framework_hint` — detected from `package.json` dependencies / devDeps
 //!   (jest / vitest / bun-types / mocha / @types/node).
 //! - `runner_hint` — detected from `scripts.test` and lockfile presence.
@@ -277,7 +277,7 @@ pub(crate) fn resolve_package_discovery(
     let runner_hint_from_script = detect_runner_from_scripts(&pkg_json_text);
 
     // Detect monorepo workspace root: walk upward from pkg_root looking for
-    // pnpm-workspace.yaml or a package.json with "workspaces" field.
+    // pnpm-workspace.yaml or a structural package.json "workspaces" marker.
     let ws_root =
         find_workspace_root(&pkg_root, workspace_root).unwrap_or_else(|| pkg_root.clone());
 
@@ -378,7 +378,7 @@ fn find_workspace_root(pkg_root: &Path, stop_at: &Path) -> Option<PathBuf> {
             return Some(current.clone());
         }
         if let Ok(text) = read_config_capped(&current.join("package.json"))
-            && json_has_workspaces_field(&text)
+            && json_declares_workspace(&text)
         {
             return Some(current.clone());
         }
@@ -447,8 +447,8 @@ struct ManifestFacts {
     dep_names: Vec<String>,
     /// Lowercased `scripts.test` command, when present and a string.
     test_script: Option<String>,
-    /// Whether a top-level `workspaces` field exists.
-    has_workspaces: bool,
+    /// Whether a top-level `workspaces` field is an array or object marker.
+    declares_workspace: bool,
 }
 
 fn parse_manifest_facts(pkg_json: &str) -> Option<ManifestFacts> {
@@ -466,11 +466,11 @@ fn parse_manifest_facts(pkg_json: &str) -> Option<ManifestFacts> {
         .and_then(|scripts| scripts.get("test"))
         .and_then(serde_json::Value::as_str)
         .map(str::to_lowercase);
-    let has_workspaces = object.contains_key("workspaces");
+    let declares_workspace = crate::config::package_json_declares_workspace(&value);
     Some(ManifestFacts {
         dep_names,
         test_script,
-        has_workspaces,
+        declares_workspace,
     })
 }
 
@@ -733,11 +733,11 @@ fn detect_runner_from_lockfile(workspace_root: &Path, pkg_root: &Path) -> Option
 }
 
 /// Field check: does the parsed `package.json` object carry a top-level
-/// `workspaces` key?  Uses the serde parse (see [`parse_manifest_facts`]) so
+/// array or object `workspaces` marker? Uses the serde parse (see [`parse_manifest_facts`]) so
 /// the word `"workspaces"` inside an unrelated string value does NOT mark a
 /// monorepo root. Fail-closed: `false` for unparseable manifests.
-fn json_has_workspaces_field(pkg_json: &str) -> bool {
-    parse_manifest_facts(pkg_json).is_some_and(|facts| facts.has_workspaces)
+fn json_declares_workspace(pkg_json: &str) -> bool {
+    parse_manifest_facts(pkg_json).is_some_and(|facts| facts.declares_workspace)
 }
 
 // ─── Verify-command inference ─────────────────────────────────────────────────
@@ -777,8 +777,9 @@ fn json_has_workspaces_field(pkg_json: &str) -> bool {
 /// relative to `package_root` so the command is runnable from there.
 ///
 /// Fail-closed: when neither a framework nor a runner resolves, returns
-/// `None` so the caller emits the named limitation
-/// `typescript_test_runner_unresolved` instead of an invented command.
+/// `None`. The caller emits `typescript_test_runner_unresolved` only in
+/// that unknown-runner case; it does not reuse the name when a runner is
+/// known but no related test exists to target (#7646).
 pub(crate) fn verify_command_for_discovery(
     discovery: &PackageDiscovery,
     test_file: &Path,
@@ -1293,15 +1294,15 @@ mod tests {
     #[test]
     fn workspaces_word_inside_string_value_is_not_monorepo_root() {
         // The word "workspaces" inside a string value must NOT mark a monorepo
-        // root; only a real top-level `workspaces` field counts.
+        // root; only a top-level array or object `workspaces` marker counts.
         let pkg = r#"{"name":"x","description":"uses workspaces for discovery"}"#;
         assert!(
-            !json_has_workspaces_field(pkg),
+            !json_declares_workspace(pkg),
             "workspaces inside a string value must not mark a monorepo root"
         );
         // Positive control: a real top-level field is still detected.
         let real = r#"{"name":"x","workspaces":["packages/*"]}"#;
-        assert!(json_has_workspaces_field(real));
+        assert!(json_declares_workspace(real));
     }
 
     #[test]

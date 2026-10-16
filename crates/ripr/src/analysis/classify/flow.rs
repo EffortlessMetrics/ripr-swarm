@@ -433,56 +433,91 @@ fn first_error_return(
     })
 }
 
-/// The changed predicate when it is the owner's whole tail expression
-/// (`items >= 10` as the last expression of `fn ships_free(..) -> bool`):
-/// the comparison's boolean is the returned value itself, so it propagates
-/// to the return without any branch. Requires a non-unit signature, the
-/// changed line to be exactly the comparison (no `;`, `if`, `let`, or
-/// `return`), and only the function's closing brace after it. A predicate
-/// retargeted from a changed `let` initializer (RIPR-SPEC-0158) is excluded:
-/// its changed text is the initializer, not the returned comparison, and its
-/// operand value stays a named limitation rather than a repair target.
+/// Resolve the whole returned comparison in the exact owner, including a body
+/// on the signature line. The shared bounded parser owns braces, parentheses
+/// and return types; a token match elsewhere cannot establish this sink.
+/// Retargeted initializers (SPEC-0158) and ambiguous source lines fail closed.
 fn predicate_as_owner_tail(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
 ) -> Option<LocalTextFact> {
-    let function = owner_fn?;
-    // Compare code only: a trailing `// note` on the changed line must not
-    // hide the tail, and comment text must not make two lines match.
+    use crate::analysis::syntax::parse_clean_source_file;
+    use ra_ap_syntax::{
+        AstNode,
+        ast::{self, HasName},
+    };
+
+    let owner = owner_fn?;
+    // The index stores the owner file relative to the workspace, while a
+    // diff probe locates that same file from the absolute analysis root.
+    if probe.owner.as_ref() != Some(&owner.id) || !probe.location.file.ends_with(&owner.file) {
+        return None;
+    }
     let code = |text: &str| {
         crate::analysis::language::mask_rust_comments_and_strings(text)
             .trim()
             .to_string()
     };
     let expression = code(&probe.expression);
-    if probe.after.as_deref().map(code).as_deref() != Some(expression.as_str()) {
-        return None;
-    }
-    let masked = crate::analysis::language::mask_rust_comments_and_strings(&function.body);
-    let mut lines = masked.lines();
-    let signature = lines.next()?;
-    if !signature.contains("->") {
-        return None;
-    }
-    let offset = probe.location.line.checked_sub(function.start_line)?;
-    let changed = masked.lines().nth(offset)?.trim();
-    if offset == 0
-        || changed != expression
-        || changed.ends_with(';')
-        || ["if ", "let ", "return ", "match ", "while "]
-            .iter()
-            .any(|keyword| changed.starts_with(keyword))
+    if expression.is_empty()
+        || probe.after.as_deref().map(code).as_deref() != Some(expression.as_str())
     {
         return None;
     }
-    let rest = masked
-        .lines()
-        .skip(offset + 1)
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>();
-    (rest == ["}"]).then_some(LocalTextFact {
-        line: probe.location.line,
+    let parse = parse_clean_source_file(&owner.body)?;
+    let tree = parse.tree();
+    let mut items = tree.syntax().children().filter_map(ast::Item::cast);
+    let Some(ast::Item::Fn(function)) = items.next() else {
+        return None;
+    };
+    if items.next().is_some()
+        || function.name()?.text() != owner.name
+        || code(&function.ret_type()?.ty()?.syntax().text().to_string()) == "()"
+    {
+        return None;
+    }
+    let tail = function.body()?.tail_expr()?;
+    let tail_start = usize::from(tail.syntax().text_range().start());
+    let line = owner.start_line
+        + owner
+            .body
+            .get(..tail_start)?
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count();
+    if line != probe.location.line || tail.syntax().text().to_string().contains('\n') {
+        return None;
+    }
+    // Parentheses do not add a sink. Blocks, closures, continuations and
+    // statements do: none may be peeled to borrow a nested comparison.
+    let mut comparison = tail;
+    while let ast::Expr::ParenExpr(parenthesized) = comparison.clone() {
+        comparison = parenthesized.expr()?;
+    }
+    let ast::Expr::BinExpr(binary) = &comparison else {
+        return None;
+    };
+    if !matches!(binary.op_kind(), Some(ast::BinaryOp::CmpOp(_))) {
+        return None;
+    }
+    let actual = comparison.syntax().text().to_string();
+    // Raw expression bytes retain literal identity; only trailing trivia may
+    // be absent from the parser node. Masking alone could equate two strings.
+    let matches_actual = |text: &str| {
+        text.trim()
+            .strip_prefix(actual.trim())
+            .is_some_and(|rest| code(rest).is_empty())
+    };
+    if !matches_actual(&probe.expression) || !matches_actual(probe.after.as_deref()?) {
+        return None;
+    }
+    let offset = line.checked_sub(owner.start_line)?;
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    if masked.lines().nth(offset)?.matches(&expression).count() != 1 {
+        return None;
+    }
+    Some(LocalTextFact {
+        line,
         text: expression,
     })
 }
@@ -1413,6 +1448,106 @@ mod tests {
     }
 
     #[test]
+    fn same_line_owner_tail_comparison_reaches_return_sink() {
+        for (body, expression, line) in [
+            (
+                "pub fn gate(input: u32) -> bool { 10 <= input }",
+                "10 <= input",
+                1,
+            ),
+            (
+                "pub fn gate(input: u32) -> bool { (10 <= input) }",
+                "10 <= input",
+                1,
+            ),
+            (
+                "pub fn gate(input: u32) -> bool { input >= 10 }",
+                "input >= 10",
+                1,
+            ),
+            (
+                "pub fn gate(input: u32) -> bool { input >= 10 // threshold\n}",
+                "input >= 10 // threshold",
+                1,
+            ),
+            (
+                "pub fn gate(input: u32) -> bool {\n  input >= 10\n}",
+                "input >= 10",
+                2,
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::Predicate, expression, line);
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert_eq!(sinks.len(), 1, "{body}: {sinks:?}");
+            assert_eq!(
+                sinks[0].kind,
+                FlowSinkKind::ReturnValue,
+                "{body}: {sinks:?}"
+            );
+            assert_eq!(sinks[0].line, line);
+            assert_eq!(sinks[0].owner.as_ref(), Some(&owner.id));
+        }
+    }
+
+    #[test]
+    fn same_line_owner_tail_refuses_non_tail_ambiguous_and_foreign_predicates() {
+        for (body, expression) in [
+            (
+                "pub fn gate(input: u32) -> bool { let b = input >= 10; b }",
+                "input >= 10",
+            ),
+            (
+                "pub fn gate(input: u32) -> bool { input >= 10; true }",
+                "input >= 10",
+            ),
+            (
+                "pub fn gate(input: u32) -> bool { (input >= 10) && true }",
+                "input >= 10",
+            ),
+            (
+                "pub fn gate(input: u32) -> bool { { input >= 10 } }",
+                "input >= 10",
+            ),
+            (
+                "pub fn gate(input: u32) -> impl Fn() -> bool { || input >= 10 }",
+                "input >= 10",
+            ),
+            (
+                "pub fn gate(input: u32) -> bool { let _ = input >= 10; input >= 10 }",
+                "input >= 10",
+            ),
+            ("pub fn gate(input: u32) { input >= 10; }", "input >= 10"),
+            (
+                "pub fn gate(input: u32, callback: fn() -> bool) { input >= 10; }",
+                "input >= 10",
+            ),
+            (
+                "pub fn gate(input: u32) -> bool { input >= 10 }\npub fn sibling(input: u32) -> bool { input >= 10 }",
+                "input >= 10",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::Predicate, expression, 1);
+            assert_eq!(
+                predicate_as_owner_tail(&probe, Some(&owner)),
+                None,
+                "{body}"
+            );
+        }
+        let owner = tail_owner("pub fn gate(input: u32) -> bool { input >= 10 }");
+        let mut probe = probe(ProbeFamily::Predicate, "input >= 10", 1);
+        probe.after = Some("input > 10".to_string());
+        assert_eq!(predicate_as_owner_tail(&probe, Some(&owner)), None);
+        probe.after = Some("input >= 10".to_string());
+        probe.owner = Some(SymbolId("src/lib.rs::sibling".to_string()));
+        assert_eq!(predicate_as_owner_tail(&probe, Some(&owner)), None);
+        probe.owner = Some(owner.id.clone());
+        probe.location.file = std::path::PathBuf::from("src/other.rs");
+        assert_eq!(predicate_as_owner_tail(&probe, Some(&owner)), None);
+    }
+
+    #[test]
     fn predicate_that_is_the_owner_tail_flows_to_the_returned_value() {
         let owner = tail_owner("pub fn ships_free(items: u32) -> bool {\n    items >= 10\n}");
         let probe = probe(ProbeFamily::Predicate, "items >= 10", 2);
@@ -2276,10 +2411,17 @@ mod tests {
     }
 
     fn tail_owner(body: &str) -> FunctionSummary {
-        FunctionSummary {
+        let mut owner = FunctionSummary {
             returns: Vec::new(),
             ..function(body)
+        };
+        if let Some(name) = body
+            .split_once("fn ")
+            .and_then(|(_, rest)| rest.split_once('('))
+        {
+            owner.name = name.0.to_string();
         }
+        owner
     }
 
     // ── Fix B: value_is_swallowed ─────────────────────────────────────────

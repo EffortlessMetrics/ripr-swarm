@@ -8,9 +8,9 @@ use super::arguments::{
     is_complete_macro_invocation, split_top_level_commas,
 };
 use super::patterns::{
-    boolean_literal_value, has_top_level_disjunction, has_top_level_exact_equality,
-    pattern_conjunct_assertions, pattern_invocation_spans, split_top_level_conjuncts,
-    strip_not_call, top_level_comparison_operator, unwrap_parentheses,
+    boolean_literal_value, contains_negated_pattern, has_top_level_disjunction,
+    has_top_level_exact_equality, pattern_conjunct_assertions, pattern_invocation_spans,
+    split_top_level_conjuncts, strip_not_call, top_level_comparison_operator, unwrap_parentheses,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 
@@ -27,6 +27,14 @@ pub(super) enum BoolOperandReading {
     /// `==` conjunct asserted true, which reads like the same chain in
     /// `assert!` (rule 3): this assertion text.
     Chain(String),
+    /// The operand is an `&&` chain with a pinning `==` conjunct and at
+    /// least one conjunct that states only a relation
+    /// (`a == b && !matches!(r, Err(E::Bad))`, `a == b && r != Err(E::Bad)`):
+    /// the same equality assertion over the other conjuncts. The relation
+    /// conjunct pins nothing, so it lends the reading no kind (rule 1;
+    /// #7947). Only the equality-macro form produces it; condition macros
+    /// (`assert!`, `ensure!`) read `None` here.
+    Rest(String),
 }
 
 /// The reading of an equality macro with one boolean-literal operand
@@ -40,6 +48,9 @@ pub(super) enum BoolOperandReading {
 /// it), or a comparison asserted true that may pin (`assert_eq!(a == b,
 /// true)`).
 pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandReading> {
+    if compares_test_with_non_literal(line) {
+        return Some(BoolOperandReading::Capped);
+    }
     let (operand, mut positive, in_condition) = compared_with_bool_literal(line)?;
     // An operand that feeds a `matches!` to an unread call or operator, in
     // any conjunct, may invert it (`assert_eq!(f(matches!(r, Ok(3))), true)`).
@@ -105,7 +116,20 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
         if conjuncts.iter().any(|conjunct| {
             has_top_level_exact_equality(conjunct) && !conjunct_states_relation(conjunct)
         }) {
-            return None;
+            let rest: Vec<&str> = conjuncts
+                .iter()
+                .filter(|conjunct| !conjunct_states_relation(conjunct))
+                .map(|conjunct| conjunct.trim())
+                .collect();
+            if rest.len() == conjuncts.len() {
+                return None;
+            }
+            // The rest keeps the equality-macro form, so `a == b` reads as
+            // `assert_eq!(a == b, true)` does.
+            return Some(BoolOperandReading::Rest(format!(
+                "assert_eq!({}\n, true\n);",
+                rest.join("\n && ")
+            )));
         }
         // With no pinning `==` conjunct, a negated, `!=`, relational or
         // false-compared conjunct states only a relation
@@ -148,7 +172,8 @@ fn strip_negations(text: &str) -> (&str, bool, bool) {
                 break;
             }
             core = inner;
-        } else if let Some(receiver) = strip_not_call(core) {
+        } else if let Some(receiver) = strip_not_call(core).or_else(|| not_path_call_operand(core))
+        {
             core = unwrap_parentheses(receiver.trim());
         } else if let Some(inner) = unwrap_block(core) {
             // A block around one expression is that expression
@@ -174,6 +199,25 @@ fn strip_negations(text: &str) -> (&str, bool, bool) {
     (core, negated, literal_compared)
 }
 
+/// The one argument of a path call to `not` (`Not::not(x)`,
+/// `std::ops::Not::not(x)`, `<bool as Not>::not(x)`, `bool::not(x)`;
+/// #8101), which negates it like `!x` and `x.not()` do. Any path counts:
+/// a function named `not` most likely inverts, and reading it as a
+/// negation only lowers a reading (review of 1ae0c07).
+fn not_path_call_operand(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let masked = mask_comments_and_strings(text);
+    let open = masked.find('(')?;
+    let head = masked.get(..open)?.trim_end().strip_suffix("not")?;
+    head.trim_end().strip_suffix("::")?;
+    if !is_path_head(head) {
+        return None;
+    }
+    let argument = super::arguments::parenthesized_contents(text.get(open..)?.trim_end())?;
+    let commas = super::arguments::split_top_level_commas(argument);
+    (commas.len() == 1).then_some(argument)
+}
+
 /// The operand of a top-level `==` or `!=` whose other side is a boolean
 /// literal, and whether the comparison negates it (`X == false`).
 fn literal_compared_operand(text: &str) -> Option<(&str, bool)> {
@@ -197,13 +241,20 @@ fn literal_compared_operand(text: &str) -> Option<(&str, bool)> {
 /// The value of a boolean literal through the spellings that keep it: a
 /// reference, a one-expression block, a `bool` cast or `bool::from`, each
 /// through grouping parentheses (`&false`, `{ false }`, `(false as bool)`,
-/// `bool::from(false)`; #7931). `side` is masked.
+/// `bool::from(false)`; #7931), and through a `!` that negates it
+/// (`!&true`; #7993). `side` is masked.
 fn literal_spelling_value(side: &str) -> Option<bool> {
     let mut text = side.trim();
+    let mut negated = false;
     loop {
         text = unwrap_parentheses(text);
         if let Some(value) = boolean_literal_value(text) {
-            return Some(value);
+            return Some(value != negated);
+        }
+        if let Some(rest) = text.strip_prefix('!') {
+            negated = !negated;
+            text = rest.trim();
+            continue;
         }
         let cast = text.strip_suffix("bool").and_then(|rest| {
             rest.trim_end()
@@ -250,10 +301,10 @@ fn method_comparison(text: &str) -> Option<&'static str> {
 
 /// A comparison spelled as one call: its method name and its two sides,
 /// either a receiver and an argument (`score(2).ne(&0)`) or the two
-/// arguments of a `PartialEq` or `PartialOrd` path call
-/// (`PartialEq::eq(&r, &x)`). A method call binds tighter than any operator,
-/// so the receiver must be one operand (`flag && r.eq(&x)` calls `eq` on
-/// `r` only) and the path call must start the text.
+/// arguments of a path call (`PartialEq::eq(&r, &x)`,
+/// `<_ as PartialEq>::eq(&r, &x)`). A method call binds tighter than any
+/// operator, so the receiver must be one operand (`flag && r.eq(&x)` calls
+/// `eq` on `r` only) and the path call must be the whole text.
 fn comparison_call(text: &str) -> Option<(&'static str, &str, &str)> {
     let text = text.trim();
     let masked = mask_comments_and_strings(text);
@@ -294,19 +345,69 @@ fn comparison_call(text: &str) -> Option<(&'static str, &str, &str)> {
                 return Some((name, receiver, arguments.trim()));
             }
         }
-        let path = if matches!(name, "eq" | "ne") {
-            "PartialEq::"
-        } else {
-            "PartialOrd::"
-        };
-        let starts_path = rest
-            .strip_suffix(path)
-            .is_some_and(|before| before.is_empty() || before.ends_with("::"));
-        if starts_path {
+        if is_path_head(rest) {
             return split_two_arguments(arguments).map(|(left, right)| (name, left, right));
         }
     }
     None
+}
+
+/// Whether masked `head` is the whole path before an associated function
+/// name: segments joined by `::`, through a qualified-self head or
+/// generics (`PartialEq::`, `Result::`, `<_ as PartialEq>::`,
+/// `<Result<u8, E> as PartialEq>::`; #7993). Any path's two-argument
+/// `eq` reads like `PartialEq::eq`: a cap only lowers a reading, and `eq`
+/// asserted true still pins. An operator outside the angles, or a space
+/// there that does not sit beside a `::` separator (`flag && PartialEq::`,
+/// `a < b`, `x Result::`), ends the path, so the call is not the whole
+/// text; `Result :: eq` keeps it. Inside the angles a const-generic block
+/// is one argument, and an unbalanced block, or a `{`, `}` or `;` outside
+/// one, rejects the head (#8081).
+fn is_path_head(head: &str) -> bool {
+    let head = head.trim_end();
+    if !head.ends_with("::") {
+        return false;
+    }
+    let bytes = head.as_bytes();
+    // Unformatted code may space a separator (`Result :: eq`); a space
+    // anywhere else outside the angles ends the path.
+    let beside_separator = |index: usize| {
+        let before = bytes
+            .get(..index)
+            .and_then(|head| head.iter().rev().find(|byte| !byte.is_ascii_whitespace()));
+        let after = bytes
+            .get(index..)
+            .and_then(|tail| tail.iter().find(|byte| !byte.is_ascii_whitespace()));
+        before == Some(&b':') || after == Some(&b':')
+    };
+    let mut generics = 0usize;
+    // A const-generic block inside the angles (`C::<{ A > B }>::ne`) is one
+    // argument: its `<`, `>` and spaces are not the path's.
+    let mut blocks = 0usize;
+    for (index, &byte) in bytes.iter().enumerate() {
+        match byte {
+            b';' => return false,
+            b'{' if generics > 0 => blocks += 1,
+            b'}' if blocks > 0 => blocks -= 1,
+            _ if blocks > 0 => {}
+            b'<' if generics > 0
+                || index == 0
+                || (index >= 2 && bytes.get(index - 2..index) == Some(&b"::"[..])) =>
+            {
+                generics += 1;
+            }
+            b'>' if generics > 0 && (index == 0 || bytes.get(index - 1) != Some(&b'-')) => {
+                generics -= 1;
+            }
+            b'{' | b'}' => return false,
+            _ if generics > 0 => {}
+            b':' | b'_' => {}
+            _ if byte.is_ascii_alphanumeric() => {}
+            _ if byte.is_ascii_whitespace() && beside_separator(index) => {}
+            _ => return false,
+        }
+    }
+    generics == 0 && blocks == 0
 }
 
 /// The two arguments of a call's argument list when it holds exactly two,
@@ -375,7 +476,12 @@ fn method_literal_operand(text: &str) -> Option<(&str, bool)> {
 
 /// The operand inside a spelling that keeps its bool value: a reference to
 /// a single operand, `bool::from(..)` or a single operand cast `as bool`
-/// (`&(r == Err(E::Bad))`, `(r == Err(E::Bad)) as bool`; #7931).
+/// (`&(r == Err(E::Bad))`, `(r == Err(E::Bad)) as bool`; #7931), or that
+/// carries it as an integer: a cast to an integer type or `u8::from(..)`
+/// (`(r == Err(E::Bad)) as u8`; #8093). A cast keeps whether its operand
+/// is a test, so a test compared through one is read like the test; an
+/// integer is no boolean literal, so `0` and `1` on the other side never
+/// pin it.
 fn bool_preserving_operand(text: &str) -> Option<&str> {
     let text = text.trim();
     let single = |operand: &str| {
@@ -385,20 +491,63 @@ fn bool_preserving_operand(text: &str) -> Option<&str> {
     if let Some(rest) = text.strip_prefix('&').filter(|rest| single(rest)) {
         return Some(unwrap_parentheses(rest.trim()));
     }
-    if let Some(inner) = text
-        .strip_prefix("bool::from")
-        .and_then(|rest| super::arguments::parenthesized_contents(rest.trim_start()))
-    {
+    if let Some(inner) = BOOL_CARRYING_TYPES.iter().find_map(|ty| {
+        text.strip_prefix(ty)?
+            .trim_start()
+            .strip_prefix("::")?
+            .trim_start()
+            .strip_prefix("from")
+            .and_then(|rest| super::arguments::parenthesized_contents(rest.trim_start()))
+    }) {
+        return Some(unwrap_parentheses(inner.trim()));
+    }
+    if let Some(inner) = conversion_call_argument(text) {
         return Some(unwrap_parentheses(inner.trim()));
     }
     let masked = mask_comments_and_strings(text);
-    let head = masked.strip_suffix("bool")?.trim_end().strip_suffix("as")?;
-    if !head.ends_with(char::is_whitespace) {
-        return None;
-    }
+    let head = BOOL_CARRYING_TYPES.iter().find_map(|ty| {
+        let head = masked.strip_suffix(ty)?.trim_end().strip_suffix("as")?;
+        head.ends_with(char::is_whitespace).then_some(head)
+    })?;
     let operand = text.get(..head.len())?;
     single(operand).then(|| unwrap_parentheses(operand.trim()))
 }
+
+/// The one argument of a conversion spelled through the `From` or `Into`
+/// trait (`From::from(x)`, `<u8 as From<bool>>::from(x)`,
+/// `Into::<u8>::into(x)`, `std::primitive::u8::from(x)`; #8101). A
+/// conversion of a `bool` keeps whether it is a test.
+fn conversion_call_argument(text: &str) -> Option<&str> {
+    let masked = mask_comments_and_strings(text);
+    // The call's own argument list closes the text; an earlier parenthesis
+    // may sit inside the path (`<u8 as From<(bool)>>::from(x)`).
+    let open = final_group_open(masked.trim_end())?;
+    let callee = masked.get(..open)?.trim_end();
+    let head = callee
+        .strip_suffix("from")
+        .or_else(|| callee.strip_suffix("into"))?;
+    let path = head.trim_end().strip_suffix("::")?;
+    let names_conversion = path.contains("From")
+        || path.contains("Into")
+        || BOOL_CARRYING_TYPES.iter().any(|ty| {
+            let path = path.trim_end();
+            path == *ty
+                || path
+                    .strip_suffix(ty)
+                    .is_some_and(|rest| rest.ends_with("::"))
+        });
+    if !names_conversion || !is_path_head(head) {
+        return None;
+    }
+    let argument = super::arguments::parenthesized_contents(text.get(open..)?.trim_end())?;
+    (super::arguments::split_top_level_commas(argument).len() == 1).then_some(argument)
+}
+
+/// The types a `bool` converts to without losing it, through `as` or
+/// `From`.
+const BOOL_CARRYING_TYPES: [&str; 13] = [
+    "bool", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+];
 
 /// Whether `text` has no top-level binary operator the bool rules read.
 fn is_single_operand(text: &str) -> bool {
@@ -434,6 +583,136 @@ fn conjunct_states_relation(conjunct: &str) -> bool {
         || method_comparison(core).is_some_and(|method| method != "eq" || negated)
         || top_level_comparison_operator(core).and_then(|(at, width)| core.get(at..at + width))
             == Some("!=")
+}
+
+/// Whether an equality macro, or a boolean assertion whose whole condition
+/// is an `==` or `!=`, compares a boolean-valued test with a side that is no
+/// boolean literal (`assert_eq!(r == Err(E::Bad), expected)`,
+/// `assert_eq!(matches!(r, Err(E::Bad)).eq(&true), expected)`; #8006). The
+/// other side may be `false`, so the test may be asserted false: like a
+/// `matches!` compared with a non-literal, it fails closed.
+fn compares_test_with_non_literal(line: &str) -> bool {
+    let literal = |side: &str| literal_spelling_value(&mask_comments_and_strings(side)).is_some();
+    let comparison = assertion_comparison(line);
+    let (mut left, mut right): (&str, &str) = match &comparison {
+        Some(AssertionComparison::Operands { left, right, .. }) => (left, right),
+        Some(AssertionComparison::Condition(condition)) => {
+            let Some(sides) = whole_comparison_sides(condition) else {
+                return false;
+            };
+            sides
+        }
+        None => return false,
+    };
+    // A literal side asserts the other side's comparison, so that
+    // comparison is read in turn (`assert_eq!((r == Err(E::Bad)) as u8 == 0,
+    // true)`; review of #8110).
+    loop {
+        (left, right) = (left.trim(), right.trim());
+        let other = match (literal(left), literal(right)) {
+            (false, false) => return is_bool_test(left) || is_bool_test(right),
+            (true, false) => right,
+            (false, true) => left,
+            (true, true) => return false,
+        };
+        let (core, _, _) = strip_negations(other);
+        let Some(sides) = whole_comparison_sides(core) else {
+            return false;
+        };
+        (left, right) = sides;
+    }
+}
+
+/// The two sides of `condition` when its whole is one `==` or `!=`
+/// comparison, not a chain of `||` or `&&`.
+fn whole_comparison_sides(condition: &str) -> Option<(&str, &str)> {
+    let condition = unwrap_parentheses(condition.trim());
+    if has_top_level_disjunction(condition) || split_top_level_conjuncts(condition).len() > 1 {
+        return None;
+    }
+    let (at, width) = top_level_comparison_operator(condition)?;
+    Some((condition.get(..at)?, condition.get(at + width..)?))
+}
+
+/// Whether `side`, through the spellings `strip_negations` peels, is a
+/// test: a top-level comparison, `||` or `&&`, a comparison call, a whole
+/// `matches!`, or a `^`, `|` or `&` over a comparison or pattern
+/// (`(r == Err(E::Bad)) ^ flag`, `matches!(..) & flag`). A bitwise
+/// operator over plain values is no test (`flags & MASK`, `n & (n - 1)` pin
+/// a value).
+fn is_bool_test(side: &str) -> bool {
+    let (core, _, _) = strip_negations(side);
+    // A comparison inside a call's arguments is the callee's input, not an
+    // operand of the bitwise operator (`flags | compute(|v| v == 1)`; #8101).
+    let masked = blank_call_arguments(&mask_comments_and_strings(core));
+    let holds_test = masked.contains("matches!")
+        || masked.contains("==")
+        || masked.contains("!=")
+        || holds_comparison_call(&masked);
+    top_level_comparison_operator(core).is_some()
+        || has_top_level_relational_operator(core)
+        || has_top_level_disjunction(core)
+        || split_top_level_conjuncts(core).len() > 1
+        || method_comparison(core).is_some()
+        || is_whole_pattern(core)
+        || (holds_test
+            && (has_top_level_bitwise_operator(core)
+                || split_top_level_conjuncts(&conjoin_single_ampersands(core)).len() > 1))
+}
+
+/// Masked `text` with the inside of every call's argument list blanked: a
+/// parenthesis after a callee (see `strip_grouping_opens`) opens arguments,
+/// and the callee and its parentheses stay (`r.eq(  )`). Grouping
+/// parentheses, macro arguments (`matches!(..)`) and the argument of a
+/// call that carries a test through (`bool::from(..)`, `From::from(..)`,
+/// `Not::not(..)`) keep their contents.
+fn blank_call_arguments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut call_depth = 0usize;
+    let mut depth = 0usize;
+    for (index, ch) in text.char_indices() {
+        if call_depth > 0 {
+            match ch {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth < call_depth {
+                        call_depth = 0;
+                        out.push(ch);
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+            out.push(' ');
+            continue;
+        }
+        match ch {
+            '(' => {
+                depth += 1;
+                let head = text.get(..index).unwrap_or_default();
+                if opens_call_after(head) && !carries_test_through(head) {
+                    call_depth = depth;
+                }
+            }
+            '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// Whether `head` ends with a path callee that passes its argument's test
+/// through: a conversion (`bool::from`, `From::from`, `Into::<u8>::into`)
+/// or a negation (`Not::not`). Reading such a call as opaque would hide the
+/// test from the bitwise operator around it (review of #8101).
+fn carries_test_through(head: &str) -> bool {
+    let head = head.trim_end();
+    let path = head.trim_end_matches(|ch: char| ch.is_alphanumeric() || ch == '_');
+    let name = head.get(path.len()..).unwrap_or_default();
+    matches!(name, "from" | "into" | "not") && path.trim_end().ends_with("::")
 }
 
 /// The non-literal operand of a comparison with a boolean literal, whether
@@ -595,6 +874,16 @@ pub(super) fn contains_unread_pattern_operand(line: &str) -> bool {
     if spans.is_empty() {
         return false;
     }
+    // A negation of the whole condition, through any grouping, block,
+    // `.not()` or negating literal call, excludes whatever pattern it holds
+    // (`!(flag || matches!(..))`, `!{ matches!(..) }`,
+    // `Some(matches!(..)).unwrap().not()`, `(matches!(..),).0.eq(&false)`;
+    // #8006). A `!` or `.not()` directly on the pattern is the
+    // negated-pattern rules' to read, so a negated conjunct still drops.
+    let (_, negated, _) = strip_negations(&condition);
+    if negated && !contains_negated_pattern(line) {
+        return true;
+    }
     let head = unwrap_parentheses(masked.trim());
     if ["if", "while", "match"].iter().any(|keyword| {
         head.strip_prefix(keyword)
@@ -607,12 +896,16 @@ pub(super) fn contains_unread_pattern_operand(line: &str) -> bool {
     }
     spans.into_iter().any(|(start, end)| {
         let before = masked.get(..start).unwrap_or_default().trim_end();
+        // Grouping parentheses and one-expression blocks pass the pattern
+        // through (`flag ^ { matches!(..) }`; #8006); a call's parenthesis
+        // does not (`foo::<T>(matches!(..))`; #8101).
+        let unopened = strip_grouping_opens(before);
         let after = masked
             .get(end..)
             .unwrap_or_default()
-            .trim_start_matches(|ch: char| ch.is_whitespace() || ch == ')');
-        unread_operator_before(before)
-            || binary_bar_before(before)
+            .trim_start_matches(|ch: char| ch.is_whitespace() || ch == ')' || ch == '}');
+        unread_operator_before(unopened)
+            || binary_bar_before(unopened)
             || in_keyword_condition(before)
             || after.starts_with(['^', '<', '>'])
             || (after.starts_with('|') && !after.starts_with("||"))
@@ -638,16 +931,31 @@ fn is_whole_pattern(text: &str) -> bool {
 }
 
 /// Whether masked `text` spells a comparison as a call anywhere
-/// (`r.eq(&Err(E::Bad)) ^ true`, `PartialOrd::lt(&a, &b) | flag`; #7931).
+/// (`r.eq(&Err(E::Bad)) ^ true`, `PartialOrd::lt(&a, &b) | flag`; #7931),
+/// including through any path (`Result::ne(&r, &x) ^ flag`,
+/// `<_ as PartialEq>::ne(..)`; #7993).
 fn holds_comparison_call(text: &str) -> bool {
     text.contains("PartialEq::")
         || text.contains("PartialOrd::")
         || ["eq", "ne", "lt", "le", "gt", "ge"].iter().any(|name| {
+            // A method call or its turbofish follows the name; after a path
+            // `::name` only a call does, since `helpers::eq::value()` names
+            // a module.
+            let called = |rest: &str, turbofish: bool| {
+                let rest = rest.trim_start();
+                rest.starts_with('(') || (turbofish && rest.starts_with(':'))
+            };
             text.match_indices(&format!(".{name}"))
                 .any(|(at, matched)| {
                     text.get(at + matched.len()..)
-                        .is_some_and(|rest| rest.trim_start().starts_with(['(', ':']))
+                        .is_some_and(|rest| called(rest, true))
                 })
+                || text
+                    .match_indices(&format!("::{name}"))
+                    .any(|(at, matched)| {
+                        text.get(at + matched.len()..)
+                            .is_some_and(|rest| called(rest, false))
+                    })
         })
 }
 
@@ -891,6 +1199,80 @@ fn binary_bar_before(before: &str) -> bool {
     binary
 }
 
+/// `before` (masked) without the grouping parentheses and block braces that
+/// open right before an operand. A parenthesis after a callee (a name, a
+/// call or index result, or a turbofish such as `foo::<T>`) opens a call's
+/// arguments, so it stays.
+fn strip_grouping_opens(before: &str) -> &str {
+    let mut text = before.trim_end();
+    loop {
+        if let Some(rest) = text.strip_suffix('{') {
+            text = rest.trim_end();
+        } else if let Some(rest) = text.strip_suffix('(') {
+            let head = rest.trim_end();
+            if opens_call_after(head) {
+                return text;
+            }
+            text = head;
+        } else {
+            return text;
+        }
+    }
+}
+
+/// Whether a parenthesis right after `head` (masked) opens a call's
+/// arguments: `head` ends with a callee (a name, a call or index result, or
+/// a turbofish such as `foo::<T>`) and not with a keyword.
+fn opens_call_after(head: &str) -> bool {
+    let head = head.trim_end();
+    (head.ends_with(|ch: char| ch.is_alphanumeric() || matches!(ch, '_' | ')' | ']' | '?'))
+        && !ends_with_keyword(head))
+        || closes_turbofish(head)
+}
+
+/// Whether `text` ends with a keyword after which a parenthesis groups an
+/// expression rather than opening call arguments (`if (..)`, `match (..)`).
+fn ends_with_keyword(text: &str) -> bool {
+    let head = text.trim_end_matches(|ch: char| ch.is_alphanumeric() || ch == '_');
+    let word = text.get(head.len()..).unwrap_or_default();
+    !head.ends_with("r#")
+        && matches!(
+            word,
+            "if" | "while" | "match" | "return" | "in" | "else" | "break" | "yield" | "mut"
+        )
+}
+
+/// Whether `text` ends with the `>` of a turbofish (`foo::<T>`,
+/// `Vec::<Vec<u8>>`): its matching `<` follows `::`.
+fn closes_turbofish(text: &str) -> bool {
+    if !text.ends_with('>') {
+        return false;
+    }
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    // A const-generic block (`foo::<{ N > 1 }>`) is one argument, and the
+    // `>` of a `->` closes no angle (as in `is_path_head`).
+    let mut blocks = 0usize;
+    for (index, &byte) in bytes.iter().enumerate().rev() {
+        match byte {
+            b'}' => blocks += 1,
+            b'{' => blocks = blocks.saturating_sub(1),
+            _ if blocks > 0 => {}
+            b'>' if index == 0 || bytes.get(index - 1) != Some(&b'-') => depth += 1,
+            b'<' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return text
+                        .get(..index)
+                        .is_some_and(|head| head.trim_end().ends_with("::"));
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 fn unread_operator_before(before: &str) -> bool {
     match before.as_bytes().last() {
         Some(b'^' | b'<') => true,
@@ -1006,4 +1388,43 @@ pub(super) fn unread_pattern_conjunct_rest(line: &str) -> Option<String> {
     // Each conjunct ends its own line, so a trailing `//` comment on one
     // cannot swallow the next conjunct or the closing `);`.
     Some(format!("{macro_name}({}\n);", rest.join("\n && ")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_path_head;
+
+    #[test]
+    fn path_heads_reject_what_is_no_whole_path() -> Result<(), String> {
+        for head in [
+            "PartialEq::",
+            "std::cmp::PartialEq::",
+            "Result :: ",
+            "<_ as PartialEq>::",
+            "<Result<u8, E> as PartialEq>::",
+            "C::<{ 2 }>::",
+            "C::<{ A > B }>::",
+        ] {
+            if !is_path_head(head) {
+                return Err(format!("{head}: must read as a path head"));
+            }
+        }
+        // #8081: an unbalanced const block, a brace or `;` in the angles, a
+        // space not beside a separator, and an operator before the path.
+        for head in [
+            "C::<{ 2 >::",
+            "C::<2 }>::",
+            "C::<A; B>::",
+            "{ x }::",
+            "x Result::",
+            "flag && PartialEq::",
+            "a < b::",
+            "Result",
+        ] {
+            if is_path_head(head) {
+                return Err(format!("{head}: must not read as a path head"));
+            }
+        }
+        Ok(())
+    }
 }

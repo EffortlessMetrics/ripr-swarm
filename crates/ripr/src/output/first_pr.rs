@@ -1625,7 +1625,13 @@ fn current_evidence_strength_for_card(card: &Value) -> String {
         string_path(card, &["oracle_kind"]),
     ) {
         (Some(strength), Some(kind)) => {
-            format!(" with a `{strength}` `{kind}` related-test oracle")
+            // #7752: the displayed phrase opens with the strength adjective
+            // ("a `strong` ..."), so the article agrees with the strength,
+            // not the oracle-kind label (Devin review on #8096).
+            format!(
+                " with {} `{strength}` `{kind}` related-test oracle",
+                crate::domain::indefinite_article(&strength)
+            )
         }
         _ => String::new(),
     };

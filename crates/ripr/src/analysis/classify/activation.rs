@@ -2120,6 +2120,24 @@ fn missing_field_value_discriminator(
             pushed_collection_compared_whole(owner, path, test, assertion, index)
         })
     };
+    // RIPR-SPEC-0228: a changed field assignment (`self.count += 1`) is
+    // observed by an `assert_eq!` that reads that whole field from the
+    // binding the test called the owner on, after the call, directly or
+    // through a getter whose body returns it, under the same binding rules
+    // as a pushed literal.
+    let assigned =
+        owner_fn.and_then(|owner| assigned_field_of(owner, probe, index).map(|path| (owner, path)));
+    // A default-like expected value (`0`, `false`) cannot tell a deleted
+    // write from a kept one, so it does not confirm the assignment.
+    let assigned_field_observed = |test: &TestSummary, assertion: &OracleFact| {
+        assigned.as_ref().is_some_and(|(owner, path)| {
+            !super::propagation_witness::assertion_expects_default_like(&assertion.text)
+                && pushed_collection_compared_whole(owner, path, test, assertion, index)
+        })
+    };
+    // #6578: the variant-field pattern rule's workspace scan depends only on
+    // the variant name, so one probe pays for it once.
+    let variant_heads = std::cell::RefCell::new(std::collections::BTreeMap::<String, usize>::new());
     let field_already_observed = related_tests.iter().any(|test| {
         test.assertions.iter().any(|assertion| {
             matches!(
@@ -2136,6 +2154,74 @@ fn missing_field_value_discriminator(
                         reads_owner_result_field(&test.body, &assertion.text, read, owner)
                     }))
                 || pushed_literal_observed(test, assertion)
+                || assigned_field_observed(test, assertion)
+                // #6578: `assert_matches!(owner(..), Err(E::V { f: 0 }))`
+                // pins the constructed variant field by a literal pattern.
+                || owner_fn.is_some_and(|owner| {
+                    // A `#[should_panic]` test passes when the pattern fails.
+                    !test
+                        .attrs
+                        .iter()
+                        .map(String::as_str)
+                        .chain(std::iter::once(test.body.as_str()))
+                        .any(|text| text.contains("should_panic"))
+                        && super::variant_field_pattern::pattern_pins_constructed_field(
+                        &super::variant_field_pattern::ConstructedField {
+                            owner_body: &owner.body,
+                            owner_start_line: owner.start_line,
+                            owner_name: &owner.name,
+                            probe_line: probe.location.line,
+                            probe_expression: &probe.expression,
+                        },
+                        &test.body,
+                        &assertion.text,
+                        &|qualifier| {
+                            match super::call_identity::shared_owner_call_identity(index, owner) {
+                                Some(identity) => {
+                                    identity.resolve_call(test, index, qualifier)
+                                        == super::call_identity::CallTarget::Owner
+                                }
+                                // No identity: only a bare or crate-relative
+                                // call the test file does not import from
+                                // another crate, and only when no other
+                                // production function shares the owner's
+                                // name (the identity is also absent for
+                                // layouts it cannot classify);
+                                // `other::owner(..)` may name a foreign
+                                // namesake.
+                                None => {
+                                    qualifier.iter().all(|segment| {
+                                        matches!(segment.as_str(), "crate" | "self" | "super")
+                                    }) && !index.files().get(&test.file).is_some_and(|facts| {
+                                        super::reveal::file_imports_foreign_callee_name(
+                                            &facts.data().source,
+                                            &owner.name,
+                                            &index.package_names,
+                                        )
+                                    }) && index
+                                        .functions()
+                                        .iter()
+                                        .filter(|function| {
+                                            function.name == owner.name
+                                                && !function.source_role.is_evidence_role()
+                                        })
+                                        .count()
+                                        == 1
+                                }
+                            }
+                        },
+                        &|last| {
+                            *variant_heads
+                                .borrow_mut()
+                                .entry(last.to_string())
+                                .or_insert_with(|| {
+                                    super::variant_field_pattern::production_literal_heads(
+                                        index, last,
+                                    )
+                                })
+                        },
+                    )
+                })
         })
     });
     if field_already_observed {
@@ -2153,6 +2239,31 @@ fn missing_field_value_discriminator(
             .find(|sink| sink.kind == FlowSinkKind::StructField)
             .cloned(),
     })
+}
+
+/// RIPR-SPEC-0228: the field path `probe`, a changed field assignment in
+/// `owner`, leaves as the owner's last write
+/// ([`super::propagation_witness::assigned_field_path`]); `self` methods
+/// called after it resolve through `owner`'s inherent impl.
+pub(in crate::analysis) fn assigned_field_of(
+    owner: &FunctionSummary,
+    probe: &Probe,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<String> {
+    let impl_type = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
+        .and_then(|call| call.impl_type());
+    super::propagation_witness::assigned_field_path(
+        owner.body.as_str(),
+        owner.start_line,
+        probe.location.line,
+        &probe.expression,
+        &|method| {
+            impl_type.and_then(|impl_type| {
+                super::builder_override::inherent_method_body(index, impl_type, method)
+                    .map(str::to_string)
+            })
+        },
+    )
 }
 
 /// #7131: whether `assertion` compares the whole field collection `path`
@@ -3186,6 +3297,35 @@ pub(crate) fn signature_parameters(function: &FunctionSummary) -> Vec<String> {
     split_top_level_args(&arguments)
         .iter()
         .flat_map(|argument| pattern_bindings(top_level_pattern(argument)))
+        .collect()
+}
+
+/// The names of `function`'s call parameters in declaration order, the
+/// `self` receiver excluded, so index `i` is the method call's argument
+/// `i`. A parameter whose pattern binds more or fewer than one name
+/// (`(a, b): (u8, u8)`, `_: u8`) is an empty name.
+pub(crate) fn call_parameter_names(function: &FunctionSummary) -> Vec<String> {
+    let body = function.body.as_str();
+    let Some(arguments) =
+        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
+    else {
+        return Vec::new();
+    };
+    split_top_level_args(&arguments)
+        .iter()
+        .filter_map(|argument| {
+            let pattern = top_level_pattern(argument).trim();
+            let receiver = pattern.is_empty()
+                || pattern.strip_prefix("mut ").unwrap_or(pattern).trim() == "self";
+            if receiver {
+                return None;
+            }
+            let mut names = pattern_bindings(pattern);
+            Some(match (names.pop(), names.is_empty()) {
+                (Some(name), true) => name,
+                _ => String::new(),
+            })
+        })
         .collect()
 }
 
@@ -6086,6 +6226,26 @@ assert_eq!(input.amount, 100);"#
             expected_sinks: Vec::new(),
             required_oracles: Vec::new(),
         }
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: argument `i` of a method call is call
+    /// parameter `i`, receiver excluded.
+    #[test]
+    fn call_parameter_names_follow_argument_positions() {
+        let names = |signature: &str| call_parameter_names(&function(signature));
+        assert_eq!(
+            names("pub fn ship(&mut self, sku: &str, qty: u32) -> u32 { 0 }"),
+            ["sku", "qty"]
+        );
+        assert_eq!(names("fn f(self: Box<Self>, mut a: u8) {}"), ["a"]);
+        assert_eq!(names("fn f(mut self, a: u8) {}"), ["a"]);
+        assert_eq!(names("fn f<F: Fn(u8)>(f: F, b: u8) {}"), ["f", "b"]);
+        // A pattern binding two names or none keeps its position, unnamed.
+        assert_eq!(
+            names("fn f((a, b): (u8, u8), _: u8, c: u8) {}"),
+            ["", "", "c"]
+        );
+        assert_eq!(names("fn f(a: HashMap<String, u8>, c: u8) {}"), ["a", "c"]);
     }
 
     fn function(body: &str) -> FunctionSummary {

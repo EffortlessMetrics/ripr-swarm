@@ -5,28 +5,28 @@ config: <cwd>/fixtures/ts_parse_depth_budget/input/ripr.toml
 
 Summary: 3 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 3 of 3 finding(s) unsuppressed
 
-Changed file(s) by language: typescript: 3.
+Changed file(s) by language: typescript = 3
 
-Analysis outcome: limitations below (analysis incomplete; partial_with_limitations).
+Analysis outcome: limitations below (analysis incomplete; partial_with_limitations)
   The 3 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
   Limitation: some changed files were not analyzed during language analysis (language_scope_unsupported at language_adapter); file: src/deep_over_budget.ts; affected items: 1; recovery: retry — Fix the TypeScript or JavaScript parse error, then re-run the analysis.
 
 Start here:
   State: preview language, advisory only (preview_limited)
-  Safe next action: this TypeScript preview finding's repair packet is not ready (no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add a test that calls it by hand, then rerun `ripr check`.
+  Safe next action: this TypeScript preview finding's repair packet is not ready (no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add a test that calls it by hand, then rerun `ripr check`
   File: src/deep_under_budget.ts:2
   Language: typescript
   Language status: preview
   Static exposure: no path (no_static_path, warning, confidence 0.40)
   Why no path: no related test was found that reaches this change
   Changed behavior: const r = ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((…
-  Missing discriminator: No test references `deepUnderBudget(` — add a test that calls the changed owner.
-  Next step: TypeScript preview advisory: no test references the changed owner; add a test that
+  Missing discriminator: No test references `deepUnderBudget(` — add a test that calls the changed owner
+  Next step — TypeScript preview advisory: no test references the changed owner; add a test that
     calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair
-    packet is emitted.
+    packet is emitted
   Evidence: reach no · infection unknown · propagation unknown · observation no · discriminator no
     - reach no: 0 related test(s) found for owner `deepUnderBudget`
-    - infection unknown: TypeScript preview adapter does not yet model infection.
+    - infection unknown: TypeScript preview adapter does not yet model infection
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:

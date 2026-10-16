@@ -605,12 +605,16 @@ impl WorkspaceSession {
     /// the narrowed items in snapshot order (#6021); an unset limit
     /// byte-fills the page to [`super::MAX_TOOL_DOCUMENT_BYTES`] so a
     /// listing that outgrows one wire response degrades to disclosed pages
-    /// instead of failing after budget approval.
+    /// instead of failing after budget approval. `max_envelope_bytes` is the
+    /// caller's id-aware response budget (#7768): the structured-envelope
+    /// fit decision reserves the actual request ID and outer wrapper, so a
+    /// page that passes it still ships `structuredContent` on the wire.
     pub(crate) fn list_gaps(
         &self,
         requested: Option<&str>,
         window: GapListWindow,
         filter: &GapListFilter,
+        max_envelope_bytes: usize,
     ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
         let selection = &snapshot.selection;
@@ -685,57 +689,56 @@ impl WorkspaceSession {
             has_more: start + count < selected_items.len(),
             next_offset: (start + count < selected_items.len()).then_some(start + count),
         };
-        if !items.is_empty() {
-            let structured_fit = |count: usize| -> Result<bool, AttemptFailure> {
-                let scope = GapListScope {
-                    selection,
-                    requested,
-                    filter,
-                    filtered,
-                };
-                let probe = self.gap_list_document(
-                    snapshot,
-                    &scope,
-                    items[..count].to_vec(),
-                    &page_fields(count),
-                )?;
-                crate::mcp::protocol::structured_envelope_overflows(&probe)
-                    .map(|overflows| !overflows)
-                    .map_err(|error| {
-                        AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
-                    })
+        // Empty pages still echo non-pageable filters, so they must pass
+        // the same complete structured-envelope bound as nonempty pages.
+        let structured_fit = |count: usize| -> Result<bool, AttemptFailure> {
+            let scope = GapListScope {
+                selection,
+                requested,
+                filter,
+                filtered,
             };
-            if !structured_fit(items.len())? {
-                let mut low = 1usize;
-                let mut high = items.len() - 1;
-                let mut fitting = 0usize;
-                while low <= high {
-                    let mid = (low + high) / 2;
-                    if structured_fit(mid)? {
-                        fitting = mid;
-                        low = mid + 1;
-                    } else {
-                        high = mid.saturating_sub(1);
-                    }
+            let probe = self.gap_list_document(
+                snapshot,
+                &scope,
+                items[..count].to_vec(),
+                &page_fields(count),
+            )?;
+            crate::mcp::protocol::structured_envelope_overflows(&probe, max_envelope_bytes)
+                .map(|overflows| !overflows)
+                .map_err(|error| {
+                    AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
+                })
+        };
+        if !structured_fit(items.len())? {
+            let mut low = 1usize;
+            let mut high = items.len().saturating_sub(1);
+            let mut fitting = 0usize;
+            while low <= high {
+                let mid = (low + high) / 2;
+                if structured_fit(mid)? {
+                    fitting = mid;
+                    low = mid + 1;
+                } else {
+                    high = mid.saturating_sub(1);
                 }
-                if fitting == 0 {
-                    // Even one summary cannot fit beside the shell in the
-                    // structured envelope: no page can carry the advertised
-                    // structured result, so fail closed instead of shipping
-                    // a text-only success that breaks the outputSchema
-                    // contract (#6021 review).
-                    return Err(AttemptFailure::new(
-                        CODE_RESULT_TOO_LARGE,
-                        format!(
-                            "gap list cannot serve even one page with its structured result: the non-pageable disclosure alone fills the {}-byte envelope budget",
-                            super::MAX_RESPONSE_BYTES
-                        ),
-                        "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap",
-                    )
-                    .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
-                }
-                items.truncate(fitting);
             }
+            if fitting == 0 {
+                // No page can carry the required structured result. This
+                // includes empty pages whose echoed filters fill the shell;
+                // fail closed instead of shipping a text-only success that
+                // breaks the outputSchema contract (#6021 review, #7768).
+                return Err(AttemptFailure::new(
+                    CODE_RESULT_TOO_LARGE,
+                    format!(
+                        "gap list cannot serve even one page with its structured result: the non-pageable disclosure alone fills the {max_envelope_bytes}-byte id-aware envelope budget ({}-byte response bound minus the request id and outer reserve)",
+                        super::MAX_RESPONSE_BYTES
+                    ),
+                    "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap",
+                )
+                .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
+            }
+            items.truncate(fitting);
         }
 
         let page = page_fields(items.len());
@@ -1465,10 +1468,20 @@ mod tests {
             superseded_order: std::collections::VecDeque::new(),
         };
         let _ = complete
-            .list_gaps(None, GapListWindow::default(), &GapListFilter::default())
+            .list_gaps(
+                None,
+                GapListWindow::default(),
+                &GapListFilter::default(),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
             .map_err(|failure| failure.detail)?;
         let incomplete_doc = incomplete
-            .list_gaps(None, GapListWindow::default(), &GapListFilter::default())
+            .list_gaps(
+                None,
+                GapListWindow::default(),
+                &GapListFilter::default(),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
             .map_err(|failure| failure.detail)?;
         let complete_snapshot = complete
             .last_good
@@ -1518,7 +1531,12 @@ mod tests {
     fn list_get_snapshot_before_any_refresh_fail_closed() -> Result<(), String> {
         let session = WorkspaceSession::default();
         expect_code(
-            session.list_gaps(None, GapListWindow::default(), &GapListFilter::default()),
+            session.list_gaps(
+                None,
+                GapListWindow::default(),
+                &GapListFilter::default(),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            ),
             CODE_NO_SNAPSHOT,
         )?;
         expect_code(session.get_gap("gap:any", None), CODE_NO_SNAPSHOT)?;
@@ -1540,7 +1558,12 @@ mod tests {
             ..Default::default()
         };
         expect_code(
-            session.list_gaps(None, GapListWindow::default(), &GapListFilter::default()),
+            session.list_gaps(
+                None,
+                GapListWindow::default(),
+                &GapListFilter::default(),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            ),
             CODE_ANALYSIS_IN_FLIGHT,
         )?;
         expect_code(session.get_gap("gap:any", None), CODE_ANALYSIS_IN_FLIGHT)?;
@@ -1568,6 +1591,7 @@ mod tests {
             Some("snapshot:sha256:old"),
             GapListWindow::default(),
             &GapListFilter::default(),
+            crate::mcp::MAX_RESPONSE_BYTES,
         ) {
             Ok(value) => Err(format!("stale snapshot must fail closed: {value}")),
             Err(failure) if failure.code != CODE_STALE_SNAPSHOT => {
@@ -1746,7 +1770,12 @@ mod tests {
     fn gap_list_summaries_project_readiness_matching_get_gap() -> Result<(), String> {
         let session = session_with_varied_findings()?;
         let document = session
-            .list_gaps(None, GapListWindow::default(), &GapListFilter::default())
+            .list_gaps(
+                None,
+                GapListWindow::default(),
+                &GapListFilter::default(),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
             .map_err(|failure| failure.detail)?;
         if document.pointer("/selected").and_then(Value::as_u64) != Some(4) {
             return Err(format!("varied fixture must select four items: {document}"));
@@ -1822,7 +1851,12 @@ mod tests {
         let session = session_with_varied_findings()?;
         let filtered = |filter: &GapListFilter| {
             session
-                .list_gaps(None, GapListWindow::default(), filter)
+                .list_gaps(
+                    None,
+                    GapListWindow::default(),
+                    filter,
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
                 .map_err(|failure| failure.detail)
         };
         let file = |value: &str| GapListFilter {
@@ -1959,6 +1993,7 @@ mod tests {
                     limit: Some(1),
                 },
                 &file("src/checkout.rs"),
+                crate::mcp::MAX_RESPONSE_BYTES,
             )
             .map_err(|failure| failure.detail)?;
         if first.pointer("/page/returned").and_then(Value::as_u64) != Some(1)
@@ -1995,6 +2030,7 @@ mod tests {
                     limit: Some(1),
                 },
                 &file("src/checkout.rs"),
+                crate::mcp::MAX_RESPONSE_BYTES,
             )
             .map_err(|failure| failure.detail)?;
         if second.pointer("/page/has_more").and_then(Value::as_bool) != Some(false) {
@@ -2087,15 +2123,21 @@ mod tests {
     -> Result<(), String> {
         let session = session_with_findings(700)?;
         let document = session
-            .list_gaps(None, GapListWindow::default(), &GapListFilter::default())
+            .list_gaps(
+                None,
+                GapListWindow::default(),
+                &GapListFilter::default(),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
             .map_err(|failure| failure.detail)?;
 
         // The page itself must fit the wire envelope end to end, with the
         // advertised structured copy intact: the tool declares an
         // outputSchema, so a paged success may not drop structuredContent
         // (#6021 review).
-        let envelope = crate::mcp::protocol::tool_result(document.clone())
-            .map_err(|error| format!("paged listing must ship: {error}"))?;
+        let envelope =
+            crate::mcp::protocol::tool_result(document.clone(), crate::mcp::MAX_RESPONSE_BYTES)
+                .map_err(|error| format!("paged listing must ship: {error}"))?;
         let envelope_bytes = serde_json::to_vec(&envelope).map_err(|error| error.to_string())?;
         if envelope_bytes.len() > crate::mcp::MAX_RESPONSE_BYTES {
             return Err(format!(
@@ -2189,6 +2231,7 @@ mod tests {
                         limit: None,
                     },
                     &GapListFilter::default(),
+                    crate::mcp::MAX_RESPONSE_BYTES,
                 )
                 .map_err(|failure| failure.detail)?;
             let ids = document
@@ -2239,6 +2282,7 @@ mod tests {
                     limit: Some(1),
                 },
                 &GapListFilter::default(),
+                crate::mcp::MAX_RESPONSE_BYTES,
             )
             .map_err(|failure| failure.detail)?;
         if limited.pointer("/page/limit").and_then(Value::as_u64) != Some(1)
@@ -2261,6 +2305,7 @@ mod tests {
                     limit: None,
                 },
                 &GapListFilter::default(),
+                crate::mcp::MAX_RESPONSE_BYTES,
             )
             .map_err(|failure| failure.detail)?;
         if beyond
@@ -2287,7 +2332,12 @@ mod tests {
     fn fitting_listing_ships_whole_with_a_closed_page_window() -> Result<(), String> {
         let session = session_with_findings(3)?;
         let document = session
-            .list_gaps(None, GapListWindow::default(), &GapListFilter::default())
+            .list_gaps(
+                None,
+                GapListWindow::default(),
+                &GapListFilter::default(),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
             .map_err(|failure| failure.detail)?;
         if document.pointer("/selected").and_then(Value::as_u64) != Some(3)
             || document
@@ -2306,10 +2356,113 @@ mod tests {
                 "a complete listing must close its window: {document}"
             ));
         }
-        let envelope = crate::mcp::protocol::tool_result(document)
+        let envelope = crate::mcp::protocol::tool_result(document, crate::mcp::MAX_RESPONSE_BYTES)
             .map_err(|error| format!("small listing must ship: {error}"))?;
         if envelope.get("structuredContent").is_none() {
             return Err("a fitting listing must keep structuredContent".to_string());
+        }
+        Ok(())
+    }
+
+    /// #7768: the pager's structured-envelope fit decision runs on the
+    /// caller's id-aware budget. One byte below the empty-page envelope
+    /// (the minimum page) refuses typed with the current snapshot bound;
+    /// one byte below the whole listing bisects to a smaller structured
+    /// page with its continuation intact instead of shipping an envelope
+    /// the wire must replace.
+    #[test]
+    fn list_gaps_honors_the_id_aware_envelope_budget() -> Result<(), String> {
+        let session = session_with_findings(4)?;
+        let whole = session
+            .list_gaps(
+                None,
+                GapListWindow::default(),
+                &GapListFilter::default(),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .map_err(|failure| failure.detail)?;
+        let whole_items = whole
+            .pointer("/items")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "whole listing lost its items".to_string())?
+            .len();
+        let snapshot_id = whole["snapshot_id"]
+            .as_str()
+            .ok_or("whole listing lost its snapshot identity")?
+            .to_string();
+        let no_match = GapListFilter {
+            file: Some("src/no-such-file.rs".to_string()),
+            ..GapListFilter::default()
+        };
+        let empty = session
+            .list_gaps(
+                None,
+                GapListWindow::default(),
+                &no_match,
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .map_err(|failure| failure.detail)?;
+        let empty_bytes = crate::mcp::protocol::structured_envelope_bytes(&empty)
+            .map_err(|error| error.to_string())?;
+        let refusal = session.list_gaps(None, GapListWindow::default(), &no_match, empty_bytes - 1);
+        let checked: Result<(), String> = match refusal {
+            Ok(value) => Err(format!(
+                "a budget below the empty page must refuse typed: {value}"
+            )),
+            Err(failure) => {
+                if failure.code != CODE_RESULT_TOO_LARGE
+                    || !failure.detail.contains("even one page")
+                    || !failure.detail.contains(&(empty_bytes - 1).to_string())
+                    || failure
+                        .data
+                        .pointer("/current_snapshot_id")
+                        .and_then(Value::as_str)
+                        != Some(snapshot_id.as_str())
+                {
+                    return Err(format!(
+                        "the empty-page refusal lost its typed shape or identity: {failure:?}"
+                    ));
+                }
+                Ok(())
+            }
+        };
+        checked?;
+        let whole_bytes = crate::mcp::protocol::structured_envelope_bytes(&whole)
+            .map_err(|error| error.to_string())?;
+        let truncated = session
+            .list_gaps(
+                None,
+                GapListWindow::default(),
+                &GapListFilter::default(),
+                whole_bytes - 1,
+            )
+            .map_err(|failure| {
+                format!("a one-byte-narrower budget must still page: {failure:?}")
+            })?;
+        let returned = truncated
+            .pointer("/page/returned")
+            .and_then(Value::as_u64)
+            .ok_or("truncated page lost its window")?;
+        if returned == 0
+            || returned as usize >= whole_items
+            || truncated.pointer("/page/has_more").and_then(Value::as_bool) != Some(true)
+            || truncated.pointer("/page/next_offset").is_none()
+            || truncated
+                .pointer("/items")
+                .and_then(Value::as_array)
+                .is_none()
+        {
+            return Err(format!(
+                "the truncated page must make progress and disclose the window: {truncated}"
+            ));
+        }
+        let truncated_bytes = crate::mcp::protocol::structured_envelope_bytes(&truncated)
+            .map_err(|error| error.to_string())?;
+        if truncated_bytes > whole_bytes - 1 {
+            return Err(format!(
+                "the truncated page must fit the narrowed budget: {truncated_bytes} > {}",
+                whole_bytes - 1
+            ));
         }
         Ok(())
     }

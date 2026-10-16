@@ -62,6 +62,8 @@ mod python_source_admission;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_unittest_selectors.rs"]
 mod python_unittest_selectors;
+#[path = "cli_smoke/recall_tradeoff.rs"]
+mod recall_tradeoff;
 #[cfg(unix)]
 #[path = "cli_smoke/receipt_recovery_root.rs"]
 mod receipt_recovery_root;
@@ -73,6 +75,9 @@ mod repair_orderfile;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/rerun_ledger_recovery.rs"]
 mod rerun_ledger_recovery;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/same_line_owner_tail.rs"]
+mod same_line_owner_tail;
 #[path = "cli_smoke/sample_output.rs"]
 mod sample_output;
 #[path = "cli_smoke/shell_words.rs"]
@@ -80,6 +85,11 @@ mod shell_words;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/source_unicode.rs"]
 mod source_unicode;
+#[cfg(any(feature = "lang-rust", feature = "lang-typescript"))]
+#[path = "cli_smoke/structural_workspace_markers.rs"]
+mod structural_workspace_markers;
+#[path = "cli_smoke/suppression_notice.rs"]
+mod suppression_notice;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/typescript_effect_aliases.rs"]
 mod typescript_effect_aliases;
@@ -1826,42 +1836,14 @@ fn check_human_output_reports_sample_findings() -> sample_output::TestResult {
 }
 
 #[test]
-fn check_no_unchanged_tests_restates_the_recall_tradeoff_on_stderr() {
-    // #4946(a): the flag's recall/cost tradeoff is restated on stderr where
-    // the user waits, and only while the flag is actually active.
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff();
-    assert!(diff.exists());
-    let diff = diff.display().to_string();
-
-    let with_flag = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--no-unchanged-tests",
-    ]);
-    assert_success(&with_flag);
-    let stderr = String::from_utf8_lossy(&with_flag.stderr);
-    assert!(
-        stderr.contains("unchanged tests are excluded from the index"),
-        "the active flag must restate its tradeoff on stderr; got:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("Reach evidence cannot name tests the diff does not touch"),
-        "the note must name the recall effect, not only the speedup; got:\n{stderr}"
-    );
-
-    let without_flag = run_ripr(&["check", "--root", &root, "--diff", &diff]);
-    assert_success(&without_flag);
-    let stderr = String::from_utf8_lossy(&without_flag.stderr);
-    assert!(
-        !stderr.contains("unchanged tests are excluded from the index"),
-        "the default run must not claim the flag is active; got:\n{stderr}"
-    );
+fn check_no_unchanged_tests_restates_the_recall_tradeoff_on_stderr() -> sample_output::TestResult {
+    // #4946(a): keep the real CLI and both recall notes on a small owned root.
+    let fixture = sample_output::Fixture::new()?;
+    let with_flag = fixture.run(&["--no-unchanged-tests"])?;
+    let without_flag = fixture.run(&[])?;
+    recall_tradeoff::check(&with_flag, &without_flag)?;
+    Ok(())
 }
-
 /// Small single-crate fixture with `include_unchanged_tests = false` set in
 /// `ripr.toml` plus a one-file diff, for the config-driven exclusion pins.
 /// The tests analyze the live temp tree and may write caches under it, so
@@ -2849,70 +2831,9 @@ fn check_human_suppression_policy_lists_suppressed_findings_compactly() -> Resul
 }
 
 #[test]
-fn check_github_over_broad_suppression_policy_emits_denominator_notice() -> Result<(), String> {
-    // Production-path control for #4393: an over-broad path glob that hides
-    // every sample finding must still emit a github denominator notice, not
-    // zero bytes, and must not annotate the suppressed findings. Exit status
-    // stays success (no gate/exit-code authority change).
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let policy = write_suppression_policy(
-        "suppression-github-over-broad",
-        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"crates/ripr/examples/sample/**\"\nreason = \"repro: suppress all sample findings\"\nowner = \"qa\"\n",
-    )?;
-    let policy_arg = policy.display().to_string();
-
-    let unfiltered = run_ripr(&[
-        "check", "--root", &root, "--diff", &diff, "--format", "github",
-    ]);
-    assert_success(&unfiltered);
-    let unfiltered_stdout = String::from_utf8_lossy(&unfiltered.stdout);
-    let unfiltered_annotations = unfiltered_stdout
-        .lines()
-        .filter(|line| line.contains("file="))
-        .count();
-    assert!(
-        unfiltered_annotations > 0,
-        "unfiltered github output must annotate findings: {unfiltered_stdout}"
-    );
-    assert!(
-        !unfiltered_stdout.contains("suppressed by policy"),
-        "unfiltered run must not mention policy: {unfiltered_stdout}"
-    );
-
-    let filtered = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--format",
-        "github",
-        "--suppression-policy",
-        &policy_arg,
-    ]);
-    assert_success(&filtered);
-    let stdout = String::from_utf8_lossy(&filtered.stdout);
-    assert!(
-        !stdout.is_empty(),
-        "all-suppressed github output must not be silent"
-    );
-    let expected = format!(
-        "::notice title=ripr::Annotated 0 of {unfiltered_annotations} static exposure finding(s); {unfiltered_annotations} suppressed by policy"
-    );
-    assert!(
-        stdout.contains(&expected),
-        "all-suppressed github output must name the denominator ({expected}): {stdout}"
-    );
-    assert!(
-        !stdout.contains("file="),
-        "suppressed findings must stay unannotated: {stdout}"
-    );
-    assert!(
-        !stdout.contains("No static exposure findings found"),
-        "all-suppressed is not an empty run: {stdout}"
-    );
-    Ok(())
+fn check_github_over_broad_suppression_policy_emits_denominator_notice() -> sample_output::TestResult
+{
+    suppression_notice::run()
 }
 
 #[test]
@@ -11674,6 +11595,49 @@ fn check_rejects_missing_and_file_roots_without_leaking_the_git_invocation() -> 
 }
 
 #[test]
+fn config_validate_does_not_consume_root_flag_as_a_path() -> Result<(), String> {
+    let workspace = unique_temp_workspace("config-missing-root-value");
+    // A real directory makes the old parser falsely report success instead of
+    // merely producing a misleading filesystem error for the missing value.
+    std::fs::create_dir_all(workspace.join("--root")).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(workspace.join("--workspace")).map_err(|error| error.to_string())?;
+    let result = (|| {
+        for args in [
+            vec!["config", "validate", "--root"],
+            vec!["config", "validate", "--root", "--root"],
+            vec!["config", "validate", "--root", "--root", "."],
+        ] {
+            let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&workspace), &args)
+                .map_err(|error| error.to_string())?;
+            assert_eq!(output.status.code(), Some(2), "args: {args:?}");
+            assert!(output.stdout.is_empty(), "args: {args:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stderr).trim(),
+                "ripr: missing value for --root",
+                "args: {args:?}"
+            );
+        }
+
+        // Explicit paths to flag-named directories and other dash-prefixed paths
+        // remain usable; refusing every value starting with '-' is too broad.
+        for path in ["./--root", "--workspace"] {
+            let output = run_command(
+                env!("CARGO_BIN_EXE_ripr"),
+                Some(&workspace),
+                &["config", "validate", "--root", path],
+            )
+            .map_err(|error| error.to_string())?;
+            assert!(output.status.success(), "stderr: {:?}", output.stderr);
+            assert!(String::from_utf8_lossy(&output.stdout).contains("built-in defaults apply"));
+            assert!(output.stderr.is_empty());
+        }
+        Ok(())
+    })();
+    ignore_remove_dir_all(&workspace);
+    result
+}
+
+#[test]
 fn config_validate_rejects_missing_and_file_roots() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
     let missing = workspace.join("missing-root");
@@ -17128,7 +17092,7 @@ fn check_python_finding_without_repair_card_names_the_terminal_manual_step() -> 
     )?;
     assert_eq!(
         line,
-        "  Safe next action: this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`."
+        "  Safe next action: this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
     );
     Ok(())
 }
@@ -17147,7 +17111,7 @@ fn check_python_finding_with_repair_card_points_at_the_card() -> Result<(), Stri
     )?;
     assert_eq!(
         line,
-        "  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it."
+        "  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it"
     );
     Ok(())
 }
@@ -17225,10 +17189,6 @@ fn assert_pilot_does_not_read_as_clean(stdout: &str, md: &str) {
         "no-Rust-seam pilot must not print the plain no-recommendation line:\n{stdout}"
     );
     assert!(
-        stdout.contains("none: pilot ranks Rust seams and found none here"),
-        "{stdout}"
-    );
-    assert!(
         stdout.contains("Languages outside pilot's Rust seam scan:"),
         "{stdout}"
     );
@@ -17242,6 +17202,34 @@ fn assert_pilot_does_not_read_as_clean(stdout: &str, md: &str) {
     );
     assert!(md.contains("This is not a clean result"), "{md}");
     assert!(!md.contains("ripr outcome --before"), "{md}");
+}
+
+/// #7665: when an enabled supported language has a check route, that route
+/// is the headline, not a Rust-framed "none".
+fn assert_pilot_headline_names_supported_check_route(
+    stdout: &str,
+    md: &str,
+    language_display: &str,
+    command: &str,
+) {
+    let headline = format!("analyze the {language_display} diff: {command}");
+    assert!(
+        stdout.contains(&format!("Top recommendation:\n  {headline}\n")),
+        "headline must name the supported-language check route:\n{stdout}"
+    );
+    assert!(
+        !stdout
+            .contains("none: pilot ranks Rust seams and found none here; see the languages below"),
+        "headline must not read as an empty recommendation:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("(pilot ranks Rust seams and found none here; see the languages below)"),
+        "{stdout}"
+    );
+    assert!(
+        md.contains(&format!("Analyze the {language_display} diff: `{command}`")),
+        "{md}"
+    );
 }
 
 #[test]
@@ -17288,6 +17276,19 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
         "{route}"
     );
     assert_pilot_does_not_read_as_clean(&stdout, &md);
+    // Default config leaves TypeScript disabled: `ripr check` will not
+    // analyze it, so the headline stays none while the languages section
+    // still names the route (#7665).
+    assert!(
+        stdout
+            .contains("none: pilot ranks Rust seams and found none here; see the languages below"),
+        "disabled TypeScript must not headline the check route:\n{stdout}"
+    );
+    assert!(!stdout.contains("analyze the TypeScript diff:"), "{stdout}");
+    assert!(
+        summary.get("top_recommendation").is_none(),
+        "schema must not grow a top_recommendation field: {summary}"
+    );
     assert!(
         stdout.contains(
             "typescript: 2 files (preview, diff-first; not enabled in ripr.toml [languages])"
@@ -17314,7 +17315,8 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
         "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
     )
     .map_err(|err| format!("write ripr.toml: {err}"))?;
-    let (enabled_stdout, _, enabled_summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    let (enabled_stdout, enabled_md, enabled_summary, _) =
+        run_pilot_language_fixture(&root, &out_dir)?;
     assert_eq!(
         required_language_route(&enabled_summary, "typescript")?["enabled"],
         true
@@ -17322,6 +17324,12 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
     assert!(
         enabled_stdout.contains("typescript: 2 files (preview, diff-first)\n"),
         "{enabled_stdout}"
+    );
+    assert_pilot_headline_names_supported_check_route(
+        &enabled_stdout,
+        &enabled_md,
+        "TypeScript",
+        &command,
     );
 
     ignore_remove_dir_all(&root);
@@ -17404,6 +17412,15 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
         "{stdout}"
     );
     assert!(
+        !stdout
+            .contains("none: pilot ranks Rust seams and found none here; see the languages below"),
+        "a Python repair card remains the top recommendation:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("analyze the Python diff:"),
+        "a Python repair card outranks the language-route headline:\n{stdout}"
+    );
+    assert!(
         !stdout.contains("Next, analyze the changed code in these languages:"),
         "{stdout}"
     );
@@ -17453,11 +17470,24 @@ fn pilot_says_perl_is_unavailable_when_repo_has_no_rust_seams() -> Result<(), St
     assert_pilot_does_not_read_as_clean(&stdout, &md);
     if cfg!(feature = "lang-perl") {
         assert_eq!(route["language_status"], "preview");
-        assert_eq!(
-            route["command"],
-            serde_json::json!(format!("ripr check --root {}", root.display()))
+        let command = format!("ripr check --root {}", root.display());
+        assert_eq!(route["command"], serde_json::json!(command));
+        // Perl is compiled in but not in the default enabled set, so the
+        // headline stays none (same as disabled TypeScript).
+        assert!(
+            stdout.contains(
+                "none: pilot ranks Rust seams and found none here; see the languages below"
+            ),
+            "disabled Perl keeps the none headline:\n{stdout}"
         );
+        assert!(!stdout.contains("analyze the Perl diff:"), "{stdout}");
     } else {
+        assert!(
+            stdout.contains(
+                "none: pilot ranks Rust seams and found none here; see the languages below"
+            ),
+            "unavailable Perl keeps the none headline:\n{stdout}"
+        );
         let notice = "Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`perl-ripr-facts`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it.";
         assert_eq!(route["language_status"], "unavailable");
         assert_eq!(route["route"], "unavailable_in_this_binary");
@@ -17822,6 +17852,141 @@ fn pilot_names_no_build_script_when_rust_is_disabled() -> Result<(), String> {
     assert!(!md.contains("build.rs"), "{md}");
     ignore_remove_dir_all(&root);
     ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// #5604: later lines of normalized match heads follow the real working-tree
+/// change, including a warm inventory, partial tests and both seam caps.
+#[test]
+fn pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps() -> Result<(), String> {
+    let lib = "pub fn first(n: u32) -> bool {\n    n > 10\n}\npub fn target(n: u32) -> u8 {\n    match (\n        n,\n    ) {\n        0\n        | 1\n        => 7,\n        _ => 9,\n    }\n}\n";
+    for partial in [false, true] {
+        let mut files = vec![
+            (
+                "Cargo.toml",
+                "[package]\nname = 'match_fixture'\nversion = '0.1.0'\nedition = '2024'\n",
+            ),
+            ("src/lib.rs", lib),
+        ];
+        if partial {
+            files.push((
+                "tests/partial.rs",
+                "#[test]\nfn smoke_only() { let _ = match_fixture::target(4); }\n",
+            ));
+        }
+        let root = pilot_language_fixture_repo(
+            "pilot-multiline-head",
+            &files,
+            ("NOTES.md", "unrelated change\n"),
+        )?;
+        let out = unique_temp_workspace("pilot-multiline-head-out");
+        // Seed the classified cache with a diff that touches no seam.
+        let (_, _, summary, _) = run_pilot_language_fixture(&root, &out)?;
+        assert_eq!(summary["current_change"]["actionable_seams_in_change"], 0);
+        for (edited, expected_line) in [
+            (lib.replace("        n,", "        n + 1,"), 5),
+            (lib.replace("        | 1", "        | 2"), 10),
+        ] {
+            std::fs::write(root.join("src/lib.rs"), &edited).map_err(|e| e.to_string())?;
+            // Repeat identical bytes to exercise a warm classified cache;
+            // moving the changed line then requires a fresh source identity.
+            for _ in 0..2 {
+                let (stdout, md, summary, exposure) = run_pilot_language_fixture(&root, &out)?;
+                let match_seams: Vec<_> = exposure["seams"]
+                    .as_array()
+                    .ok_or("missing seam population")?
+                    .iter()
+                    .filter(|seam| seam["kind"] == "match_arm")
+                    .collect();
+                assert_eq!(match_seams.len(), 3, "{exposure}");
+                for seam in match_seams {
+                    let related = seam["related_tests"]
+                        .as_array()
+                        .ok_or("missing related-test population")?;
+                    assert_eq!(related.len(), usize::from(partial), "{seam}");
+                    if partial {
+                        assert_eq!(related[0]["name"], "smoke_only", "{seam}");
+                        assert_eq!(related[0]["file"], "tests/partial.rs", "{seam}");
+                    }
+                }
+                assert_eq!(
+                    summary["top_actionable_seams"][0]["line"], expected_line,
+                    "{summary}"
+                );
+                assert_eq!(
+                    summary["top_actionable_seams"][0]["kind"], "match_arm",
+                    "{summary}"
+                );
+                assert_eq!(
+                    summary["current_change"]["actionable_seams_in_change"], 1,
+                    "{summary}"
+                );
+                assert_eq!(
+                    summary["current_change"]["top_recommendation_in_change"], true,
+                    "{summary}"
+                );
+                assert!(stdout.contains("current change: part of it"), "{stdout}");
+                assert!(md.contains("- Current change: part of it"), "{md}");
+            }
+            let warm = run_ripr_with_env(
+                &[
+                    "pilot",
+                    "--root",
+                    &root.display().to_string(),
+                    "--out",
+                    &out.display().to_string(),
+                ],
+                &[("RIPR_REPO_EXPOSURE_LATENCY_TRACE", "1")],
+            );
+            assert_success(&warm);
+            let trace = String::from_utf8_lossy(&warm.stderr);
+            assert!(trace.contains("phase=cache_load status=hit"), "{trace}");
+            let output = run_ripr_with_env(
+                &[
+                    "pilot",
+                    "--root",
+                    &root.display().to_string(),
+                    "--out",
+                    &out.display().to_string(),
+                ],
+                &[
+                    ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1"),
+                    ("RIPR_PILOT_SEAM_BUDGET", "1"),
+                ],
+            );
+            assert_success(&output);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains(
+                    "pilot hit the seam limit; classifying the current change's 1 Rust file(s)"
+                ),
+                "{stderr}"
+            );
+            let summary: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(out.join("pilot-summary.json"))
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            let md =
+                std::fs::read_to_string(out.join("pilot-summary.md")).map_err(|e| e.to_string())?;
+            assert_eq!(
+                summary["top_actionable_seams"].as_array().map(Vec::len),
+                Some(1),
+                "{summary}"
+            );
+            assert_eq!(
+                summary["top_actionable_seams"][0]["line"], expected_line,
+                "{summary}"
+            );
+            assert_eq!(
+                summary["current_change"]["top_recommendation_in_change"], true,
+                "{summary}"
+            );
+            assert!(md.contains("ranked 1 of 5 seams"), "{md}");
+        }
+        ignore_remove_dir_all(&root);
+        ignore_remove_dir_all(&out);
+    }
     Ok(())
 }
 
@@ -20321,6 +20486,143 @@ expires = "2025-01-01"
     assert!(stdout.contains(r#""warnings": []"#));
 
     ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn check_configured_suppression_diagnostics_preserve_locations_and_escaping() -> Result<(), String>
+{
+    let valid = "schema_version = 1\n[[suppressions]]\nkind = \"exposure_gap\"\nfinding_id = \"probe:one\"\nowner = \"alice\"\nreason = \"accepted debt\"\n";
+    let duplicate = format!("{valid}owner = \"bob\"\n");
+    // Preserve the default filename inside the offending value while escaping
+    // its terminal control byte. Only the diagnostic's location is renamed.
+    let malformed = valid.replace("exposure_gap", ".ripr/suppressions.toml\u{1b}[31m");
+    let unquoted = valid.replace("owner = \"alice\"", "owner = alice");
+    for relative_policy in [
+        ".ripr/suppressions.toml",
+        "policies/accepted $debt & 50%.toml",
+    ] {
+        let workspace =
+            make_temp_workspace_with_suppressions(None, Some("invalid default policy\n"))?;
+        std::fs::create_dir_all(workspace.join("policies")).map_err(|e| e.to_string())?;
+        if relative_policy != ".ripr/suppressions.toml" {
+            std::fs::write(
+                workspace.join("ripr.toml"),
+                format!("[suppressions]\npath = \"{relative_policy}\"\n"),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        let policy = workspace.join(relative_policy);
+        let root = workspace.display().to_string();
+        let diff = sample_diff().display().to_string();
+        for (manifest, diagnostics) in [
+            (
+                duplicate.as_str(),
+                [":7 duplicate `[[suppressions]]` field `owner` (first declared at line 5)"]
+                    .as_slice(),
+            ),
+            (
+                malformed.as_str(),
+                [":3 unsupported kind `.ripr/suppressions.toml\\u{1b}[31m`"].as_slice(),
+            ),
+            (
+                unquoted.as_str(),
+                [
+                    ":5 expected quoted string, got `alice`",
+                    ":2 `[[suppressions]]` entry is missing required `owner`",
+                ]
+                .as_slice(),
+            ),
+        ] {
+            std::fs::write(&policy, manifest).map_err(|e| e.to_string())?;
+            for format in ["badge-json", "badge-shields", "sarif"] {
+                let output = run_ripr(&[
+                    "check", "--root", &root, "--diff", &diff, "--format", format,
+                ]);
+                assert!(
+                    !output.status.success(),
+                    "{format}: invalid policy accepted"
+                );
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert!(
+                    stderr.contains(&format!("{relative_policy} validation failed:\n"))
+                        && diagnostics
+                            .iter()
+                            .all(|diagnostic| stderr
+                                .contains(&format!("{relative_policy}{diagnostic}"))),
+                    "{format}: wrong policy location or diagnostic: {stderr}"
+                );
+                assert!(
+                    !stderr.contains('\u{1b}'),
+                    "raw terminal control: {stderr:?}"
+                );
+            }
+
+            // Explicit loading already names the supplied path (#7921).
+            // Keep it fail-closed without changing that production path.
+            let output = run_ripr(&[
+                "check",
+                "--root",
+                &root,
+                "--diff",
+                &diff,
+                "--suppression-policy",
+                relative_policy,
+            ]);
+            assert!(!output.status.success(), "explicit invalid policy accepted");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                diagnostics
+                    .iter()
+                    .all(|diagnostic| stderr.contains(&format!("{relative_policy}{diagnostic}"))),
+                "{stderr}"
+            );
+            assert!(
+                !stderr.contains('\u{1b}'),
+                "raw terminal control: {stderr:?}"
+            );
+        }
+
+        // Valid and missing optional policies still work. A malformed default
+        // file remains present for custom paths, defeating fallback to it.
+        std::fs::write(&policy, valid).map_err(|e| e.to_string())?;
+        for missing in [false, true] {
+            if missing {
+                std::fs::remove_file(&policy).map_err(|e| e.to_string())?;
+            }
+            let output = run_ripr(&[
+                "check",
+                "--root",
+                &root,
+                "--diff",
+                &diff,
+                "--format",
+                "badge-json",
+            ]);
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let output = run_ripr(&[
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--suppression-policy",
+            relative_policy,
+        ]);
+        assert!(!output.status.success(), "explicit missing policy accepted");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("failed to read suppression policy")
+                && stderr.contains(relative_policy),
+            "{stderr}"
+        );
+        ignore_remove_dir_all(&workspace);
+    }
     Ok(())
 }
 

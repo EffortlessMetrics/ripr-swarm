@@ -1355,6 +1355,20 @@ fn extract_parser_probe_shapes(
                 bin_expr.syntax().text_range().end(),
             );
         }
+        // RIPR-SPEC-0228: a field assignment (`self.f = ..`, `self.f op= ..`)
+        // is a field write, probed as `field_construction` like a
+        // constructed field instead of falling to `static_unknown`.
+        if field_assignment_path(&bin_expr).is_some() {
+            push_probe_shape(
+                &mut shapes,
+                line_index,
+                text,
+                source,
+                ProbeShapeKind::FieldConstruction,
+                bin_expr.syntax().text_range().start(),
+                bin_expr.syntax().text_range().end(),
+            );
+        }
     }
 
     let body = function.body();
@@ -1512,6 +1526,15 @@ fn extract_parser_probe_shapes(
                 token.text_range().start(),
                 token.text_range().end(),
                 link_shape_text(source, token.text_range().start(), snippet),
+                Some((
+                    line_index.line(token.text_range().start()),
+                    line_index.line_for_range_end(
+                        match_expr
+                            .expr()
+                            .map(|expr| expr.syntax().text_range().end())
+                            .unwrap_or(token.text_range().end()),
+                    ),
+                )),
             );
         }
     }
@@ -1534,6 +1557,14 @@ fn extract_parser_probe_shapes(
                 token.text_range().start(),
                 token.text_range().end(),
                 link_shape_text(source, token.text_range().start(), snippet),
+                Some((
+                    line_index.line(
+                        arm.pat()
+                            .map(|pat| pat.syntax().text_range().start())
+                            .unwrap_or(token.text_range().start()),
+                    ),
+                    line_index.line_for_range_end(token.text_range().end()),
+                )),
             );
         }
     }
@@ -1576,6 +1607,7 @@ fn push_unsafe_boundary_probe_shapes(
                 unsafe_token.text_range().start(),
                 format!("unsafe fn {name}"),
             ),
+            None,
         );
     }
 
@@ -1598,7 +1630,103 @@ fn push_unsafe_boundary_probe_shapes(
                 unsafe_token.text_range().start(),
                 "unsafe block".to_string(),
             ),
+            None,
         );
+    }
+}
+
+/// RIPR-SPEC-0228: the field path after `self` written by an assignment or
+/// compound assignment (`count` for `self.count += 1`, `child.count` for
+/// `self.child.count = 0`). Any other place (a local, `*p`, an index, a
+/// field of a call result or of another binding) gives `None`, and so does
+/// an assignment that spans lines (a changed continuation line would carry
+/// only part of it) or whose right-hand side contains, at any depth, a call,
+/// method call, macro, closure, `?` or `.await`, or a choice between values
+/// (`if`, `match`, a comparison or `&&`/`||`): those keep their
+/// `call_deletion`, predicate and other probes (RIPR-SPEC-0228 Non-Goals).
+pub(crate) fn field_assignment_path(bin_expr: &ast::BinExpr) -> Option<String> {
+    let op = bin_expr.op_token()?;
+    if !matches!(
+        op.text(),
+        "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>="
+    ) {
+        return None;
+    }
+    let rhs = bin_expr.rhs()?;
+    let keeps_other_probe = rhs.syntax().descendants().any(|node| {
+        matches!(
+            ast::Expr::cast(node.clone()),
+            Some(
+                ast::Expr::CallExpr(_)
+                    | ast::Expr::MethodCallExpr(_)
+                    | ast::Expr::MacroExpr(_)
+                    | ast::Expr::TryExpr(_)
+                    | ast::Expr::AwaitExpr(_)
+                    | ast::Expr::IfExpr(_)
+                    | ast::Expr::MatchExpr(_)
+                    | ast::Expr::ClosureExpr(_)
+                    // A block or loop can leave the owner before the write
+                    // (`self.n = { let Some(n) = x else { return }; n };`).
+                    | ast::Expr::BlockExpr(_)
+                    | ast::Expr::ReturnExpr(_)
+                    | ast::Expr::BreakExpr(_)
+                    | ast::Expr::ContinueExpr(_)
+                    | ast::Expr::LetExpr(_)
+                    | ast::Expr::LoopExpr(_)
+                    | ast::Expr::WhileExpr(_)
+                    | ast::Expr::ForExpr(_)
+            )
+        ) || ast::BinExpr::cast(node).is_some_and(|inner| {
+            inner
+                .op_kind()
+                .is_some_and(|op| matches!(op, ast::BinaryOp::CmpOp(_) | ast::BinaryOp::LogicOp(_)))
+        })
+    });
+    // A comment inside the assignment hides it from the textual
+    // `field_assignment_target` reader, which the evidence guard and the
+    // seam skip rely on, so such writes keep no probe.
+    let has_comment = bin_expr
+        .syntax()
+        .descendants_with_tokens()
+        .any(|element| element.kind() == ra_ap_syntax::SyntaxKind::COMMENT);
+    if bin_expr.syntax().text().contains_char('\n') || keeps_other_probe || has_comment {
+        return None;
+    }
+    let mut place = bin_expr.lhs()?;
+    let mut segments = Vec::new();
+    loop {
+        match place {
+            ast::Expr::FieldExpr(field) => {
+                // Only plain ASCII names (no `self.0`, `self.r#type` or
+                // non-ASCII names), matching `field_assignment_target`.
+                let name = field.name_ref()?.text().to_string();
+                let plain = name
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+                    && name
+                        .chars()
+                        .all(|ch| ch == '_' || ch.is_ascii_alphanumeric());
+                if !plain {
+                    return None;
+                }
+                segments.push(name);
+                place = field.expr()?;
+            }
+            ast::Expr::PathExpr(path) => {
+                let path = path.path()?;
+                let is_self = path.qualifier().is_none()
+                    && path
+                        .segment()
+                        .is_some_and(|segment| segment.self_token().is_some());
+                if !is_self || segments.is_empty() {
+                    return None;
+                }
+                segments.reverse();
+                return Some(segments.join("."));
+            }
+            _ => return None,
+        }
     }
 }
 
@@ -1623,7 +1751,7 @@ fn push_probe_shape(
     let leading = raw.len() - raw.trim_start().len();
     let link_start = (u32::from(start) as usize).saturating_add(leading);
     let text = SourceText::shared_or_owned(source, link_start, &snippet);
-    push_probe_shape_with_text(shapes, line_index, kind, start, end, text);
+    push_probe_shape_with_text(shapes, line_index, kind, start, end, text, None);
 }
 
 fn push_probe_shape_with_text(
@@ -1633,6 +1761,7 @@ fn push_probe_shape_with_text(
     start: TextSize,
     end: TextSize,
     text: SourceText,
+    source_lines: Option<(usize, usize)>,
 ) {
     if text.is_empty() {
         return;
@@ -1645,6 +1774,7 @@ fn push_probe_shape_with_text(
         kind,
         text,
         value_consumed: false,
+        source_lines,
     });
 }
 
@@ -4556,5 +4686,60 @@ mod shadow_fact_equivalence_tests {
             "the nested fn's own walk must still emit its return: {return_errors:?}"
         );
         Ok(())
+    }
+
+    /// RIPR-SPEC-0228: which assignments are probed as field writes.
+    #[test]
+    fn field_assignment_path_reads_single_line_plain_self_field_writes() {
+        let path = |statement: &str| {
+            let source = format!("impl P {{ fn f(&mut self) {{ {statement} }} }}");
+            let parse = SourceFile::parse(&source, Edition::CURRENT);
+            parse
+                .tree()
+                .syntax()
+                .descendants()
+                .find_map(ast::BinExpr::cast)
+                .and_then(|bin_expr| field_assignment_path(&bin_expr))
+        };
+        for (statement, expected) in [
+            ("self.count += 2 - 1;", "count"),
+            ("self.child.count = 0;", "child.count"),
+            ("self.state = State::Done;", "state"),
+            ("self.total <<= 1;", "total"),
+            // A trailing comment is trivia outside the assignment node.
+            ("self.total += 1 /* c */;", "total"),
+        ] {
+            assert_eq!(path(statement).as_deref(), Some(expected), "{statement}");
+        }
+        for statement in [
+            "self.0 = 1;",
+            "self.r#type = 1;",
+            "self.z\u{e4}hler = 1;",
+            "self.count =\n    self.count + 1;",
+            "self.label = compute(2);",
+            "self.count = self.count + compute(2);",
+            "self.count = (self.size() as u32) * 2;",
+            "self.ok = !self.a.is_empty();",
+            "self.label = self.name.clone();",
+            "self.label = format!(\"x\");",
+            "self.count = parse()?;",
+            "count += 1;",
+            "other.count = 1;",
+            "self.items[0] = 1;",
+            "self.count == 1;",
+            "self.locked = self.count >= 4;",
+            "self.ok = self.a && self.b;",
+            "self.count = if self.locked { 2 } else { 5 };",
+            "self.count = match self.locked { true => 1, false => 2 };",
+            // #8061 review: a block can leave the owner before the write,
+            // and a comment hides the write from the textual reader.
+            "self.count = { let Some(n) = self.next else { return }; n };",
+            "self.count = { 1 };",
+            "self.count = loop { break 2 };",
+            "self.count /* c */ += 1;",
+            "self.count += /* c */ 1;",
+        ] {
+            assert_eq!(path(statement), None, "{statement}");
+        }
     }
 }

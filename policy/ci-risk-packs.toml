@@ -60,7 +60,7 @@ reason = "Policy metadata, repository config, and allowlist changes should be me
 [risk_pack.workflow_policy]
 paths = [".github/workflows/**", ".github/dependabot.yml"]
 required = ["policy", "security-posture"]
-advisory = ["droid-review"]
+advisory = []
 on_demand = ["release-readiness-proof"]
 artifact_families = []
 estimated_lem = 12
@@ -90,9 +90,9 @@ reason = "Fixture inputs, expected outputs, and corpus docs define behavior evid
 [risk_pack.vscode]
 paths = ["editors/vscode/**"]
 required = ["vscode-compile", "vscode-e2e", "policy"]
-advisory = ["droid-review"]
+advisory = []
 on_demand = ["vsix-package"]
-artifact_families = ["editor-agent-loop", "release-readiness"]
+artifact_families = ["editor-agent-loop", "release-readiness", "vscode-test-host-diagnostics"]
 estimated_lem = 26
 owner = "repo-maintainers"
 reason = "VS Code extension implementation, package, or tests need editor-loop proof."

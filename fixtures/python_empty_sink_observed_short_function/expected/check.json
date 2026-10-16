@@ -41,14 +41,14 @@
         "infect": {"state":"yes","confidence":"low","summary":"Changed Python return expression can alter the owner return value: `return 1`"},
         "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
-        "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `f`", "infection yes: Changed Python return expression can alter the owner return value: `return 1`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return 1 (line 5)", "related test tests/test_constants.py:4 test_constants uses strong exact value oracle: assert f() == 1"],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `f`", "infection yes: Changed Python return expression can alter the owner return value: `return 1`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return 1 (line 5)", "related test tests/test_constants.py:4 test_constants uses strong exact value oracle: assert f() == 1"],
       "flow_sinks": [
         {"kind":"return_value","text":"return 1","line":5}
       ],
       "evidence": ["owner: f", "owner_kind: function", "test_framework: pytest (test_constants)", "test_verify_command: python -m pytest tests/test_constants.py::test_constants (test_constants)", "related_test_relation: syntactic_call (test_constants)", "test_oracle: exact_value strong (test_constants)"],
-      "missing": ["Related Python test reaches `f` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `f` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
       "assertion_texts": {
       },
       "activation": {

@@ -692,19 +692,34 @@ fn oracle_fixture() -> Result<PathBuf, String> {
 #[test]
 fn oracle_committed_rates_keep_labeled_and_unlabeled_cases() -> Result<(), String> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/rust-verdict-corpus");
-    let expected_ids: BTreeSet<_> = super::super::verdict_corpus::load_corpus(&dir)?
+    let corpus = super::super::verdict_corpus::load_corpus(&dir)?;
+    let expected_ids: BTreeSet<_> = corpus
         .cases
-        .into_iter()
-        .map(|case| case.case_id)
+        .iter()
+        .map(|case| case.case_id.clone())
         .collect();
+    let labeled = corpus
+        .cases
+        .iter()
+        .filter(|case| case.expected_oracle.is_some())
+        .count();
+    assert!(labeled > 0, "control needs labeled oracle cases");
     assert!(
-        expected_ids.len() > 43,
+        expected_ids.len() > labeled,
         "control needs unlabeled source cases"
     );
+    // `match_floor` / `overclaim_ceiling` remain the reviewed ratchets in
+    // spec-coverage.toml; this test does not pin the labeled total.
+    let gate = super::super::verdict_corpus::coverage::load_ledger(&dir)?
+        .oracle
+        .ok_or("no [oracle] table")?;
     let records = population::Records::load(&dir)?;
-    for (rate, numerator) in [("oracle_accuracy", 43), ("oracle_overclaim_rate", 0)] {
+    for (rate, numerator) in [
+        ("oracle_accuracy", gate.match_floor as u64),
+        ("oracle_overclaim_rate", gate.overclaim_ceiling as u64),
+    ] {
         let population = records.population(&format!("oracle_accuracy.{rate}"))?;
-        assert_eq!(population.totals()?, (numerator, 43));
+        assert_eq!(population.totals()?, (numerator, labeled as u64));
         assert_eq!(
             population
                 .cases
@@ -719,7 +734,7 @@ fn oracle_committed_rates_keep_labeled_and_unlabeled_cases() -> Result<(), Strin
                 .iter()
                 .filter(|case| case.denominator == 0)
                 .count(),
-            expected_ids.len() - 43
+            expected_ids.len() - labeled
         );
         assert_eq!(
             population
@@ -727,7 +742,7 @@ fn oracle_committed_rates_keep_labeled_and_unlabeled_cases() -> Result<(), Strin
                 .iter()
                 .filter(|c| c.denominator == 1)
                 .count(),
-            43
+            labeled
         );
         assert!(
             population
@@ -1177,17 +1192,106 @@ fn changed_eligibility_without_a_changed_definition_is_incomparable() -> Result<
     Ok(())
 }
 
+/// #7325: the owner accepted the retained Rust abstention rise, so the five
+/// Rust corpus entries are a refreshed observation. Every other byte of the
+/// operational baseline still matches the #7552 witness, and each refreshed
+/// sample names the revision and committed rows its population came from.
 #[test]
-fn operational_migration_and_public_copy_preserve_original_values_and_identity()
--> Result<(), String> {
-    let live: Value = serde_json::from_str(include_str!(
+fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> Result<(), String> {
+    let mut live: Value = serde_json::from_str(include_str!(
         "../../../../metrics/dx-scoreboard/baseline.json"
     ))
     .map_err(|err| err.to_string())?;
-    let witness: Value = serde_json::from_str(include_str!(
+    let mut witness: Value = serde_json::from_str(include_str!(
         "../../../../benchmarks/dx_scoreboard/testdata/7552-original-baseline-with-population.json"
     ))
     .map_err(|err| err.to_string())?;
+    let refreshed = [
+        ("trust.false_verdict_rate", "false_verdict_rate", 29, 477),
+        (
+            "trust.verdict_corpus_false_actionable",
+            "false_actionable_rate",
+            26,
+            236,
+        ),
+        (
+            "trust.verdict_corpus_abstention",
+            "abstention_rate",
+            177,
+            477,
+        ),
+        (
+            "trust.verdict_corpus_false_silent",
+            "false_silent_rate",
+            0,
+            241,
+        ),
+        (
+            "trust.verdict_corpus_false_exposed",
+            "false_exposed_rate",
+            3,
+            241,
+        ),
+    ];
+    for (id, rate, n, d) in refreshed {
+        let find = |report: &mut Value| -> Result<Value, String> {
+            let metrics = report["metrics"].as_array_mut().ok_or("metrics missing")?;
+            let at = metrics
+                .iter()
+                .position(|metric| metric["id"] == id)
+                .ok_or("refreshed metric missing")?;
+            Ok(metrics.remove(at))
+        };
+        let metric = find(&mut live)?;
+        let original = find(&mut witness)?;
+        assert_eq!(
+            metric["source"],
+            format!("verdict-corpus:fixtures/rust-verdict-corpus#{rate}")
+        );
+        let sample = &metric["samples"][0];
+        assert_eq!(metric["samples"].as_array().map(Vec::len), Some(1));
+        let population: Population =
+            serde_json::from_value(sample["population"].clone()).map_err(|err| err.to_string())?;
+        assert_eq!(population.rate, rate);
+        assert_eq!(population.totals()?, (n, d));
+        // The stored value and status must match the population, not a stale copy.
+        let value = round(n as f64 / d as f64);
+        assert_eq!(metric["value"].as_f64(), Some(value), "{id} value");
+        let target = metric["target"].as_f64().ok_or("target missing")?;
+        let status = if value <= target {
+            "meets_target"
+        } else {
+            "below_target"
+        };
+        assert_eq!(metric["status"], status, "{id} status");
+        let provenance = &sample["population_provenance"];
+        assert_eq!(provenance["kind"], "committed_expected_rows");
+        assert_eq!(
+            provenance["revision"],
+            "2af3f38a1de75ca48d5d84555a839d50710159b6"
+        );
+        assert_eq!(
+            provenance["rows_tree"],
+            "e7f8f98f10d0d368e3d07fa2fdd86a8bad87ac22"
+        );
+        assert_eq!(
+            provenance["corpus_blob"],
+            "8ef7a4bec9b0e6594e676ec9089db205ade40af3"
+        );
+        assert_eq!(provenance["approved"], "EffortlessMetrics/ripr-swarm#7325");
+        // Only value, status, source and samples moved.
+        for key in [
+            "board",
+            "direction",
+            "id",
+            "target",
+            "title",
+            "unit",
+            "runner_dependent",
+        ] {
+            assert_eq!(metric[key], original[key], "{id} {key}");
+        }
+    }
     assert_eq!(live, witness);
     assert_eq!(
         include_str!("../../../../metrics/dx-scoreboard/baseline.json"),

@@ -1318,22 +1318,7 @@ fn apply_rust_no_static_path_limit(
 
     if let Some(witness) = transitive_reach.transitive_witness(&owner_name) {
         replace_witnessed_no_path_infection_summary(finding);
-        finding.static_limit_kind = Some(classify::transitive_reach_limit_kind(&witness.test_file));
-        finding
-            .stop_reasons
-            .push(StopReason::TransitiveReachUnresolved);
-        finding
-            .evidence
-            .push(classify::RUST_TRANSITIVE_REACH_MESSAGE.to_string());
-        finding
-            .evidence
-            .push(classify::transitive_reach_witness_pointer(&witness));
-        finding
-            .evidence
-            .extend(classify::transitive_reach_limitation_detail_lines(
-                &witness,
-                &owner_name,
-            ));
+        apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
     } else if let Some(witness) = transitive_reach.macro_reach_witness(&owner_name) {
         replace_witnessed_no_path_infection_summary(finding);
         apply_rust_macro_reach_limit(finding, &owner_name, &witness);
@@ -1355,6 +1340,11 @@ fn apply_rust_no_static_path_limit(
         property_macro_mentions,
     ) {
         replace_witnessed_no_path_infection_summary(finding);
+    } else if let Some(witness) = transitive_reach.deep_transitive_witness(&owner_name) {
+        // Last: a chain past five hops never displaces a shallower or more
+        // specific witness (#8047).
+        replace_witnessed_no_path_infection_summary(finding);
+        apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
     }
 }
 
@@ -1370,22 +1360,7 @@ fn apply_rust_proximity_reach_limit(
         return;
     };
     if let Some(witness) = transitive_reach.transitive_witness(&owner_name) {
-        finding.static_limit_kind = Some(classify::transitive_reach_limit_kind(&witness.test_file));
-        finding
-            .stop_reasons
-            .push(StopReason::TransitiveReachUnresolved);
-        finding
-            .evidence
-            .push(classify::RUST_TRANSITIVE_REACH_MESSAGE.to_string());
-        finding
-            .evidence
-            .push(classify::transitive_reach_witness_pointer(&witness));
-        finding
-            .evidence
-            .extend(classify::transitive_reach_limitation_detail_lines(
-                &witness,
-                &owner_name,
-            ));
+        apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
         unresolved_reach_next_step(
             finding,
             &witness.test_name,
@@ -1400,7 +1375,39 @@ fn apply_rust_proximity_reach_limit(
             &witness.entry_symbol,
             &owner_name,
         );
+    } else if let Some(witness) = transitive_reach.deep_transitive_witness(&owner_name) {
+        apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
+        unresolved_reach_next_step(
+            finding,
+            &witness.test_name,
+            &witness.entry_symbol,
+            &owner_name,
+        );
     }
+}
+
+/// Shared transitive limitation projection (RIPR-SPEC-0114), for a witness
+/// within the bound or past it. No reach credit, no related-test relation.
+fn apply_rust_transitive_reach_limit(
+    finding: &mut Finding,
+    owner_name: &str,
+    witness: &classify::TransitiveWitness,
+) {
+    finding.static_limit_kind = Some(classify::transitive_reach_limit_kind(&witness.test_file));
+    finding
+        .stop_reasons
+        .push(StopReason::TransitiveReachUnresolved);
+    finding
+        .evidence
+        .push(classify::RUST_TRANSITIVE_REACH_MESSAGE.to_string());
+    finding
+        .evidence
+        .push(classify::transitive_reach_witness_pointer(witness));
+    finding
+        .evidence
+        .extend(classify::transitive_reach_limitation_detail_lines(
+            witness, owner_name,
+        ));
 }
 
 /// Shared typed macro limitation projection. It adds neither reach credit

@@ -169,8 +169,10 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             naming_only_skips: Vec::new(),
         })
     };
-    // The timeout hint scales from the budget actually spent, so an
-    // extended run does not suggest a smaller --timeout-ms than it used.
+    // The timeout hint floors at the budget actually spent, so an
+    // extended run does not suggest a smaller --timeout-ms than it used
+    // (#5443). The printed retry also stays inside an interactive cap
+    // instead of multiplying the spent budget by four (#7427).
     let spent_timeout_ms = options.timeout_ms.saturating_add(extension_ms.unwrap_or(0));
     let PilotAnalysisResult::Complete(report) = analysis_result else {
         // #7425: a timeout overwrites only the two summaries. Remove leftover
@@ -185,6 +187,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             config_path: config.source_path(),
             max_seams: options.max_seams,
             timeout_ms: spent_timeout_ms,
+            timeout_extension_ms: extension_ms.unwrap_or(0),
             artifacts: &artifacts,
             python_first_use: None,
             language_routes: None,
@@ -306,8 +309,10 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     }
 
     let python_first_use = collect_pilot_python_first_use(&input, &config);
-    // #3906: pilot ranks Rust seams only. Name the languages it did not rank
-    // so an empty ranking is never read as a clean result for them.
+    // #3906 / #7665: pilot ranks Rust seams only. Name the languages it did
+    // not rank so an empty ranking is never read as a clean result for them;
+    // when an enabled supported language is present, the headline names its
+    // `ripr check` route instead of "none".
     let language_routes = output::pilot::PilotLanguageRoutes::from_discovered(
         &input.root,
         !classified.is_empty(),
@@ -325,6 +330,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         config_path: config.source_path(),
         max_seams: options.max_seams,
         timeout_ms: options.timeout_ms,
+        timeout_extension_ms: 0,
         artifacts: &artifacts,
         python_first_use: python_first_use.as_ref(),
         language_routes: Some(&language_routes),

@@ -2895,6 +2895,14 @@ fn build_seam_from_shape(
     crlf_pairs: &CrlfPairPositions,
 ) -> Option<RepoSeam> {
     let kind = seam_kind_from_probe_shape(shape.kind)?;
+    // RIPR-SPEC-0228 field assignments are diff-scope probes only: repo-scope
+    // seam grading does not know their read rule, so it would grade a
+    // well-tested write as weakly gripped.
+    if kind == SeamKind::FieldConstruction
+        && crate::analysis::classify::field_assignment_target(&shape.text).is_some()
+    {
+        return None;
+    }
     // A call whose value feeds a consumer cannot be deleted without breaking
     // the build, so no mutant asks whether tests notice it is gone. The
     // consumer's predicate, return or error seam carries that behavior
@@ -2932,7 +2940,8 @@ fn build_seam_from_shape(
         expected_sink,
         crlf_pairs,
     )
-    .with_owner_call(owner_call);
+    .with_owner_call(owner_call)
+    .with_source_lines(shape.source_lines);
     // Span geometry is additional precision: when derivation fails (stale or
     // mismatched source), the seam keeps line-only behavior rather than
     // carrying wrong coordinates. Match-arm shapes are line-only by policy:
@@ -5595,6 +5604,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                     kind: ProbeShapeKind::UnsafeBoundary,
                     text: "owner_body".into(),
                     value_consumed: false,
+                    source_lines: None,
                 }],
                 ..FileFacts::default()
             },
@@ -5649,6 +5659,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                     kind: ProbeShapeKind::Predicate,
                     text: "x >= 0".into(),
                     value_consumed: false,
+                    source_lines: None,
                 }],
                 ..FileFacts::default()
             },

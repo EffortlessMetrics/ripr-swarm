@@ -5,10 +5,10 @@ config: <cwd>/fixtures/typescript_adversarial_owner_module_mock/input/ripr.toml
 
 Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
 
-Changed file(s) by language: typescript: 1.
+Changed file(s) by language: typescript = 1
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
 
 WARNING src/discount.ts:2
   id: probe:src_discount.ts:typescript_preview:2396aec1
@@ -41,15 +41,15 @@ Static exposure
 
 Evidence
   - reach weak: 1 related test(s) found for owner `applyDiscount`
-  - infection unknown: TypeScript preview adapter does not yet model infection.
-  - propagation unknown: TypeScript preview adapter does not yet model propagation.
+  - infection unknown: TypeScript preview adapter does not yet model infection
+  - propagation unknown: TypeScript preview adapter does not yet model propagation
   - observation weak: Strongest extracted oracle kind: `unknown` (rank 0)
-  - discriminator weak: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.
+  - discriminator weak: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands
   - related test tests/discount.test.ts:12 applyDiscount at threshold discounts uses unknown unknown oracle
 
 Weakness
-  - Only heuristic TypeScript test links were found for `applyDiscount`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
-  - Static limit `mocked_module`: related test file mocks `../src/discount` via `vi.mock(...)` / `jest.mock(...)`. The TypeScript preview adapter does not resolve mocked module semantics, so the substitution under test is opaque to static evidence. Repair route: add mock-shape support or validate the real substitution under test before issuing a repair packet.
+  - Only heuristic TypeScript test links were found for `applyDiscount`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
+  - Static limit `mocked_module`: related test file mocks `../src/discount` via `vi.mock(...)` / `jest.mock(...)`. The TypeScript preview adapter does not resolve mocked module semantics, so the substitution under test is opaque to static evidence. Repair route: add mock-shape support or validate the real substitution under test before issuing a repair packet
 
 Static limitation
   mocked_module — A mocked module replaces the real implementation, so a passing test may not observe the actual changed behavior.
@@ -78,7 +78,7 @@ TypeScript repair packet (advisory)
   next capability needed: resolve the named static limit and re-run TypeScript preview evidence extraction
 
 Next step
-  TypeScript preview advisory: static limit `mocked_module`; Repair route: add mock-shape support or validate the real substitution under test before issuing a repair packet.; no actionable repair packet is emitted.
+  TypeScript preview advisory: static limit `mocked_module`; Repair route: add mock-shape support or validate the real substitution under test before issuing a repair packet.; no actionable repair packet is emitted
 Drill in:
   ripr explain --root <cwd>/fixtures/typescript_adversarial_owner_module_mock/input --diff <cwd>/fixtures/typescript_adversarial_owner_module_mock/diff.patch --mode fast probe:src_discount.ts:typescript_preview:2396aec1
   ripr context --root <cwd>/fixtures/typescript_adversarial_owner_module_mock/input --diff <cwd>/fixtures/typescript_adversarial_owner_module_mock/diff.patch --mode fast --at probe:src_discount.ts:typescript_preview:2396aec1

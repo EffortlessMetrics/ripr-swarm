@@ -6,6 +6,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const INSPECT: &str = "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.";
+/// #7756: the human render strips the single trailing period from the
+/// labelled next-step value; the JSON surface keeps the producer string.
+const INSPECT_RENDERED: &str = "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap";
 const EXACT: &str = "Replace broad assertions with exact equality or a property that constrains the changed returned value.";
 
 struct Fixture(PathBuf);
@@ -93,11 +96,18 @@ fn unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim() -> R
         ] {
             let rendered = render_check(&output, &format)?;
             let words = rendered.split_whitespace().collect::<Vec<_>>().join(" ");
-            assert!(words.contains(INSPECT), "{fence}: {rendered}");
+            // #7756: human surfaces carry no trailing period on the labelled
+            // next-step value; JSON keeps the producer string verbatim.
+            let expected = if format == OutputFormat::Json {
+                INSPECT
+            } else {
+                INSPECT_RENDERED
+            };
+            assert!(words.contains(expected), "{fence}: {rendered}");
         }
         let explanation = ripr::explain_finding_with_input(fixture.input(), &finding.id)?;
         let words = explanation.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(words.contains(INSPECT), "{fence}: {explanation}");
+        assert!(words.contains(INSPECT_RENDERED), "{fence}: {explanation}");
     }
     Ok(())
 }

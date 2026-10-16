@@ -841,6 +841,66 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             &err,
         ),
         ("assert_eq!(flag.eq(&false), true);", &exact),
+        // #7993 controls: a qualified path call asserted true pins like
+        // `==`, and a doubly negated literal is the literal.
+        (
+            "assert_eq!(<_ as PartialEq>::eq(&r, &Err(E::Bad)), true);",
+            &err,
+        ),
+        ("assert_eq!(Result::eq(&r, &Err(E::Bad)), !&false);", &err),
+        ("assert_eq!(r == Err(E::Bad), !!&true);", &err),
+        // A module named `eq` is not a comparison call.
+        ("assert_eq!(flag ^ helpers::eq::value(), true);", &exact),
+        // #8006 controls: a pattern in a closure or read call keeps its
+        // reading, and a bool value compared with a non-literal pins it.
+        (
+            "assert!(xs.iter().any(|x| { matches!(x, Some(3)) }));",
+            &exact,
+        ),
+        ("assert!(foo(matches!(x, A)).is_ok());", &exact),
+        ("assert_eq!(is_valid(x), expected);", &exact),
+        ("assert_eq!(xs.iter().any(|x| *x == 1), expected);", &exact),
+        // A bitwise `&` over plain values pins a value (review of 49bc452).
+        ("assert_eq!(flags & MASK, 0);", &exact),
+        ("assert_eq!(flags & Flags::A, Flags::A);", &exact),
+        // An integer cast or `From` of a value pins it (#8093), and a
+        // negated literal that keeps a pattern method's polarity asserts
+        // the pattern (#8081).
+        ("assert_eq!(x as u8, 3);", &exact),
+        ("assert_eq!(u32::from(c), 97);", &exact),
+        ("assert_eq!(is_valid(x) as u8, 1);", &exact),
+        ("assert!(matches!(r, Err(E::Bad)).eq(&!false));", &err),
+        // A value compared inside a literal comparison still pins.
+        ("assert_eq!((x as u8 == 3), true);", &exact),
+        // A relation-only conjunct beside a pinning `==` lends no kind: the
+        // pinning conjunct decides it (#7947).
+        (
+            "assert_eq!(a == b && !matches!(r, Err(E::Bad)), true);",
+            &exact,
+        ),
+        ("assert_eq!(a == b && r != Err(E::Bad), true);", &exact),
+        (
+            "assert_eq!(!matches!(r, Err(E::Bad)) && a == b, true);",
+            &exact,
+        ),
+        ("assert_eq!(r == Err(E::Bad) && score(2) != 0, true);", &err),
+        // A dropped compared pattern still caps the whole (review of #7947).
+        (
+            "assert_eq!(a == b && matches!(r, Err(E::Bad)) == false, true);",
+            &weak,
+        ),
+        (
+            "assert_eq!(a == b && matches!(r, Err(E::Bad)) != true, true);",
+            &weak,
+        ),
+        (
+            "assert_eq!((a == b && !matches!(r, Err(E::Bad))) == true, true);",
+            &weak,
+        ),
+        (
+            "assert_eq!(a == b // note\n && r != Err(E::Bad), true);",
+            &exact,
+        ),
         // An `eq`/`ne` chain against literals that keeps a pattern's
         // polarity asserts the pattern (review of #7992).
         ("assert!(matches!(r, Err(E::Bad)).eq(&true));", &err),
@@ -970,6 +1030,73 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!(matches!(r, Err(E::Bad)) /* c */ .eq(&true), false);",
         "assert_eq!((matches!(r, Err(E::Bad)) /* c */).eq(&true), false);",
         "assert_eq!(matches!(matches!(r, Err(E::Bad)), true).eq(&true), false);",
+        // #7993: qualified-self and type-path calls, and a negated literal
+        // spelling.
+        "assert_eq!(<_ as PartialEq>::eq(&r, &Err(E::Bad)), false);",
+        "assert_eq!(Result::eq(&r, &Err(E::Bad)), false);",
+        "assert_eq!(Result::<u8, E>::eq(&r, &Err(E::Bad)), false);",
+        "assert_eq!(<Result<u8, E> as PartialEq>::ne(&r, &Err(E::Bad)), true);",
+        "assert_eq!(i32::lt(&score(2), &3), true);",
+        "assert_eq!(r == Err(E::Bad), !&true);",
+        "assert_eq!(r == Err(E::Bad), &!true);",
+        "assert_eq!(r == Err(E::Bad), !{ true });",
+        "assert_eq!(!&true, Result::eq(&r, &Err(E::Bad)));",
+        "assert_eq!(flag ^ Result::ne(&r, &Err(E::Bad)), true);",
+        "assert_eq!(Result ::ne(&r, &Err(E::Bad)), true);",
+        "assert_eq!(<_ as PartialEq> :: eq(&r, &Err(E::Bad)), false);",
+        "assert_eq!(C::<{ 2 }>::ne(&r, &Err(E::Bad)), true);",
+        "assert_eq!(C::<{ A > B }>::eq(&r, &Err(E::Bad)), false);",
+        "assert_eq!(Result::eq(&r, &Err(E::Bad)) ^ true, true);",
+        "assert_eq!(flag | <_ as PartialEq>::ne(&r, &Err(E::Bad)), true);",
+        "assert_eq!(matches!(r, Err(E::Bad)).eq(&!true), true);",
+        // #8006: a negation of the whole condition through a tuple, array,
+        // `Option`, block or group; a block under `^` or `|`; and a test
+        // compared with a side that is no boolean literal.
+        "assert!((matches!(r, Err(E::Bad)),).0.eq(&false));",
+        "assert!([matches!(r, Err(E::Bad))][0].eq(&false));",
+        "assert!(Some(matches!(r, Err(E::Bad))).unwrap().not());",
+        "assert!(!{ matches!(r, Err(E::Bad)) });",
+        "assert!(!(flag || matches!(r, Err(E::Bad))));",
+        "assert!(!(flag && matches!(r, Err(E::Bad))));",
+        "assert!(flag ^ { matches!(r, Err(E::Bad)) });",
+        "assert!(flag | { matches!(r, Err(E::Bad)) });",
+        "assert_eq!(matches!(r, Err(E::Bad)).eq(&true), expected);",
+        "assert_eq!(!matches!(r, Err(E::Bad)).eq(&true), expected);",
+        "assert_eq!(r == Err(E::Bad), expected);",
+        "assert!(expected == (r == Err(E::Bad)));",
+        "assert_eq!((r == Err(E::Bad)) ^ flag, expected);",
+        "assert_eq!(flag | (r == Err(E::Bad)), expected);",
+        "assert!((r == Err(E::Bad)) == expected);",
+        "assert_eq!(matches!(r, Err(E::Bad)) & flag, expected);",
+        "assert_eq!(flag & (r == Err(E::Bad)), expected);",
+        // #8093: a test carried as an integer through a cast or `From`,
+        // compared with a non-literal or with `0`.
+        "assert_eq!((r == Err(E::Bad)) as u8, n);",
+        "assert_eq!(u8::from(r == Err(E::Bad)), n);",
+        "assert_eq!((r == Err(E::Bad)) as u8, 0);",
+        "assert_eq!(n, (r == Err(E::Bad)) as i32);",
+        "assert_eq!(i64::from(matches!(r, Err(E::Bad))), expected);",
+        // #8101: a path call to `Not::not` over a whole condition, and a
+        // negated literal that flips a pattern method (#8081).
+        "assert!(Not::not(flag || matches!(r, Err(E::Bad))));",
+        "assert!(std::ops::Not::not(flag && matches!(r, Err(E::Bad))));",
+        "assert!(<bool as Not>::not(flag || matches!(r, Err(E::Bad))));",
+        "assert!(matches!(r, Err(E::Bad)).ne(&!false));",
+        // Review of 7830f13: `Not::not` over a comparison, and a test
+        // compared with a non-literal inside a literal comparison.
+        "assert_eq!(Not::not(r == Err(E::Bad)), true);",
+        "assert_eq!((r == Err(E::Bad)) as u8 == 0, true);",
+        "assert_eq!(u8::from(r == Err(E::Bad)) == 0, true);",
+        "assert_eq!((r == Err(E::Bad)) == flag, true);",
+        "assert!(((r == Err(E::Bad)) == flag) == true);",
+        // Any path call named `not` reads as a negation (review of 1ae0c07).
+        "assert_eq!(MyNot::not(r == Err(E::Bad)), true);",
+        "assert_eq!(bool::not(r == Err(E::Bad)), true);",
+        // #8101: `From`/`Into` conversion paths carry the test as an integer.
+        "assert_eq!(From::from(r == Err(E::Bad)), n);",
+        "assert_eq!(<u8 as From<bool>>::from(r == Err(E::Bad)), 0);",
+        "assert_eq!(Into::<u8>::into(r == Err(E::Bad)), n);",
+        "assert_eq!(std::primitive::u8::from(r == Err(E::Bad)), 0);",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
@@ -987,10 +1114,81 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert!(foo(matches!(x, A)).is_ok());",
         "assert!(foo(|| { matches!(x, A) }).is_ok());",
         "assert!(matches!(r, Err(E::Bad)).eq(&true));",
+        "assert!(foo::<T>(matches!(x, A)).is_ok());",
+        "assert_eq!(flags | compute(|v| v == 1), EXPECTED);",
     ] {
         if is_inequality_assertion(text) {
             return Err(format!("{text}: must not read as an inequality"));
         }
+    }
+    // #8101: a turbofish call and a comparison nested inside a call's
+    // arguments read as a pinned value, while a call that carries the test
+    // through, a grouping parenthesis and a keyword's parenthesis still cap.
+    for (text, expected) in [
+        ("assert!(foo::<T>(matches!(x, A)).is_ok());", &exact),
+        ("assert_eq!(flags | compute(|v| v == 1), EXPECTED);", &exact),
+        ("assert_eq!(mask & lookup(a == b), X);", &exact),
+        ("assert_eq!(flags | compute(v), EXPECTED);", &exact),
+        ("assert_eq!(<u8 as From<bool>>::from(x), 1);", &exact),
+        ("assert_eq!(Into::<u8>::into(c), 97);", &exact),
+        (
+            "assert_eq!(flag ^ bool::from(r == Err(E::Bad)), expected);",
+            &weak,
+        ),
+        ("assert_eq!(flags | u8::from(a == b), x);", &weak),
+        (
+            "assert_eq!(flag ^ std::ops::Not::not(r == Err(E::Bad)), expected);",
+            &weak,
+        ),
+        (
+            "assert_eq!(flag & From::from(r == Err(E::Bad)), expected);",
+            &weak,
+        ),
+        ("assert_eq!(flags | (a == b), X);", &weak),
+        // Review of e2f22d1: a parenthesized type inside the conversion's
+        // path, and a const-generic block or `->` inside a turbofish.
+        (
+            "assert_eq!(<u8 as From<(bool)>>::from(r == Err(E::Bad)), 0);",
+            &weak,
+        ),
+        ("assert!(foo::<{ 2 > 1 }>(matches!(x, A)).is_ok());", &exact),
+        (
+            "assert!(foo::<fn() -> u8>(matches!(x, A)).is_ok());",
+            &exact,
+        ),
+        ("assert_eq!(flag ^ Into::<u8>::into(a == b), x);", &weak),
+        (
+            "assert_eq!(flag ^ <bool as From<bool>>::from(a == b), x);",
+            &weak,
+        ),
+        ("assert_eq!(flags | &mut (a == b), X);", &weak),
+        // A multi-byte identifier character before a callee's last word
+        // (review of e7a56e8: a byte offset past it is no char boundary).
+        ("assert_eq!(flag ^ x\u{b7}y(a == b), x);", &exact),
+        ("assert_eq!(flag ^ x\u{b7}not(a == b), x);", &exact),
+        (
+            "assert!(flag == if (ready && matches!(r, Ok(3))) { false } else { true });",
+            &weak,
+        ),
+    ] {
+        require_classification(text, expected)?;
+    }
+    for (text, plain) in [
+        (
+            "assert!(foo::<T>(matches!(x, A)).is_ok());",
+            "assert!(foo(matches!(x, A)).is_ok());",
+        ),
+        (
+            "assert_eq!(flags | compute(|v| v == 1), EXPECTED);",
+            "assert_eq!(flags | compute(v), EXPECTED);",
+        ),
+        (
+            "assert_eq!(mask & lookup(a == b), X);",
+            "assert_eq!(mask & lookup(c), X);",
+        ),
+    ] {
+        let plain = classify_assertion(plain);
+        require_classification(text, &(plain.kind, plain.strength))?;
     }
     Ok(())
 }

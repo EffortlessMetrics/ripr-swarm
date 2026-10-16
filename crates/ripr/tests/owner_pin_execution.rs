@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[path = "owner_pin_execution/field_projected_collection.rs"]
+mod field_projected_collection;
+
 struct Scratch(PathBuf);
 
 impl Scratch {
@@ -1465,7 +1468,8 @@ fn macro_use_module_admission_matches_runtime() -> Result<(), String> {
 /// macro's arguments keeps the name ambiguous, and `no_implicit_prelude` or
 /// `macro_use` hidden in macro arguments counts as written. Each row records
 /// whether the compiled test catches the wrong library; the pass-through row
-/// stays refused although it would, which is the conservative direction.
+/// stays refused although it would, which is the conservative direction
+/// (its `tt` fragment could splice a `!` onto another name, #6648).
 #[test]
 fn wrapper_argument_admission_matches_runtime() -> Result<(), String> {
     let fixture =
