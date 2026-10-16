@@ -180,7 +180,7 @@
       "description": "Where the seam cache lives for this root and how large it is. `size_bytes` is 0 when the directory does not exist or cannot be read, which is a legitimate state, not a failed measurement. Never null: a released document always carries the cache the run resolved, so a producer that stopped reporting it fails this contract instead of passing it.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["cache_dir", "relocated_by_env", "size_bytes", "size_display"],
+      "required": ["cache_dir", "relocated_by_env", "size_bytes", "size_display", "artifact_ignore"],
       "properties": {
         "cache_dir": { "type": "string", "minLength": 1 },
         "relocated_by_env": {
@@ -188,7 +188,23 @@
           "type": "boolean"
         },
         "size_bytes": { "type": "integer", "minimum": 0 },
-        "size_display": { "type": "string", "minLength": 1 }
+        "size_display": { "type": "string", "minLength": 1 },
+        "artifact_ignore": { "$ref": "#/$defs/artifact_ignore" }
+      }
+    },
+    "artifact_ignore": {
+      "description": "Whether git ignore rules cover ripr's own artifact root (`target/ripr`) under the doctor root. `no_artifacts` (nothing to cover yet), `ignored`, and `not_checked` (the root is not a git repository, git is unavailable, or the probe deadline passed, so doctor stays quiet rather than claiming a checked fact it could not establish) are plain verdict strings; `unignored` is an object carrying the exact warning line the human screen prints, so automation can act on the same actionable evidence. The union is a plain type list rather than `oneOf` because the published-schema conformance checker (crates/ripr/tests/doctor_json_schema.rs) enumerates the keywords it enforces and does not claim `oneOf` support.",
+      "type": ["string", "object"],
+      "required": [],
+      "properties": {
+        "unignored": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["warning"],
+          "properties": {
+            "warning": { "type": "string", "minLength": 1 }
+          }
+        }
       }
     },
     "test_surface": {

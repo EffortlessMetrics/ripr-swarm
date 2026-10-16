@@ -435,6 +435,31 @@ fn published_doctor_schema_rejects_documents_the_schema_forbids() -> Result<(), 
     undeclared_nested_field["cache"]["free_form_note"] = Value::String("hello".to_string());
     assert_rejected("undeclared nested field", &undeclared_nested_field, &schema)?;
 
+    // #7663 review: `cache.artifact_ignore` is a string verdict
+    // (`no_artifacts` / `ignored` / `not_checked`) or an `unignored` object
+    // carrying the exact warning line. An `unignored` without the warning
+    // line is the string-or-object union claiming evidence it does not
+    // carry. (The plain-string verdicts are documented in the schema
+    // description but deliberately not enum-pinned: the conformance
+    // checker does not claim `oneOf`, and a top-level `enum` would reject
+    // the `unignored` object arm.)
+    let mut warningless_unignored = base.clone();
+    warningless_unignored["cache"]["artifact_ignore"] = serde_json::json!({"unignored": {}});
+    assert_rejected(
+        "unignored without its warning line",
+        &warningless_unignored,
+        &schema,
+    )?;
+
+    // The positive counterpart: a fully populated `unignored` arm stays legal,
+    // because that is the shape an un-ignored artifact root actually emits.
+    let mut populated_unignored = base.clone();
+    populated_unignored["cache"]["artifact_ignore"] =
+        serde_json::json!({"unignored": {"warning": "warning: add target/ripr/ to .gitignore"}});
+    check(&populated_unignored, &schema, &schema, "doctor").map_err(|error| {
+        format!("a populated unignored artifact-ignore must stay legal: {error}")
+    })?;
+
     let mut wrong_test_surface_type = base.clone();
     wrong_test_surface_type["test_surfaces"] = Value::String("rust".to_string());
     assert_rejected(
