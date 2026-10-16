@@ -50103,6 +50103,50 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
 
 #[test]
 fn preview_editor_workflow_fixtures_do_not_wait_for_cwd() -> Result<(), String> {
+    const CHILD_ENV: &str = "RIPR_XTASK_PREVIEW_CWD_CHILD";
+    const COMPLETED: &str = "preview CWD child assertions completed";
+    match std::env::var_os(CHILD_ENV) {
+        Some(value) if value == "1" => {
+            preview_fixture_assertions_with_cwd_writer()?;
+            eprintln!("{COMPLETED}");
+            return Ok(());
+        }
+        Some(value) => return Err(format!("invalid preview CWD child marker: {value:?}")),
+        None => {}
+    }
+    // Only the isolated child acquires the CWD writer: aggregate peers may
+    // already hold it across their own Cargo work before our timers can start.
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let output = crate::run::capture_output_measured(
+        &exe.to_string_lossy(),
+        &[
+            "tests::preview_editor_workflow_fixtures_do_not_wait_for_cwd".to_string(),
+            "--exact".to_string(),
+            "--nocapture".to_string(),
+        ],
+        Some(&repo_root()?),
+        &[(CHILD_ENV, "1")],
+        Duration::from_secs(20),
+        "isolated preview CWD regression",
+    )?
+    .output;
+    let diagnostic = format!(
+        "preview CWD child status={:?}, timed_out={}, stdout={}, stderr={}",
+        output.status, output.timed_out, output.stdout, output.stderr
+    );
+    if output.timed_out
+        || !output.status.is_some_and(|status| status.success())
+        || !output.stdout.contains("running 1 test")
+        || !output.stdout.contains("1 passed; 0 failed; 0 ignored;")
+        || !output.stderr.lines().any(|line| line == COMPLETED)
+    {
+        return Err(diagnostic);
+    }
+    eprintln!("{diagnostic}");
+    Ok(())
+}
+
+fn preview_fixture_assertions_with_cwd_writer() -> Result<(), String> {
     let (started, completed, worker) = with_temp_cwd("preview-independent-cwd", |_root| {
         let (start_tx, start_rx) = std::sync::mpsc::channel();
         let (done_tx, done_rx) = std::sync::mpsc::channel();
