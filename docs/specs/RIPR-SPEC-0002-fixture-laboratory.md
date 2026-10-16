@@ -32,6 +32,10 @@ Readiness is checked once per runner process before this fixture executes.
 Missing dependencies must produce an actionable preparation error, without
 network access during the check or a golden blessing. Warm binary-build
 memoization and the existing fixture-cache isolation remain in force.
+Offline proxy launches set `RUSTUP_AUTO_INSTALL=0`, including version probes
+before offline preparation. Cargo's `--offline` flag alone does not prevent
+Rustup from installing a missing pin. Ordinary online preparation preserves
+the caller's Rustup installation policy.
 
 Each fixture should provide enough evidence to prove one analyzer behavior or
 output contract without relying on chat history.

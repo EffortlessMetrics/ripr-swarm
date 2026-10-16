@@ -58,18 +58,36 @@ fn toolchain(pin: &str) -> Result<String, String> {
         .ok_or_else(|| "rust-toolchain.toml must name toolchain.channel".into())
 }
 
-fn cargo(args: &[String]) -> Result<String, String> {
-    let environment = environment()?;
+/// Cargo's offline flag is parsed after rustup selects a toolchain. Bind the
+/// launcher policy as well, overriding even an ambient AUTO_INSTALL=1.
+fn proxy_environment(
+    environment: &[(&'static str, String)],
+    offline: bool,
+) -> Vec<(&'static str, String)> {
+    let mut envs = environment.to_vec();
+    if offline {
+        envs.push(("RUSTUP_AUTO_INSTALL", "0".into()));
+    }
+    envs
+}
+
+fn offline_mode(requested: bool) -> bool {
+    requested || std::env::var("CARGO_NET_OFFLINE").is_ok_and(|value| value == "true")
+}
+
+fn proxy_output(program: &str, args: &[String], offline: bool) -> Result<String, String> {
+    let environment = proxy_environment(environment()?, offline_mode(offline));
     let envs = environment
         .iter()
         .map(|(k, v)| (*k, v.as_str()))
         .collect::<Vec<_>>();
-    run_output_owned_with_envs("cargo", args, &envs)
-        .map_err(|e| preparation_error(&binding(environment), &e))
+    run_output_owned_with_envs(program, args, &envs)
+        .map_err(|e| preparation_error(&binding(&environment), &e))
 }
 
 pub(super) fn build(args: &[&str]) -> Result<(), String> {
-    let envs = environment()?
+    let environment = proxy_environment(environment()?, offline_mode(args.contains(&"--offline")));
+    let envs = environment
         .iter()
         .map(|(k, v)| (*k, v.as_str()))
         .collect::<Vec<_>>();
@@ -86,7 +104,7 @@ fn binding(environment: &[(&str, String)]) -> String {
 
 fn preparation_error(binding: &str, error: &str) -> String {
     format!(
-        "fixture dependency preparation failed for {FIXTURE}\nenvironment: {binding}\n{error}\nnext: run `cargo xtask goldens prepare` with this same environment (or `cargo xtask goldens prepare --offline` with a seeded cache), then retry the fixture/golden check. The fixture requires its locked anyhow 1.0.100; fetching another Cargo home does not prepare this subprocess. Do not bless availability drift."
+        "fixture dependency preparation failed for {FIXTURE}\nenvironment: {binding}\n{error}\nnext: run `cargo xtask goldens prepare` with this same environment (or `cargo xtask goldens prepare --offline` with a seeded cache), then retry the fixture/golden check. The fixture requires its locked anyhow 1.0.100; fetching another Cargo home does not prepare this subprocess. If the pinned toolchain is missing, install it explicitly before retrying offline. Do not bless availability drift."
     )
 }
 
@@ -106,7 +124,7 @@ fn metadata_args() -> Vec<String> {
 
 pub(super) fn ensure_ready() -> Result<(), String> {
     READY
-        .get_or_init(|| cargo(&metadata_args()).map(|_| ()))
+        .get_or_init(|| proxy_output("cargo", &metadata_args(), true).map(|_| ()))
         .clone()
 }
 
@@ -114,83 +132,28 @@ pub(super) fn prepare(args: &[String]) -> Result<(), String> {
     if !args.is_empty() && args != ["--offline"] {
         return Err("usage: cargo xtask goldens prepare [--offline]".into());
     }
+    let offline = offline_mode(!args.is_empty());
     println!(
         "fixture: {FIXTURE}\nenvironment: {}",
-        binding(environment()?)
+        binding(&proxy_environment(environment()?, offline))
     );
-    println!("{}", cargo(&["--version".into()])?.trim());
-    let envs = environment()?
-        .iter()
-        .map(|(k, v)| (*k, v.as_str()))
-        .collect::<Vec<_>>();
-    let rustc = run_output_owned_with_envs("rustc", &["--version".into()], &envs)?;
-    println!("{}", rustc.trim());
+    for program in ["cargo", "rustc"] {
+        println!(
+            "{}",
+            proxy_output(program, &["--version".into()], offline)?.trim()
+        );
+    }
     let mut fetch = ["fetch", "--locked", "--manifest-path", MANIFEST]
         .map(String::from)
         .to_vec();
     fetch.extend_from_slice(args);
-    cargo(&fetch)?;
+    proxy_output("cargo", &fetch, offline)?;
     // A successful fetch alone is not readiness: verify locked resolution with
     // the same offline metadata command the golden runner will use.
-    cargo(&metadata_args())?;
+    proxy_output("cargo", &metadata_args(), true)?;
     println!("prepared {FIXTURE}; retry fixture/golden checks with the environment above");
     Ok(())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn readiness_uses_the_locked_fixture_offline() {
-        assert_eq!(
-            metadata_args(),
-            [
-                "metadata",
-                "--locked",
-                "--offline",
-                "--format-version",
-                "1",
-                "--manifest-path",
-                "fixtures/owner_return_pin_fallible_literal/input/Cargo.toml"
-            ]
-        );
-    }
-
-    #[test]
-    fn missing_dependency_error_names_binding_and_repair() {
-        let error = preparation_error(
-            "CARGO_HOME=\"/selected cache\" RUSTUP_TOOLCHAIN=\"1.95.0\"",
-            "no matching package named anyhow",
-        );
-        for expected in [
-            "/selected cache",
-            "1.95.0",
-            "no matching package named anyhow",
-            "cargo xtask goldens prepare",
-            "locked anyhow 1.0.100",
-            "Do not bless",
-        ] {
-            assert!(error.contains(expected), "missing {expected}: {error}");
-        }
-    }
-
-    #[test]
-    fn preparation_rejects_unknown_arguments() -> Result<(), String> {
-        let Err(error) = prepare(&["--force".into()]) else {
-            return Err("unknown preparation argument was accepted".into());
-        };
-        assert_eq!(error, "usage: cargo xtask goldens prepare [--offline]");
-        Ok(())
-    }
-
-    #[test]
-    fn repository_toolchain_is_required() -> Result<(), String> {
-        assert_eq!(toolchain("[toolchain]\nchannel = '1.95.0'\n")?, "1.95.0");
-        let Err(error) = toolchain("[toolchain]\ncomponents = []") else {
-            return Err("missing repository toolchain channel was accepted".into());
-        };
-        assert_eq!(error, "rust-toolchain.toml must name toolchain.channel");
-        Ok(())
-    }
-}
+mod tests;

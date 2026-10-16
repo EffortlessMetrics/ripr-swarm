@@ -71,7 +71,10 @@ when set, repository toolchain pin and actual Cargo/rustc versions. Keep that
 same environment for subsequent checks. `--offline` supports a seeded registry
 cache. The command fetches only the locked fixture manifest and verifies offline
 metadata; it does not build the workspace or change expected outputs. Fixture
-checks refuse missing prerequisites with the selected environment and repair
+readiness and offline preparation also disable Rustup auto-installation, including
+the Cargo/rustc version probes: a missing pin refuses instead of downloading a
+toolchain. Ordinary online preparation preserves the caller's Rustup policy.
+Fixture checks refuse missing prerequisites with the selected environment and repair
 command, rather than treating availability drift as a reason to bless goldens.
 A fetch in another Cargo home does not prepare the subprocess. Sanitized external
 sensors need their own compatible preparation boundary; this local command does
