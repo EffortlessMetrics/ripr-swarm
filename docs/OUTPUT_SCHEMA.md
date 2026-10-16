@@ -16236,6 +16236,11 @@ the observation found no absent requested files; it does not assert that every
 changed seam was classified. Intentionally deleted files are excluded by the
 shared diff parser.
 
+When no successful supplement supplied the observation, pilot applies the shared
+diff-aware generated-source exclusions before checking presence, including exact
+handwritten opt-ins and changed vendor checksum markers. Deliberately excluded
+source is not named as absent by that fallback.
+
 The terminal and Markdown "Inspected" block names each absent path, the
 `changed_file_absent_from_worktree` category, and the producer's recovery
 guidance, even when `top_recommendation_in_change` is true for a present file.

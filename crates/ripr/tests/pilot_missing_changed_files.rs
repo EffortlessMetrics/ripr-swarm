@@ -555,6 +555,121 @@ fn pilot_discloses_mixed_missing_changed_file_without_inventory_limit() -> Resul
 }
 
 #[test]
+fn pilot_uncapped_absence_honors_generated_policy_and_handwritten_opt_in() -> Result<(), String> {
+    let mut fixture = fixture("pilot-uncapped-generated-admission", true)?;
+    fixture.seam_limit = None;
+    std::fs::write(fixture.root.join("src/generated.rs"), HIDDEN_CHANGE)
+        .map_err(|error| error.to_string())?;
+    run_git(&fixture.root, &["add", "src/generated.rs"])?;
+    run_git(&fixture.root, &["commit", "-m", "generated source"])?;
+    let identity = committed_identity(&fixture.root)?;
+    assert_eq!(
+        identity.1.replace("\r\n", "\n"),
+        "src/generated.rs\nsrc/y_present.rs\nsrc/z_hidden.rs\n"
+    );
+    run_git(&fixture.root, &["sparse-checkout", "init", "--no-cone"])?;
+    run_git(
+        &fixture.root,
+        &[
+            "sparse-checkout",
+            "set",
+            "--no-cone",
+            "/*",
+            "!/src/generated.rs",
+            "!/src/z_hidden.rs",
+        ],
+    )?;
+    assert!(!fixture.root.join("src/generated.rs").exists());
+    assert!(!fixture.root.join("src/z_hidden.rs").exists());
+    assert_eq!(committed_identity(&fixture.root)?, identity);
+    let cache = fixture.scratch.join("cache");
+    let default = pilot(&fixture, &cache, 3)?;
+    assert_absent(&default);
+    for text in [&default.stdout, &default.md] {
+        assert!(
+            !text
+                .lines()
+                .any(|line| line.contains("changed_file_absent_from_worktree")
+                    && line.contains("src/generated.rs")),
+            "{text}"
+        );
+    }
+    std::fs::write(
+        fixture.root.join("ripr.toml"),
+        "[languages.rust]\nhandwritten_files = [\"src/generated.rs\"]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let opted_in = pilot(&fixture, &cache, 3)?;
+    assert_eq!(
+        opted_in.summary["current_change"]["absent_changed_files"],
+        json!(["src/generated.rs", "src/z_hidden.rs"])
+    );
+    std::fs::write(fixture.root.join("ripr.toml"), "[languages.rust]\nhandwritten_files = [\"src/generated.rs\", \"src/z_hidden.rs\"]\ngenerated_file_patterns = [\"src/z_hidden.rs\"]\n")
+        .map_err(|error| error.to_string())?;
+    let explicit = pilot(&fixture, &cache, 3)?;
+    assert_eq!(
+        explicit.summary["current_change"]["absent_changed_files"],
+        json!(["src/generated.rs"])
+    );
+    Ok(())
+}
+
+#[test]
+fn pilot_uncapped_absence_retains_changed_missing_vendor_marker_context() -> Result<(), String> {
+    let mut fixture = fixture("pilot-uncapped-absent-vendor-marker", true)?;
+    fixture.seam_limit = None;
+    std::fs::create_dir_all(fixture.root.join("src/vendor")).map_err(|error| error.to_string())?;
+    std::fs::write(fixture.root.join("src/vendor/ordinary.rs"), HIDDEN_CHANGE)
+        .map_err(|error| error.to_string())?;
+    std::fs::write(fixture.root.join("src/vendor/.cargo-checksum.json"), "{}\n")
+        .map_err(|error| error.to_string())?;
+    run_git(&fixture.root, &["add", "src/vendor"])?;
+    run_git(
+        &fixture.root,
+        &["commit", "-m", "vendored source and checksum"],
+    )?;
+    let identity = committed_identity(&fixture.root)?;
+    assert!(identity.1.contains("src/vendor/.cargo-checksum.json"));
+    run_git(&fixture.root, &["sparse-checkout", "init", "--no-cone"])?;
+    run_git(
+        &fixture.root,
+        &[
+            "sparse-checkout",
+            "set",
+            "--no-cone",
+            "/*",
+            "!/src/vendor/",
+            "!/src/z_hidden.rs",
+        ],
+    )?;
+    assert!(
+        !fixture
+            .root
+            .join("src/vendor/.cargo-checksum.json")
+            .exists()
+    );
+    assert!(!fixture.root.join("src/vendor/ordinary.rs").exists());
+    assert_eq!(committed_identity(&fixture.root)?, identity);
+    std::fs::write(
+        fixture.root.join("ripr.toml"),
+        "[languages.rust]\nhandwritten_files = [\"src/vendor/ordinary.rs\"]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let result = pilot(&fixture, &fixture.scratch.join("cache"), 3)?;
+    assert_absent(&result);
+    for text in [&result.stdout, &result.md] {
+        assert!(
+            !text
+                .lines()
+                .any(|line| line.contains("changed_file_absent_from_worktree")
+                    && line.contains("src/vendor/ordinary.rs")),
+            "{text}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn pilot_does_not_name_intentionally_deleted_file_as_absent() -> Result<(), String> {
     let mut fixture = fixture("pilot-deleted-changed-source", true)?;
     fixture.seam_limit = None;

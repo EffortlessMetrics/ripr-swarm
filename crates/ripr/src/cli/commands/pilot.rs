@@ -277,15 +277,14 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let absent_file_limitations = if let Some(limitations) = folded.absent_file_limitations {
         Some(limitations)
     } else if rust_enabled {
-        let files = current_change.changed_rust_files();
-        if files.is_empty() {
+        if current_change.changed_rust_files().is_empty() {
             None
         } else {
-            let absent = analysis::changed_source_files_absent_from_worktree(
+            Some(analysis::absent_changed_rust_file_limitations(
                 &input.root,
-                files.iter().map(PathBuf::as_path),
-            );
-            Some(analysis::supplement_absent_file_limitations(&absent)?)
+                &config,
+                &current_change.changed_files(),
+            )?)
         }
     } else {
         None

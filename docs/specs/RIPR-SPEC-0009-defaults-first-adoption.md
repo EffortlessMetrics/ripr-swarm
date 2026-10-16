@@ -243,6 +243,10 @@ change names Rust source files, pilot records the shared source-admission
 observation regardless of whether the inventory cap fired or supplemental
 classification succeeded. It retains the producer's existing
 `changed_file_absent_from_worktree` limitations for absent requested files.
+The fallback observation applies the shared diff-aware generated-source policy
+before admission, including handwritten opt-ins, explicit patterns and changed
+vendor checksum markers, so deliberately excluded source gains no restoration
+warning from that fallback.
 The terminal and Markdown name each path and its recovery action under
 "Inspected", even when a present changed seam is the top recommendation.
 `current_change.absent_changed_files` in the JSON summary records those portable

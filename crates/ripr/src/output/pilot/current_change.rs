@@ -127,6 +127,14 @@ impl PilotCurrentChange {
     /// its own when the inventory seam limit cut it (#6943). Empty without a
     /// change.
     pub(crate) fn changed_rust_files(&self) -> Vec<PathBuf> {
+        self.changed_files()
+            .into_iter()
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+            .collect()
+    }
+
+    /// All decoded diff paths, including non-Rust vendor checksum markers.
+    pub(crate) fn changed_files(&self) -> Vec<PathBuf> {
         let Self::Changed { lines, .. } = self else {
             return Vec::new();
         };
@@ -134,7 +142,6 @@ impl PilotCurrentChange {
         // raw path bytes, so decode them back to the on-disk spelling.
         lines
             .keys()
-            .filter(|path| path.ends_with(".rs"))
             .map(|path| crate::analysis::decode_stable_path_text(path))
             .collect()
     }
