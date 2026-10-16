@@ -1,0 +1,615 @@
+{
+  "timestamp_utc": "2026-10-16T06:14:30.310169+00:00",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "pr": 8004,
+  "requested_review": 5543295375,
+  "requested_packet": "f975e98e2eecc4126c1aaca9846e934975e2266c/evidence/8004/independent-shadow8e",
+  "disposition": "PROFILING_COMPLETE_FROZEN8E / NO_OPTIMIZATION_IMPLEMENTED / NO_NEW_HEAD_QUALIFICATION",
+  "source_currentness": {
+    "timestamp_utc": "2026-10-16T06:12:43.168604+00:00",
+    "profiled_source": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+    "profiled_tree": "da4222d49d37aa82662003e0b6ef4ca8715dbac3",
+    "live_head": "36dbb87430ef858aa143b5fc3205b376b0caee11",
+    "live_tree": "024d04e46de6ac531ca7485d9b7b6b4e7dafc2e4",
+    "live_parents": [
+      "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+      "d08c77d144c016078364fcc1fcf2fa593d21cefc"
+    ],
+    "live_basis": "d08c77d144c016078364fcc1fcf2fa593d21cefc",
+    "pr_open_draft": true,
+    "unchanged_path_blobs": [
+      {
+        "path": "crates/ripr/src/analysis/classify/related_tests.rs",
+        "old": "5ac5805ae66fb438b3d6b339688a3d469c40d7a5",
+        "new": "5ac5805ae66fb438b3d6b339688a3d469c40d7a5"
+      },
+      {
+        "path": "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
+        "old": "2b1fdf03905b76a30d3425af517a1398ad1ef83f",
+        "new": "2b1fdf03905b76a30d3425af517a1398ad1ef83f"
+      },
+      {
+        "path": "crates/ripr/src/analysis/classify/call_identity.rs",
+        "old": "9f0ffbfa6e59b99de06d31917c0c89acbf14f3b4",
+        "new": "9f0ffbfa6e59b99de06d31917c0c89acbf14f3b4"
+      },
+      {
+        "path": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+        "old": "06c39013faf4b9b2287fe03d587dac896a1ded80",
+        "new": "06c39013faf4b9b2287fe03d587dac896a1ded80"
+      },
+      {
+        "path": "crates/ripr/src/analysis/syntax/owner_pin.rs",
+        "old": "75b109395849e5f0c36adea2b8fbfcca2179272d",
+        "new": "75b109395849e5f0c36adea2b8fbfcca2179272d"
+      }
+    ],
+    "unchanged_owner_functions": [
+      {
+        "name": "targeted_source_provenance_is_admitted",
+        "old_line": 648,
+        "current_line": 674,
+        "body_bytes_equal": true,
+        "sha256": "b75abda4614bbe21dc46cb2f5b71e9360f77536575d9b9a4418138f3e95e825e"
+      },
+      {
+        "name": "targeted_macro_binding_is_unambiguous",
+        "old_line": 673,
+        "current_line": 699,
+        "body_bytes_equal": true,
+        "sha256": "0c669e24a388d00ac04c1d63c1e5cff689df21a715b6912eab64fcd5fbf83dc5"
+      },
+      {
+        "name": "trusted_macro_ambiguities",
+        "old_line": 748,
+        "current_line": 774,
+        "body_bytes_equal": true,
+        "sha256": "ceeba512a90ee988f74ad020a6e23fd515076b2d78f06a0fdc37cd4fc7ae1de1"
+      },
+      {
+        "name": "same_file_free_helper_call_reaches_owner",
+        "old_line": 6731,
+        "current_line": 6927,
+        "body_bytes_equal": true,
+        "sha256": "68f21c5e889ec6ab836c62fd75aed7d62cbab80e881f7ac1030c1543426d2725"
+      },
+      {
+        "name": "test_module_shadows_item",
+        "old_line": 9897,
+        "current_line": 10093,
+        "body_bytes_equal": true,
+        "sha256": "c2f386c385ef37b9ef9846c9e0cad9219c0419bdf38000c5fe88c050136d62f2"
+      },
+      {
+        "name": "file_scopes",
+        "old_line": 6860,
+        "current_line": 7056,
+        "body_bytes_equal": true,
+        "sha256": "7d4b904ccb6a4b60f91a70b18c5fd5d78228b8acad8c666da7cddeec2cd0cddf"
+      }
+    ],
+    "owner_pin_delta": "196 additive lines: new fields and iteration/element-field support; measured function bodies unchanged",
+    "other_material_delta": "main integration includes Cargo/dependencies, classifier and cache schema1.79->1.80/compact0.85->0.86 changes",
+    "inference": "measured target and request-multiplication producer survive source inspection; all executed numbers remain frozen8e only, not new-head runtime/latency or cache qualification",
+    "candidate_ref_owned_by": "Rook; external owner moved8e to36db during this task; no candidate write by profiling lane"
+  },
+  "binaries": {
+    "clean": {
+      "source": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+      "tree": "da4222d49d37aa82662003e0b6ef4ca8715dbac3",
+      "version": "ripr 0.11.0 (8e0444b1a62ead18584d40b18278c6e8716dc56c)",
+      "sha256": "9a4674f89a81c5ff153e1422946e1425cf1491cc578f5e478aa43a420b3c3d84",
+      "bytes": 33047248,
+      "artifact": {
+        "reason": "compiler-artifact",
+        "package_id": "path+file:///workspace/profile8004/source/crates/ripr#0.11.0",
+        "manifest_path": "/workspace/profile8004/source/crates/ripr/Cargo.toml",
+        "target": {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "ripr",
+          "src_path": "/workspace/profile8004/source/crates/ripr/src/main.rs",
+          "edition": "2024",
+          "doc": true,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": false
+        },
+        "features": [
+          "default",
+          "lang-python",
+          "lang-rust",
+          "lang-typescript"
+        ],
+        "filenames": [
+          "/workspace/profile8004/target/release/ripr"
+        ],
+        "executable": "/workspace/profile8004/target/release/ripr",
+        "fresh": true
+      },
+      "stamp": [
+        {
+          "RIPR_BUILD_COMMIT": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+          "RIPR_BUILD_COMMIT_DIRTY": "false",
+          "RIPR_BUILD_SOURCE_DIGEST": ""
+        }
+      ]
+    },
+    "profile": {
+      "source": "dbea701084ed6c6ded6cf35dfed3bb0f0e065af4",
+      "tree": "c055237af4cbd0cc570f9d62baaebbdafa241b97",
+      "version": "ripr 0.11.0 (dbea701084ed6c6ded6cf35dfed3bb0f0e065af4)",
+      "sha256": "599e117aee42e63a460c141a74a5639502514d64a60825fe09ec2568bbd09d28",
+      "bytes": 33065408,
+      "artifact": {
+        "reason": "compiler-artifact",
+        "package_id": "path+file:///workspace/profile8004/source/crates/ripr#0.11.0",
+        "manifest_path": "/workspace/profile8004/source/crates/ripr/Cargo.toml",
+        "target": {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "ripr",
+          "src_path": "/workspace/profile8004/source/crates/ripr/src/main.rs",
+          "edition": "2024",
+          "doc": true,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": false
+        },
+        "features": [
+          "default",
+          "lang-python",
+          "lang-rust",
+          "lang-typescript"
+        ],
+        "filenames": [
+          "/workspace/profile8004/target/release/ripr"
+        ],
+        "executable": "/workspace/profile8004/target/release/ripr",
+        "fresh": false
+      },
+      "stamp": [
+        {
+          "RIPR_BUILD_COMMIT": "dbea701084ed6c6ded6cf35dfed3bb0f0e065af4",
+          "RIPR_BUILD_COMMIT_DIRTY": "false",
+          "RIPR_BUILD_SOURCE_DIGEST": ""
+        }
+      ]
+    }
+  },
+  "instrumentation_patch_sha256": "b046fabc3141dcb2a4f81fb919100f0bae727706d95700eab5e10779ee312d21",
+  "packet_recovery": [
+    {
+      "ref": "f975e98e2eecc4126c1aaca9846e934975e2266c",
+      "packet": "independent-shadow8e",
+      "members": 2169,
+      "checksums": "all pass",
+      "member_bytes_sizes_modes_inventory": "pass"
+    },
+    {
+      "ref": "31c295d2f05eb3cb89e4b5cd8191d33f86267df8",
+      "packet": "shadow-syntax-repair",
+      "members": 8985,
+      "checksums": "all pass",
+      "member_bytes_sizes_modes_inventory": "pass"
+    }
+  ],
+  "analyzer_processes": 13,
+  "successful_analyzer_processes": 13,
+  "timeouts": 0,
+  "complete_retained_output_comparisons": 13,
+  "normalization": "top-level artifact removal and exact input-root rebasing only",
+  "native_control_results": [
+    {
+      "argv": [
+        "/workspace/profile8004/bin/anchor-original",
+        "--exact",
+        "positive::subject",
+        "--nocapture"
+      ],
+      "exit": 0,
+      "source_sha256": "6eb760f3d94cd595c0f7571e9f42841f9520dc5bd567a5c21c7cfadd9c5620e6",
+      "one_named_test": true,
+      "executable_sha256": "17ecd849696691f302d5e1ec4a25a29750590d284fd72086f26992d7bba3eb8a"
+    },
+    {
+      "argv": [
+        "/workspace/profile8004/bin/anchor-original",
+        "--exact",
+        "negative::subject",
+        "--nocapture"
+      ],
+      "exit": 0,
+      "source_sha256": "6eb760f3d94cd595c0f7571e9f42841f9520dc5bd567a5c21c7cfadd9c5620e6",
+      "one_named_test": true,
+      "executable_sha256": "17ecd849696691f302d5e1ec4a25a29750590d284fd72086f26992d7bba3eb8a"
+    },
+    {
+      "argv": [
+        "/workspace/profile8004/bin/anchor-mutant",
+        "--exact",
+        "positive::subject",
+        "--nocapture"
+      ],
+      "exit": 101,
+      "source_sha256": "74166c84a66d49f2c8bde4b13a4c5e699448c335e3fd2cdc7da539808c877933",
+      "one_named_test": true,
+      "executable_sha256": "2153e651c4e7564c449b4f87eb246bf77b96dbf0293b1efd6aa7bb5c4b601a20"
+    },
+    {
+      "argv": [
+        "/workspace/profile8004/bin/anchor-mutant",
+        "--exact",
+        "negative::subject",
+        "--nocapture"
+      ],
+      "exit": 0,
+      "source_sha256": "74166c84a66d49f2c8bde4b13a4c5e699448c335e3fd2cdc7da539808c877933",
+      "one_named_test": true,
+      "executable_sha256": "2153e651c4e7564c449b4f87eb246bf77b96dbf0293b1efd6aa7bb5c4b601a20"
+    }
+  ],
+  "fresh_lexical_controls": {
+    "clean_and_profile_each": {
+      "owner_seams": 4,
+      "positive_direct_high": 4,
+      "negative_direct_or_helper": 0
+    }
+  },
+  "warm_cache_controls": "sync64 single and split: complete448-seam report parity; zero instrumented spans/queries",
+  "input_controls": "ordered split module bytes equal single for16 and64; Cargo files, locks and exact bytes retained",
+  "clean_compact_observations_s": {
+    "sync-16-single": 0.164268925,
+    "sync-16-split": 0.064730045,
+    "sync-64-single": 9.040923839,
+    "sync-64-split": 1.919594887
+  },
+  "profile_spans": {
+    "sync-16-single": {
+      "executable_query": {
+        "calls": 19416,
+        "inclusive_s": 0.085387472
+      },
+      "fragment_miss": {
+        "calls": 6,
+        "inclusive_s": 6.9352e-05
+      },
+      "fragment_query": {
+        "calls": 27112,
+        "inclusive_s": 0.001250231
+      },
+      "helper_name_match": {
+        "calls": 11928,
+        "inclusive_s": 0.0
+      },
+      "helper_query": {
+        "calls": 19368,
+        "inclusive_s": 0.08856248
+      },
+      "inherent_query": {
+        "calls": 48,
+        "inclusive_s": 0.000226657
+      },
+      "macro_ambiguities": {
+        "calls": 3976,
+        "inclusive_s": 0.01231452
+      },
+      "macro_binding": {
+        "calls": 3976,
+        "inclusive_s": 0.013392927
+      },
+      "operand_query": {
+        "calls": 3976,
+        "inclusive_s": 0.021899703
+      },
+      "outer_ast_visits": {
+        "calls": 813200,
+        "inclusive_s": 0.0
+      },
+      "receiver_scope": {
+        "calls": 16,
+        "inclusive_s": 2.9874e-05
+      },
+      "same_file_helper_binding": {
+        "calls": 11928,
+        "inclusive_s": 0.018174119
+      },
+      "shadow_mask": {
+        "calls": 768,
+        "inclusive_s": 0.010042816
+      },
+      "shadow_miss": {
+        "calls": 768,
+        "inclusive_s": 0.0140281
+      },
+      "shadow_query": {
+        "calls": 768,
+        "inclusive_s": 0.014589553
+      },
+      "source_provenance": {
+        "calls": 3976,
+        "inclusive_s": 0.000273625
+      }
+    },
+    "sync-16-split": {
+      "executable_query": {
+        "calls": 816,
+        "inclusive_s": 0.031081654
+      },
+      "fragment_miss": {
+        "calls": 5,
+        "inclusive_s": 5.6633e-05
+      },
+      "fragment_query": {
+        "calls": 1072,
+        "inclusive_s": 0.000124287
+      },
+      "helper_name_match": {
+        "calls": 768,
+        "inclusive_s": 0.0
+      },
+      "helper_query": {
+        "calls": 768,
+        "inclusive_s": 0.031431365
+      },
+      "inherent_query": {
+        "calls": 48,
+        "inclusive_s": 0.000213196
+      },
+      "macro_ambiguities": {
+        "calls": 256,
+        "inclusive_s": 0.016021809
+      },
+      "macro_binding": {
+        "calls": 256,
+        "inclusive_s": 0.024879877
+      },
+      "operand_query": {
+        "calls": 256,
+        "inclusive_s": 0.002571957
+      },
+      "outer_ast_visits": {
+        "calls": 17120,
+        "inclusive_s": 0.0
+      },
+      "owner_assertions_build": {
+        "calls": 256,
+        "inclusive_s": 0.008430569
+      },
+      "receiver_scope": {
+        "calls": 16,
+        "inclusive_s": 2.3687e-05
+      },
+      "same_file_helper_binding": {
+        "calls": 768,
+        "inclusive_s": 0.003832249
+      },
+      "shadow_mask": {
+        "calls": 768,
+        "inclusive_s": 0.000607401
+      },
+      "shadow_miss": {
+        "calls": 768,
+        "inclusive_s": 0.001431722
+      },
+      "shadow_query": {
+        "calls": 768,
+        "inclusive_s": 0.002397317
+      },
+      "source_provenance": {
+        "calls": 256,
+        "inclusive_s": 0.008781866
+      }
+    },
+    "sync-64-single": {
+      "executable_query": {
+        "calls": 1292640,
+        "inclusive_s": 7.671343536
+      },
+      "fragment_miss": {
+        "calls": 6,
+        "inclusive_s": 7.5089e-05
+      },
+      "fragment_query": {
+        "calls": 1808800,
+        "inclusive_s": 0.083538228
+      },
+      "helper_name_match": {
+        "calls": 780384,
+        "inclusive_s": 0.0
+      },
+      "helper_query": {
+        "calls": 1292448,
+        "inclusive_s": 7.885430208
+      },
+      "inherent_query": {
+        "calls": 192,
+        "inclusive_s": 0.001077214
+      },
+      "macro_ambiguities": {
+        "calls": 260128,
+        "inclusive_s": 2.880945274
+      },
+      "macro_binding": {
+        "calls": 260128,
+        "inclusive_s": 2.963577894
+      },
+      "operand_query": {
+        "calls": 260128,
+        "inclusive_s": 1.466592134
+      },
+      "outer_ast_visits": {
+        "calls": 55043648,
+        "inclusive_s": 0.0
+      },
+      "receiver_scope": {
+        "calls": 64,
+        "inclusive_s": 0.000189995
+      },
+      "same_file_helper_binding": {
+        "calls": 780384,
+        "inclusive_s": 1.034666941
+      },
+      "shadow_mask": {
+        "calls": 12288,
+        "inclusive_s": 0.597880219
+      },
+      "shadow_miss": {
+        "calls": 12288,
+        "inclusive_s": 0.804249292
+      },
+      "shadow_query": {
+        "calls": 12288,
+        "inclusive_s": 0.832644639
+      },
+      "source_provenance": {
+        "calls": 260128,
+        "inclusive_s": 0.013525158
+      }
+    },
+    "sync-64-split": {
+      "executable_query": {
+        "calls": 12480,
+        "inclusive_s": 1.52477169
+      },
+      "fragment_miss": {
+        "calls": 5,
+        "inclusive_s": 6.4475e-05
+      },
+      "fragment_query": {
+        "calls": 16576,
+        "inclusive_s": 0.001549375
+      },
+      "helper_name_match": {
+        "calls": 12288,
+        "inclusive_s": 0.0
+      },
+      "helper_query": {
+        "calls": 12288,
+        "inclusive_s": 1.548271637
+      },
+      "inherent_query": {
+        "calls": 192,
+        "inclusive_s": 0.001053188
+      },
+      "macro_ambiguities": {
+        "calls": 4096,
+        "inclusive_s": 0.400365673
+      },
+      "macro_binding": {
+        "calls": 4096,
+        "inclusive_s": 1.386663382
+      },
+      "operand_query": {
+        "calls": 4096,
+        "inclusive_s": 0.066446439
+      },
+      "outer_ast_visits": {
+        "calls": 252800,
+        "inclusive_s": 0.0
+      },
+      "owner_assertions_build": {
+        "calls": 4096,
+        "inclusive_s": 0.973635459
+      },
+      "receiver_scope": {
+        "calls": 64,
+        "inclusive_s": 0.00014557
+      },
+      "same_file_helper_binding": {
+        "calls": 12288,
+        "inclusive_s": 0.088579638
+      },
+      "shadow_mask": {
+        "calls": 12288,
+        "inclusive_s": 0.010722773
+      },
+      "shadow_miss": {
+        "calls": 12288,
+        "inclusive_s": 0.026597924
+      },
+      "shadow_query": {
+        "calls": 12288,
+        "inclusive_s": 0.075454319
+      },
+      "source_provenance": {
+        "calls": 4096,
+        "inclusive_s": 0.984160775
+      }
+    }
+  },
+  "exact_request_cardinality": {
+    "H": {
+      "unique": 20352,
+      "total": 1292448,
+      "repeat_queries": 1272096,
+      "max_reuse": 64
+    },
+    "I": {
+      "unique": 192,
+      "total": 192,
+      "repeat_queries": 0,
+      "max_reuse": 1
+    }
+  },
+  "next_target": {
+    "owner": "Rook / existing #8004 / #7415",
+    "producer": "context.rs:3993 inherent_helper_path_reaches_owner",
+    "admission": "related_tests.rs:3070 free_helper_call_resolves",
+    "recommendation": "Reuse owner-independent caller/helper executable-admission answers within a fully keyed immutable-index context, including false answers; retain current per-call lexical/module/macro/refusal authority on first computation. Do not replace or weaken the DFS.",
+    "observed_repeated_helper_queries": 1272096,
+    "observed_repeated_fraction": 0.9842531382307064,
+    "cache_requirements": [
+      "caller file/name/start/end/body identity and actual helper symbol/declaration/source identity",
+      "complete lexical/module/macro binding and source/provenance generation; invalidate on every dependent source/provenance change and clone",
+      "retain async declaration gate, helper owner scope and unsupported-boundary refusals",
+      "do not memoize recursive reach without depth/visited state; existing(test,owner) reach memo is already present"
+    ]
+  },
+  "secondary_targets": [
+    "split: source-provenance macro authority rebuilds parent owner_pin_assertions4096 times /0.973635459s inclusive; share immutable source+trusted-policy facts while preserving invocation anchors",
+    "single: unique shadow misses mask complete source12288 times /0.597880219s inclusive; share source masking/declaration facts without weakening complete answer keys"
+  ],
+  "limits": [
+    "n=1 profiling samples, instrument overhead; no speedup claim",
+    "inclusive nested spans overlap; not wall percentages",
+    "fixed immutable per-process index, pair identity is not cross-source cache-key proof",
+    "selected Linux/default feature/Rust1.95 release; no new-head execution or general performance qualification",
+    "no full benchmark matrix, predecessor/a5/base98 runs, hosted/Windows/workspace qualification or new optimization",
+    "selected old UnitStructFacts zero remains retained evidence only; not instrumented anew"
+  ],
+  "resources": {
+    "owned": "/workspace/profile8004",
+    "common_git": "/workspace/ripr-swarm/.git",
+    "status": "retained with reason: exact clean/profile executable witnesses, source patch, raw reports, own build target and restored packets available for owner replay; no queued consumers",
+    "shared_checkout": "b772d9e13cafcdc84a19ea77d9b90fbc6cb91ecc clean and untouched",
+    "budget": "peak12GiB extra, reserve8GiB; final observed29GiB free / owned1.4GiB",
+    "cleanup": "none; inherited targets and unknown resources untouched"
+  },
+  "prohibitions_respected": [
+    "no source optimization or submitted candidate push",
+    "no issue8005 read/retry",
+    "no Ready/merge/thread resolution",
+    "no bot contact/release/deploy/spending/credential or security changes/destructive cleanup/workflow weakening"
+  ]
+}
