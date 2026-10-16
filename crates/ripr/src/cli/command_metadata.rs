@@ -918,7 +918,7 @@ const METADATA: &[CommandMetadata] = &[
         effects: READS_ONLY,
         primary_inputs: &[
             "--pr-number, --base, and --head identities",
-            "optional gate, baseline-delta, zero-status, and guidance artifacts",
+            "at least one of --gate, --baseline-delta, --zero-status, --pr-guidance, or --gap-ledger (each individually optional)",
         ],
         outputs: CommandOutputs {
             default: Some("target/ripr/reports/pr-evidence-ledger.json"),
@@ -931,7 +931,7 @@ const METADATA: &[CommandMetadata] = &[
             "the append-only JSONL history (--out-jsonl), consumed by policy waiver-aging and policy history",
         ),
         json_support: true,
-        example: "ripr pr-ledger record --pr-number 123 --base SHA --head SHA",
+        example: "ripr pr-ledger record --pr-number 123 --base SHA --head SHA --gate target/ripr/reports/gate-decision.json",
         next_routes: &[
             "policy waiver-aging",
             "policy history",

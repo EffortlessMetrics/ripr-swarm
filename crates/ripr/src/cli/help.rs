@@ -1036,6 +1036,34 @@ mod tests {
         }
     }
 
+    /// The artifact-input group is disclosed as a one-of requirement, both
+    /// in the Usage synopsis and in a paragraph, so the shipped example
+    /// cannot be read as "every flag is optional" (#7746).
+    #[test]
+    fn pr_ledger_help_discloses_required_artifact_input() {
+        let usage = PR_LEDGER_HELP
+            .lines()
+            .find(|line| line.starts_with("Usage: ripr pr-ledger record"))
+            .unwrap_or_default();
+        for flag in [
+            "--gate",
+            "--baseline-delta",
+            "--zero-status",
+            "--pr-guidance",
+            "--gap-ledger",
+        ] {
+            assert!(
+                usage.contains(&format!("({flag} PATH|"))
+                    || usage.contains(&format!("|{flag} PATH")),
+                "Usage line must mark {flag} as one of the required artifact inputs: {usage}"
+            );
+        }
+        assert!(
+            PR_LEDGER_HELP.contains("At least one artifact input is required"),
+            "help must disclose the one-of artifact-input gate that exits 2"
+        );
+    }
+
     #[test]
     fn every_help_printer_executes_without_panic() {
         // Each wrapper is a `println!("{CONST}")` over the help-text
