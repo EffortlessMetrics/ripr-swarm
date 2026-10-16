@@ -134,6 +134,35 @@ mod tests {
     }
 
     #[test]
+    fn debug_assert_in_a_test_body_is_an_extracted_oracle() -> Result<(), String> {
+        let source = "fn owner(x: i32) -> i32 { x }\n#[test]\nfn boundary() {\n debug_assert_eq!(owner(1), 1);\n}\n";
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
+        assert_eq!(facts.tests.len(), 1, "premise: one parsed test");
+        assert_eq!(facts.tests[0].assertions.len(), 1);
+        assert!(
+            facts.tests[0].assertions[0]
+                .text
+                .starts_with("debug_assert_eq!")
+        );
+        // A look-alike with another crate path gains no authority.
+        let foreign = source.replace("debug_assert_eq!", "other::debug_assert_eq!");
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), &foreign)?;
+        assert_eq!(facts.tests.len(), 1, "premise: one parsed test");
+        assert!(facts.tests[0].assertions.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn debug_assert_spellings_are_assertion_macros() {
+        for name in ["debug_assert", "debug_assert_eq", "debug_assert_ne"] {
+            assert!(is_assertion_macro(name), "{name}");
+            assert!(is_assertion_macro_leaf(name), "{name}");
+            assert!(!is_assertion_macro(&format!("other::{name}")), "{name}");
+        }
+        assert!(!is_assertion_macro("debug_assert_custom"));
+    }
+
+    #[test]
     fn drop_in_assertion_crate_paths_keep_assertion_authority() {
         for name in [
             "pretty_assertions::assert_eq",

@@ -556,10 +556,13 @@ changes `self.count += 2` to `self.count += 1`.
   failing closed until those reads are established. Writes through `*p`, a
   local binding or a non-`self` receiver are not probed.
 - Known limits shared with other probe families (#8051, #7638): a test
-  whose only oracle is a manual `if .. { panic!(..) }`, a
-  `debug_assert_eq!` or an unrecognized assertion macro (`assert_that!`,
-  `check!`, `prop_assert_eq!`), or whose owner asserts on the field itself,
-  reads `reachable_unrevealed`; an assertion that only runs in a dead
+  whose only oracle is a manual `if .. { panic!(..) }`, an unrecognized
+  assertion macro (`assert_that!`, `check!`, `prop_assert_eq!`), or whose
+  owner asserts on the field itself, reads `reachable_unrevealed`. A
+  `debug_assert!`, `debug_assert_eq!` or `debug_assert_ne!` is extracted as an
+  oracle (#8051 item 1), so it no longer reads as a gap; the owner-return
+  admission gates still list only the release spellings, so such a test
+  reads `weakly_exposed` rather than `exposed`; an assertion that only runs in a dead
   branch, an empty loop or a `#[should_panic]` test still credits; and a
   non-default pre-call value equal to the asserted one
   (`self.count = self.count.max(1)` with `count` already 5) still credits.

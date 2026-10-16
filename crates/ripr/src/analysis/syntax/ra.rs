@@ -2674,15 +2674,29 @@ pub(crate) fn is_assertion_macro_leaf(name: &str) -> bool {
     // admitting the computation itself credits discarded values (#5713).
     matches!(
         name,
-        "assert" | "assert_eq" | "assert_ne" | "assert_matches"
+        "assert"
+            | "assert_eq"
+            | "assert_ne"
+            | "assert_matches"
+            | "debug_assert"
+            | "debug_assert_eq"
+            | "debug_assert_ne"
     ) || name.ends_with("snapshot")
 }
 
 pub(crate) fn is_assertion_macro(macro_name: &str) -> bool {
     let macro_name = drop_in_assertion_leaf(macro_name).unwrap_or(macro_name);
+    // The `debug_` spellings run in `cargo test`'s debug profile and state the
+    // same relation, so they observe like their release twins (#8051 item 1).
     matches!(
         macro_name,
-        "assert" | "assert_eq" | "assert_ne" | "assert_matches"
+        "assert"
+            | "assert_eq"
+            | "assert_ne"
+            | "assert_matches"
+            | "debug_assert"
+            | "debug_assert_eq"
+            | "debug_assert_ne"
     ) || macro_name.starts_with("insta::assert")
         || macro_name.contains("snapshot")
 }
