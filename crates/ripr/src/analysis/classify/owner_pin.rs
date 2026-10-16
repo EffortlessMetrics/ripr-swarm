@@ -219,6 +219,8 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// probe, test and assertion, and each input below scans the workspace,
     /// so every answer is kept for the run under the key it depends on.
     path_memo: RefCell<PathCallMemo>,
+    /// Compact pure file facts; source identity is checked before every hit.
+    item_nesting_files: RefCell<ItemNestingMemo>,
     /// #7097: per-file module scopes (direct `use`s and value-taking
     /// items), parsed once per run; `None` when the file does not parse.
     file_scopes: RefCell<BTreeMap<PathBuf, Option<Rc<FileScopes>>>>,
@@ -302,9 +304,6 @@ struct PathCallMemo {
     /// Per (owner file, owner start line, owner name, path prefix, test
     /// file, test line): the verdict.
     verdicts: BTreeMap<(PathBuf, usize, String, String, PathBuf, usize), bool>,
-    /// Per (file, fn name, start line): the inline modules enclosing that
-    /// item, or `None` when ripr cannot place it.
-    nesting: BTreeMap<(PathBuf, String, usize), Option<ItemNesting>>,
     /// Per (owner crate root, owner name): whether the crate may hold an
     /// item of the name ripr cannot see.
     hidden: BTreeMap<(PathBuf, String), bool>,
@@ -463,7 +462,7 @@ impl OwnerPinSyntax {
         }
     }
 
-    /// #6974: [`item_nesting`], kept per (file, name, line).
+    /// #6974: reuse compact nesting facts only for the same retained source.
     fn item_nesting(
         &self,
         index: &RustIndex,
@@ -471,19 +470,12 @@ impl OwnerPinSyntax {
         name: &str,
         line: usize,
     ) -> Option<ItemNesting> {
-        let key = (file.to_path_buf(), name.to_string(), line);
-        if let Some(known) = self.path_memo.borrow().nesting.get(&key) {
-            return known.clone();
-        }
-        let nesting = index
-            .files()
-            .get(file)
-            .and_then(|facts| item_nesting(&facts.source, name, line));
-        self.path_memo
-            .borrow_mut()
-            .nesting
-            .insert(key, nesting.clone());
-        nesting
+        let Some(facts) = index.files().get(file) else {
+            self.item_nesting_files.borrow_mut().files.remove(file);
+            return None;
+        };
+        ItemNestingMemo::facts(&self.item_nesting_files, file, &facts.source)?
+            .query(name, line, false)
     }
 
     /// #7082: whether a `cfg` may drop `file` as a whole, kept per file: a
@@ -3731,7 +3723,7 @@ fn test_crate_may_bind(
 /// `None` when the file does not parse, no single such item is found, or
 /// it sits anywhere but directly in a module (a fn body, an `impl`).
 /// Where a `fn` sits among its file's inline modules (#6974).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct ItemNesting {
     /// The inline modules enclosing the `fn`, outermost first.
     modules: Vec<String>,
@@ -3742,8 +3734,119 @@ struct ItemNesting {
     cfg_gated: bool,
 }
 
-fn item_nesting(source: &str, name: &str, line: usize) -> Option<ItemNesting> {
-    item_nesting_with_impl(source, name, line, false)
+#[cfg(test)]
+thread_local! {
+    static ITEM_NESTING_FILE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static ITEM_NESTING_NODE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[derive(Clone, Debug)]
+struct ItemNestingEntry {
+    start_line: usize,
+    end_line: usize,
+    requires_impl: bool,
+    nesting: Option<ItemNesting>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ItemNestingFile {
+    by_name: BTreeMap<String, Vec<ItemNestingEntry>>,
+}
+
+impl ItemNestingFile {
+    fn parse(source: &str) -> Option<Self> {
+        #[cfg(test)]
+        ITEM_NESTING_FILE_PARSES.with(|count| count.set(count.get() + 1));
+        let parsed = parse_clean_source_file(source)?;
+        let line_starts: Vec<usize> = std::iter::once(0)
+            .chain(source.match_indices('\n').map(|(offset, _)| offset + 1))
+            .collect();
+        let line_of = |offset: u32| line_starts.partition_point(|start| *start <= offset as usize);
+        let mut by_name: BTreeMap<String, Vec<ItemNestingEntry>> = BTreeMap::new();
+        for function in parsed
+            .tree()
+            .syntax()
+            .descendants()
+            .inspect(|_| {
+                #[cfg(test)]
+                ITEM_NESTING_NODE_VISITS.with(|count| count.set(count.get() + 1));
+            })
+            .filter_map(ast::Fn::cast)
+        {
+            let Some(name) = function.name() else {
+                continue;
+            };
+            let name = name.text();
+            let name = name.strip_prefix("r#").unwrap_or(&name).to_owned();
+            let range = function.syntax().text_range();
+            let entry = ItemNestingEntry {
+                start_line: line_of(range.start().into()),
+                end_line: line_of(range.end().into()),
+                requires_impl: function
+                    .syntax()
+                    .ancestors()
+                    .skip(1)
+                    .any(|ancestor| ast::Impl::can_cast(ancestor.kind())),
+                nesting: item_nesting_of_function(&function, true),
+            };
+            // Illegal placements still participate in the query's ambiguity
+            // check, just as they do before ancestor validation in the parser.
+            by_name.entry(name).or_default().push(entry);
+        }
+        Some(Self { by_name })
+    }
+
+    fn query(&self, name: &str, line: usize, allow_impl: bool) -> Option<ItemNesting> {
+        let name = name.strip_prefix("r#").unwrap_or(name);
+        let mut found = self
+            .by_name
+            .get(name)?
+            .iter()
+            .filter(|entry| entry.start_line <= line && line <= entry.end_line);
+        let entry = found.next()?;
+        if found.next().is_some() || (!allow_impl && entry.requires_impl) {
+            return None;
+        }
+        entry.nesting.clone()
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CachedItemNestingFile {
+    source: std::sync::Arc<str>,
+    facts: Option<Rc<ItemNestingFile>>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ItemNestingMemo {
+    files: BTreeMap<PathBuf, CachedItemNestingFile>,
+}
+
+impl ItemNestingMemo {
+    fn facts(
+        memo: &RefCell<Self>,
+        path: &Path,
+        source: &std::sync::Arc<str>,
+    ) -> Option<Rc<ItemNestingFile>> {
+        {
+            let memo = memo.borrow();
+            if let Some(previous) = memo.files.get(path)
+                && std::sync::Arc::ptr_eq(&previous.source, source)
+            {
+                return previous.facts.clone();
+            }
+        }
+        // Parse outside the memo borrow. Keep no AST or borrowed source node.
+        let facts = ItemNestingFile::parse(source).map(Rc::new);
+        memo.borrow_mut().files.insert(
+            path.to_path_buf(),
+            CachedItemNestingFile {
+                source: source.clone(),
+                facts: facts.clone(),
+            },
+        );
+        facts
+    }
 }
 
 fn item_nesting_with_impl(
@@ -3776,9 +3879,14 @@ fn item_nesting_with_impl(
     if found.next().is_some() {
         return None;
     }
+    item_nesting_of_function(&function, allow_impl)
+}
+
+fn item_nesting_of_function(function: &ast::Fn, allow_impl: bool) -> Option<ItemNesting> {
+    let base = |text: String| text.strip_prefix("r#").map_or(text.clone(), str::to_string);
     let mut modules = Vec::new();
     // An inner `#![cfg]` in the body gates the whole fn too.
-    let mut cfg_gated = has_cfg_attr(&function)
+    let mut cfg_gated = has_cfg_attr(function)
         || function
             .body()
             .and_then(|body| body.stmt_list())
@@ -10428,3 +10536,7 @@ const BY_VALUE_PRELUDE_METHODS: &[&str] = &[
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "owner_pin/tests/item_nesting_facts.rs"]
+mod item_nesting_facts_tests;
