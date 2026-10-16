@@ -1,0 +1,22 @@
+{
+  "args": [
+    "/workspace/ripr-swarm/target/debug/ripr",
+    "check",
+    "--root",
+    "/workspace/8201-evidence/exclusion94/parent-refusal/root",
+    "--diff",
+    "/workspace/8201-evidence/exclusion94/parent-refusal/input.diff",
+    "--output-dir",
+    "/workspace/8201-evidence/exclusion94/parent-refusal/selected/result"
+  ],
+  "version": "ripr 0.11.0 (7995ea78d776692085f4f7035ce4aaa9b63be782)",
+  "exit": 2,
+  "trigger": true,
+  "existing_destination_preserved": true,
+  "files": {
+    "badge.json": "baa807fa24dad7fec26ee5a785853c4a329e82c5f09091f1c1a4bf6583cc1d1f",
+    "detail.json": "56addbe8f553ba3789b820dbb5a09f03856d2e9930c15cfe6588eade540cd220",
+    "human.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "manifest.json": "b36743d08f32e3a06ec9d39bacabeec68b042b284f1f8e0c78e55abadda839b1"
+  }
+}

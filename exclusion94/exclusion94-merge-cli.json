@@ -1,0 +1,18 @@
+{
+  "label": "exclusion94-merge-cli",
+  "args": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "cli_smoke",
+    "native_fanout"
+  ],
+  "cwd": "/workspace/review-8201-exclusion-merge",
+  "started": 1792140058.2995443,
+  "elapsed": 69.72625923156738,
+  "exit": 0,
+  "head": "7995ea78d776692085f4f7035ce4aaa9b63be782"
+}

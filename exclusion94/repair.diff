@@ -1,0 +1,205 @@
+diff --git a/.ripr/traceability.toml b/.ripr/traceability.toml
+index 41c8d753e..1ae5ecd9e 100644
+--- a/.ripr/traceability.toml
++++ b/.ripr/traceability.toml
+@@ -9,6 +9,9 @@ id = "RIPR-SPEC-0001"
+ name = "static exposure loop"
+ spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
+ tests = [
++  "crates/ripr/src/analysis/input_boundary.rs::fanout_boundary_rejects_excluded_aliases_to_captured_files",
++  "crates/ripr/tests/cli_smoke/native_fanout.rs::fanout_excluded_alias_in_git_refuses_captured_target",
++  "crates/ripr/tests/cli_smoke/native_fanout.rs::fanout_excluded_alias_in_cargo_target_refuses_captured_target",
+   "crates/ripr/src/analysis/input_boundary.rs::fanout_boundary_failure_is_scoped_to_active_root_lifecycle",
+   "crates/ripr/src/analysis/input_boundary.rs::fanout_boundary_resolves_root_alias_and_absent_probes",
+   "crates/ripr/tests/cli_smoke/native_fanout.rs::fanout_root_alias_preserves_native_parity_and_symlink_refusal",
+diff --git a/changelog.d/8169-native-diff-output-set.md b/changelog.d/8169-native-diff-output-set.md
+index 62501b0f9..546df5017 100644
+--- a/changelog.d/8169-native-diff-output-set.md
++++ b/changelog.d/8169-native-diff-output-set.md
+@@ -4,3 +4,5 @@
+   a final output-set manifest (#8169).
+ - Selected roots spelled through directory symlinks retain native output parity;
+   input-read failures are scoped to their active root boundary (#8169).
++- Reads through aliases under excluded Git metadata or Cargo target directories
++  remain refused even when the alias resolves to captured source (#8169).
+diff --git a/crates/ripr/src/analysis/input_boundary.rs b/crates/ripr/src/analysis/input_boundary.rs
+index 41b77a64c..618275e09 100644
+--- a/crates/ripr/src/analysis/input_boundary.rs
++++ b/crates/ripr/src/analysis/input_boundary.rs
+@@ -65,6 +65,7 @@ pub(crate) fn observe_module_read(root: &Path, file: &Path, outside: bool) {
+     guards.retain(|guard| guard.strong_count() > 0);
+     let requested_root = std::path::absolute(root);
+     let canonical_root = root.canonicalize();
++    let requested_file = std::path::absolute(file);
+     let observed_file = resolved_probe_path(file);
+     for state in guards.iter().filter_map(Weak::upgrade) {
+         let matches = requested_root
+@@ -82,26 +83,45 @@ pub(crate) fn observe_module_read(root: &Path, file: &Path, outside: bool) {
+             || canonical_root
+                 .as_ref()
+                 .map_or(true, |path| path != &state.root)
+-            || observed_file.as_ref().map_or(true, |path| {
+-                let Ok(relative) = path.strip_prefix(&state.root) else {
+-                    return true;
+-                };
+-                let mut parent = state.root.clone();
+-                relative.components().any(|component| {
+-                    let skipped = matches!(component, std::path::Component::ParentDir)
+-                        || component_is_named(component.as_os_str(), ".git", cfg!(windows))
+-                        || (component_is_named(component.as_os_str(), "target", cfg!(windows))
+-                            && parent.join("Cargo.toml").is_file());
+-                    parent.push(component);
+-                    skipped
+-                })
+-            });
++            // Canonical identity must not erase an excluded alias binding.
++            // Match the selected-root spelling first, then its captured aliases;
++            // components above that selected root do not define exclusions.
++            || requested_file.as_ref().map_or(true, |file| {
++                [
++                    requested_root.as_ref().ok(),
++                    Some(&state.requested_root),
++                    Some(&state.root),
++                ]
++                .into_iter()
++                .flatten()
++                .find(|root| file.starts_with(root))
++                .is_none_or(|root| excluded_probe_path(root, file))
++            })
++            || observed_file
++                .as_ref()
++                .map_or(true, |file| excluded_probe_path(&state.root, file));
+         if escaped {
+             state.escaped.store(true, Ordering::SeqCst);
+         }
+     }
+ }
+ 
++/// Check both the traversed spelling and resolved identity at the same owner.
++fn excluded_probe_path(root: &Path, file: &Path) -> bool {
++    let Ok(relative) = file.strip_prefix(root) else {
++        return true;
++    };
++    let mut parent = root.to_path_buf();
++    relative.components().any(|component| {
++        let skipped = matches!(component, std::path::Component::ParentDir)
++            || component_is_named(component.as_os_str(), ".git", cfg!(windows))
++            || (component_is_named(component.as_os_str(), "target", cfg!(windows))
++                && parent.join("Cargo.toml").is_file());
++        parent.push(component);
++        skipped
++    })
++}
++
+ /// Resolve aliases in the existing prefix while retaining absent module probes.
+ /// Other resolution failures remain failures; no unreadable prefix is admitted.
+ fn resolved_probe_path(file: &Path) -> std::io::Result<PathBuf> {
+@@ -266,4 +286,31 @@ mod tests {
+         );
+         Ok(())
+     }
++    #[cfg(unix)]
++    #[test]
++    fn fanout_boundary_rejects_excluded_aliases_to_captured_files() -> Result<(), String> {
++        let physical = fixture("excluded-aliases")?;
++        let aliases = fixture("excluded-root-alias")?;
++        std::fs::write(physical.0.join("Cargo.toml"), "[workspace]").map_err(|e| e.to_string())?;
++        let captured = physical.0.join("lib.rs");
++        std::fs::write(&captured, "").map_err(|e| e.to_string())?;
++        let alias = aliases.0.join("root");
++        std::os::unix::fs::symlink(&physical.0, &alias).map_err(|e| e.to_string())?;
++        for directory in [".git", "target"] {
++            std::fs::create_dir(physical.0.join(directory)).map_err(|e| e.to_string())?;
++            std::os::unix::fs::symlink(&captured, physical.0.join(directory).join("linked.rs"))
++                .map_err(|e| e.to_string())?;
++            for root in [&physical.0, &alias] {
++                let boundary = Boundary::new(root)?;
++                observe_module_read(root, &root.join("lib.rs"), false);
++                boundary.verify()?;
++                observe_module_read(root, &root.join(directory).join("linked.rs"), false);
++                assert!(
++                    boundary.verify().is_err(),
++                    "{directory} alias must retain exclusion"
++                );
++            }
++        }
++        Ok(())
++    }
+ }
+diff --git a/crates/ripr/tests/cli_smoke/native_fanout.rs b/crates/ripr/tests/cli_smoke/native_fanout.rs
+index 5b7f4a698..9f70df42e 100644
+--- a/crates/ripr/tests/cli_smoke/native_fanout.rs
++++ b/crates/ripr/tests/cli_smoke/native_fanout.rs
+@@ -528,3 +528,72 @@ fn fanout_root_alias_preserves_native_parity_and_symlink_refusal() -> TestResult
+     assert_eq!(manifest["command_success"], false);
+     Ok(())
+ }
++
++#[cfg(unix)]
++fn excluded_alias_refuses(directory: &str) -> TestResult {
++    let physical = Fixture::new()?;
++    let holder = Fixture::new()?;
++    let alias = holder.0.join("root-alias");
++    std::os::unix::fs::symlink(&physical.0, &alias)?;
++    std::fs::write(
++        physical.0.join("src/impl.rs"),
++        "pub fn positive(value: i32) -> bool { value > 0 }\n",
++    )?;
++    std::fs::write(
++        physical.0.join("src/lib.rs"),
++        format!("include!(\"../{directory}/linked.rs\");\n"),
++    )?;
++    std::fs::write(
++        physical.0.join("input.diff"),
++        "--- a/src/impl.rs\n+++ b/src/impl.rs\n@@ -1 +1 @@\n-pub fn positive(value: i32) -> bool { value >= 0 }\n+pub fn positive(value: i32) -> bool { value > 0 }\n",
++    )?;
++    std::fs::create_dir_all(physical.0.join(directory))?;
++    std::os::unix::fs::symlink(
++        physical.0.join("src/impl.rs"),
++        physical.0.join(directory).join("linked.rs"),
++    )?;
++    for (label, root) in [("physical", &physical.0), ("alias", &alias)] {
++        let standalone = physical.run_at(root, &["--format", "json"], &[])?;
++        assert!(
++            standalone.status.success(),
++            "{directory}/{label}: {}",
++            String::from_utf8_lossy(&standalone.stderr)
++        );
++        let detail: serde_json::Value = serde_json::from_slice(&standalone.stdout)?;
++        assert!(
++            detail["findings"]
++                .as_array()
++                .is_some_and(|findings| !findings.is_empty()),
++            "native include must reach changed source"
++        );
++        let destination = holder.0.join(label);
++        let combined =
++            physical.run_at(root, &["--output-dir", &destination.to_string_lossy()], &[])?;
++        assert_eq!(
++            combined.status.code(),
++            Some(2),
++            "{directory}/{label} excluded alias must refuse"
++        );
++        assert!(
++            String::from_utf8_lossy(&combined.stderr)
++                .contains("under Git metadata/Cargo target directories")
++        );
++        let manifest: serde_json::Value =
++            serde_json::from_slice(&std::fs::read(destination.join("manifest.json"))?)?;
++        assert_eq!(manifest["complete_set"], false);
++        assert_eq!(manifest["command_success"], false);
++    }
++    Ok(())
++}
++
++#[cfg(unix)]
++#[test]
++fn fanout_excluded_alias_in_git_refuses_captured_target() -> TestResult {
++    excluded_alias_refuses(".git")
++}
++
++#[cfg(unix)]
++#[test]
++fn fanout_excluded_alias_in_cargo_target_refuses_captured_target() -> TestResult {
++    excluded_alias_refuses("target")
++}

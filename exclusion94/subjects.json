@@ -1,0 +1,33 @@
+{
+  "observed_utc": "2026-10-16T08:44:05.917092+00:00",
+  "head": "94b92efd77b052ce66493dc43f260d1f6e4e9457 dc9eaa5b5c4012bab4fbabd7d2931c99262ccef1 490963fbff4bde6f425a667dda21d7d85205568d",
+  "merge": "7995ea78d776692085f4f7035ce4aaa9b63be782 a79924b0860cbcbc0186629f8f64eb3efec3cec3 ce553243845a9f88529097828b3de0735e5c0dea 94b92efd77b052ce66493dc43f260d1f6e4e9457",
+  "recomputed_merge_tree": "a79924b0860cbcbc0186629f8f64eb3efec3cec3",
+  "tested_base": "27b74d26f0b7e35a08c614b29bb7e369e7b146fd",
+  "observed_main": "2b7810d719474c1d8d2fd0ed4d1e38022a4669cc",
+  "repair_paths": [
+    ".ripr/traceability.toml",
+    "changelog.d/8169-native-diff-output-set.md",
+    "crates/ripr/src/analysis/input_boundary.rs",
+    "crates/ripr/tests/cli_smoke/native_fanout.rs"
+  ],
+  "later_main_delta_paths": [
+    ".ripr/traceability.toml",
+    "changelog.d/8227-consumer-compatibility.md",
+    "changelog.d/pilot-uncapped-missing-source-coverage.md",
+    "crates/ripr/src/analysis/generated_rust_corpus.rs",
+    "crates/ripr/src/analysis/language/rust/mod.rs",
+    "crates/ripr/src/analysis/mod.rs",
+    "crates/ripr/src/cli/commands/pilot.rs",
+    "crates/ripr/src/output/badge/tests.rs",
+    "crates/ripr/src/output/pilot/current_change.rs",
+    "crates/ripr/tests/pilot_missing_changed_files.rs",
+    "docs/BADGE_ADOPTION.md",
+    "docs/OUTPUT_SCHEMA.md",
+    "docs/specs/RIPR-SPEC-0004-test-efficiency.md",
+    "docs/specs/RIPR-SPEC-0009-defaults-first-adoption.md",
+    "xtask/src/tests.rs"
+  ],
+  "merge_runtime_changes": "crates/ripr/src/analysis/pipeline.rs       |  11 ++\n crates/ripr/src/app/repair_attempt/mod.rs  |   4 +-\n crates/ripr/src/cli/commands/agent.rs      |   9 +-\n crates/ripr/src/cli/commands/agent_card.rs |   6 +-\n crates/ripr/src/cli/commands/agent_stub.rs |  11 +-\n crates/ripr/src/cli/commands/task_first.rs |   7 +-\n crates/ripr/src/cli/commands_context.rs    |  10 ++\n crates/ripr/src/cli/help.rs                |  31 ++++\n crates/ripr/src/cli/help/overview.rs       |   4 +-\n crates/ripr/src/cli/mod.rs                 |   2 +-\n crates/ripr/src/git.rs                     | 228 ++++++++++++++++++++++++++---\n crates/ripr/src/output/path.rs             |  19 +++\n 12 files changed, 300 insertions(+), 42 deletions(-)",
+  "boundary_blob": "618275e09a6a9931d0ba2e970740aaff3b9366ac"
+}

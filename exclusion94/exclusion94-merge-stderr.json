@@ -1,0 +1,18 @@
+{
+  "label": "exclusion94-merge-stderr",
+  "args": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "cli_smoke",
+    "malformed_config_json_keeps_exit_two_with_closed_stderr"
+  ],
+  "cwd": "/workspace/review-8201-exclusion-merge",
+  "started": 1792140128.3335016,
+  "elapsed": 0.1241302490234375,
+  "exit": 0,
+  "head": "7995ea78d776692085f4f7035ce4aaa9b63be782"
+}

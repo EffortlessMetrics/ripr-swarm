@@ -1,0 +1,11 @@
+{
+  "module_driver_compile_exit": 0,
+  "module_driver_exit": 0,
+  "module_driver_sha256": "b1cb1aea62b6bc30076e4d0409e37d5839e757ed8941ff25a93a307e6ca953ab",
+  "module_source_sha256": "3f7c25f35ddd64cd620a088fbef770e44abc3e0b638813b13447f93c8c7ee770",
+  "candidate_native": "bb7ab36096496b02b9b23936afb81518b5354810ff0a8e91f3f7f215a7769942",
+  "candidate_version": "ripr 0.11.0 (94b92efd77b052ce66493dc43f260d1f6e4e9457)",
+  "current_mutable_merge_binary_sha256": "ec54185cf7befd8c428258ab1ee97d629824063e07bc8353b3be415ae54500e4",
+  "merge_version": "ripr 0.11.0 (7995ea78d776692085f4f7035ce4aaa9b63be782)",
+  "scope": "identities only; scratch native/module executables omitted remotely; retained historical negative witness unchanged"
+}

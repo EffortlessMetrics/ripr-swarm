@@ -1,0 +1,154 @@
+{
+  "command_success": true,
+  "complete_set": true,
+  "error": null,
+  "identity": {
+    "available_languages": [
+      "rust",
+      "python",
+      "typescript",
+      "javascript"
+    ],
+    "cargo_input_identity": "fnv1a64:37ef314c0768c149",
+    "effective_config": "RiprConfig { analysis: AnalysisConfig { mode: Some(Ready), include_unchanged_tests: None, production_like_targets: {}, test_harnesses: [] }, oracles: OraclePolicy { snapshot_strength: Medium, mock_expectation_strength: Medium, broad_error_strength: Weak }, severity: SeverityConfig { findings: FindingSeverityConfig { exposed: Info, weakly_exposed: Warning, reachable_unrevealed: Warning, no_static_path: Warning, infection_unknown: Warning, propagation_unknown: Note, static_unknown: Note }, seams: SeamSeverityConfig { strongly_gripped: Off, weakly_gripped: Warning, ungripped: Warning, reachable_unrevealed: Warning, activation_unknown: Info, propagation_unknown: Info, observation_unknown: Info, discrimination_unknown: Info, opaque: Info, intentional: Off, suppressed: Off } }, lsp: LspConfig { seam_diagnostics: Some(true), diagnostic_profile: None }, reports: ReportsConfig { max_related_tests: 5 }, suppressions: SuppressionsConfig { path: \".ripr/suppressions.toml\" }, languages: LanguagesConfig { enabled: [Rust], rust: RustLanguageConfig { generated_file_patterns: [], handwritten_files: [] }, python: PythonLanguageConfig { handwritten_files: [] }, typescript: TypescriptLanguageConfig { handwritten_files: [] } }, profiles: ProfilesConfig { bun_ub: None }, typescript: TypescriptConfig { resolve_tsconfig_paths: false }, perl: PerlConfig { producer: None, executable: None, timeout_ms: 0, cache_dir: None }, source_path: Some(\"/workspace/8201-evidence/exclusion94/excluded-native-target/root/ripr.toml\"), source_text: Some(\"[analysis]\\nmode=\\\"ready\\\"\\n[languages]\\nenabled=[\\\"rust\\\"]\\n\") }",
+    "effective_input": "CheckInput { root: \"/workspace/8201-evidence/exclusion94/excluded-native-target/root\", base: None, diff_file: Some(\"/workspace/8201-evidence/exclusion94/excluded-native-target/input.diff\"), mode: Ready, format: Human, include_unchanged_tests: true, perl_facts_path: None, suppression_policy: None, git_timeout: Some(300s), git_candidate: None }",
+    "findings_budget": null,
+    "observed_inputs": [
+      {
+        "kind": "absent",
+        "path": "/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/ripr.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/exclusion94/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/exclusion94/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/exclusion94/excluded-native-target/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/exclusion94/excluded-native-target/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/exclusion94/excluded-native-target/input.diff",
+        "sha256": "ff89c5add67b9a0b9e5641832d9f1b390cd7f20b92c96f578fb2f192eb9c632d"
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/exclusion94/excluded-native-target/ripr.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/exclusion94/excluded-native-target/root/.ripr/suppressions.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/exclusion94/excluded-native-target/root/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/exclusion94/excluded-native-target/root/Cargo.toml",
+        "sha256": "f920d5d8bb59d6ca1f46090b26e889b110e3c4863c11d2639d49b4f0462860bb"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/exclusion94/excluded-native-target/root/ripr.toml",
+        "sha256": "d1f7edafbe724367716c24b2881dff39581f0726f6efc2bb9fa363e022791c22"
+      },
+      {
+        "kind": "directory",
+        "path": "/workspace/8201-evidence/exclusion94/excluded-native-target/root/src",
+        "sha256": null
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/exclusion94/excluded-native-target/root/src/impl.rs",
+        "sha256": "ae9c7bf77922169c3f634deb18ea39d3f63540f0a52e3f21661705436b7cabbb"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/exclusion94/excluded-native-target/root/src/lib.rs",
+        "sha256": "0fd6335fd09aa89e53b6a781a087bdebfd917b6be058f463906d9082d4605bb5"
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/exclusion94/ripr.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/ripr.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/ripr.toml",
+        "sha256": null
+      }
+    ],
+    "producer": "0.11.0+490963fbff4bde6f425a667dda21d7d85205568d",
+    "utc_date": "2026-10-16"
+  },
+  "members": [
+    {
+      "bytes": 1810,
+      "file": "badge.json",
+      "sha256": "8cb387deb6ba3e548e5f2b891379b4cf60d19d8da9e4bbd1956b986e01855787"
+    },
+    {
+      "bytes": 9802,
+      "file": "detail.json",
+      "sha256": "90cb719f33a2f9a925216dd8bdbdb80c3defe39ecc193346c6762f5b98dea344"
+    },
+    {
+      "bytes": 3019,
+      "file": "human.txt",
+      "sha256": "4e941b87f035d35081eaecbb5c45e47855ee52a14cc81fc6218177cb7287cec3"
+    }
+  ],
+  "schema_version": "ripr-native-diff-output-set-v1"
+}

@@ -1,0 +1,25 @@
+   Compiling ripr v0.11.0 (/workspace/review-8201-exclusion/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 35s
+     Running unittests src/lib.rs (/workspace/ripr-swarm/target/debug/deps/ripr-a6dce9f917d6369e)
+
+running 17 tests
+test analysis::input_boundary::tests::fanout_boundary_matches_windows_exclusion_aliases ... ok
+test analysis::input_boundary::tests::fanout_boundary_rejects_only_exclusions_below_selected_root ... ok
+test analysis::input_boundary::tests::fanout_boundary_failure_is_scoped_to_active_root_lifecycle ... ok
+test analysis::input_boundary::tests::fanout_boundary_observes_worker_reads_and_isolates_roots ... ok
+test analysis::input_boundary::tests::fanout_boundary_rejects_excluded_aliases_to_captured_files ... ok
+test analysis::input_boundary::tests::fanout_boundary_resolves_root_alias_and_absent_probes ... ok
+test analysis::test_grip_evidence::tests::given_call_presence_when_test_calls_same_file_fanout_wrapper_then_activation_is_yes ... ok
+test analysis::test_grip_evidence::tests::given_call_presence_when_test_local_fanout_helper_asserts_other_target_then_activation_stays_unknown ... ok
+test cli::commands::check_fanout::tests::fanout_input_byte_cap_is_enforced_before_allocation ... ok
+test cli::commands::check_fanout::tests::fanout_input_identity_keeps_non_utf8_paths_without_panicking ... ok
+test cli::commands::check_fanout::tests::fanout_auxiliary_binding_does_not_hide_new_workspace_inputs ... ok
+test cli::commands::check_fanout::tests::fanout_enters_diff_pipeline_once ... ok
+test cli::commands::check_fanout::tests::fanout_partial_member_manifest_and_late_drift_fail_without_completion ... ok
+test cli::commands::check_fanout::tests::fanout_refuses_output_parent_identity_drift ... ok
+test cli::commands::check_fanout::tests::fanout_detects_diff_config_suppression_source_facts_and_membership_drift ... ok
+test cli::commands::check_fanout::tests::fanout_refuses_input_mutations_at_the_native_analysis_boundary ... ok
+test cli::commands::check_fanout::tests::fanout_output_caps_cover_members_and_manifest ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 11060 filtered out; finished in 0.62s
+

@@ -1,0 +1,18 @@
+{
+  "label": "exclusion94-cli",
+  "args": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "cli_smoke",
+    "native_fanout"
+  ],
+  "cwd": "/workspace/review-8201-exclusion",
+  "started": 1792139920.0246282,
+  "elapsed": 72.7223732471466,
+  "exit": 0,
+  "head": "94b92efd77b052ce66493dc43f260d1f6e4e9457"
+}

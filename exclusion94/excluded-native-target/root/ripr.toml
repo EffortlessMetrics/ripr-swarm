@@ -1,0 +1,4 @@
+[analysis]
+mode="ready"
+[languages]
+enabled=["rust"]

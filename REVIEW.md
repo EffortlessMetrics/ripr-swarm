@@ -1,5 +1,7 @@
 # Independent review of Draft PR #8201
 
+**Current head94b92:** [independent exclusion-repair review](exclusion94/REVIEW.md). All prior blocking findings independently repaired; pre-Ready technical prerequisites satisfied. Merge remains REVIEW_INCOMPLETE, with a confirmed nonblocking refusal-location note and unresolved conversations retained. Earlier head-specific judgments remain historical.
+
 **Latest head 490963fb:** [independent repair re-review](repair490/REVIEW.md). Earlier root-alias/lifecycle findings repaired; a new excluded-alias admission regression retains REPAIR_REQUIRED. Earlier head-specific records remain historical.
 
 **Current-head review:** [independent review at 0ffd9456](final0ffd/REVIEW.md) supersedes prior head/integration status. **Current disposition: REPAIR_REQUIRED.** A late independent root-alias counterexample withdraws the earlier pre-Ready assessment; see the current-head findings.

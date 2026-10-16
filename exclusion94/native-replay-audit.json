@@ -1,0 +1,16 @@
+{
+  "git": {
+    "old490_exit": 0,
+    "new94_exit": 2,
+    "old_admitted": true,
+    "new_admitted": false,
+    "old_and_new_member_hashes_verified": true
+  },
+  "target": {
+    "old490_exit": 0,
+    "new94_exit": 2,
+    "old_admitted": true,
+    "new_admitted": false,
+    "old_and_new_member_hashes_verified": true
+  }
+}

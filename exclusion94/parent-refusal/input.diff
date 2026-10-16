@@ -1,0 +1,80 @@
+--- a/src/m0.rs
++++ b/src/m0.rs
+@@ -1 +1 @@
+-pub fn positive(v:i32)->bool { v >= 0 }
++pub fn positive(v:i32)->bool { v > 0 }
+--- a/src/m1.rs
++++ b/src/m1.rs
+@@ -1 +1 @@
+-pub fn positive(v:i32)->bool { v >= 1 }
++pub fn positive(v:i32)->bool { v > 1 }
+--- a/src/m2.rs
++++ b/src/m2.rs
+@@ -1 +1 @@
+-pub fn positive(v:i32)->bool { v >= 2 }
++pub fn positive(v:i32)->bool { v > 2 }
+--- a/src/m3.rs
++++ b/src/m3.rs
+@@ -1 +1 @@
+-pub fn positive(v:i32)->bool { v >= 3 }
++pub fn positive(v:i32)->bool { v > 3 }
+--- a/src/m4.rs
++++ b/src/m4.rs
+@@ -1 +1 @@
+-pub fn positive(v:i32)->bool { v >= 4 }
++pub fn positive(v:i32)->bool { v > 4 }
+--- a/src/m5.rs
++++ b/src/m5.rs
+@@ -1 +1 @@
+-pub fn positive(v:i32)->bool { v >= 5 }
++pub fn positive(v:i32)->bool { v > 5 }
+--- a/src/m6.rs
++++ b/src/m6.rs
+@@ -1 +1 @@
+-pub fn positive(v:i32)->bool { v >= 6 }
++pub fn positive(v:i32)->bool { v > 6 }
+--- a/src/m7.rs
++++ b/src/m7.rs
+@@ -1 +1 @@
+-pub fn positive(v:i32)->bool { v >= 7 }
++pub fn positive(v:i32)->bool { v > 7 }
+--- a/src/m8.rs
++++ b/src/m8.rs
+@@ -1 +1 @@
+-pub fn positive(v:i32)->bool { v >= 8 }
++pub fn positive(v:i32)->bool { v > 8 }
+--- a/src/m9.rs
++++ b/src/m9.rs
+@@ -1 +1 @@
+-pub fn positive(v:i32)->bool { v >= 9 }
++pub fn positive(v:i32)->bool { v > 9 }
+--- a/src/m10.rs
++++ b/src/m10.rs
+@@ -1 +1 @@
+-pub fn positive(v:i32)->bool { v >= 10 }
++pub fn positive(v:i32)->bool { v > 10 }
+--- a/src/m11.rs
++++ b/src/m11.rs
+@@ -1 +1 @@
+-pub fn positive(v:i32)->bool { v >= 11 }
++pub fn positive(v:i32)->bool { v > 11 }
+--- a/src/m12.rs
++++ b/src/m12.rs
+@@ -1 +1 @@
+-pub fn positive(v:i32)->bool { v >= 12 }
++pub fn positive(v:i32)->bool { v > 12 }
+--- a/src/m13.rs
++++ b/src/m13.rs
+@@ -1 +1 @@
+-pub fn positive(v:i32)->bool { v >= 13 }
++pub fn positive(v:i32)->bool { v > 13 }
+--- a/src/m14.rs
++++ b/src/m14.rs
+@@ -1 +1 @@
+-pub fn positive(v:i32)->bool { v >= 14 }
++pub fn positive(v:i32)->bool { v > 14 }
+--- a/src/m15.rs
++++ b/src/m15.rs
+@@ -1 +1 @@
+-pub fn positive(v:i32)->bool { v >= 15 }
++pub fn positive(v:i32)->bool { v > 15 }

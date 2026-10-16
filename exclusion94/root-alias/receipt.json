@@ -1,0 +1,103 @@
+{
+  "status": "passed",
+  "binary_sha256": "bb7ab36096496b02b9b23936afb81518b5354810ff0a8e91f3f7f215a7769942",
+  "version": "ripr 0.11.0 (94b92efd77b052ce66493dc43f260d1f6e4e9457)",
+  "records": [
+    {
+      "label": "physical",
+      "args": [
+        "/workspace/ripr-swarm/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/exclusion94/root-alias/physical",
+        "--diff",
+        "/workspace/8201-evidence/exclusion94/root-alias/input.diff",
+        "--quiet",
+        "--output-dir",
+        "/workspace/8201-evidence/exclusion94/root-alias/physical-output"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "alias",
+      "args": [
+        "/workspace/ripr-swarm/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/exclusion94/root-alias/alias",
+        "--diff",
+        "/workspace/8201-evidence/exclusion94/root-alias/input.diff",
+        "--quiet",
+        "--output-dir",
+        "/workspace/8201-evidence/exclusion94/root-alias/alias-output"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "native-badge-json",
+      "args": [
+        "/workspace/ripr-swarm/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/exclusion94/root-alias/alias",
+        "--diff",
+        "/workspace/8201-evidence/exclusion94/root-alias/input.diff",
+        "--quiet",
+        "--format",
+        "badge-json"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "native-json",
+      "args": [
+        "/workspace/ripr-swarm/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/exclusion94/root-alias/alias",
+        "--diff",
+        "/workspace/8201-evidence/exclusion94/root-alias/input.diff",
+        "--quiet",
+        "--format",
+        "json"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "native-human",
+      "args": [
+        "/workspace/ripr-swarm/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/exclusion94/root-alias/alias",
+        "--diff",
+        "/workspace/8201-evidence/exclusion94/root-alias/input.diff",
+        "--quiet",
+        "--format",
+        "human"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "inroot-symlink",
+      "args": [
+        "/workspace/ripr-swarm/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/exclusion94/root-alias/alias",
+        "--diff",
+        "/workspace/8201-evidence/exclusion94/root-alias/input.diff",
+        "--quiet",
+        "--output-dir",
+        "/workspace/8201-evidence/exclusion94/root-alias/inroot-symlink-output"
+      ],
+      "exit": 2,
+      "stderr": "ripr: --output-dir requires regular input files: /workspace/8201-evidence/exclusion94/root-alias/physical/src/link.rs\n"
+    }
+  ]
+}

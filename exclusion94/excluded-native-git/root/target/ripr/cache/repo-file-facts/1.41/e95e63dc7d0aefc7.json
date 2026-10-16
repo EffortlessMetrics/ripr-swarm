@@ -1,0 +1,103 @@
+{
+  "file_fact_cache_schema_version": "1.41",
+  "analyzer_version": "0.11.0+94b92efd77b052ce66493dc43f260d1f6e4e9457",
+  "file_path": "src/impl.rs",
+  "content_hash": "9bc0b9ff6cc1d69d",
+  "file_facts": {
+    "path": "src/impl.rs",
+    "functions": [
+      {
+        "id": "src/impl.rs::positive",
+        "name": "positive",
+        "file": "src/impl.rs",
+        "start_line": 1,
+        "end_line": 1,
+        "body": {
+          "start": 4,
+          "len": 34
+        },
+        "calls": [
+          {
+            "line": 1,
+            "name": "positive",
+            "text": "fn positive(v:i32)->bool { v > 0 }"
+          }
+        ],
+        "returns": [],
+        "literals": [
+          {
+            "line": 1,
+            "value": "0"
+          }
+        ],
+        "source_role": "production",
+        "attrs": [],
+        "impl_attrs": [],
+        "nested_fn_names": [],
+        "let_bindings": [],
+        "item": {
+          "container": {
+            "kind": "free"
+          },
+          "has_self_param": false,
+          "has_body": true
+        },
+        "impl_context": "Free"
+      }
+    ],
+    "tests": [],
+    "returns": [],
+    "literals": [
+      {
+        "line": 1,
+        "value": "0"
+      }
+    ],
+    "probe_shapes": [
+      {
+        "start_line": 1,
+        "end_line": 1,
+        "start_byte": 31,
+        "end_byte": 36,
+        "kind": "predicate",
+        "text": {
+          "start": 31,
+          "len": 5
+        }
+      },
+      {
+        "start_line": 1,
+        "end_line": 1,
+        "start_byte": 31,
+        "end_byte": 36,
+        "kind": "return_value",
+        "text": {
+          "start": 31,
+          "len": 5
+        }
+      }
+    ],
+    "used_lexical_fallback": false,
+    "module_declarations": [],
+    "unresolved_property_macros": [],
+    "source": "pub fn positive(v:i32)->bool { v > 0 }\n",
+    "item_scopes": {
+      "fns": [
+        {
+          "line": 1,
+          "name": "positive",
+          "item": "TopLevel",
+          "local_use": false,
+          "deferred_code": false,
+          "cfg": false,
+          "direct_calls": [],
+          "bound_names": []
+        }
+      ]
+    },
+    "macro_candidates": {
+      "Names": []
+    }
+  },
+  "payload_digest": "sha256:795d1fb3cf7b7f0787e77a6c800be9d7530efd2fb41898146380ffbd06ed6c4c"
+}

@@ -1,0 +1,154 @@
+{
+  "file_fact_cache_schema_version": "1.41",
+  "analyzer_version": "0.11.0+7995ea78d776692085f4f7035ce4aaa9b63be782",
+  "file_path": "src/lib.rs",
+  "content_hash": "bc675a1afc4023dd",
+  "file_facts": {
+    "path": "src/lib.rs",
+    "functions": [],
+    "tests": [],
+    "returns": [],
+    "literals": [],
+    "probe_shapes": [],
+    "used_lexical_fallback": false,
+    "module_declarations": [
+      {
+        "name": "m0",
+        "line": 1,
+        "path_target": {
+          "kind": "default"
+        },
+        "requires_test": false
+      },
+      {
+        "name": "m1",
+        "line": 2,
+        "path_target": {
+          "kind": "default"
+        },
+        "requires_test": false
+      },
+      {
+        "name": "m2",
+        "line": 3,
+        "path_target": {
+          "kind": "default"
+        },
+        "requires_test": false
+      },
+      {
+        "name": "m3",
+        "line": 4,
+        "path_target": {
+          "kind": "default"
+        },
+        "requires_test": false
+      },
+      {
+        "name": "m4",
+        "line": 5,
+        "path_target": {
+          "kind": "default"
+        },
+        "requires_test": false
+      },
+      {
+        "name": "m5",
+        "line": 6,
+        "path_target": {
+          "kind": "default"
+        },
+        "requires_test": false
+      },
+      {
+        "name": "m6",
+        "line": 7,
+        "path_target": {
+          "kind": "default"
+        },
+        "requires_test": false
+      },
+      {
+        "name": "m7",
+        "line": 8,
+        "path_target": {
+          "kind": "default"
+        },
+        "requires_test": false
+      },
+      {
+        "name": "m8",
+        "line": 9,
+        "path_target": {
+          "kind": "default"
+        },
+        "requires_test": false
+      },
+      {
+        "name": "m9",
+        "line": 10,
+        "path_target": {
+          "kind": "default"
+        },
+        "requires_test": false
+      },
+      {
+        "name": "m10",
+        "line": 11,
+        "path_target": {
+          "kind": "default"
+        },
+        "requires_test": false
+      },
+      {
+        "name": "m11",
+        "line": 12,
+        "path_target": {
+          "kind": "default"
+        },
+        "requires_test": false
+      },
+      {
+        "name": "m12",
+        "line": 13,
+        "path_target": {
+          "kind": "default"
+        },
+        "requires_test": false
+      },
+      {
+        "name": "m13",
+        "line": 14,
+        "path_target": {
+          "kind": "default"
+        },
+        "requires_test": false
+      },
+      {
+        "name": "m14",
+        "line": 15,
+        "path_target": {
+          "kind": "default"
+        },
+        "requires_test": false
+      },
+      {
+        "name": "m15",
+        "line": 16,
+        "path_target": {
+          "kind": "default"
+        },
+        "requires_test": false
+      }
+    ],
+    "unresolved_property_macros": [],
+    "source": "pub mod m0;\npub mod m1;\npub mod m2;\npub mod m3;\npub mod m4;\npub mod m5;\npub mod m6;\npub mod m7;\npub mod m8;\npub mod m9;\npub mod m10;\npub mod m11;\npub mod m12;\npub mod m13;\npub mod m14;\npub mod m15;\n",
+    "item_scopes": {
+      "fns": []
+    },
+    "macro_candidates": {
+      "Names": []
+    }
+  },
+  "payload_digest": "sha256:3fa5be04b8e19bbc1a7d903f3a9182198d83c5199cb066c62e0912cf71440649"
+}

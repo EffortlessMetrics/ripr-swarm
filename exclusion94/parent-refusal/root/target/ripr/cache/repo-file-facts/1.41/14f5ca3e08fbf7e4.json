@@ -1,0 +1,103 @@
+{
+  "file_fact_cache_schema_version": "1.41",
+  "analyzer_version": "0.11.0+7995ea78d776692085f4f7035ce4aaa9b63be782",
+  "file_path": "src/m3.rs",
+  "content_hash": "28e0e1f852de8fca",
+  "file_facts": {
+    "path": "src/m3.rs",
+    "functions": [
+      {
+        "id": "src/m3.rs::positive",
+        "name": "positive",
+        "file": "src/m3.rs",
+        "start_line": 1,
+        "end_line": 1,
+        "body": {
+          "start": 4,
+          "len": 34
+        },
+        "calls": [
+          {
+            "line": 1,
+            "name": "positive",
+            "text": "fn positive(v:i32)->bool { v > 3 }"
+          }
+        ],
+        "returns": [],
+        "literals": [
+          {
+            "line": 1,
+            "value": "3"
+          }
+        ],
+        "source_role": "production",
+        "attrs": [],
+        "impl_attrs": [],
+        "nested_fn_names": [],
+        "let_bindings": [],
+        "item": {
+          "container": {
+            "kind": "free"
+          },
+          "has_self_param": false,
+          "has_body": true
+        },
+        "impl_context": "Free"
+      }
+    ],
+    "tests": [],
+    "returns": [],
+    "literals": [
+      {
+        "line": 1,
+        "value": "3"
+      }
+    ],
+    "probe_shapes": [
+      {
+        "start_line": 1,
+        "end_line": 1,
+        "start_byte": 31,
+        "end_byte": 36,
+        "kind": "predicate",
+        "text": {
+          "start": 31,
+          "len": 5
+        }
+      },
+      {
+        "start_line": 1,
+        "end_line": 1,
+        "start_byte": 31,
+        "end_byte": 36,
+        "kind": "return_value",
+        "text": {
+          "start": 31,
+          "len": 5
+        }
+      }
+    ],
+    "used_lexical_fallback": false,
+    "module_declarations": [],
+    "unresolved_property_macros": [],
+    "source": "pub fn positive(v:i32)->bool { v > 3 }\n",
+    "item_scopes": {
+      "fns": [
+        {
+          "line": 1,
+          "name": "positive",
+          "item": "TopLevel",
+          "local_use": false,
+          "deferred_code": false,
+          "cfg": false,
+          "direct_calls": [],
+          "bound_names": []
+        }
+      ]
+    },
+    "macro_candidates": {
+      "Names": []
+    }
+  },
+  "payload_digest": "sha256:a1a6b52c4f0ce880c1af764c2e0b5a2dd2da280b59c824726dc322c21066ac73"
+}

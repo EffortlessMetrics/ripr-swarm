@@ -1,0 +1,17 @@
+{
+  "label": "exclusion94-units",
+  "args": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--lib",
+    "fanout_"
+  ],
+  "cwd": "/workspace/review-8201-exclusion",
+  "started": 1792139749.3660426,
+  "elapsed": 155.99380660057068,
+  "exit": 0,
+  "head": "94b92efd77b052ce66493dc43f260d1f6e4e9457"
+}

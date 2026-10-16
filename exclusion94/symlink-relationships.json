@@ -1,0 +1,11 @@
+{
+  "root-alias/alias": "/workspace/8201-evidence/exclusion94/root-alias/physical",
+  "parent-refusal/selected": "/workspace/8201-evidence/exclusion94/parent-refusal/second",
+  "root-alias/physical/src/link.rs": "/workspace/8201-evidence/exclusion94/root-alias/outside.rs",
+  "module-fixture/.git/selected-alias": "/workspace/8201-evidence/exclusion94/module-fixture/target/selected",
+  "module-fixture/target/selected/outside-alias": "/workspace/8201-evidence/exclusion94/module-fixture/outside",
+  "module-fixture/target/selected/target/linked.rs": "/workspace/8201-evidence/exclusion94/module-fixture/target/selected/source.rs",
+  "module-fixture/target/selected/.git/linked.rs": "/workspace/8201-evidence/exclusion94/module-fixture/target/selected/source.rs",
+  "excluded-native-git/root/.git/linked.rs": "/workspace/8201-evidence/exclusion94/excluded-native-git/root/src/impl.rs",
+  "excluded-native-target/root/target/linked.rs": "/workspace/8201-evidence/exclusion94/excluded-native-target/root/src/impl.rs"
+}

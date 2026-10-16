@@ -1,0 +1,8 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running tests/cli_smoke.rs (/workspace/ripr-swarm/target/debug/deps/cli_smoke-544169fd588b0e87)
+
+running 1 test
+test closed_stderr::malformed_config_json_keeps_exit_two_with_closed_stderr ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 549 filtered out; finished in 0.02s
+

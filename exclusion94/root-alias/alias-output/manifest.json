@@ -1,0 +1,149 @@
+{
+  "command_success": true,
+  "complete_set": true,
+  "error": null,
+  "identity": {
+    "available_languages": [
+      "rust",
+      "python",
+      "typescript",
+      "javascript"
+    ],
+    "cargo_input_identity": "fnv1a64:b5d78f68cb994787",
+    "effective_config": "RiprConfig { analysis: AnalysisConfig { mode: None, include_unchanged_tests: None, production_like_targets: {}, test_harnesses: [] }, oracles: OraclePolicy { snapshot_strength: Medium, mock_expectation_strength: Medium, broad_error_strength: Weak }, severity: SeverityConfig { findings: FindingSeverityConfig { exposed: Info, weakly_exposed: Warning, reachable_unrevealed: Warning, no_static_path: Warning, infection_unknown: Warning, propagation_unknown: Note, static_unknown: Note }, seams: SeamSeverityConfig { strongly_gripped: Off, weakly_gripped: Warning, ungripped: Warning, reachable_unrevealed: Warning, activation_unknown: Info, propagation_unknown: Info, observation_unknown: Info, discrimination_unknown: Info, opaque: Info, intentional: Off, suppressed: Off } }, lsp: LspConfig { seam_diagnostics: Some(true), diagnostic_profile: None }, reports: ReportsConfig { max_related_tests: 5 }, suppressions: SuppressionsConfig { path: \".ripr/suppressions.toml\" }, languages: LanguagesConfig { enabled: [Rust], rust: RustLanguageConfig { generated_file_patterns: [], handwritten_files: [] }, python: PythonLanguageConfig { handwritten_files: [] }, typescript: TypescriptLanguageConfig { handwritten_files: [] } }, profiles: ProfilesConfig { bun_ub: None }, typescript: TypescriptConfig { resolve_tsconfig_paths: false }, perl: PerlConfig { producer: None, executable: None, timeout_ms: 0, cache_dir: None }, source_path: Some(\"/workspace/8201-evidence/exclusion94/root-alias/physical/ripr.toml\"), source_text: Some(\"[languages]\\nenabled=[\\\"rust\\\"]\\n\") }",
+    "effective_input": "CheckInput { root: \"/workspace/8201-evidence/exclusion94/root-alias/alias\", base: None, diff_file: Some(\"/workspace/8201-evidence/exclusion94/root-alias/input.diff\"), mode: Draft, format: Human, include_unchanged_tests: true, perl_facts_path: None, suppression_policy: None, git_timeout: Some(300s), git_candidate: None }",
+    "findings_budget": null,
+    "observed_inputs": [
+      {
+        "kind": "absent",
+        "path": "/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/ripr.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/exclusion94/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/exclusion94/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/exclusion94/ripr.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/exclusion94/root-alias/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/exclusion94/root-alias/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/exclusion94/root-alias/input.diff",
+        "sha256": "c5116be1712e3d4fc6190121567d965238037a180f2b03f39c97d7de02e325fc"
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/exclusion94/root-alias/physical/.ripr/suppressions.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/exclusion94/root-alias/physical/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/exclusion94/root-alias/physical/Cargo.toml",
+        "sha256": "f6f55e6bf65ddf6525a62e005a1cf67b2df8f9951d7497d2a252c35c682e9520"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/exclusion94/root-alias/physical/ripr.toml",
+        "sha256": "9630f624ff94ac92f148398529560d61e64351d5f413c8792ec4c49622757cec"
+      },
+      {
+        "kind": "directory",
+        "path": "/workspace/8201-evidence/exclusion94/root-alias/physical/src",
+        "sha256": null
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/exclusion94/root-alias/physical/src/lib.rs",
+        "sha256": "ae9c7bf77922169c3f634deb18ea39d3f63540f0a52e3f21661705436b7cabbb"
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/exclusion94/root-alias/ripr.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/ripr.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/ripr.toml",
+        "sha256": null
+      }
+    ],
+    "producer": "0.11.0+94b92efd77b052ce66493dc43f260d1f6e4e9457",
+    "utc_date": "2026-10-16"
+  },
+  "members": [
+    {
+      "bytes": 1810,
+      "file": "badge.json",
+      "sha256": "66d8b3a63e79ccb5f874c85b0fce0be80abcdf6d48b2ec90f421bb322c4c933b"
+    },
+    {
+      "bytes": 9684,
+      "file": "detail.json",
+      "sha256": "97a68a3accb1a5b2897526f8185c566c2074831a27b3ef137fff07578c58b2e0"
+    },
+    {
+      "bytes": 2911,
+      "file": "human.txt",
+      "sha256": "f27aaaff49a1c69c51b5d630b8d824efa2c1a0675e530f17ecd4b762928c10b8"
+    }
+  ],
+  "schema_version": "ripr-native-diff-output-set-v1"
+}

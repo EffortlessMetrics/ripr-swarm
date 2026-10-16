@@ -1,0 +1,12 @@
+outer Cargo target is above selected root: expected allowed=true; observed Ok(())
+outer git alias is above selected root: expected allowed=true; observed Ok(())
+physical absent probe: expected allowed=true; observed Ok(())
+aliased absent probe: expected allowed=true; observed Ok(())
+physical .git alias: expected allowed=false; observed Err("--output-dir cannot bind module reads outside the root or under Git metadata/Cargo target directories; use standalone formats for this input")
+selected alias with .git alias: expected allowed=false; observed Err("--output-dir cannot bind module reads outside the root or under Git metadata/Cargo target directories; use standalone formats for this input")
+physical target alias: expected allowed=false; observed Err("--output-dir cannot bind module reads outside the root or under Git metadata/Cargo target directories; use standalone formats for this input")
+selected alias with target alias: expected allowed=false; observed Err("--output-dir cannot bind module reads outside the root or under Git metadata/Cargo target directories; use standalone formats for this input")
+canonical outside source: expected allowed=false; observed Err("--output-dir cannot bind module reads outside the root or under Git metadata/Cargo target directories; use standalone formats for this input")
+absent probe through existing outside prefix: expected allowed=false; observed Err("--output-dir cannot bind module reads outside the root or under Git metadata/Cargo target directories; use standalone formats for this input")
+parent-dir traversed spelling: expected allowed=false; observed Err("--output-dir cannot bind module reads outside the root or under Git metadata/Cargo target directories; use standalone formats for this input")
+failed root isolated from concurrent and later fresh root
