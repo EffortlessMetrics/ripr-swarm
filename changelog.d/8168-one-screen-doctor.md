@@ -12,3 +12,6 @@
   characters so a newline-bearing root stays within 24 lines; JSON keeps
   the raw path. Verbose config failures keep source-free parser reasons.
   `ripr doctor --json` schema is unchanged (#8168).
+  Owner-return pin JSON-import visibility scans each file's `use` items
+  once so dogfood `ripr check` on this doctor diff can finish inside the
+  PR-evidence ceiling.

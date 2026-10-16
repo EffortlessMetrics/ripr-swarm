@@ -67,38 +67,62 @@ pub(super) fn literal_json_tokens(tokens: &[ra_ap_syntax::SyntaxToken]) -> bool 
     false
 }
 
+/// `use` items in `file`, collected once. Escape-gating asks visibility per
+/// macro call; walking every descendant of a 20k-line test file for each call
+/// made dogfood `ripr check` hang through the 3600s PR-evidence ceiling.
+pub(super) fn literal_json_uses(file: &ast::SourceFile) -> Vec<ast::Use> {
+    #[cfg(test)]
+    USE_SCAN_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    file.syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .collect()
+}
+
 /// Only an unchanged canonical import in this call's lexical ancestry. Binding
 /// competitors and registry identity remain the classifier's shared authority.
+pub(super) fn literal_json_import_visible_among(uses: &[ast::Use], call: &SyntaxNode) -> bool {
+    uses.iter().any(|import| {
+        import.attrs().next().is_none()
+            && import
+                .syntax()
+                .ancestors()
+                .skip(1)
+                .find(|node| {
+                    ast::BlockExpr::can_cast(node.kind())
+                        || ast::Module::can_cast(node.kind())
+                        || ast::SourceFile::can_cast(node.kind())
+                })
+                .is_some_and(|scope| call.ancestors().any(|node| node == scope))
+            && import.use_tree().is_some_and(|tree| {
+                tree.syntax()
+                    .descendants()
+                    .filter_map(ast::UseTree::cast)
+                    .any(|item| {
+                        item.rename().is_none()
+                            && item.use_tree_list().is_none()
+                            && is_drop_in_assertion(&item, "json")
+                    })
+            })
+    })
+}
+
+/// Only an unchanged canonical import in this call's lexical ancestry. Binding
+/// competitors and registry identity remain the classifier's shared authority.
+#[cfg(test)]
 pub(super) fn literal_json_import_visible(call: &SyntaxNode) -> bool {
     let Some(file) = call.ancestors().find_map(ast::SourceFile::cast) else {
         return false;
     };
-    file.syntax()
-        .descendants()
-        .filter_map(ast::Use::cast)
-        .any(|import| {
-            import.attrs().next().is_none()
-                && import
-                    .syntax()
-                    .ancestors()
-                    .skip(1)
-                    .find(|node| {
-                        ast::BlockExpr::can_cast(node.kind())
-                            || ast::Module::can_cast(node.kind())
-                            || ast::SourceFile::can_cast(node.kind())
-                    })
-                    .is_some_and(|scope| call.ancestors().any(|node| node == scope))
-                && import.use_tree().is_some_and(|tree| {
-                    tree.syntax()
-                        .descendants()
-                        .filter_map(ast::UseTree::cast)
-                        .any(|item| {
-                            item.rename().is_none()
-                                && item.use_tree_list().is_none()
-                                && is_drop_in_assertion(&item, "json")
-                        })
-                })
-        })
+    literal_json_import_visible_among(&literal_json_uses(&file), call)
+}
+
+#[cfg(test)]
+static USE_SCAN_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(super) fn take_use_scan_count() -> usize {
+    USE_SCAN_COUNT.swap(0, std::sync::atomic::Ordering::Relaxed)
 }
 
 pub(super) fn json_namespace_rebound(node: &SyntaxNode) -> bool {
@@ -118,4 +142,54 @@ pub(super) fn json_namespace_rebound(node: &SyntaxNode) -> bool {
                     .and_then(|segment| segment.name_ref())
                     .is_some_and(|name| name.text().trim_start_matches("r#") == "serde_json")
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::owner_pin_assertions;
+    use super::{
+        literal_json_import_visible, literal_json_import_visible_among, take_use_scan_count,
+    };
+    use crate::analysis::syntax::parse_clean_source_file;
+    use ra_ap_syntax::AstNode;
+
+    #[test]
+    fn json_use_scan_runs_once_per_file_not_per_macro() {
+        let mut src = String::from("use serde_json::json;\n#[test]\nfn checks() {\n");
+        for i in 0..40 {
+            src.push_str(&format!(
+                "    let _p{i} = json!(null);\n    assert_eq!(1, 1);\n"
+            ));
+        }
+        src.push_str("}\n");
+        let _ = take_use_scan_count();
+        let assertions = owner_pin_assertions(&src, &["assert_eq", "json"]);
+        assert!(assertions.parsed, "synthetic json-macro file must parse");
+        assert_eq!(
+            take_use_scan_count(),
+            1,
+            "import visibility must scan the file's use items once, not once per macro"
+        );
+    }
+
+    #[test]
+    fn cached_uses_keep_per_call_scope() -> Result<(), String> {
+        let source = "mod other { use serde_json::json; }\nfn f() { json!(null); }\n";
+        let parse = parse_clean_source_file(source).ok_or_else(|| "parse".to_string())?;
+        let file = parse.tree();
+        let call = file
+            .syntax()
+            .descendants()
+            .find_map(ra_ap_syntax::ast::MacroCall::cast)
+            .ok_or_else(|| "json call".to_string())?;
+        assert_eq!(
+            literal_json_import_visible_among(&super::literal_json_uses(&file), call.syntax()),
+            literal_json_import_visible(call.syntax())
+        );
+        assert!(
+            !literal_json_import_visible(call.syntax()),
+            "a use in another module must not make json visible"
+        );
+        Ok(())
+    }
 }

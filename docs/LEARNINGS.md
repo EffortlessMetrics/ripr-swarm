@@ -3181,3 +3181,26 @@ Durable rules:
 - Prefer proving a negative twice on two independent paths - e.g. the safe
   wrapper listing and a compile attempt that uses it - before writing that a
   capability is unavailable.
+
+## 2026-10-16: Per-macro full-file `use` scans hang dogfood PR evidence
+
+`cargo xtask ripr-pr` builds this branch's `ripr` and runs `ripr check` on
+the PR diff. On #8181 that producer stayed in `analyzing` for 3600s with
+no JSON. A 17-line `terminal_text.rs` slice of the same tree hung the same
+way. gdb showed `literal_json_import_visible` walking every descendant of
+the SourceFile for each macro in `has_escape`. When `json` is trusted,
+every `assert_eq!` / `format!` / `json!` in a 20k-line test file repeats
+that walk. Probe count times file size times macros is hours, not a
+flake, and splitting doctor tests does not remove it.
+
+Durable rules:
+
+- Dogfood PR evidence uses the PR's own binary. An analyzer quadratic on
+  large in-tree test files is a required-check failure of that PR, not a
+  reason to raise the 3600s ceiling or `workflow_dispatch` routed-rust.
+- Import visibility (or any lexical query whose answer is file-scoped)
+  must scan the file once and filter by call scope, not rescan descendants
+  per macro. Pin the scan count, not a wall-clock.
+- A tiny-diff hang that still names `analyzing [diff]` after index
+  disclosure is CPU work on indexed test files, not "the diff is too
+  many lines". Sample the stack before splitting the changed file.

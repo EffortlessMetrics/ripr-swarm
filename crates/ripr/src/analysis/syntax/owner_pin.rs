@@ -9,7 +9,8 @@
 mod fallible_check;
 mod literal_json;
 use literal_json::{
-    json_namespace_rebound, literal_json_import_visible, literal_json_tokens, literal_json_tree,
+    json_namespace_rebound, literal_json_import_visible_among, literal_json_tokens,
+    literal_json_tree, literal_json_uses,
 };
 mod slice_table;
 pub(crate) use fallible_check::{decimal_u8, literal_check_syntax, literal_owner_syntax};
@@ -1333,6 +1334,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
     result.parsed = true;
     let lines = LineIndex::new(source);
     let empty_macros = local_empty_macros(parse.tree().syntax());
+    let json_uses = literal_json_uses(&parse.tree());
     // A guard twin's discrimination assumes its `return Err(..)` is the
     // prelude variant: only then does a changed owner fail the test. A file
     // that binds the value name `Err` anywhere may route that return to an
@@ -1411,7 +1413,8 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                 .any(|attr| tokio_test_runs_body(&attr, function.syntax()))
         {
             Some(AssertionContextRefusal::AsyncTest)
-        } else if let Some(refusal) = has_escape(body.syntax(), trusted, &empty_macros) {
+        } else if let Some(refusal) = has_escape(body.syntax(), trusted, &empty_macros, &json_uses)
+        {
             Some(refusal)
         } else if let Some(attr) = function
             .attrs()
@@ -1556,6 +1559,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                 (source, &lines),
                 trusted,
                 &empty_macros,
+                &json_uses,
             )
         } else {
             BTreeMap::new()
@@ -1656,6 +1660,7 @@ fn local_helper_assertions(
     (source, lines): (&str, &LineIndex),
     trusted: &[&str],
     empty_macros: &BTreeMap<String, ast::MacroRules>,
+    json_uses: &[ast::Use],
 ) -> BTreeMap<AssertionKey, BorrowedAssertion> {
     let mut borrowed = BTreeMap::new();
     let Some(module) = test.syntax().parent() else {
@@ -1726,7 +1731,7 @@ fn local_helper_assertions(
         };
         if helper.syntax() == test.syntax()
             || helper.syntax().parent().as_ref() != Some(&module)
-            || !plain_check_helper(helper, trusted, empty_macros)
+            || !plain_check_helper(helper, trusted, empty_macros, json_uses)
         {
             continue;
         }
@@ -1824,6 +1829,7 @@ fn plain_check_helper(
     helper: &ast::Fn,
     trusted: &[&str],
     empty_macros: &BTreeMap<String, ast::MacroRules>,
+    json_uses: &[ast::Use],
 ) -> bool {
     let Some(body) = helper.body() else {
         return false;
@@ -1842,7 +1848,7 @@ fn plain_check_helper(
         && !body.syntax().descendants().any(|node| {
             ast::ReturnExpr::can_cast(node.kind()) || ast::TryExpr::can_cast(node.kind())
         })
-        && has_escape(body.syntax(), trusted, empty_macros).is_none()
+        && has_escape(body.syntax(), trusted, empty_macros, json_uses).is_none()
         && supported_item_context(helper.syntax())
 }
 
@@ -2912,6 +2918,7 @@ fn has_escape(
     body: &SyntaxNode,
     trusted: &[&str],
     empty: &BTreeMap<String, ast::MacroRules>,
+    json_uses: &[ast::Use],
 ) -> Option<AssertionContextRefusal> {
     body.descendants().find_map(|node| {
         if let Some(call) = ast::MacroCall::cast(node.clone()) {
@@ -2924,10 +2931,11 @@ fn has_escape(
                 .path()
                 .map(|path| path.syntax().text().to_string())
                 .unwrap_or_default();
+            let json_visible = literal_json_import_visible_among(json_uses, call.syntax());
             if (!is_trusted_macro(&path, trusted)
                 && !is_standard_qualified_macro(&path, &call, trusted))
                 || path == "json"
-                    && (!literal_json_import_visible(call.syntax())
+                    && (!json_visible
                         || !call
                             .token_tree()
                             .is_some_and(|tree| literal_json_tree(&tree)))
@@ -2937,10 +2945,7 @@ fn has_escape(
             // Macro operands are opaque to AST descendant walks. Refuse
             // hidden exits and nested expansion, but not boolean negation.
             if call.token_tree().is_some_and(|tree| {
-                opaque_macro_operand_with_json(
-                    &tree,
-                    trusted.contains(&"json") && literal_json_import_visible(call.syntax()),
-                )
+                opaque_macro_operand_with_json(&tree, trusted.contains(&"json") && json_visible)
             }) {
                 return Some(AssertionContextRefusal::MacroOperandExit(path));
             }
