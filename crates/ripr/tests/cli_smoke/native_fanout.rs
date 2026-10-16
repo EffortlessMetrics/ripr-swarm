@@ -528,3 +528,72 @@ fn fanout_root_alias_preserves_native_parity_and_symlink_refusal() -> TestResult
     assert_eq!(manifest["command_success"], false);
     Ok(())
 }
+
+#[cfg(unix)]
+fn excluded_alias_refuses(directory: &str) -> TestResult {
+    let physical = Fixture::new()?;
+    let holder = Fixture::new()?;
+    let alias = holder.0.join("root-alias");
+    std::os::unix::fs::symlink(&physical.0, &alias)?;
+    std::fs::write(
+        physical.0.join("src/impl.rs"),
+        "pub fn positive(value: i32) -> bool { value > 0 }\n",
+    )?;
+    std::fs::write(
+        physical.0.join("src/lib.rs"),
+        format!("include!(\"../{directory}/linked.rs\");\n"),
+    )?;
+    std::fs::write(
+        physical.0.join("input.diff"),
+        "--- a/src/impl.rs\n+++ b/src/impl.rs\n@@ -1 +1 @@\n-pub fn positive(value: i32) -> bool { value >= 0 }\n+pub fn positive(value: i32) -> bool { value > 0 }\n",
+    )?;
+    std::fs::create_dir_all(physical.0.join(directory))?;
+    std::os::unix::fs::symlink(
+        physical.0.join("src/impl.rs"),
+        physical.0.join(directory).join("linked.rs"),
+    )?;
+    for (label, root) in [("physical", &physical.0), ("alias", &alias)] {
+        let standalone = physical.run_at(root, &["--format", "json"], &[])?;
+        assert!(
+            standalone.status.success(),
+            "{directory}/{label}: {}",
+            String::from_utf8_lossy(&standalone.stderr)
+        );
+        let detail: serde_json::Value = serde_json::from_slice(&standalone.stdout)?;
+        assert!(
+            detail["findings"]
+                .as_array()
+                .is_some_and(|findings| !findings.is_empty()),
+            "native include must reach changed source"
+        );
+        let destination = holder.0.join(label);
+        let combined =
+            physical.run_at(root, &["--output-dir", &destination.to_string_lossy()], &[])?;
+        assert_eq!(
+            combined.status.code(),
+            Some(2),
+            "{directory}/{label} excluded alias must refuse"
+        );
+        assert!(
+            String::from_utf8_lossy(&combined.stderr)
+                .contains("under Git metadata/Cargo target directories")
+        );
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(destination.join("manifest.json"))?)?;
+        assert_eq!(manifest["complete_set"], false);
+        assert_eq!(manifest["command_success"], false);
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn fanout_excluded_alias_in_git_refuses_captured_target() -> TestResult {
+    excluded_alias_refuses(".git")
+}
+
+#[cfg(unix)]
+#[test]
+fn fanout_excluded_alias_in_cargo_target_refuses_captured_target() -> TestResult {
+    excluded_alias_refuses("target")
+}

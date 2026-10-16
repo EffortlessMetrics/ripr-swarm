@@ -65,6 +65,7 @@ pub(crate) fn observe_module_read(root: &Path, file: &Path, outside: bool) {
     guards.retain(|guard| guard.strong_count() > 0);
     let requested_root = std::path::absolute(root);
     let canonical_root = root.canonicalize();
+    let requested_file = std::path::absolute(file);
     let observed_file = resolved_probe_path(file);
     for state in guards.iter().filter_map(Weak::upgrade) {
         let matches = requested_root
@@ -82,24 +83,43 @@ pub(crate) fn observe_module_read(root: &Path, file: &Path, outside: bool) {
             || canonical_root
                 .as_ref()
                 .map_or(true, |path| path != &state.root)
-            || observed_file.as_ref().map_or(true, |path| {
-                let Ok(relative) = path.strip_prefix(&state.root) else {
-                    return true;
-                };
-                let mut parent = state.root.clone();
-                relative.components().any(|component| {
-                    let skipped = matches!(component, std::path::Component::ParentDir)
-                        || component_is_named(component.as_os_str(), ".git", cfg!(windows))
-                        || (component_is_named(component.as_os_str(), "target", cfg!(windows))
-                            && parent.join("Cargo.toml").is_file());
-                    parent.push(component);
-                    skipped
-                })
-            });
+            // Canonical identity must not erase an excluded alias binding.
+            // Match the selected-root spelling first, then its captured aliases;
+            // components above that selected root do not define exclusions.
+            || requested_file.as_ref().map_or(true, |file| {
+                [
+                    requested_root.as_ref().ok(),
+                    Some(&state.requested_root),
+                    Some(&state.root),
+                ]
+                .into_iter()
+                .flatten()
+                .find(|root| file.starts_with(root))
+                .is_none_or(|root| excluded_probe_path(root, file))
+            })
+            || observed_file
+                .as_ref()
+                .map_or(true, |file| excluded_probe_path(&state.root, file));
         if escaped {
             state.escaped.store(true, Ordering::SeqCst);
         }
     }
+}
+
+/// Check both the traversed spelling and resolved identity at the same owner.
+fn excluded_probe_path(root: &Path, file: &Path) -> bool {
+    let Ok(relative) = file.strip_prefix(root) else {
+        return true;
+    };
+    let mut parent = root.to_path_buf();
+    relative.components().any(|component| {
+        let skipped = matches!(component, std::path::Component::ParentDir)
+            || component_is_named(component.as_os_str(), ".git", cfg!(windows))
+            || (component_is_named(component.as_os_str(), "target", cfg!(windows))
+                && parent.join("Cargo.toml").is_file());
+        parent.push(component);
+        skipped
+    })
 }
 
 /// Resolve aliases in the existing prefix while retaining absent module probes.
@@ -264,6 +284,33 @@ mod tests {
             boundary.verify().is_err(),
             "alias must retain excluded-directory refusal"
         );
+        Ok(())
+    }
+    #[cfg(unix)]
+    #[test]
+    fn fanout_boundary_rejects_excluded_aliases_to_captured_files() -> Result<(), String> {
+        let physical = fixture("excluded-aliases")?;
+        let aliases = fixture("excluded-root-alias")?;
+        std::fs::write(physical.0.join("Cargo.toml"), "[workspace]").map_err(|e| e.to_string())?;
+        let captured = physical.0.join("lib.rs");
+        std::fs::write(&captured, "").map_err(|e| e.to_string())?;
+        let alias = aliases.0.join("root");
+        std::os::unix::fs::symlink(&physical.0, &alias).map_err(|e| e.to_string())?;
+        for directory in [".git", "target"] {
+            std::fs::create_dir(physical.0.join(directory)).map_err(|e| e.to_string())?;
+            std::os::unix::fs::symlink(&captured, physical.0.join(directory).join("linked.rs"))
+                .map_err(|e| e.to_string())?;
+            for root in [&physical.0, &alias] {
+                let boundary = Boundary::new(root)?;
+                observe_module_read(root, &root.join("lib.rs"), false);
+                boundary.verify()?;
+                observe_module_read(root, &root.join(directory).join("linked.rs"), false);
+                assert!(
+                    boundary.verify().is_err(),
+                    "{directory} alias must retain exclusion"
+                );
+            }
+        }
         Ok(())
     }
 }

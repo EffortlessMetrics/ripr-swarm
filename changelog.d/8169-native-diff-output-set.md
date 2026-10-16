@@ -4,3 +4,5 @@
   a final output-set manifest (#8169).
 - Selected roots spelled through directory symlinks retain native output parity;
   input-read failures are scoped to their active root boundary (#8169).
+- Reads through aliases under excluded Git metadata or Cargo target directories
+  remain refused even when the alias resolves to captured source (#8169).
