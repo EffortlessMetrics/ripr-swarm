@@ -1206,3 +1206,36 @@ fn require_classification(
     }
     Ok(())
 }
+
+// #8101: the same constructor around both sides compares what it wraps, so a
+// test compared with a non-literal through `Some(..)` or `Ok(..)` caps like
+// the bare comparison does.
+#[test]
+fn a_shared_constructor_does_not_hide_a_test_compared_with_a_non_literal() -> Result<(), String> {
+    let weak = (OracleKind::RelationalCheck, OracleStrength::Weak);
+    let exact = (OracleKind::ExactValue, OracleStrength::Strong);
+    let variant = (OracleKind::ExactErrorVariant, OracleStrength::Strong);
+    // The unwrapped comparisons are the baseline each wrapper must match.
+    require_classification("assert_eq!(r == Err(E::Bad), expected);", &weak)?;
+    require_classification("assert_eq!(r == Err(E::Bad), true);", &variant)?;
+    for text in [
+        "assert_eq!(Some(r == Err(E::Bad)), Some(expected));",
+        "assert_eq!(Some(expected), Some(r == Err(E::Bad)));",
+        "assert_eq!(Ok(r == Err(E::Bad)), Ok(expected));",
+        "assert_eq!(Err(r == Err(E::Bad)), Err(expected));",
+        "assert_eq!(Some(Some(r == Err(E::Bad))), Some(Some(expected)));",
+        "assert_eq!(Some(matches!(r, Err(E::Bad))), Some(expected));",
+    ] {
+        require_classification(text, &weak)?;
+    }
+    // A wrapper around a literal compares like the literal does, and
+    // constructors that differ, or carry more than one value, are not peeled.
+    require_classification("assert_eq!(Some(r == Err(E::Bad)), Some(true));", &variant)?;
+    let plain = classify_assertion("assert_eq!(total(2), expected);");
+    require_classification(
+        "assert_eq!(Some(total(2)), Some(expected));",
+        &(plain.kind, plain.strength),
+    )?;
+    require_classification("assert_eq!(Some(total(2)), Some(5));", &exact)?;
+    Ok(())
+}
