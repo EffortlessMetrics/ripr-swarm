@@ -11,7 +11,10 @@ struct Subject(PathBuf);
 impl Subject {
     fn new(body: &str) -> TestResult<Self> {
         let fixture = workspace_root().join("fixtures/typescript_caught_assertion");
-        let subject = Self(unique_temp_workspace("typescript-caught-assertion"));
+        let root = unique_temp_workspace("typescript-caught-assertion");
+        fs::create_dir_all(std::env::temp_dir())?;
+        fs::create_dir(&root)?;
+        let subject = Self(root);
         fs::create_dir_all(subject.0.join("src"))?;
         fs::create_dir_all(subject.0.join("tests"))?;
         for path in ["package.json", "ripr.toml", "src/load.ts"] {
