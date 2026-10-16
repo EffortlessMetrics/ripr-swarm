@@ -276,7 +276,8 @@ fn exact_boundary_argument_is_witnessed() -> Result<(), String> {
 }
 
 /// A body-local `ns` at the boundary is not an owner call. The real owner
-/// pin is off the boundary, so the row must miss rather than witness.
+/// pin is off the boundary, but `const ns = fakePricing()` keeps the body
+/// from a definite miss, so the row stays unresolved rather than witnessed.
 #[test]
 fn shadowed_namespace_boundary_call_does_not_witness() -> Result<(), String> {
     let source = one_test(
@@ -301,7 +302,7 @@ fn shadowed_namespace_boundary_call_does_not_witness() -> Result<(), String> {
     }
     let evaluated = evaluate(&DISCOUNT, &source, true)?;
     assert_eq!(evaluated.row("shadowed namespace")?.1, R::DirectOwnerCall);
-    assert_eq!(evaluated.activation("shadowed namespace")?, A::MissedBoundary);
+    assert_eq!(evaluated.activation("shadowed namespace")?, A::Unresolved);
     assert!(!evaluated.witnessed);
     Ok(())
 }
