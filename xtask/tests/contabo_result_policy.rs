@@ -110,6 +110,28 @@ fn accepts_exact_import_and_refuses_stale_missing_or_nonproduct_success() -> Res
 }
 
 #[test]
+fn refuses_malformed_dispatch_base_before_shell_normalization() -> Result<(), String> {
+    for change in [
+        ".inputs.base_sha += \"\\n\"",
+        ".inputs.base_sha += \"\\n\\n\"",
+        ".inputs.base_sha += \"0\"",
+        ".inputs.base_sha = 1",
+        ".inputs.base_sha = null",
+        ".inputs.base_sha = []",
+    ] {
+        let setup = format!(
+            "jq '{change}' \"$GITHUB_EVENT_PATH\" > \"$FIXTURE/event-changed.json\"; mv \"$FIXTURE/event-changed.json\" \"$GITHUB_EVENT_PATH\""
+        );
+        assert_ne!(
+            policy_exit(POLICY, ".", ".", &setup)?,
+            0,
+            "accepted malformed dispatch base: {change}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn source_and_product_guards_have_discriminating_controls() -> Result<(), String> {
     let source_guard = ".identity.attempt == $attempt and";
     assert!(POLICY.contains(source_guard));

@@ -10,9 +10,10 @@ set -euo pipefail
 [[ -n "${EM_CI_ARTIFACT_DIR:-}" && -d "$EM_CI_ARTIFACT_DIR" && ! -L "$EM_CI_ARTIFACT_DIR" ]]
 context="$EM_CI_ARTIFACT_DIR/em-ci-ripr-product-context.json"
 [[ -f "$context" && ! -L "$context" ]]
+# jq's `$` anchor accepts a final newline; refuse it before Bash strips it.
 base=$(jq -er --arg subject "$GITHUB_SHA" '
   .inputs | select(.expected_sha == $subject) | .base_sha
-  | select(type == "string" and test("^[0-9a-f]{40}$") and . != $subject)
+  | select(type == "string" and length == 40 and test("^[0-9a-f]{40}$") and . != $subject)
 ' "$GITHUB_EVENT_PATH")
 tree=$(git rev-parse 'HEAD^{tree}')
 [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
