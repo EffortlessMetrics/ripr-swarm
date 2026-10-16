@@ -683,7 +683,9 @@ fn default_enabled_features(package: &serde_json::Value) -> BTreeSet<String> {
 
 /// Transitively enable `default` and the local features it names.
 /// `dep:` and `dep/feature` enables are not local feature names.
-fn expand_default_features(features: &BTreeMap<String, Vec<String>>) -> BTreeSet<String> {
+pub(super) fn expand_default_features(
+    features: &BTreeMap<String, Vec<String>>,
+) -> BTreeSet<String> {
     let mut enabled = BTreeSet::new();
     if !features.contains_key("default") {
         return enabled;

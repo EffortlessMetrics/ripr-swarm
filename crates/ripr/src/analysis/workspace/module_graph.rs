@@ -50,8 +50,8 @@ use std::path::{Path, PathBuf};
 use rayon::prelude::*;
 
 use super::cargo_targets::{
-    collect_explicit_paths, declared_targets_from_manifest, lexical, nearest_manifest_dir,
-    normalize, owning_package_dir,
+    collect_explicit_paths, declared_targets_from_manifest, expand_default_features, lexical,
+    nearest_manifest_dir, normalize, owning_package_dir,
 };
 use super::source_role::SourceRoleContext;
 use crate::analysis::syntax::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
@@ -698,10 +698,67 @@ fn evidence_roots(
             roots.extend(named_default_roots(manifest.get(section), &dir));
         }
     }
-    roots
+    let mut roots: BTreeSet<PathBuf> = roots
         .into_iter()
         .map(|root| lexical(&normalize(&root)))
-        .collect()
+        .collect();
+    for unrun in unrun_test_roots(manifest, package_dir) {
+        roots.remove(&unrun);
+    }
+    roots
+}
+
+/// Roots of `[[test]]` targets `cargo test` never runs (#8016): `test =
+/// false` or `required-features` outside the package's default feature
+/// set. `harness = false` is deliberately not here: the harness registry
+/// (#3608) owns that target and credits it through a registered adapter, so
+/// an orphan verdict would contradict a verified registration. A root
+/// another, runnable declaration also names stays. An unreadable value
+/// keeps the root, the over-collecting direction.
+fn unrun_test_roots(manifest: &toml::Value, package_dir: &Path) -> BTreeSet<PathBuf> {
+    let Some(entries) = manifest.get("test").and_then(toml::Value::as_array) else {
+        return BTreeSet::new();
+    };
+    let defaults = manifest_default_features(manifest);
+    let dir = package_dir.join("tests");
+    let mut unrun = BTreeSet::new();
+    let mut run = BTreeSet::new();
+    for entry in entries {
+        let roots: Vec<PathBuf> = match entry.get("path").and_then(toml::Value::as_str) {
+            Some(path) if !path.trim().is_empty() => vec![package_dir.join(path.trim())],
+            _ => named_default_roots(Some(&toml::Value::Array(vec![entry.clone()])), &dir),
+        };
+        let skipped = entry.get("test").and_then(toml::Value::as_bool) == Some(false)
+            || entry
+                .get("required-features")
+                .and_then(toml::Value::as_array)
+                .is_some_and(|features| {
+                    features
+                        .iter()
+                        .any(|f| f.as_str().is_none_or(|name| !defaults.contains(name)))
+                });
+        let target = if skipped { &mut unrun } else { &mut run };
+        target.extend(roots.into_iter().map(|root| lexical(&normalize(&root))));
+    }
+    unrun.difference(&run).cloned().collect()
+}
+
+/// Features enabled under cargo defaults, from the manifest `[features]`
+/// table (the same expansion the metadata premise uses, #7266).
+fn manifest_default_features(manifest: &toml::Value) -> BTreeSet<String> {
+    let mut map = BTreeMap::new();
+    if let Some(table) = manifest.get("features").and_then(toml::Value::as_table) {
+        for (name, enables) in table {
+            let items = enables.as_array().into_iter().flatten();
+            map.insert(
+                name.clone(),
+                items
+                    .filter_map(|i| i.as_str().map(str::to_string))
+                    .collect(),
+            );
+        }
+    }
+    expand_default_features(&map)
 }
 
 /// The default paths of declared targets that name no `path`:
@@ -1395,6 +1452,52 @@ mod tests {
             BTreeSet::from([
                 PathBuf::from("src/a/orphan.rs"),
                 PathBuf::from("src/orphan.rs")
+            ])
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn test_targets_cargo_never_runs_are_orphans_and_runnable_ones_are_not() -> Result<(), String> {
+        // #8016: `test = false` and unmet `required-features` leave
+        // `tests/<name>.rs` unrun; a default feature, a plain target, a
+        // `harness = false` target (registry-owned) and a shared-path
+        // runnable twin stay roots.
+        let manifest = format!(
+            "{MANIFEST}[features]\ndefault = ['on']\non = []\n\
+             [[test]]\nname = 'off'\ntest = false\n\
+             [[test]]\nname = 'custom'\nharness = false\n\
+             [[test]]\nname = 'gated'\nrequired-features = ['never']\n\
+             [[test]]\nname = 'enabled'\nrequired-features = ['on']\n\
+             [[test]]\nname = 'plain'\n\
+             [[test]]\nname = 'twin_off'\npath = 'tests/twin.rs'\ntest = false\n\
+             [[test]]\nname = 'twin_on'\npath = 'tests/twin.rs'\n"
+        );
+        let files = [
+            ("Cargo.toml", manifest.as_str()),
+            ("src/lib.rs", ""),
+            ("tests/off.rs", ""),
+            ("tests/custom.rs", ""),
+            ("tests/gated.rs", ""),
+            ("tests/enabled.rs", ""),
+            ("tests/plain.rs", ""),
+            ("tests/twin.rs", ""),
+        ];
+        let root = fixture("unrun-test-targets", &files)?;
+        let candidates = [
+            "tests/off.rs",
+            "tests/custom.rs",
+            "tests/gated.rs",
+            "tests/enabled.rs",
+            "tests/plain.rs",
+            "tests/twin.rs",
+        ];
+        let context = evidence_for(&root, &candidates);
+        assert_eq!(
+            context.module_graph_orphans,
+            BTreeSet::from([
+                PathBuf::from("tests/gated.rs"),
+                PathBuf::from("tests/off.rs"),
             ])
         );
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
