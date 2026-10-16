@@ -1,5 +1,5 @@
 name: 'PR candidate admission'
-description: 'Refuse expensive qualification for stale heads, incomplete claim identity, unresolved competing candidates, or oversized non-docs scope (#2022, #4987)'
+description: 'Refuse expensive qualification for stale heads, incomplete claim identity, trusted competing candidates, or oversized non-docs scope (#2022, #4987)'
 author: 'EffortlessMetrics'
 
 inputs:
@@ -10,7 +10,7 @@ inputs:
   repository:
     description: 'Repository in owner/name form'
     required: false
-    default: ${{ github.repository }}
+    default: ''
   pr-number:
     description: 'Pull request number; empty for non-PR workflow invocations'
     required: false
@@ -50,7 +50,7 @@ outputs:
     description: 'Normalized acceptance delta'
     value: ${{ steps.admit.outputs.acceptance_delta }}
   competing_prs:
-    description: 'Comma-separated unresolved competing PR numbers'
+    description: 'Comma-separated trusted competing PR numbers'
     value: ${{ steps.admit.outputs.competing_prs }}
   changed_files:
     description: 'GitHub changed-files count for the current PR'
@@ -84,6 +84,7 @@ runs:
 
         if [ "${ADMISSION_MODE:-admit}" = "admit" ] && [ -n "${ADMISSION_PR_NUMBER:-}" ]; then
           [ -n "${GH_TOKEN:-}" ] || { echo '::error::candidate admission requires a read-only GitHub token'; exit 1; }
+          [ -n "${ADMISSION_REPOSITORY:-}" ] || { echo '::error::candidate admission requires owner/name repository identity'; exit 1; }
           gh api "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}" > "$current"
           gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls?state=open&per_page=100" | jq -s 'add' > "$open_prs"
         fi
@@ -143,6 +144,22 @@ runs:
             normalized = normalize(value)
             return normalized in PLACEHOLDERS or normalized.startswith("<")
 
+        def head_repository(pr: dict) -> str:
+            return (((pr.get("head") or {}).get("repo") or {}).get("full_name") or "")
+
+        def base_ref(pr: dict) -> str:
+            return ((pr.get("base") or {}).get("ref") or "")
+
+        def trusted_peer(current: dict, peer: dict) -> bool:
+            return (
+                peer.get("state") == "open"
+                and peer.get("draft") is False
+                and head_repository(peer) != ""
+                and head_repository(peer) == head_repository(current)
+                and base_ref(peer) != ""
+                and base_ref(peer) == base_ref(current)
+            )
+
         def refusal(reason: str, current: dict, fields: dict, peers=None) -> dict:
             changed_files = int(current.get("changed_files") or 0)
             changed_lines = int(current.get("additions") or 0) + int(current.get("deletions") or 0)
@@ -173,24 +190,19 @@ runs:
             claim = normalize(fields["claim"])
             delta = normalize(fields["delta"])
             exact_peers: list[int] = []
-            incomplete_peers: list[int] = []
             for peer in open_candidates:
-                if peer.get("number") == current.get("number"):
+                if peer.get("number") == current.get("number") or not trusted_peer(current, peer):
                     continue
                 peer_fields = extract_fields(peer.get("body") or "")
-                if invalid(peer_fields["claim"]):
+                if invalid(peer_fields["claim"]) or invalid(peer_fields["delta"]):
+                    # An incomplete peer refuses itself when selected. It cannot
+                    # acquire authority to block a complete candidate.
                     continue
-                if normalize(peer_fields["claim"]) != claim:
-                    continue
-                if invalid(peer_fields["delta"]):
-                    incomplete_peers.append(int(peer["number"]))
-                elif normalize(peer_fields["delta"]) == delta:
+                if normalize(peer_fields["claim"]) == claim and normalize(peer_fields["delta"]) == delta:
                     exact_peers.append(int(peer["number"]))
 
             if exact_peers:
                 return refusal("competing_candidate", current, fields, sorted(exact_peers))
-            if incomplete_peers:
-                return refusal("claim_collision_unresolved", current, fields, sorted(incomplete_peers))
 
             changed_files = int(current.get("changed_files") or 0)
             changed_lines = int(current.get("additions") or 0) + int(current.get("deletions") or 0)
@@ -211,13 +223,15 @@ runs:
 
         def fixture(number: int = 10, body: str = "", head: str = "a" * 40,
                     changed_files: int = 2, additions: int = 20, deletions: int = 5,
-                    draft: bool = False) -> dict:
+                    draft: bool = False, repository: str = "EffortlessMetrics/ripr-swarm",
+                    target: str = "main") -> dict:
             return {
                 "number": number,
                 "state": "open",
                 "draft": draft,
                 "body": body,
-                "head": {"sha": head},
+                "head": {"sha": head, "repo": {"full_name": repository}},
+                "base": {"ref": target},
                 "changed_files": changed_files,
                 "additions": additions,
                 "deletions": deletions,
@@ -237,7 +251,13 @@ runs:
             distinct = fixture(number=12, body=body(delta="add a delivery-state projection"), head="c" * 40)
             assert decide(current, [current, distinct], head, False)["status"] == "admitted"
             incomplete = fixture(number=13, body="Governing issue or accepted claim: #2022\n", head="d" * 40)
-            assert decide(current, [current, incomplete], head, False)["reason"] == "claim_collision_unresolved"
+            assert decide(current, [current, incomplete], head, False)["status"] == "admitted"
+            draft_duplicate = fixture(number=14, body=body(), head="e" * 40, draft=True)
+            assert decide(current, [current, draft_duplicate], head, False)["status"] == "admitted"
+            fork_duplicate = fixture(number=15, body=body(), head="f" * 40, repository="external/fork")
+            assert decide(current, [current, fork_duplicate], head, False)["status"] == "admitted"
+            other_base = fixture(number=16, body=body(), head="1" * 40, target="release")
+            assert decide(current, [current, other_base], head, False)["status"] == "admitted"
             assert decide(fixture(body="", head=head), [], head, False)["reason"] == "claim_identity_missing"
             oversized = fixture(body=body(), head=head, changed_files=161)
             assert decide(oversized, [oversized], head, False)["reason"] == "qualification_scope_oversized"
@@ -245,7 +265,7 @@ runs:
             assert decide(current, [current], "b" * 40, False)["reason"] == "candidate_head_moved"
             print(json.dumps({
                 "status": "self_test_pass",
-                "reason": "six_discriminating_controls_passed",
+                "reason": "ten_discriminating_controls_passed",
                 "claim": "",
                 "acceptance_delta": "",
                 "competing_prs": [],
@@ -306,8 +326,8 @@ runs:
 
         if [ "$status" = "refused" ]; then
           case "$reason" in
-            competing_candidate|claim_collision_unresolved)
-              echo "::error::candidate admission refused ($reason): reconcile competing PRs ${competing_prs:-unknown} and record the accepted winner/losing disposition before qualification"
+            competing_candidate)
+              echo "::error::candidate admission refused ($reason): reconcile trusted competing PRs ${competing_prs:-unknown} and record the accepted winner/losing disposition before qualification"
               ;;
             qualification_scope_oversized)
               echo "::error::candidate admission refused ($reason): split or recompose the candidate before ordinary qualification ($changed_files files, $changed_lines changed lines)"
