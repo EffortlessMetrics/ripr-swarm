@@ -247,11 +247,9 @@ pub(super) fn zero(args: &[String]) -> Result<(), String> {
         help::print_zero_help();
         return Ok(());
     }
-    // The sole subcommand is implied when the command runs bare:
-    // `ripr <cmd>` behaves like `ripr <cmd> "status"` (#2013).
-    let (subcommand, rest) = match args.split_first() {
-        Some((subcommand, rest)) => (subcommand.as_str(), rest),
-        None => ("status", &[][..]),
+    let Some((subcommand, rest)) = args.split_first() else {
+        help::print_zero_help();
+        return Ok(());
     };
     if subcommand != "status" {
         return Err(format!(
@@ -267,10 +265,8 @@ pub(super) fn policy(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {
-        return Err(
-            "policy requires subcommand `readiness`, `operations`, `history`, `promote`, `preview-promote`, `waiver-aging`, or `suppression-health`"
-                .to_string(),
-        );
+        help::print_policy_help();
+        return Ok(());
     };
     match subcommand.as_str() {
         "readiness" => policy_readiness(rest),
@@ -291,11 +287,9 @@ pub(super) fn pr_ledger(args: &[String]) -> Result<(), String> {
         help::print_pr_ledger_help();
         return Ok(());
     }
-    // The sole subcommand is implied when the command runs bare:
-    // `ripr <cmd>` behaves like `ripr <cmd> "record"` (#2013).
-    let (subcommand, rest) = match args.split_first() {
-        Some((subcommand, rest)) => (subcommand.as_str(), rest),
-        None => ("record", &[][..]),
+    let Some((subcommand, rest)) = args.split_first() else {
+        help::print_pr_ledger_help();
+        return Ok(());
     };
     if subcommand != "record" {
         return Err(format!(
@@ -331,11 +325,9 @@ pub(super) fn pr_review(args: &[String]) -> Result<(), String> {
         help::print_pr_review_help();
         return Ok(());
     }
-    // The sole subcommand is implied when the command runs bare:
-    // `ripr <cmd>` behaves like `ripr <cmd> "front-panel"` (#2013).
-    let (subcommand, rest) = match args.split_first() {
-        Some((subcommand, rest)) => (subcommand.as_str(), rest),
-        None => ("front-panel", &[][..]),
+    let Some((subcommand, rest)) = args.split_first() else {
+        help::print_pr_review_help();
+        return Ok(());
     };
     if subcommand != "front-panel" {
         return Err(format!(
@@ -350,11 +342,9 @@ pub(super) fn coverage_grip(args: &[String]) -> Result<(), String> {
         help::print_coverage_grip_help();
         return Ok(());
     }
-    // The sole subcommand is implied when the command runs bare:
-    // `ripr <cmd>` behaves like `ripr <cmd> "frontier"` (#2013).
-    let (subcommand, rest) = match args.split_first() {
-        Some((subcommand, rest)) => (subcommand.as_str(), rest),
-        None => ("frontier", &[][..]),
+    let Some((subcommand, rest)) = args.split_first() else {
+        help::print_coverage_grip_help();
+        return Ok(());
     };
     if subcommand != "frontier" {
         return Err(format!(
@@ -370,7 +360,8 @@ pub(super) fn assistant_loop(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {
-        return Err("assistant-loop requires subcommand `proof` or `health`".to_string());
+        help::print_assistant_loop_help();
+        return Ok(());
     };
     match subcommand.as_str() {
         "proof" => assistant_loop_proof(rest),
@@ -493,10 +484,8 @@ pub(super) fn reports(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {
-        return Err(
-            "reports requires subcommand `index`, `ci-packet`, `ci-summary`, `gap-ledger`, `ts-limitations`, or `ts-false-actionable`"
-                .to_string(),
-        );
+        help::print_reports_help();
+        return Ok(());
     };
     match subcommand.as_str() {
         "index" => report_packet_index(rest),
@@ -1180,7 +1169,8 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
     }
 
     let Some((subcommand, rest)) = args.split_first() else {
-        return Err("calibrate requires subcommand `cargo-mutants`".to_string());
+        help::print_calibrate_help();
+        return Ok(());
     };
     if subcommand != "cargo-mutants" {
         return Err(format!(
@@ -4517,10 +4507,10 @@ mod tests {
     }
 
     #[test]
-    fn pr_review_bare_dispatches_to_front_panel() {
-        // Bare `ripr pr-review` is the `front-panel` alias (#2013).
+    fn pr_review_bare_shows_help_and_front_panel_requires_input() {
+        assert_eq!(pr_review(&args(&[])), Ok(()));
         assert_eq!(
-            pr_review(&args(&[])),
+            pr_review(&args(&["front-panel"])),
             Err("pr-review front-panel requires at least one explicit artifact input".to_string())
         );
         assert_eq!(
@@ -4569,9 +4559,9 @@ mod tests {
 
     #[test]
     fn ripr_zero_status_requires_inputs_and_rejects_unknown_args() {
-        // Bare `ripr zero` is the `status` alias (#2013).
+        assert_eq!(zero(&args(&[])), Ok(()));
         assert_eq!(
-            zero(&args(&[])),
+            zero(&args(&["status"])),
             Err("zero status requires --delta <path>".to_string())
         );
         assert_eq!(
@@ -4701,13 +4691,7 @@ mod tests {
 
     #[test]
     fn policy_readiness_rejects_unknown_args() {
-        assert_eq!(
-            policy(&args(&[])),
-            Err(
-                "policy requires subcommand `readiness`, `operations`, `history`, `promote`, `preview-promote`, `waiver-aging`, or `suppression-health`"
-                    .to_string()
-            )
-        );
+        assert_eq!(policy(&args(&[])), Ok(()));
         assert_eq!(
             policy(&args(&["unknown"])),
             Err(
@@ -5851,9 +5835,9 @@ language = "rust"
 
     #[test]
     fn pr_evidence_ledger_requires_identity_and_evidence() {
-        // Bare `ripr pr-ledger` is the `record` alias (#2013).
+        assert_eq!(pr_ledger(&args(&[])), Ok(()));
         assert_eq!(
-            pr_ledger(&args(&[])),
+            pr_ledger(&args(&["record"])),
             Err(
                 "pr-ledger record requires at least one of --gate, --baseline-delta, --zero-status, --pr-guidance, or --gap-ledger"
                     .to_string()
@@ -6563,9 +6547,9 @@ language = "rust"
 
     #[test]
     fn coverage_grip_frontier_requires_movement_input() {
-        // Bare `ripr coverage-grip` is the `frontier` alias (#2013).
+        assert_eq!(coverage_grip(&args(&[])), Ok(()));
         assert_eq!(
-            coverage_grip(&args(&[])),
+            coverage_grip(&args(&["frontier"])),
             Err(
                 "coverage-grip frontier requires at least one of --ledger, --baseline-delta, or --zero-status"
                     .to_string()
@@ -7034,11 +7018,8 @@ language = "rust"
     }
 
     #[test]
-    fn calibrate_requires_subcommand_and_inputs() {
-        assert_eq!(
-            calibrate(&args(&[])),
-            Err("calibrate requires subcommand `cargo-mutants`".to_string())
-        );
+    fn calibrate_bare_shows_help_and_requires_inputs() {
+        assert_eq!(calibrate(&args(&[])), Ok(()));
         assert_eq!(
             calibrate(&args(&["runtime"])),
             Err("unknown calibrate subcommand \"runtime\"; expected `cargo-mutants`".to_string())

@@ -133,6 +133,13 @@ map is:
 | `ripr agent card --json` refusal stderr envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
 | `ripr agent stub --json` document and its refusal stderr envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762) | `schema_version` | `0.2` |
 
+The MCP tool envelopes carry the schema-versioned document as
+`structuredContent` in every successful response; a result whose complete
+double-carry envelope cannot fit the id-aware response bound refuses typed
+with `result_too_large` instead of shipping a success without
+`structuredContent` (#7768; details in
+[MCP workspace status server](interop/mcp.md)).
+
 The published JSON Schemas have these current versions. Each row is checked
 against the schema's pinned `const` and every named producer source by
 `cargo xtask check-verification-contracts`. A schema can describe a reserved

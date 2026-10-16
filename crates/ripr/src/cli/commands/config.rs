@@ -12,7 +12,8 @@ pub(in crate::cli) fn config(args: &[String]) -> Result<(), String> {
     }
 
     let Some((subcommand, rest)) = args.split_first() else {
-        return Err("config requires subcommand `validate`".to_string());
+        help::print_config_help();
+        return Ok(());
     };
     if subcommand != "validate" {
         return Err(format!(
