@@ -12939,6 +12939,45 @@ fn doctor_reports_loaded_config_path() -> Result<(), String> {
 }
 
 #[test]
+fn doctor_combined_ordinary_path_with_enablement_tip_fits_one_screen() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    std::fs::write(
+        workspace.join("ripr.toml"),
+        "[analysis]\nmode = \"deep\"\n\n[lsp]\nseam_diagnostics = true\n",
+    )
+    .map_err(|e| format!("write ripr.toml: {e}"))?;
+    std::fs::write(workspace.join("index.ts"), "export const x = 1;\n")
+        .map_err(|e| format!("write ts: {e}"))?;
+    std::fs::write(workspace.join("index.js"), "export const y = 1;\n")
+        .map_err(|e| format!("write js: {e}"))?;
+
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().count() <= 24,
+        "combined ordinary-path doctor must fit 80x24 ({} lines):\n{stdout}",
+        stdout.lines().count()
+    );
+    let tip = stdout.lines().find(|line| line.contains("- Tip:"));
+    assert!(
+        tip.is_some_and(|line| line.contains("[languages]") && line.contains("enabled =")),
+        "enablement tip must stay on one physical line:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("To analyze them, set in ripr.toml:"),
+        "the four-row TOML block must not return:\n{stdout}"
+    );
+    assert!(stdout.contains("Config: loaded ripr.toml"), "{stdout}");
+    assert!(stdout.contains("Analysis mode default: deep"), "{stdout}");
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
 fn doctor_reports_malformed_config_error() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
     std::fs::write(workspace.join("ripr.toml"), "[analysis]\nmode = \"slow\"\n")

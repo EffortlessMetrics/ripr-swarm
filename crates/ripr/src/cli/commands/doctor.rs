@@ -356,10 +356,23 @@ fn display_path(path: &Path) -> String {
 fn failure_block(evidence: &str) -> Vec<String> {
     let (state, fix) = split_state_and_fix(evidence);
     let mut lines = vec![format!("! {}", display_text(state))];
-    if let Some(fix) = fix {
+    if let Some(fix) = fix.or_else(|| tool_probe_nonzero_exit_fix(state)) {
         lines.push(format!("  Fix: {}", display_text(fix)));
     }
     lines
+}
+
+/// A probe that spawned and then exited nonzero is not a missing-tool
+/// install case. Name a repair of the binary on PATH so the bang line
+/// still has a `Fix:` without changing JSON evidence.
+fn tool_probe_nonzero_exit_fix(evidence: &str) -> Option<&'static str> {
+    output::doctor::DOCTOR_TOOLS.iter().find_map(|tool| {
+        evidence
+            .starts_with(&format!("{tool} --version failed"))
+            .then_some(
+                "the binary on PATH ran but `--version` failed; repair or replace it so the probe can succeed",
+            )
+    })
 }
 
 fn runtime_failure_block(probe: &output::doctor::DoctorRuntimeProbe) -> Vec<String> {
@@ -1385,7 +1398,7 @@ fn preview_language_enable_suggestions(enablement: Option<&PreviewEnablement>) -
         ""
     };
     vec![format!(
-        "- Tip: {names} files detected but not enabled, so `ripr check` does not analyze them. To analyze them, set in ripr.toml{javascript_note}:\n\n  [languages]\n  {enabled_line}"
+        "- Tip: {names} files detected but not enabled, so `ripr check` does not analyze them. Set in ripr.toml{javascript_note}: [languages] {enabled_line}"
     )]
 }
 
@@ -2903,17 +2916,85 @@ mod tests {
         );
     }
 
+    fn printed_line_count(lines: &[String]) -> usize {
+        lines.iter().map(|line| line.lines().count().max(1)).sum()
+    }
+
+    fn assert_fits_one_screen(lines: &[String]) {
+        let physical = printed_line_count(lines);
+        assert!(
+            physical <= DOCTOR_HUMAN_SCREEN_BUDGET,
+            "compact doctor must fit 80x24 ({physical} physical lines):\n{}",
+            lines.join("\n")
+        );
+        assert!(
+            lines
+                .iter()
+                .all(|line| !line.contains('\n') && !line.contains('\r')),
+            "printer entries must stay single-line:\n{}",
+            lines.join("\n")
+        );
+    }
+
+    fn version_failed_fix_is_not_install(lines: &[String]) {
+        let fixes: Vec<&String> = lines
+            .iter()
+            .filter(|line| line.starts_with("  Fix:"))
+            .collect();
+        assert!(
+            !fixes.is_empty(),
+            "expected at least one Fix line:\n{}",
+            lines.join("\n")
+        );
+        for fix in fixes {
+            let lower = fix.to_ascii_lowercase();
+            assert!(
+                !lower.contains("install") && !lower.contains("rustup"),
+                "nonzero `--version` is not a missing-tool install: {fix}"
+            );
+            assert!(
+                fix.contains("repair or replace"),
+                "nonzero `--version` must name a PATH-binary repair: {fix}"
+            );
+        }
+    }
+
+    #[test]
+    fn nonzero_tool_probe_gets_a_fix_without_install() {
+        let lines = failure_block("git --version failed (exit status: 127)");
+        assert_eq!(lines[0], "! git --version failed (exit status: 127)");
+        version_failed_fix_is_not_install(&lines);
+        let rustc = failure_block(
+            "rustc --version failed (exit status: 1): error: toolchain 1.81.0 is not installed",
+        );
+        assert!(
+            rustc[0].contains("toolchain 1.81.0 is not installed"),
+            "{rustc:?}"
+        );
+        version_failed_fix_is_not_install(&rustc);
+    }
+
+    #[test]
+    fn missing_git_spawn_still_names_install() {
+        let lines = failure_block(crate::git::GIT_NOT_FOUND_ON_PATH_MESSAGE);
+        assert!(
+            lines[0].starts_with('!') && lines[0].contains("git was not found on PATH"),
+            "{lines:?}"
+        );
+        assert!(
+            lines
+                .get(1)
+                .is_some_and(|line| line.starts_with("  Fix:") && line.contains("install git")),
+            "spawn-missing git keeps the install route: {lines:?}"
+        );
+    }
+
     #[test]
     fn compact_passing_screen_fits_one_terminal_and_hides_verbose_detail() {
         let report = passing_report();
         let environment = empty_environment();
         let lines = render_screen(&report, &environment, false, true);
-        assert!(
-            lines.len() <= DOCTOR_HUMAN_SCREEN_BUDGET,
-            "compact doctor must fit 80x24 ({} lines):\n{}",
-            lines.len(),
-            lines.join("\n")
-        );
+        assert_fits_one_screen(&lines);
         let text = lines.join("\n");
         assert!(text.contains("✓ doctor checks passed"), "{text}");
         assert!(text.contains("Recommended first command:"), "{text}");
@@ -2965,12 +3046,7 @@ mod tests {
         report.status = output::doctor::DoctorStatus::Fail;
         let environment = empty_environment();
         let lines = render_screen(&report, &environment, false, false);
-        assert!(
-            lines.len() <= DOCTOR_HUMAN_SCREEN_BUDGET,
-            "failing doctor must fit 80x24 ({} lines):\n{}",
-            lines.len(),
-            lines.join("\n")
-        );
+        assert_fits_one_screen(&lines);
         let text = lines.join("\n");
         let fail_at = text
             .find("! not inside a Git work tree")
@@ -3003,12 +3079,7 @@ mod tests {
         );
         let environment = empty_environment();
         let lines = render_screen(&report, &environment, false, false);
-        assert!(
-            lines.len() <= DOCTOR_HUMAN_SCREEN_BUDGET,
-            "required runtime failure must still fit 80x24 ({} lines):\n{}",
-            lines.len(),
-            lines.join("\n")
-        );
+        assert_fits_one_screen(&lines);
         let text = lines.join("\n");
         let fail_at = text
             .find("! python verify-route runtime: python3 not available")
@@ -3052,12 +3123,7 @@ mod tests {
         report.status = output::doctor::DoctorStatus::Fail;
         let environment = empty_environment();
         let lines = render_screen(&report, &environment, false, false);
-        assert!(
-            lines.len() <= DOCTOR_HUMAN_SCREEN_BUDGET,
-            "cargo_toml failure must still fit 80x24 ({} lines):\n{}",
-            lines.len(),
-            lines.join("\n")
-        );
+        assert_fits_one_screen(&lines);
         let text = lines.join("\n");
         assert!(text.contains("! no Cargo.toml found at ."), "{text}");
         assert!(text.contains("  Fix: pass `--root <dir>`"), "{text}");
@@ -3094,12 +3160,7 @@ mod tests {
             next_command: "next".to_string(),
         });
         let compact = render_screen(&report, &environment, false, true);
-        assert!(
-            compact.len() <= DOCTOR_HUMAN_SCREEN_BUDGET,
-            "perl-executable disclosure must still fit 80x24 ({} lines):\n{}",
-            compact.len(),
-            compact.join("\n")
-        );
+        assert_fits_one_screen(&compact);
         let text = compact.join("\n");
         assert!(
             text.contains("ignoring [perl].executable `sh` from ripr.toml (not run)"),
@@ -3182,19 +3243,7 @@ mod tests {
             verbose: false,
             passed: true,
         });
-        assert!(
-            lines.len() <= DOCTOR_HUMAN_SCREEN_BUDGET,
-            "newline-bearing root must still fit 80x24 ({} lines):\n{}",
-            lines.len(),
-            lines.join("\n")
-        );
-        assert!(
-            lines
-                .iter()
-                .all(|line| !line.contains('\n') && !line.contains('\r')),
-            "printer entries must stay single-line:\n{}",
-            lines.join("\n")
-        );
+        assert_fits_one_screen(&lines);
         assert!(
             lines.iter().any(|line| line.contains("\\u{0a}")),
             "newlines in the root must be spelled:\n{}",
@@ -3277,12 +3326,7 @@ mod tests {
             false,
             true,
         );
-        assert!(
-            lines.len() <= DOCTOR_HUMAN_SCREEN_BUDGET,
-            "source-build compact must still fit 80x24 ({} lines):\n{}",
-            lines.len(),
-            lines.join("\n")
-        );
+        assert_fits_one_screen(&lines);
         let text = lines.join("\n");
         assert!(
             text.contains("typescript verify-route runtime: node not available"),
@@ -3342,12 +3386,7 @@ mod tests {
             false,
             false,
         );
-        assert!(
-            compact.len() <= DOCTOR_HUMAN_SCREEN_BUDGET,
-            "invalid-config compact must fit 80x24 ({} lines):\n{}",
-            compact.len(),
-            compact.join("\n")
-        );
+        assert_fits_one_screen(&compact);
         let text = compact.join("\n");
         assert!(text.contains("! Config: invalid ripr.toml"), "{text}");
         assert!(
@@ -3375,6 +3414,127 @@ mod tests {
         assert!(
             verbose.contains("correct `ripr.toml` so it loads"),
             "{verbose}"
+        );
+    }
+
+    #[test]
+    fn compact_tool_version_failures_each_get_a_fix_and_fit() {
+        let mut report = passing_report();
+        for tool in ["git", "cargo", "rustc"] {
+            let name = format!("tool_{tool}");
+            report.add_check(
+                &name,
+                output::doctor::DoctorStatus::Fail,
+                Some(format!("{tool} --version failed (exit status: 1)")),
+            );
+            report.checks.retain(|check| {
+                check.name != name || check.status == output::doctor::DoctorCheckStatus::Fail
+            });
+        }
+        report.status = output::doctor::DoctorStatus::Fail;
+        let lines = render_screen(&report, &empty_environment(), false, false);
+        assert_fits_one_screen(&lines);
+        let text = lines.join("\n");
+        for tool in ["git", "cargo", "rustc"] {
+            assert!(
+                text.contains(&format!("! {tool} --version failed (exit status: 1)")),
+                "{text}"
+            );
+        }
+        version_failed_fix_is_not_install(&lines);
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.starts_with("  Fix:"))
+                .count(),
+            3,
+            "each tool bang needs its own Fix:\n{text}"
+        );
+    }
+
+    #[test]
+    fn compact_ordinary_path_with_enablement_tip_fits_one_screen() {
+        let mut report = passing_report();
+        report.add_runtime_probe(
+            "python",
+            "python3",
+            output::doctor::DoctorStatus::Pass,
+            "Python 3.12.0",
+            true,
+            "",
+        );
+        let mut environment = empty_environment();
+        if let Some(defaults) = environment.facts.config_defaults.as_mut() {
+            defaults.source_path = Some("ripr.toml".to_string());
+            defaults.analysis_mode = "deep".to_string();
+        }
+        environment.facts.detected_languages = vec![
+            detected_entry(LanguageId::Rust, true),
+            detected_entry(LanguageId::TypeScript, true),
+            detected_entry(LanguageId::JavaScript, true),
+        ];
+        environment.facts.unanalyzed_source_languages = vec![unanalyzed_entry("Go", 3)];
+        environment.facts.perl_preview = Some(output::doctor::DoctorPerlPreview {
+            pm_files: 1,
+            pl_files: 0,
+            t_files: 0,
+            adapter_compiled: false,
+            producer: Some("perl-ripr-facts".to_string()),
+            ignored_configured_executable: Some("sh".to_string()),
+            exporter: output::doctor::DoctorPerlExporter {
+                state: output::doctor::DoctorPerlExporterState::NotFound,
+                executable: None,
+                version: None,
+            },
+            expected_schema: "1".to_string(),
+            test_roots: Vec::new(),
+            frameworks: Vec::new(),
+            runners: Vec::new(),
+            next_command: "next".to_string(),
+        });
+        environment.preview_enablement = Some(PreviewEnablement {
+            gaps: vec![
+                PreviewLanguageGap {
+                    entry: LanguageId::TypeScript,
+                    label: "typescript".to_string(),
+                },
+                PreviewLanguageGap {
+                    entry: LanguageId::TypeScript,
+                    label: "javascript".to_string(),
+                },
+            ],
+            suggestion: vec![LanguageId::Rust, LanguageId::TypeScript],
+        });
+        let lines = render_screen(&report, &environment, false, true);
+        assert_fits_one_screen(&lines);
+        let text = lines.join("\n");
+        let tip = lines
+            .iter()
+            .find(|line| line.starts_with("- Tip:"))
+            .map(String::as_str)
+            .unwrap_or("");
+        assert!(
+            tip.starts_with("- Tip:")
+                && !tip.contains('\n')
+                && tip.contains("[languages]")
+                && tip.contains("enabled ="),
+            "enablement tip must be one physical line:\n{text}"
+        );
+        assert!(
+            tip.contains("the `typescript` entry also analyzes JavaScript"),
+            "{tip}"
+        );
+        assert!(text.contains("Config: loaded ripr.toml"), "{text}");
+        assert!(text.contains("Analysis mode default: deep"), "{text}");
+        assert!(
+            text.contains("LSP seam diagnostics default: true"),
+            "{text}"
+        );
+        assert!(text.contains("Recommended first command:"), "{text}");
+        assert!(text.contains("- Before that: enable typescript"), "{text}");
+        assert!(
+            !text.contains("To analyze them, set in ripr.toml:"),
+            "the four-row TOML block must not return:\n{text}"
         );
     }
 
@@ -5288,6 +5448,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(suggestions.len(), 1, "one tip: {suggestions:?}");
         assert!(
+            !suggestions[0].contains('\n') && !suggestions[0].contains('\r'),
+            "compact tip must stay one physical line:\n{}",
+            suggestions[0]
+        );
+        assert!(
             suggestions[0].contains(r#"enabled = ["rust", "typescript"]"#),
             "mixed repos keep rust; got:\n{}",
             suggestions[0]
@@ -5317,6 +5482,11 @@ mod tests {
         let before = test_enable_before_first_command(&dir);
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(suggestions.len(), 1, "one combined tip: {suggestions:?}");
+        assert!(
+            !suggestions[0].contains('\n') && suggestions[0].contains("[languages]"),
+            "compact tip must stay one physical line:\n{}",
+            suggestions[0]
+        );
         assert!(
             suggestions[0].contains(r#"enabled = ["python", "typescript"]"#),
             "the snippet must keep python and omit undetected rust; got:\n{}",

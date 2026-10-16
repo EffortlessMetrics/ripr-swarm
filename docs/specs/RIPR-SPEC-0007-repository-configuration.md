@@ -297,16 +297,19 @@ states, proof-rail note, or "Recommended first command: ripr check";
 and enabled language runtimes are reported but do not decide that profile's
 status.
 
-Default human `ripr doctor` is a compact screen (≤24 lines) with failures
-first and a `Fix:` line each; `-v`/`--verbose` restores the full detail dump.
-`ripr doctor --json` remains the complete typed report. Compact
+Default human `ripr doctor` is a compact screen (≤24 physical lines) with
+failures first and a `Fix:` line each; `-v`/`--verbose` restores the full
+detail dump. `ripr doctor --json` remains the complete typed report. Compact
 `--profile source-build` still reports enabled primary language runtimes as
 advisory lines; optional extra tools stay behind verbose. Compact still
 discloses a refused `[perl].executable` (not run). A failing `cargo_toml`
-or required runtime does not recommend `ripr check`. Human path and evidence
-text spell control characters so a newline-bearing root stays within the
-line budget; JSON keeps the raw path. Verbose config failures keep
-source-free parser reasons and the allowlisted misplaced-key hint.
+or required runtime does not recommend `ripr check`. The compact enablement
+tip is one physical line. A tool probe that ran and then exited nonzero
+(`git --version failed`) gets a `Fix:` that names repair of the binary
+on PATH, not a missing-tool install; JSON evidence is unchanged. Human path
+and evidence text spell control characters so a newline-bearing root stays
+within the line budget; JSON keeps the raw path. Verbose config failures
+keep source-free parser reasons and the allowlisted misplaced-key hint.
 
 Given a selected root with its own rustup toolchain selection,
 when doctor probes cargo or rustc,
