@@ -10506,6 +10506,9 @@ id = "RIPR-SPEC-0153"
 name = "Rust producer-owned source role"
 spec = "docs/specs/RIPR-SPEC-0153-rust-source-role.md"
 tests = [
+  "crates/ripr/tests/unrun_test_target.rs::live_target_baseline_exposes",
+  "crates/ripr/tests/unrun_test_target.rs::unrun_declared_targets_are_not_credited",
+  "crates/ripr/tests/unrun_test_target.rs::satisfied_required_features_stay_credited",
   "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs::plain_test_gate_excludes_conditional_attribute_expansion",
   "crates/ripr/tests/cache_clear_safety.rs::classified_cache_cargo_config_edit_revert_rename_delete_matches_cold",
   "crates/ripr/tests/cache_clear_safety.rs::classified_cache_saved_test_edit_revert_rename_delete_matches_cold",

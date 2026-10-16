@@ -11,6 +11,10 @@ are scoped or reviewed.
 
 ### Changed
 
+- Tests in a `[[test]]` target `cargo test` never runs (`test = false`,
+  `required-features` outside the default feature set, or `harness = false`
+  without a `custom_harness` registration) no longer relate to a changed
+  owner, so they stop reading `exposed` (#8016).
 - LSP scale-degradation disclosures now say what the run actually did at
   all three surfaces where they previously overclaimed. An opened document
   whose changed lines sit outside the analyzed partial-diff partition is

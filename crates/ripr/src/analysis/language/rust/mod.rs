@@ -366,6 +366,78 @@ fn drop_unreached_test_files(
         .collect()
 }
 
+/// Drops the files of Cargo test targets `cargo test` never runs (#8016):
+/// a `[[test]]` with `test = false`, with `required-features` outside the
+/// default feature set, or with `harness = false` (libtest never collects
+/// its `#[test]` items). Cargo's own metadata is the authority, through the
+/// same [`workspace::ManifestInventory`] the helper-credit producer asks, so
+/// an unavailable probe keeps the file. A `harness = false` file a
+/// `custom_harness` registration names is kept: the registry validates it.
+///
+/// Only files that hold tests and sit in a package whose manifest declares
+/// one of those three keys on a `[[test]]` entry reach the probe.
+fn drop_unrun_target_files(
+    root: &Path,
+    test_harnesses: &[crate::config::TestHarnessRegistration],
+    loaded_files: Vec<(PathBuf, Vec<u8>)>,
+) -> Vec<(PathBuf, Vec<u8>)> {
+    let registered = test_harnesses
+        .iter()
+        .map(|registration| workspace::normalize_path(&registration.target))
+        .collect::<BTreeSet<_>>();
+    let mut manifests = BTreeMap::new();
+    let mut declares_gate = BTreeMap::new();
+    let mut inventory = workspace::ManifestInventory::default();
+    let mut dropped = BTreeSet::new();
+    for (path, bytes) in &loaded_files {
+        if !contains_bytes(bytes, b"test") {
+            continue;
+        }
+        let Some(package) = owning_manifest_dir(root, path, &mut manifests) else {
+            continue;
+        };
+        let gated = *declares_gate.entry(package.clone()).or_insert_with(|| {
+            committed_source::read_source_bytes(root, &package.join("Cargo.toml"))
+                .ok()
+                .flatten()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+                .and_then(|manifest| {
+                    manifest
+                        .get("test")
+                        .and_then(toml::Value::as_array)
+                        .cloned()
+                })
+                .is_some_and(|entries| {
+                    entries.iter().any(|entry| {
+                        ["test", "harness", "required-features"]
+                            .iter()
+                            .any(|key| entry.get(*key).is_some())
+                    })
+                })
+        });
+        if !gated {
+            continue;
+        }
+        let skipped = inventory.cargo_test_collection_skipped(root, path);
+        let harness_off = !registered.contains(&workspace::normalize_path(path))
+            && matches!(
+                inventory.verdict(root, path),
+                workspace::CargoHarnessVerdict::HarnessDisabled
+            );
+        if skipped || harness_off {
+            dropped.insert(workspace::normalize_path(path));
+        }
+    }
+    if dropped.is_empty() {
+        return loaded_files;
+    }
+    loaded_files
+        .into_iter()
+        .filter(|(path, _)| !dropped.contains(&workspace::normalize_path(path)))
+        .collect()
+}
+
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
     // `windows(0)` panics; every haystack contains the empty needle.
     if needle.is_empty() {
@@ -2019,6 +2091,9 @@ impl RustAdapter {
             &options.test_harnesses,
             loaded_files,
         );
+        // #8016: a `[[test]]` target cargo never runs holds no evidence.
+        let loaded_files =
+            drop_unrun_target_files(&options.root, &options.test_harnesses, loaded_files);
         let cached = rust_index::build_analysis_index_from_loaded_files(
             &options.root,
             &loaded_files,

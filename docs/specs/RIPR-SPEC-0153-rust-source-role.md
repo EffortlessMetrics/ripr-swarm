@@ -318,6 +318,12 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
   or added by the diff) and a `tests/` file that `autotests = false`
   leaves undeclared relate to nothing, while the declared file and the
   name-only `[[test]]` target keep their relation.
+- Unrun targets (#8016): a test in a `[[test]]` target that `cargo test`
+  never runs (`test = false`, `required-features` outside the default
+  feature set, or `harness = false` without a `custom_harness`
+  registration) relates to nothing. Cargo metadata decides; an unavailable
+  probe keeps the file, and a target whose required features are default
+  stays related.
 - Comment/string module mentions (#6979): an unchanged orphan named only
   inside a block comment, nested block comment, doc comment, plain string or
   raw string supplies no related test; real `cfg(test)` and renamed
