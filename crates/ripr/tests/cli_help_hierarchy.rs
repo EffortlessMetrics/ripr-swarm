@@ -77,14 +77,14 @@ mod discovery_rows {
             }
         }
 
-        fn expect(&mut self, wanted: u8) -> Result<(), String> {
+        fn require_byte(&mut self, wanted: u8) -> Result<(), String> {
             self.skip_ws();
             let got = self.bump()?;
             if got == wanted {
                 Ok(())
             } else {
                 Err(format!(
-                    "expected {:?}, got {:?}",
+                    "required {:?}, got {:?}",
                     wanted as char, got as char
                 ))
             }
@@ -232,7 +232,7 @@ mod discovery_rows {
         }
 
         fn skip_array(&mut self) -> Result<(), String> {
-            self.expect(b'[')?;
+            self.require_byte(b'[')?;
             self.skip_ws();
             if self.peek() == Some(b']') {
                 self.i += 1;
@@ -262,7 +262,7 @@ mod discovery_rows {
             &mut self,
             mut on_field: impl FnMut(&str, &mut Self) -> Result<(), String>,
         ) -> Result<(), String> {
-            self.expect(b'{')?;
+            self.require_byte(b'{')?;
             self.skip_ws();
             if self.peek() == Some(b'}') {
                 self.i += 1;
@@ -271,7 +271,7 @@ mod discovery_rows {
             loop {
                 self.skip_ws();
                 let key = self.parse_string()?;
-                self.expect(b':')?;
+                self.require_byte(b':')?;
                 self.skip_ws();
                 on_field(&key, self)?;
                 self.skip_ws();
@@ -320,7 +320,7 @@ mod discovery_rows {
         }
 
         fn parse_command_rows(&mut self) -> Result<Vec<(String, String)>, String> {
-            self.expect(b'[')?;
+            self.require_byte(b'[')?;
             self.skip_ws();
             if self.peek() == Some(b']') {
                 return Err("commands array is empty".to_string());
