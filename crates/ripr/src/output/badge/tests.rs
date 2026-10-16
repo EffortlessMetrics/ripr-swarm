@@ -865,7 +865,10 @@ fn badge_plus_accepts_empty_not_run_report_with_optional_explanation() -> Result
     assert_eq!(summary.unknowns_test_efficiency, 0);
     // A version bump is not an interchangeable way to add this optional field.
     let unsupported = explained.replace("\"0.1\"", "\"0.2\"");
-    assert!(parse_test_efficiency_badge_summary(&unsupported).is_err());
+    let error = parse_test_efficiency_badge_summary(&unsupported)
+        .err()
+        .ok_or("unsupported report schema was accepted")?;
+    assert!(error.contains("schema_version"));
     Ok(())
 }
 
