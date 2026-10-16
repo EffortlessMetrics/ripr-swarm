@@ -9,7 +9,9 @@ mod diff;
 mod extract;
 mod facts;
 mod generated_rust_corpus;
-pub(crate) use generated_rust_corpus::generated_rust_recovery;
+pub(crate) use generated_rust_corpus::{
+    absent_changed_rust_file_limitations, generated_rust_recovery,
+};
 pub(crate) mod harness_projection;
 mod language;
 pub(crate) mod new_test_target;
