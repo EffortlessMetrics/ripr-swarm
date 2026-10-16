@@ -3298,6 +3298,16 @@ disposition: agent consumers must not treat a `base_deleted`,
 `moved_or_renamed`, or `unresolved_subject` packet as a candidate edit
 target.
 
+`canonical_gap_id` is an additive top-level member, emitted between `tool` and
+`source_currentness` exactly when the finding carries a canonical gap and
+omitted otherwise (static-limit findings and probes with no owner identity).
+It is the same stable, class-scoped gap identity the finding-level
+`canonical_gap_id` and `finding_alignment.items[].canonical_gap_id` carry, for
+example `gap:rust:src/lib.rs:pricing::discount:predicate_boundary:predicate:amount>=threshold`,
+and is the id `ripr receipt write --gap` and the gap ledger key on. Consumers
+branch on its presence, not on a `null` value, and must not derive their own
+identity from `probe.id`, paths, or lines.
+
 ## Repo Seam Inventory
 
 `ripr check --root . --format repo-seams-json` emits the repo seam inventory
