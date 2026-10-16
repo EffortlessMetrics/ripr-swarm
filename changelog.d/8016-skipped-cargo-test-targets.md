@@ -1,1 +1,2 @@
-Tests in a `[[test]]` target that `cargo test` never runs (`test = false`, `required-features` outside the default set, or `harness = false` without a registered custom harness) no longer read as evidence: a change they covered now reads `no_static_path` instead of `exposed` (#8016).
+<!-- section: Fixed -->
+- Tests in a `[[test]]` target that `cargo test` never runs (`test = false`, `required-features` outside the default set, or `harness = false` without a registered custom harness) no longer read as evidence: a change they covered now reads `no_static_path` instead of `exposed` (#8016).
