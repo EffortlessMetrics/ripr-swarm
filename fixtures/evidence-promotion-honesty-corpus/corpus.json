@@ -9113,6 +9113,38 @@
         { "type": "must_not_promote" },
         { "type": "expected_class", "class": "weakly_exposed" }
       ]
+    },
+    {
+      "id": "rust_field_snapshot_wrong_receiver_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-wrong-receiver.json",
+      "vector": "snapshot_field_name_without_expected_value_and_owner_receiver_binding",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::make_record",
+          "expression": "items: count + 0",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_field_snapshot_missing_expected_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-missing-expected.json",
+      "vector": "snapshot_field_name_without_expected_value_and_owner_receiver_binding",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::make_record",
+          "expression": "items: count + 0",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        }
+      ]
     }
   ]
 }
