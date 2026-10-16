@@ -1543,6 +1543,107 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
     Ok(())
 }
 
+const SHOP_FEE_SOURCE: &str =
+    "def fee(amount):\n    if amount < 0:\n        raise ValueError('negative')\n    return amount * 3\n";
+const SHOP_FEE_NEW_LINE: &str = "    return amount * 3";
+const SHOP_FEE_OLD_LINE: &str = "    return amount * 2";
+
+fn classify_shop_fee(test_source: &str) -> Result<crate::domain::Finding, String> {
+    let owners = extract_owners(Path::new("src/shop.py"), SHOP_FEE_SOURCE);
+    let tests = extract_tests(Path::new("tests/test_shop.py"), test_source);
+    classify_change_with_old(
+        Path::new("src/shop.py"),
+        4,
+        SHOP_FEE_NEW_LINE,
+        Some(SHOP_FEE_OLD_LINE),
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "changed shop.fee return should classify".to_string())
+}
+
+fn assert_shop_fee_exposed(finding: &crate::domain::Finding) {
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
+    assert_eq!(
+        finding.related_tests[0].oracle_strength,
+        OracleStrength::Strong
+    );
+    assert!(
+        matches!(
+            finding.oracle_alignment.as_deref(),
+            Some("direct" | "alias")
+        ),
+        "unshadowed owner call must keep observation credit, got {:?}",
+        finding.oracle_alignment
+    );
+}
+
+fn assert_shop_fee_withholds_stand_in_credit(finding: &crate::domain::Finding, case: &str) {
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{case}: a locally rebound owner call must not be exposed"
+    );
+    assert!(
+        !matches!(
+            finding.oracle_alignment.as_deref(),
+            Some("direct" | "alias" | "changed_sink_token")
+        ),
+        "{case}: stand-in assertion must not observe the production return, got class={:?} alignment={:?} kind={:?} strength={:?}",
+        finding.class,
+        finding.oracle_alignment,
+        finding.related_tests.first().map(|test| &test.oracle_kind),
+        finding.related_tests.first().map(|test| &test.oracle_strength)
+    );
+}
+
+#[test]
+fn locally_rebound_owner_call_does_not_credit_exposed_exact_value() -> Result<(), String> {
+    // #8247: a test that imports the owner then rebinds that name to a
+    // stand-in (Mock, aliased Mock, lambda, local def) asserts a fixed
+    // payload. Native execution passes either production return; the
+    // assertion never observes `fee`.
+    let mock = classify_shop_fee(
+        "from unittest.mock import Mock\nfrom src.shop import fee\n\n\ndef test_fee():\n    fee = Mock(return_value=30)\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&mock, "Mock");
+
+    let aliased_mock = classify_shop_fee(
+        "from unittest.mock import Mock\nfrom src.shop import fee as price\n\n\ndef test_fee():\n    price = Mock(return_value=30)\n    assert price(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&aliased_mock, "aliased Mock");
+
+    let lambda = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef test_fee():\n    fee = lambda amount: 30\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&lambda, "lambda");
+
+    let local_def = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef test_fee():\n    def fee(amount):\n        return 30\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&local_def, "local def");
+
+    // Unshadowed control: the same assertion on the imported owner must
+    // keep exposed / exact_value / strong.
+    let control = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef test_fee():\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_exposed(&control);
+    Ok(())
+}
+
+#[test]
+fn nested_helper_local_shadow_keeps_outer_owner_credit() -> Result<(), String> {
+    // Binding `fee` only inside an uncalled helper does not shadow the
+    // test's own assertion, which still calls the imported owner.
+    let finding = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef test_fee():\n    def helper():\n        fee = lambda amount: 30\n        return fee(10)\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_exposed(&finding);
+    Ok(())
+}
+
 const AUTH_SOURCE: &str = "class TokenValidator:\n    def __init__(self, valid):\n        self._valid = valid\n\n    def validate(self, token):\n        return token.strip() in self._valid\n";
 const AUTH_CHANGED_LINE: &str = "        return token.strip() in self._valid";
 
