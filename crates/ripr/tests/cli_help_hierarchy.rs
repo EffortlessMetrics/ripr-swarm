@@ -169,6 +169,11 @@ mod discovery_rows {
                                     return Err("invalid \\u escape".to_string());
                                 }
                             }
+                        } else if !matches!(
+                            escaped,
+                            b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't'
+                        ) {
+                            return Err(format!("unknown string escape \\{}", escaped as char));
                         }
                     }
                     0x00..=0x1f => {
@@ -510,26 +515,55 @@ fn discovery_rows_require_path_and_example_in_the_same_object() -> Result<(), St
         }
     }
 
-    for (label, json) in [
+    for (label, json, wanted) in [
         (
             "duplicate group row",
             r#"{"commands":[{"path":"cache","example":"ripr cache"},{"path":"cache","example":"ripr cache"}]}"#,
+            "duplicate cache discovery rows",
         ),
-        ("missing example", r#"{"commands":[{"path":"cache"}]}"#),
-        ("missing path", r#"{"commands":[{"example":"ripr cache"}]}"#),
-        ("empty commands", r#"{"commands":[]}"#),
-        ("missing commands", r#"{"workflows":[]}"#),
+        (
+            "missing example",
+            r#"{"commands":[{"path":"cache"}]}"#,
+            "missing string example",
+        ),
+        (
+            "missing path",
+            r#"{"commands":[{"example":"ripr cache"}]}"#,
+            "missing string path",
+        ),
+        (
+            "empty commands",
+            r#"{"commands":[]}"#,
+            "commands array is empty",
+        ),
+        (
+            "missing commands",
+            r#"{"workflows":[]}"#,
+            "missing commands array",
+        ),
         (
             "truncated",
             r#"{"commands":[{"path":"cache","example":"ripr cache"}]"#,
+            "expected comma or } in JSON object",
         ),
         (
             "non-string path",
             r#"{"commands":[{"path":1,"example":"ripr cache"}]}"#,
+            "expected a JSON string",
+        ),
+        (
+            "invalid skipped escape",
+            r#"{"commands":[{"path":"cache","summary":"bad \q","example":"ripr cache"}]}"#,
+            "unknown string escape",
         ),
     ] {
-        if discovery_rows::require_groups(json, &["cache"]).is_ok() {
-            return Err(format!("{label} must be rejected"));
+        match discovery_rows::require_groups(json, &["cache"]) {
+            Err(error) if error.contains(wanted) => {}
+            other => {
+                return Err(format!(
+                    "{label} must be rejected with {wanted:?}, got {other:?}"
+                ));
+            }
         }
     }
     Ok(())
