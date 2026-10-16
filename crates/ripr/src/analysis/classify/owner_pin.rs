@@ -3777,7 +3777,7 @@ impl ItemNestingFile {
                 continue;
             };
             let name = name.text();
-            let name = name.strip_prefix("r#").unwrap_or(&name).to_owned();
+            let name = name.strip_prefix("r#").unwrap_or(name).to_owned();
             let range = function.syntax().text_range();
             let entry = ItemNestingEntry {
                 start_line: line_of(range.start().into()),
