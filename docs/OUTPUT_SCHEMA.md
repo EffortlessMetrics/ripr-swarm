@@ -3241,6 +3241,7 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
 {
   "version": "1.0",
   "tool": "ripr",
+  "canonical_gap_id": "gap:rust:src/lib.rs:discount:predicate_boundary:predicate:amount>=discount_threshold",
   "probe": {
     "id": "probe:src_lib.rs:predicate:bbaa2c25",
     "family": "predicate",
@@ -3322,7 +3323,12 @@ named and called from a test. It is observed source data only; no assertion
 value is synthesized. `source_currentness` (RIPR-SPEC-0152) mirrors the finding's
 disposition: agent consumers must not treat a `base_deleted`,
 `moved_or_renamed`, or `unresolved_subject` packet as a candidate edit
-target.
+target. `canonical_gap_id` is additive: it is present exactly when the
+finding carries a canonical gap and carries the same stable class-scoped
+value as `finding_alignment.items[].canonical_gap_id` and the finding-level
+`canonical_gap_id`, so packet consumers share one gap identity with
+`ripr receipt write --gap` and the gap ledger instead of inventing a second
+one. It is emitted between `tool` and `source_currentness`.
 
 ## Repo Seam Inventory
 
@@ -10102,6 +10108,7 @@ JSON shape:
       "suppressed": 0,
       "not_applicable": 0,
       "malformed": 0,
+      "fallback_only": 0,
       "other": 0
     }
   },
@@ -10118,6 +10125,7 @@ JSON shape:
       "path": "src/pricing.rs",
       "line": 88,
       "static_class": "weakly_gripped",
+      "root": null,
       "decision": "advisory",
       "severity": "warning",
       "source": "pr_guidance",
@@ -10154,6 +10162,23 @@ identity loss as resolved debt (issue #7421). It is `null` when the source
 report predates build identity, and `baseline create` warns loudly about
 that absence; baselines written before this field existed stay valid inputs
 and fail safe toward stale disclosure on later diffs.
+
+`root` records the repository/root identity carried by the source
+gate-decision report (issue #1964). It appears at the top level and is copied
+onto every `entries[]` item, so one entry stays interpretable if the ledger
+is ever split or relocated. The root distinguishes same-path entries across
+checkouts, and `baseline diff` refuses delta joins across mismatched roots as
+stale rather than reading them as resolved or new debt. It is `null` when the
+source report carries no root. Shrink-only `baseline update` preserves the
+root members already on the ledger it refreshes.
+
+`summary.skipped.fallback_only` counts gate decisions that were refused
+because only the legacy `path:line:static_class` fallback identity was
+available (issue #1964). Fallback identity is compatibility evidence only,
+never primary authority, so no new baseline entry is written for these
+decisions; each refusal is also loud in `warnings`. A reviewer diffing
+`summary.skipped` against this contract can therefore account for every
+nonzero counter.
 
 The `entries[].review` object is additive review metadata for later RIPR Zero
 reporting. New ledgers include `owner`, `created_at`, `review_after`, and
