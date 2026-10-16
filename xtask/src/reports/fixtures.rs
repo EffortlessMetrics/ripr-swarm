@@ -10,7 +10,7 @@
 //! `evidence_promotion`, and `tests.rs`) compile unchanged.
 
 use crate::no_panic::contains_word;
-use crate::run::{run, run_output_optional, run_output_owned, run_output_owned_with_envs};
+use crate::run::{run_output_optional, run_output_owned_with_envs};
 use crate::{
     collect_pr_changes, forbidden_static_terms, has_markdown_heading, json_escape, markdown_cell,
     normalize_path, read_text_lossy, ripr_debug_binary, write_json_string_array, write_report,
@@ -20,6 +20,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+
+mod preparation;
 
 /// Result of a single fixture run: violation lines + optional run output.
 type FixtureResult = Result<(Vec<String>, Option<FixtureRun>), String>;
@@ -96,6 +98,7 @@ pub(crate) fn fixtures_impl(name: Option<&String>) -> Result<(), String> {
 
 pub(crate) fn goldens_impl(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
+        Some("prepare") => preparation::prepare(&args[1..]),
         Some("check") => goldens_check(),
         Some("bless") => {
             let Some(name) = args.get(1) else {
@@ -108,10 +111,10 @@ pub(crate) fn goldens_impl(args: &[String]) -> Result<(), String> {
             goldens_bless(name, &reason)
         }
         Some(other) => Err(format!(
-            "unknown goldens command `{other}`\nusage: cargo xtask goldens check\n       cargo xtask goldens bless <name> --reason <reason>"
+            "unknown goldens command `{other}`\nusage: cargo xtask goldens prepare [--offline]\n       cargo xtask goldens check\n       cargo xtask goldens bless <name> --reason <reason>"
         )),
         None => Err(
-            "missing goldens command\nusage: cargo xtask goldens check\n       cargo xtask goldens bless <name> --reason <reason>"
+            "missing goldens command\nusage: cargo xtask goldens prepare [--offline]\n       cargo xtask goldens check\n       cargo xtask goldens bless <name> --reason <reason>"
                 .to_string(),
         ),
     }
@@ -715,6 +718,9 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
             normalize_path(path)
         ));
     }
+    if name == preparation::FIXTURE {
+        preparation::ensure_ready()?;
+    }
 
     let actual_dir = Path::new("target")
         .join("ripr")
@@ -814,7 +820,7 @@ pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
     // ripr_debug_binary() honors CARGO_TARGET_DIR (#2176 review): the
     // routed CI jobs set it, so `cargo build` writes there.
     ripr_fixture_binary_built_by(ripr_debug_binary(), &RIPR_BINARY_BUILD, &|| {
-        run("cargo", &["build", "-p", "ripr"]).map(|_status| ())
+        preparation::build(&["build", "-p", "ripr"])
     })
 }
 
@@ -836,7 +842,7 @@ pub(crate) fn ripr_perl_fixture_binary() -> Result<String, String> {
     let shared = ripr_debug_binary();
     let perl = shared.with_file_name(format!("ripr-lang-perl{}", std::env::consts::EXE_SUFFIX));
     ripr_fixture_binary_built_by(perl.clone(), &RIPR_PERL_BINARY_BUILD, &|| {
-        run("cargo", &["build", "-p", "ripr", "--features", "lang-perl"])?;
+        preparation::build(&["build", "-p", "ripr", "--features", "lang-perl"])?;
         fs::copy(&shared, &perl).map_err(|err| {
             format!(
                 "copy {} to {} failed: {err}",
@@ -846,7 +852,7 @@ pub(crate) fn ripr_perl_fixture_binary() -> Result<String, String> {
         })?;
         // Restore the default binary. Cargo keeps both feature sets'
         // artifacts, so this only relinks.
-        run("cargo", &["build", "-p", "ripr"]).map(|_status| ())
+        preparation::build(&["build", "-p", "ripr"])
     })
 }
 
@@ -901,12 +907,18 @@ pub(crate) fn run_fixture_check(
             args.push("human-full".to_string());
         }
     }
+    let environment = preparation::environment()?;
+    let mut envs = environment
+        .iter()
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect::<Vec<_>>();
     match cache_dir {
         Some(dir) => {
             let value = dir.to_string_lossy().into_owned();
-            run_output_owned_with_envs(&binary, &args, &[(FIXTURE_CACHE_DIR_ENV, &value)])
+            envs.push((FIXTURE_CACHE_DIR_ENV, &value));
+            run_output_owned_with_envs(&binary, &args, &envs)
         }
-        None => run_output_owned(&binary, &args),
+        None => run_output_owned_with_envs(&binary, &args, &envs),
     }
 }
 
