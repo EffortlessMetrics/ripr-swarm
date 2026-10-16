@@ -8,16 +8,19 @@ change_class = "behavior_change"
 
 claim_boundary = """
 A read of only element zero of a collection written by a push
-(first(), get(0), or [0], on a field-path or bare receiver) no longer
+(first(), get(0), [0], typed or underscore zero spellings, first-element
+ranges, on a field-path, bare, or through-getter receiver) no longer
 confirms that push in the collection observer, because the element may
 predate the push; the pre-seeded fixture stays weakly_exposed in the
 RIPR-SPEC-0108 honesty corpus. Reads of the pushed element (last(), a
 non-zero index, or the whole collection) still confirm and stay
 exposed. On a bare receiver, a first-element read still confirms when
 the test body proves the collection started empty (a narrow empty
-construction with no test-side seeding). Field-path first-element
-reads stay conservatively demoted. No new classification vocabulary,
-probe family, schema, or runtime execution.
+construction as the whole right-hand side, no test-side seeding, at
+most one mutable escape including a deref escape). Field-path
+first-element reads stay conservatively demoted, and insert writes
+keep prior credit without position awareness. No new classification
+vocabulary, probe family, schema, or runtime execution.
 """
 
 non_goals = [
