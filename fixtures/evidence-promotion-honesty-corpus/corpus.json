@@ -2633,6 +2633,36 @@
         {
           "type": "expected_class",
           "class": "exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "seconds_total",
+          "file": "src/lib.rs",
+          "line": 36,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call",
+          "miss": null
+        },
+        {
+          "type": "expected_related_test",
+          "name": "bridge_fortnight",
+          "file": "src/lib.rs",
+          "line": 45,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "same_test_file",
+          "miss": "no_call_path"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "from_str_fortnight",
+          "file": "src/lib.rs",
+          "line": 50,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "same_test_file",
+          "miss": "no_call_path"
         }
       ]
     },

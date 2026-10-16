@@ -287,6 +287,10 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
         kind: String,
         strength: String,
         relation_reason: Option<String>,
+        /// Miss-row pin (#7642): `Exact` requires the row to carry exactly
+        /// this miss; `Absent` requires the row to carry no miss at all;
+        /// `None` leaves the miss unconstrained (legacy cases).
+        miss: Option<ExpectedRelatedTestMissConstraint>,
     },
     ExpectedClass {
         class: String,
@@ -329,6 +333,15 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
     MustSeeChangedFile {
         path: String,
     },
+}
+
+/// Miss constraint for an `expected_related_test` row (#7642).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ExpectedRelatedTestMissConstraint {
+    /// The row must carry exactly this miss reason.
+    Exact(String),
+    /// The row must carry no miss at all.
+    Absent,
 }
 
 fn run_evidence_promotion_pinned_external_cases(
@@ -700,6 +713,7 @@ fn evidence_promotion_parse_assertion(
                     assertion,
                     "relation_reason",
                 )?,
+                miss: evidence_promotion_optional_related_test_miss(case_id, index, assertion)?,
             })
         }
         "expected_class" => {
@@ -875,6 +889,46 @@ fn evidence_promotion_optional_assertion_string(
         Some(Value::String(value)) if !value.trim().is_empty() => Ok(Some(value.clone())),
         Some(_) => Err(format!(
             "evidence promotion case `{case_id}` assertion {index}: `{field}` must be a non-empty string when present"
+        )),
+    }
+}
+
+/// The `miss` pin of an `expected_related_test` assertion (#7642): a string
+/// requires exactly that miss on the row; an explicit `null` requires the
+/// row to carry no miss; a missing key leaves the miss unconstrained.
+fn evidence_promotion_optional_related_test_miss(
+    case_id: &str,
+    index: usize,
+    assertion: &Value,
+) -> Result<Option<ExpectedRelatedTestMissConstraint>, String> {
+    match assertion.get("miss") {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(ExpectedRelatedTestMissConstraint::Absent)),
+        Some(Value::String(value)) => {
+            const KNOWN_MISSES: [&str; 8] = [
+                "no_call_path",
+                "no_assertion",
+                "assertion_not_observing",
+                "assertion_not_credited",
+                "weak_assertion",
+                "missing_input",
+                "missing_exact_assertion",
+                "observation_unconfirmed",
+            ];
+            if !KNOWN_MISSES.contains(&value.as_str()) {
+                return Err(format!(
+                    "evidence promotion case `{case_id}` assertion {index}: \
+                     expected_related_test.miss must be one of {}, got `{value}`",
+                    KNOWN_MISSES.join(", ")
+                ));
+            }
+            Ok(Some(ExpectedRelatedTestMissConstraint::Exact(
+                value.clone(),
+            )))
+        }
+        Some(_) => Err(format!(
+            "evidence promotion case `{case_id}` assertion {index}: \
+             expected_related_test.miss must be a known miss string or explicit null"
         )),
     }
 }
@@ -1948,6 +2002,7 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                 kind,
                 strength,
                 relation_reason,
+                miss,
             } => {
                 if findings.is_empty() {
                     violations.push(format!(
@@ -1972,6 +2027,15 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                                         test.get("relation_reason").and_then(Value::as_str)
                                             == Some(expected)
                                     })
+                                    && miss.as_ref().is_none_or(|constraint| match constraint {
+                                        ExpectedRelatedTestMissConstraint::Exact(expected) => {
+                                            test.get("miss").and_then(Value::as_str)
+                                                == Some(expected.as_str())
+                                        }
+                                        ExpectedRelatedTestMissConstraint::Absent => {
+                                            test.get("miss").is_none()
+                                        }
+                                    })
                             })
                         });
                     if !matched {
@@ -1984,8 +2048,17 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                             .map_or_else(String::new, |expected| {
                                 format!(" with relation `{expected}`")
                             });
+                        let miss_suffix = match miss {
+                            None => String::new(),
+                            Some(ExpectedRelatedTestMissConstraint::Exact(expected)) => {
+                                format!(" with miss `{expected}`")
+                            }
+                            Some(ExpectedRelatedTestMissConstraint::Absent) => {
+                                " with no miss".to_string()
+                            }
+                        };
                         violations.push(format!(
-                            "{case_label}: `expected_related_test` requires `{file}:{line} {name}` with oracle `{kind}/{strength}`{relation_suffix} on finding `{finding_id}`"
+                            "{case_label}: `expected_related_test` requires `{file}:{line} {name}` with oracle `{kind}/{strength}`{relation_suffix}{miss_suffix} on finding `{finding_id}`"
                         ));
                     }
                 }
