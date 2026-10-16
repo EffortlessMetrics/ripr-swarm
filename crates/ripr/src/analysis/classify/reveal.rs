@@ -1873,7 +1873,39 @@ fn analyze_related_assertions(
                 && (field_write.is_some()
                     || direct_collection_mutation_receiver(&probe.expression).is_some())
                 && super::propagation_witness::assertion_expects_empty_collection(&assertion.text);
-            let self_computed = self_computed || empty_after_skipped_push;
+            // #8205: the same cap applies when the assertion expects
+            // exactly the state the test seeded before the call. The
+            // skipped push never ran, so restating the pre-call state
+            // passes whether or not the push exists or is correct. An
+            // expectation that differs from the seeded state (including
+            // the seeded state plus the pushed element) keeps its credit.
+            let seeded_after_skipped_push = matched
+                && return_admission.owner_may_exit_before_probe
+                && is_effect_family(&probe.family)
+                && match (
+                    field_write,
+                    direct_collection_mutation_receiver(&probe.expression),
+                ) {
+                    (Some(path), _) => {
+                        super::propagation_witness::assertion_restates_seeded_collection(
+                            &assertion.text,
+                            &test.body,
+                            path,
+                            Some(path),
+                        )
+                    }
+                    (None, Some(receiver)) => {
+                        super::propagation_witness::assertion_restates_seeded_collection(
+                            &assertion.text,
+                            &test.body,
+                            receiver,
+                            None,
+                        )
+                    }
+                    (None, None) => false,
+                };
+            let self_computed =
+                self_computed || empty_after_skipped_push || seeded_after_skipped_push;
             // #6692: the owner pin is credited only through an assertion
             // that matched, from a test that may supply the oracle, with the
             // pin surviving the reveal-side defeats. The missing-field

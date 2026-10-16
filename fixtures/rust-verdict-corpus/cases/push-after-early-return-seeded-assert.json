@@ -1,0 +1,53 @@
+{
+  "case_id": "push-after-early-return-seeded-assert",
+  "subject_id": "authored-push-after-early-return-seeded",
+  "diff": "cases/push-after-early-return-seeded-assert.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 16
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "early_return_path_asserts_seeded_collection",
+  "hard_case": "The test seeds log with Beat { n: 9 }, beats while locked so the push never runs, and asserts the seeded value. An expectation that restates the pre-call state cannot confirm a push the owner may have skipped (#8205, extending #8051).",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0, x86_64-pc-windows-msvc (premise probe); mutants verified green on the authored crate",
+    "mutants": [
+      {
+        "replacement": "self.log.push(Entry::Beat { n: 2 });",
+        "mutated_line": "self.log.push(Entry::Beat { n: 2 });",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: an unlocked beat logs Beat { n: 2 }, but the only test beats while locked"
+      },
+      {
+        "replacement": "",
+        "mutated_line": "",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: an unlocked beat logs nothing, but the only test beats while locked"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "locked_beat_keeps_seeded_log sets locked = true, so beat() returns before the push and the log keeps its seeded value whatever the push does. An expectation equal to the seeded pre-call state cannot confirm the push (#8205).",
+  "labeling_observation": {
+    "ripr_commit": "9142188",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed",
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

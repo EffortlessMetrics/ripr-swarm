@@ -387,6 +387,18 @@ changes `self.count += 2` to `self.count += 1`.
   counts any `else`, since a `let .. else` block may exit through a
   never-typed call no token catches, so an ordinary `if/else` completed
   before the push widens the same conservative cap.
+- A seeded-collection expectation is implemented (#8205):
+  `assertion_restates_seeded_collection` in `propagation_witness.rs` and
+  the `seeded_after_skipped_push` cap in `reveal.rs` extend the
+  empty-expectation cap to an assertion that expects exactly the state
+  the test seeded before the owner call (`log: vec![Entry::Beat { n: 9 }]`
+  at construction, then `assert_eq!(p.log, vec![Entry::Beat { n: 9 }])`).
+  The seeded state is read from the binding's own construction (a
+  struct-literal field entry or a bare assignment); an expectation that
+  differs from it, including the seeded state plus the pushed element,
+  keeps its credit, and without an earlier exit the push ran, so the
+  assertion keeps its strength. Pinned by
+  `push-after-early-return-seeded-assert` in the rust verdict corpus.
 - Keyed reads of a field-map insert are implemented (examples 16-20):
   `field_collection_insert_key` and `assertion_keyed_getter_reads` in
   `propagation_witness.rs`, `keyed_field_read_confirms` and
