@@ -204,9 +204,10 @@ unchanged.
 The warning is silent when either commit fails to resolve, when the commits
 differ, and whenever the scope is explicit (`--base`, `--diff`,
 `--candidate-tree`, `--worktree`). It is also silent when no other branch
-could serve as the advised base (#7644): a branch whose merge base with
-`HEAD` is `HEAD` itself (an alias at `HEAD`'s commit, such as a fresh
-clone's remote-tracking counterpart) yields the same empty range, so the
+could serve as the advised base (#7644): only a branch whose
+`<branch>...HEAD` range contains changed files counts, so an alias at
+`HEAD`'s commit (such as a fresh clone's remote-tracking counterpart) or
+a range that restores the same tree yields the same empty result, and the
 Start-here action owns the remediation instead.
 
 ### Non-claims

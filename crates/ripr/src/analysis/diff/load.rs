@@ -1119,13 +1119,14 @@ pub fn resolve_base_commit(
 
 /// Whether some branch other than the current one could serve as a
 /// `--base`: a local or remote-tracking branch (never a remote's `HEAD`
-/// pointer) whose merge base with `HEAD` is not `HEAD` itself, so
-/// `<branch>...HEAD` is not the empty range. An alias at `HEAD`'s own
-/// commit (a fresh clone's `origin/<branch>` next to `<branch>`, or a
-/// `git branch` copy) is not a candidate: advising it would reproduce the
-/// empty result. Bounded like the default-base failure context; any Git
-/// failure answers `false`, so callers never advise a `--base` repair that
-/// this probe could not support (#7644).
+/// pointer) for which `<branch>...HEAD` actually contains changed files.
+/// An alias at `HEAD`'s own commit (a fresh clone's `origin/<branch>` next
+/// to `<branch>`, or a `git branch` copy) is not a candidate, and neither
+/// is a branch whose resulting tree matches `HEAD`'s despite distinct
+/// commits: advising either would reproduce the empty result. Bounded like
+/// the default-base failure context; any Git failure answers `false`, so
+/// callers never advise a `--base` repair that this probe could not
+/// support (#7644).
 pub fn another_base_candidate_exists(root: &Path, git_timeout: Option<Duration>) -> bool {
     let git_lines = |args: &[&str]| -> Vec<String> {
         crate::git::run_git_output_with_deadline(root, args, git_timeout)
@@ -1161,7 +1162,7 @@ pub fn another_base_candidate_exists(root: &Path, git_timeout: Option<Duration>)
     };
     const MERGE_BASE_PROBE_CAP: usize = 64;
     others.take(MERGE_BASE_PROBE_CAP).any(|name| {
-        crate::git::run_git_output_with_deadline(
+        let merge_base_differs = crate::git::run_git_output_with_deadline(
             root,
             &["merge-base", name.as_str(), "HEAD"],
             git_timeout,
@@ -1170,7 +1171,16 @@ pub fn another_base_candidate_exists(root: &Path, git_timeout: Option<Duration>)
         .filter(|output| output.status.success())
         .is_some_and(|output| {
             String::from_utf8_lossy(&output.stdout).trim() != head_commit.as_str()
-        })
+        });
+        // A distinct historical range can still restore the merge-base
+        // tree; only a non-empty three-dot diff makes the advice useful.
+        merge_base_differs
+            && crate::git::run_git_output_with_deadline(
+                root,
+                &["diff", "--quiet", &format!("{name}...HEAD"), "--"],
+                git_timeout,
+            )
+            .is_ok_and(|output| output.status.code() == Some(1))
     })
 }
 
@@ -2467,6 +2477,39 @@ mod tests {
         assert!(
             another_base_candidate_exists(&dir, None),
             "an ancestor branch sharing history must count as a --base candidate"
+        );
+        // A descendant branch has HEAD as its merge base: not a candidate.
+        run_git_checked(&dir, &["checkout", "-b", "descendant"])?;
+        fs::write(dir.join("README"), "third")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "third"])?;
+        run_git_checked(&dir, &["checkout", "master"])?;
+        run_git_checked(&dir, &["branch", "-D", "base-candidate"])?;
+        assert!(
+            !another_base_candidate_exists(&dir, None),
+            "a descendant of HEAD must not count as a --base candidate"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_rejects_a_range_that_restores_the_tree() -> std::io::Result<()> {
+        // Distinct commits whose net tree change is empty still reproduce
+        // the empty result the hedge advises against (#7644).
+        let dir = unique_fixture_root("another-base-restored-tree")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        run_git_checked(&dir, &["branch", "base-candidate"])?;
+        fs::write(dir.join("README"), "second")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "second"])?;
+        fs::write(dir.join("README"), "init")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "restore"])?;
+        assert!(
+            !another_base_candidate_exists(&dir, None),
+            "a range restoring the merge-base tree must not count as a --base candidate"
         );
         ignore_remove_dir_all(&dir);
         Ok(())
