@@ -946,6 +946,8 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         ),
         ("assert!(foo(matches!(x, A)).is_ok());", &exact),
         ("assert!(Some(true) == Some(matches!(r, Ok(3))));", &exact),
+        // #8101 control: a wrapped test asserted equal to `true` still pins.
+        ("assert_eq!(Some(matches!(r, Ok(3))), Some(true));", &exact),
         (
             "assert!(xs.iter().any(|x| f(matches!(x, Some(3)))));",
             &exact,
@@ -1089,6 +1091,14 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!(u8::from(r == Err(E::Bad)) == 0, true);",
         "assert_eq!((r == Err(E::Bad)) == flag, true);",
         "assert!(((r == Err(E::Bad)) == flag) == true);",
+        // #8101: the same constructor around both sides compares what it
+        // wraps, so a wrapped test asserted false or against a non-literal
+        // pins nothing.
+        "assert_eq!(Some(matches!(r, Err(E::Bad))), Some(false));",
+        "assert_eq!(Some(r == Err(E::Bad)), Some(false));",
+        "assert_eq!(Some(r == Err(E::Bad)), Some(expected));",
+        "assert_eq!(Ok(matches!(r, Err(E::Bad))), Ok(flag));",
+        "assert_ne!(Some(matches!(r, Err(E::Bad))), Some(true));",
         // Any path call named `not` reads as a negation (review of 1ae0c07).
         "assert_eq!(MyNot::not(r == Err(E::Bad)), true);",
         "assert_eq!(bool::not(r == Err(E::Bad)), true);",

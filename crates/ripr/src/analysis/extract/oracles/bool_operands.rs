@@ -594,8 +594,26 @@ fn conjunct_states_relation(conjunct: &str) -> bool {
 fn compares_test_with_non_literal(line: &str) -> bool {
     let literal = |side: &str| literal_spelling_value(&mask_comments_and_strings(side)).is_some();
     let comparison = assertion_comparison(line);
+    // The same `Some(..)`, `Ok(..)` or `Err(..)` constructor around both
+    // sides compares what it wraps (`assert_eq!(Some(matches!(r, Err(E::Bad))),
+    // Some(false))`; #8101). Only a `true` literal asserted equal may still
+    // pin the wrapped test, as the unwrapped spelling does.
+    let mut wrapped_non_pinning = false;
     let (mut left, mut right): (&str, &str) = match &comparison {
-        Some(AssertionComparison::Operands { left, right, .. }) => (left, right),
+        Some(AssertionComparison::Operands {
+            not_equal,
+            left,
+            right,
+        }) => match peel_matching_constructor(left, right) {
+            Some((left, right)) => {
+                wrapped_non_pinning = *not_equal
+                    || [left, right]
+                        .iter()
+                        .any(|side| literal_spelling_value(side) == Some(false));
+                (left, right)
+            }
+            None => (left, right),
+        },
         Some(AssertionComparison::Condition(condition)) => {
             let Some(sides) = whole_comparison_sides(condition) else {
                 return false;
@@ -615,12 +633,31 @@ fn compares_test_with_non_literal(line: &str) -> bool {
             (false, true) => left,
             (true, true) => return false,
         };
+        if wrapped_non_pinning {
+            return is_bool_test(other);
+        }
         let (core, _, _) = strip_negations(other);
         let Some(sides) = whole_comparison_sides(core) else {
             return false;
         };
         (left, right) = sides;
     }
+}
+
+/// The contents of the one-argument constructor call `Some(..)`, `Ok(..)` or
+/// `Err(..)` that both `left` and `right` are, when they use the same one.
+fn peel_matching_constructor<'a>(left: &'a str, right: &'a str) -> Option<(&'a str, &'a str)> {
+    let peel = |side: &'a str| {
+        let side = unwrap_parentheses(side.trim());
+        ["Some", "Ok", "Err"].into_iter().find_map(|name| {
+            let rest = side.strip_prefix(name)?.trim_start();
+            let inner = super::arguments::parenthesized_contents(rest)?;
+            (split_top_level_commas(inner).len() == 1).then_some((name, inner.trim()))
+        })
+    };
+    let (left_name, left_inner) = peel(left)?;
+    let (right_name, right_inner) = peel(right)?;
+    (left_name == right_name).then_some((left_inner, right_inner))
 }
 
 /// The two sides of `condition` when its whole is one `==` or `!=`
