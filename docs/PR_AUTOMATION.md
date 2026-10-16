@@ -67,91 +67,52 @@ No new GitHub approval count is required.
 
 The COMMENT parser recognizes a direct positive declaration at the start of the
 first nonblank line (`SOURCE_REVIEW_READY` or `REVIEW_READY`, optionally followed
-by an explanation), or a standalone `disposition: SOURCE_REVIEW_READY` /
-`disposition: REVIEW_READY` field at column zero. Quoted, indented-code and fenced
-examples are not declarations. An explicit conflicting disposition field refuses.
-Multiline inline-code spans, HTML comments and preformatted/raw HTML regions
-are excluded as well. Opaque code/HTML regions are interpreted in source order,
-so example contents cannot open a competing region outside that example. Quoted
-negative fields are ignored just like quoted positives; an outside disposition
-still governs. HTML blocks that end at a blank line require that separation
-before a subsequent standalone field.
-Inline-code matching stops at paragraph breaks (including whitespace-only
-lines), interrupting headings, fences and other recognized block starts. An
-unclosed backtick in an earlier block cannot hide a later real disposition.
-Multiline spans inside one paragraph remain examples. The renderer-backed
-`block-boundary-rendering.json` fixture retains Markdown, visible fields and
-HTML for independent inspection of both admission and refusal controls.
-Block recognition uses the retained CommonMark target and the published GFM
-rules: declaration starts require an uppercase ASCII letter, CDATA starts are
-case-sensitive, and HTML tag names are case-insensitive. A backtick fence cannot
-have a backtick in its info string; the same opener rule governs masking and
-paragraph interruption. Standalone tags do not interrupt an existing paragraph.
-`block-recognition-rendering.json` retains 240 cases and both local renderers'
-outputs. The secondary cmark-gfm 0.29.0.gfm.13 renderer disagrees with the retained
-target on 12 lowercase/mixed-CDATA cases; those disagreements remain explicit,
-not silently relabeled as passes. This is not native GitHub rendering proof or
-a claim of full CommonMark conformance. Earlier fixture references to the newer
-CommonMark specification do not identify the renderer that actually ran.
-Complete standalone tags use the HTML name and attribute grammar: boolean
-attributes are allowed, `=` requires a quoted or valid unquoted value, quoted
-values may contain angle brackets, attributes must be separated, and closing
-tags cannot have attributes or a self-closing slash. Trailing content prevents
-a type-7 block. A complete tag inside an already-open paragraph remains inline.
-Enclosing fences, HTML regions, quotes and indented blocks retain their own
-boundaries; valid inline attributes cannot cross a paragraph/heading/fence break.
-`standalone-tag-rendering.json` retains 130 conflict and positive controls whose
-field sets agree in both local renderers, including malformed-tag sibling forms.
-Container membership is resolved before HTML/inline masking. A quote marker or
-list indentation can be omitted only for a genuine paragraph continuation;
-headings, fences, HTML starts and nested container exits retain their boundaries.
-HTML inside a list ends with its owning container rather than hiding a dedented
-outside disposition. Ordinary list paragraph text retains the existing column-zero
-field rule. `container-boundary-rendering.json` retains 114 bodies and both
-renderers' agreeing field sets, including both directions of each reported repair.
-The container interpreter follows the [block-phase parsing strategy](https://spec.commonmark.org/0.29/#phase-1-block-structure):
-match existing container prefixes, recognize new blocks in the last matched
-context, then consider lazy continuation. The open paragraph belongs to the old
-complete container stack; it does not make an unmatched quote/item's parent a
-paragraph. Consequently any valid one-to-nine-digit ordered marker can open a
-sibling after a prefix fails, while only literal `1.` / `1)` with nonempty text
-interrupt an ordinary paragraph. One list-marker lexer supplies both decisions,
-including empty items, padding, leading zeros, delimiters and thematic priority.
+by an explanation), or a standalone column-zero `disposition:` field with either
+positive value. An explicit conflicting field refuses. Original source columns
+and first-nonblank occupancy govern; masking an example cannot create a new first
+line or dedent a field into column zero.
 
-Production remains the existing static Bash/jq preflight, before checkout and
-without candidate execution. There is no mature Markdown parser in that runtime
-or in repo-policy's dependencies. Using a third-party token stream there would
-require a new trusted dependency delivery/bootstrap path; compiling repo-policy
-from the candidate would cross the current admission boundary. A vendored full
-parser would greatly enlarge the static workflow. This bounded compatibility
-repair therefore keeps an explicit quote/list stack and shared context-sensitive
-block recognition in jq. Mature CommonMark and cmark-gfm ASTs supply independent
-development oracles; they are not new production dependencies. This choice does
-not claim full Markdown conformance or replace the pending structured-record fix.
+The static jq pipeline retains line records containing original text/position,
+container ownership, leaf identity and paragraph/opaque kind. Container matching
+and block starts precede lazy continuation, following the [CommonMark block-phase
+strategy](https://spec.commonmark.org/0.29/#phase-1-block-structure). The open
+paragraph belongs to its complete container stack, not an unmatched ancestor.
+One list-marker lexer determines content-bearing items for both block recognition
+and inline ownership; it searches the whole rest for content, including text after
+VT/FF. Only literal1 and nonempty content interrupt an ordinary paragraph, while
+any valid one-to-nine-digit marker may open a sibling after a prefix fails.
+ASCII content-whitespace behavior (SP/HT/LF/VT/FF/CR) and ASCII space/tab marker
+separators retain the existing target; non-ASCII whitespace is literal content.
 
-`sibling-context-rendering.json` retains 521 representative bodies, including all39
-reviewer controls, against both actual consumers and diagnostics. The external
-proof retains the complete 8840-body ordered/unordered marker, indentation,
-nesting and paragraph-interruption matrix. Sixteen leading-zero-one inline-span
-cases in that matrix differ between renderers: CommonMark retains `0001.` / `0001)`
-in the paragraph, while cmark-gfm starts a list. Existing interpretation and
-accepted syntax are preserved; these new alternate-renderer limitations are
-recorded alongside, without changing the earlier12 CDATA limitations. Adopting
-the alternative interpretation requires a separate evidence-format decision.
-Item-content classification and inline list interruption share one explicit ASCII
-whitespace class (space, tab, CR, LF, VT and FF), preserving the retained target's
-existing ASCII-control behavior. Unicode-aware `\S` cannot stand in for this
-class: all19 non-ASCII Unicode White_Space characters are literal content. Marker
-separators remain ASCII space/tab. `unicode-list-content-rendering.json` retains
-978 bodies covering those characters, invalid non-ASCII separators, ASCII/empty/
-zero-width controls, marker bounds and both current-field directions. Both mature
-renderer HTML outputs and independently traversed AST fields are retained.
-The new corpus also exposes64 inherited alternate-renderer bodies in the VT/FF
-and zero-padded-one families. Their old/new decisions are identical; cmark-gfm
-accepts VT/FF as nonempty item content where the retained target does not. These
-alternatives do not change the earlier12 CDATA or16 leading-zero matrix disclosures.
-Adopting the alternative ASCII-control interpretation requires a separate evidence
-format decision; this correction does not make that policy change.
+Inline code/HTML is masked within its owning paragraph leaf. Fences, indented
+code, HTML blocks, headings, list/container transitions and blank lines retain
+their boundaries even when their content is opaque. Masked lines are projected
+back in original line order with original source indentation. Parse-failure
+status for an unclosed top-level fence is separate from literal source control
+characters. CR, LF and CRLF are interpreted as physical line endings. The
+existing declaration recognition/reduction then consumes that projection.
+The `structural-leaf-rendering.json` fixture retains 785 actual-consumer/diagnostic
+controls; the external proof retains the full20567 scalar cases, including all5760
+independent bodies and3942 added spacing/nesting/leaf cross-products. Copied-workflow
+flattening, column-stripping and occupancy-erasure mutations discriminate these
+requirements. Same-leaf inline examples remain valid opaque examples.
+
+Production remains static Bash/jq before checkout and candidate execution. There
+is no new parser dependency/bootstrap or product job. Mature CommonMark/native
+cmark parsers remain independent development oracles, not production dependencies.
+This bounded compatibility path does not replace the pending structured-record
+contract or claim full Markdown conformance. Complete HTML/tag attribute grammar,
+case-sensitive declaration/CDATA starts, case-insensitive tag names and valid
+fence-info rules remain retained.
+
+Earlier renderer fixtures stay unchanged:42 block boundaries,240 recognition,
+130 standalone tags,114 containers,521 sibling contexts and978 Unicode content
+bodies. Earlier12 CDATA,16 leading-zero matrix and64 Unicode-corpus alternatives
+remain explicit. The independent5760 and added3942 matrices retain870 and960
+renderer-field alternatives respectively. They are not silently converted to
+new accepted evidence; the retained target and original-column/occupancy rules
+remain authoritative. Native GitHub rendering is not established. Adopting a
+secondary renderer's different interpretation requires a separate policy decision.
 A source-ready declaration may separately report overall `REVIEW_INCOMPLETE`
 while qualification remains outstanding. Both admission and the final refresh,
 including diagnostics, use the same parser.

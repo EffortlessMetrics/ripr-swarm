@@ -37,10 +37,6 @@ env:
     # The same class governs item recognition and inline paragraph interruption.
     def review_list_content:
       "[^ \t\r\n\u000b\u000c]";
-    # Block indicators precede inline parsing. A code span can cross a soft
-    # line break, never a blank line or an interrupting heading/fence/block.
-    def review_inline_end:
-      "[ \t]*(?:\n|\\z)| {0,3}(?:#{1,6}(?:[ \t]|$)|" + review_fence_open + "$|(?:=+|-+)[ \t]*$|(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$|>|(?:[-+*]|1[.)])[ \t]+" + review_list_content + "|<" + review_html_interrupt + ")";
     # Complete tags require valid names, separated attributes and a value after
     # '='. Quoted values may contain angle brackets; unquoted values may not.
     # Closing tags have no attributes or self-closing slash.
@@ -53,8 +49,7 @@ env:
     def review_html_standalone:
       review_html_tag("[ \t\u000b\u000c]"; "[^'\n]"; "[^\"\n]");
     def review_html_inline:
-      ("(?:[ \t\u000b\u000c]|\n(?!" + review_inline_end + "))") as $space |
-      review_html_tag($space; "(?:[^'\n]|\n(?!" + review_inline_end + "))"; "(?:[^\"\n]|\n(?!" + review_inline_end + "))");
+      review_html_tag("[ \t\u000b\u000c\n]"; "[^']"; "[^\"]");
     def review_html_context($line; $standalone):
       if ($line | test("^ {0,3}<(?i:pre|script|style)(?=[\\s>]|$)")) then {kind:"html",end:"(?i:</(?:pre|script|style)>)"}
       elif ($line | test("^ {0,3}<!--")) then {kind:"html",end:"-->"}
@@ -100,12 +95,14 @@ env:
         .text = $item.text | .containers += [{kind:"list",indent:$item.indent,marker:$item.marker}] |
         .paragraph = false | review_container_prefixes
       else . end;
-    def hide_review_containers:
+    # Preserve physical source lines and their owning container/leaf through masking.
+    # New block starts are recognized before lazy continuation. Only paragraphs may
+    # own inline spans; opaque leaves never erase boundaries between paragraphs.
+    def review_line_mask: gsub("[^\n]"; "\u0001");
+    def review_document:
       reduce (split("\n")[]) as $source
-        ({containers:[],paragraph:false,block:null,lines:[]};
-         .opaque = false | .tagmask = false |
-         # Continue only prefixes owned by the current container stack. A partial
-         # dedent closes the inner containers, not the still-indented outer ones.
+        ({containers:[],paragraph:false,block:null,records:[],leaf:0};
+         .cut = false | .kind = "paragraph" |
          (reduce .containers[] as $c
            ({text:($source|review_expand_tabs),containers:[],failed:false};
             if .failed then .
@@ -114,76 +111,80 @@ env:
             elif $c.kind == "list" and (.text | test("^ {" + ($c.indent|tostring) + "}")) then
               .text = .text[$c.indent:] | .containers += [$c]
             elif $c.kind == "list" and (.text | test("^[ \t]*$")) then .containers += [$c]
-            else .failed = true end)) as $continued |
-         # Match prefixes first, then recognize block starts in that context.
-         # The still-open old paragraph is eligible for lazy text only AFTER
-         # a new block failed to start at the last matching container.
-         ($continued.text | review_container_start(false)) as $new_block |
-         ($continued.failed and .paragraph and ($new_block|not) and
-           ($continued.text | test("^[ \t]*$") | not)) as $lazy |
-         if $lazy then
-           .lines += [(if any(.containers[]; .kind == "quote") then ($source | gsub("."; "\u0003")) else $source end)]
+            else .failed = true end)) as $matched |
+         .content = $matched.text |
+         ($matched.failed and .paragraph and
+           ($matched.text | review_container_start(false) | not) and
+           ($matched.text | test("^[ \t]*$") | not)) as $lazy |
+         if $lazy then .
          else
-           .containers = $continued.containers |
-           if $continued.failed then .block = null | .paragraph = false else . end |
-           $continued.text as $content |
-           # Opaque blocks consume literal markers rather than opening containers.
+           .containers = $matched.containers |
+           if $matched.failed then .block = null | .paragraph = false | .cut = true else . end |
+           $matched.text as $content |
            if .block != null and
               (.block.kind != "indent" or ($content | test("^(?: {4}|\t)|^[ \t]*$"))) then
-             .opaque = true | .block as $b |
-             .tagmask = ($b.kind == "tag" and ($content | test("^[ \t]*$") | not)) |
+             .kind = "opaque" | .paragraph = false | .block as $b |
              if (($b.kind == "blank" or $b.kind == "tag") and ($content | test("^[ \t]*$"))) or
                 ($b.kind == "html" and ($content | test($b.end))) or
                 ($b.kind == "fence" and ($content | test("^ {0,3}" + $b.char + "{" + ($b.size|tostring) + ",}[ \t]*$")))
-             then .block = null else . end |
-             .paragraph = false
+             then .block = null else . end
            else
              .block = null |
              ({text:$content,containers:.containers,paragraph:.paragraph} | review_container_prefixes) as $opened |
-             if ($opened.containers|length) > (.containers|length) then .paragraph = false else . end |
-             .containers = $opened.containers |
+             if ($opened.containers|length) > (.containers|length) then .paragraph = false | .cut = true else . end |
+             .containers = $opened.containers | .content = $opened.text |
              $opened.text as $line |
              review_html_context($line; (.paragraph|not)) as $html |
-             if ($line | test("^[ \t]*$")) then .paragraph = false
+             if ($line | test("^[ \t]*$")) then .paragraph = false | .kind = "blank" | .cut = true
              elif ($line | test("^ {0,3}" + review_fence_open + "$")) then
                ($line | capture("^ {0,3}(?<fence>`{3,}|~{3,})")) as $f |
-               .block = {kind:"fence",char:$f.fence[0:1],size:($f.fence|length)} | .paragraph = false
+               .block = {kind:"fence",char:$f.fence[0:1],size:($f.fence|length)} |
+               .paragraph = false | .kind = "opaque" | .cut = true
              elif $html != null then
-               .opaque = true | .block = $html | .paragraph = false |
+               .block = $html | .paragraph = false | .kind = "opaque" | .cut = true |
                if $html.kind == "html" and ($line | test($html.end)) then .block = null else . end
-             elif ($line | test("^ {0,3}#{1,6}(?:[ \t]|$)|^ {0,3}(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$")) then .paragraph = false
-             elif .paragraph and ($line | test("^ {0,3}(?:=+|-+)[ \t]*$")) then .paragraph = false
-             elif (.paragraph|not) and ($line | test("^(?: {4}|\t)")) then .block = {kind:"indent"}
+             elif ($line | test("^ {0,3}#{1,6}(?:[ \t]|$)|^ {0,3}(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$")) then
+               .paragraph = false | .kind = "opaque" | .cut = true
+             elif .paragraph and ($line | test("^ {0,3}(?:=+|-+)[ \t]*$")) then
+               .leaf as $heading | .records |= map(if .leaf == $heading then .kind = "opaque" else . end) |
+               .paragraph = false | .kind = "opaque" | .cut = true
+             elif (.paragraph|not) and ($line | test("^(?: {4}|\t)")) then
+               .block = {kind:"indent"} | .kind = "opaque" | .cut = true
              elif (.paragraph|not) and ($line | test("^ {0,3}" + review_html_standalone + "[ \t]*$")) then
-               .tagmask = true | .block = {kind:"tag"} | .paragraph = false
-             else .paragraph = true end
-           end |
-           .lines += [(if .tagmask or any(.containers[]; .kind == "quote") or
-           ((.containers|length) > 0 and (.opaque or .block != null))
-           then ($source | gsub("."; "\u0003")) else $source end)]
-         end) | .lines | join("\n");
-    # Match opaque regions together, in source order: syntax inside an earlier
-    # code/HTML region cannot open a different region outside it. Keep newlines
-    # and a nonblank sentinel so masking never invents a first-line declaration.
-    def hide_review_examples:
-      hide_review_containers | gsub("(?ms)(?<hidden>" +
-        "^ {0,3}(?<bt>`{3,})(?!`)[^`\n]*\n.*?(?:(?<bt_end>^ {0,3}\\k<bt>`*[ \t]*)(?=\n|\\z)|\\z)" +
-        "|^ {0,3}(?<tilde>~{3,})(?!~)[^\n]*\n.*?(?:(?<tilde_end>^ {0,3}\\k<tilde>~*[ \t]*)(?=\n|\\z)|\\z)" +
-        "|^(?: {4}|\t)[^\n]*(?:\n(?:(?: {4}|\t)[^\n]*|[ \t]*(?=\n)))*" +
-        "|^ {0,3}#{1,6}(?:[ \t]+[^\n]*|(?=\n|\\z))" +
-        "|(?<![\\\\`])(?:\\\\\\\\)*(?<ticks>`+)(?!`)(?:[^\n]|\n(?!" + review_inline_end + "))*?(?<!`)\\k<ticks>(?!`)" +
+               .block = {kind:"tag"} | .kind = "opaque" | .cut = true
+             else
+               if (.paragraph|not) then .cut = true else . end | .paragraph = true
+             end
+           end
+         end |
+         if .cut then .leaf += 1 else . end |
+         .records += [{source:$source,content:.content,leaf:.leaf,kind:.kind,
+           containers:.containers,position:{line:(.records|length),column:0},
+           quoted:any(.containers[]; .kind == "quote")}]) |
+      {records:.records,unclosed:(.block.kind == "fence" and (.containers|length) == 0)};
+    def review_inline_leaf:
+      gsub("(?ms)(?<hidden>" +
+        "(?<![\\\\`])(?:\\\\\\\\)*(?<ticks>`+)(?!`)[\\s\\S]*?(?<!`)\\k<ticks>(?!`)" +
         "|(?<!\\\\)(?:\\\\\\\\)*(?:<!--.*?(?:-->|\\z)|<!\\[CDATA\\[.*?(?:\\]\\]>|\\z)|<\\?.*?(?:\\?>|\\z))" +
         "|(?<!\\\\)(?:\\\\\\\\)*<![A-Z].*?(?:>|\\z)" +
         "|(?<!\\\\)(?:\\\\\\\\)*<(?i:pre|script|style)(?=[\\s>]|$).*?(?:(?i:</(?:pre|script|style)>)|\\z)" +
         "|(?<!\\\\)(?:\\\\\\\\)*" + review_html_open("(?i:(?<tag>code|textarea|xmp|iframe|noembed|noframes))"; "[ \t\u000b\u000c]"; "[^'\n]"; "[^\"\n]") + ".*?(?:(?i:</\\k<tag>[ \t]*>)|\\z)" +
-        "|^ {0,3}</?(?:" + review_html_blocks + ")(?=[\\s>]|/>|$).*?(?=\n[ \t]*\n|\\z)" +
-        "|(?<!\\\\)(?:\\\\\\\\)*" + review_html_inline +
-        ")";
-        if (.bt != null and .bt_end == null) or (.tilde != null and .tilde_end == null)
-        then "\u0002" else (.hidden | gsub("[^\n]"; "\u0001")) end);
+        "|(?<!\\\\)(?:\\\\\\\\)*" + review_html_inline + ")";
+        .hidden | review_line_mask);
+    def hide_review_examples:
+      review_document |
+      .visible = ([.records | group_by(.leaf)[] | sort_by(.position.line) |
+        . as $lines |
+        (if .[0].kind == "paragraph" then (map(.source)|join("\n")|review_inline_leaf|split("\n")) else map(.source|review_line_mask) end) as $masked |
+        if ($masked|length) != ($lines|length) then error("inline masking changed source line positions")
+        else range(0;length) as $i | .[$i] |
+          {position:.position,visible:(if .quoted or .kind != "paragraph" then
+            if (.source|test("^[ \t]*$")) then .source else (.source|review_line_mask) end
+          else $masked[$i] end)} end] | sort_by(.position.line) | map(.visible) | join("\n"));
     def current_comment_ready:
       if type != "string" then error("review body must be a string") else
-        (gsub("\r\n"; "\n") | hide_review_examples) as $visible |
+        (gsub("\r\n?"; "\n") | hide_review_examples) as $document |
+        $document.visible as $visible |
         reduce ($visible | split("\n")[]) as $line
           ({first:true, fence:null, dispositions:[]};
            if .fence != null then
@@ -203,7 +204,7 @@ env:
                                     then "positive" else "refuse" end)]
               else . end) | .first = false
            end) |
-        ($visible | contains("\u0002") | not) and
+        $document.unclosed == false and
         .fence == null and (.dispositions | length > 0 and all(. == "positive"))
       end;
 

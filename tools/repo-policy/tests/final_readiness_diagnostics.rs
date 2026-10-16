@@ -311,6 +311,7 @@ fn diagnostics_preserve_real_dispositions_across_block_boundaries() -> Result<()
         .chain(review_disposition::container_boundary_cases()?)
         .chain(review_disposition::sibling_context_cases()?)
         .chain(review_disposition::unicode_list_content_cases()?)
+        .chain(review_disposition::structural_leaf_cases()?)
     {
         let mut case = positive();
         let mut reviews: Value = serde_json::from_str(&case.reviews).map_err(|e| e.to_string())?;
