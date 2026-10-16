@@ -171,7 +171,7 @@ pub(in crate::analysis) fn withhold_debug_assertion_gap(
             !is_ignored(test)
                 && test.assertions.iter().filter(strong).any(|oracle| {
                     is_debug_assertion_text(&oracle.text)
-                        && oracle.observed_tokens.iter().any(|token| *token == subject)
+                        && oracle.observed_tokens.contains(&subject)
                 })
         })
         .map(|(related, _)| {
