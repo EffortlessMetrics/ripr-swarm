@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Tests in a declared `[[test]]` target that `cargo test` never runs (`test = false`, `required-features` unmet under cargo defaults, or `harness = false` with no configured custom-harness registration) are no longer credited as discriminators; cargo metadata supplies the verdict, and unavailable metadata keeps the file. Other never-run shapes (`[lib]`/`[[bin]]` `test = false`, examples, benches, non-default-member and standalone nested workspaces) remain open on #8016.

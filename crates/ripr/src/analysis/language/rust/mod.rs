@@ -357,6 +357,13 @@ fn drop_unreached_test_files(
                 .map(|path| workspace::normalize_path(path)),
         );
     }
+    orphans.extend(cargo_never_runs_test_files(
+        root,
+        test_harnesses,
+        &loaded_files,
+        &holds_tests,
+        &mut manifests,
+    ));
     if orphans.is_empty() {
         return loaded_files;
     }
@@ -364,6 +371,56 @@ fn drop_unreached_test_files(
         .into_iter()
         .filter(|(path, _)| !orphans.contains(&workspace::normalize_path(path)))
         .collect()
+}
+
+/// Test-holding files that a declared `[[test]]` target compiles but
+/// `cargo test` never runs (#8016): `test = false`, unmet
+/// `required-features` under cargo defaults, or `harness = false` with no
+/// configured custom-harness registration for the file (`fn main` drives
+/// nothing from `#[test]`). The verdict is cargo metadata's, probed once and
+/// only when an owning manifest declares a `[[test]]` table; an unavailable
+/// probe, an undeclared path or a registered harness target keeps the file,
+/// so the drop never over-refuses on missing evidence.
+fn cargo_never_runs_test_files(
+    root: &Path,
+    test_harnesses: &[crate::config::TestHarnessRegistration],
+    loaded_files: &[(PathBuf, Vec<u8>)],
+    holds_tests: &dyn Fn(&[u8]) -> bool,
+    manifests: &mut BTreeMap<PathBuf, bool>,
+) -> BTreeSet<String> {
+    let mut declares_tests: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    let mut inventory = workspace::ManifestInventory::default();
+    let mut dropped = BTreeSet::new();
+    for (path, bytes) in loaded_files {
+        if !holds_tests(bytes) {
+            continue;
+        }
+        let Some(package) = owning_manifest_dir(root, path, manifests) else {
+            continue;
+        };
+        let declared = *declares_tests.entry(package.clone()).or_insert_with(|| {
+            committed_source::read_source_bytes(root, &package.join("Cargo.toml"))
+                .ok()
+                .flatten()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+                .is_some_and(|manifest| manifest.get("test").is_some())
+        });
+        if !declared {
+            continue;
+        }
+        let registered = test_harnesses.iter().any(|registration| {
+            workspace::normalize_path(&registration.target) == workspace::normalize_path(path)
+        });
+        let never_runs = inventory.cargo_test_collection_skipped(root, path)
+            || (!registered
+                && inventory.verdict(root, path)
+                    == workspace::CargoHarnessVerdict::HarnessDisabled);
+        if never_runs {
+            dropped.insert(workspace::normalize_path(path));
+        }
+    }
+    dropped
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
@@ -7319,6 +7376,55 @@ fn absent_delimiter_boundary_returns_head() {
                 "registered={registered}"
             );
         }
+    }
+
+    #[test]
+    fn diff_analysis_ignores_declared_test_targets_cargo_never_runs() -> Result<(), String> {
+        // #8016: a declared `[[test]]` target with `test = false`, unmet
+        // `required-features` or `harness = false` compiles (or is skipped)
+        // but `cargo test` never runs its `#[test]` items. The enabled
+        // control target in the same package must keep relating, and each
+        // fixture asserts the intended target really is in the package.
+        let manifest = "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n\
+            [workspace]\n\n[features]\nnever=[]\n\n\
+            [[test]]\nname='off'\ntest=false\n\n\
+            [[test]]\nname='gated'\nrequired-features=['never']\n\n\
+            [[test]]\nname='nomain'\nharness=false\n\n\
+            [[test]]\nname='live'\n";
+        let root = temp_root("never-run-test-targets")?;
+        write(&root.join("Cargo.toml"), manifest)?;
+        write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        for name in ["off", "gated", "nomain", "live"] {
+            let main = if name == "nomain" {
+                "fn main() {}\n"
+            } else {
+                ""
+            };
+            write(
+                &root.join(format!("tests/{name}.rs")),
+                &format!(
+                    "use shop::used::discount;\n{main}\n#[test]\nfn discount_applies_{name}() {{\n    assert_eq!(discount(150), 140);\n}}\n"
+                ),
+            )?;
+        }
+
+        let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+        let related = related_test_names(&root, &result, "src/used.rs");
+        assert!(
+            related.iter().any(|name| name == "discount_applies_live"),
+            "the enabled declared target must relate: {related:?}"
+        );
+        for name in ["off", "gated", "nomain"] {
+            let test = format!("discount_applies_{name}");
+            assert!(
+                !related.iter().any(|related| *related == test),
+                "`{name}` is never run by cargo test and must not relate: {related:?}"
+            );
+        }
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
     }
 
     #[test]
