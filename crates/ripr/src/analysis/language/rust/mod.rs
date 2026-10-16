@@ -395,7 +395,7 @@ fn unrun_target_test_files(
         .iter()
         .map(|harness| workspace::normalize_path(&harness.target))
         .collect::<BTreeSet<_>>();
-    let mut conditional: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    let mut conditional: BTreeMap<PathBuf, Option<BTreeSet<String>>> = BTreeMap::new();
     let mut inventory = workspace::ManifestInventory::default();
     let mut unrun = BTreeSet::new();
     for (path, bytes) in loaded_files {
@@ -405,18 +405,27 @@ fn unrun_target_test_files(
         let Some(package_dir) = owning_manifest_dir(root, path, manifests) else {
             continue;
         };
-        let has_conditional_target = *conditional.entry(package_dir.clone()).or_insert_with(|| {
+        let explicit_paths = conditional.entry(package_dir.clone()).or_insert_with(|| {
             committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
                 .ok()
                 .flatten()
                 .and_then(|bytes| String::from_utf8(bytes).ok())
                 .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
-                .is_some_and(|manifest| has_conditionally_run_test_target(&manifest))
+                .filter(|manifest| has_conditionally_run_test_target(manifest))
+                .map(|manifest| explicit_test_paths(&manifest, &package_dir))
         });
-        if !has_conditional_target {
+        // Only a file under `tests/` or named by a `[[test]]` path can be a
+        // libtest target, so every other file skips the metadata probe.
+        let Some(explicit_paths) = explicit_paths else {
+            continue;
+        };
+        let normalized = workspace::normalize_path(path);
+        let in_tests_dir = path
+            .strip_prefix(&package_dir)
+            .is_ok_and(|relative| relative.starts_with("tests"));
+        if !in_tests_dir && !explicit_paths.contains(&normalized) {
             continue;
         }
-        let normalized = workspace::normalize_path(path);
         let skipped = inventory.cargo_test_collection_skipped(root, path)
             || (!registered.contains(&normalized)
                 && inventory.verdict(root, path)
@@ -426,6 +435,19 @@ fn unrun_target_test_files(
         }
     }
     unrun
+}
+
+/// Workspace-relative `path = ...` spellings of a manifest's `[[test]]`
+/// entries.
+fn explicit_test_paths(manifest: &toml::Value, package_dir: &Path) -> BTreeSet<String> {
+    manifest
+        .get("test")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("path").and_then(toml::Value::as_str))
+        .map(|path| workspace::normalize_path(&package_dir.join(path.trim())))
+        .collect()
 }
 
 /// Whether a manifest declares a `[[test]]` that `cargo test` may skip or
