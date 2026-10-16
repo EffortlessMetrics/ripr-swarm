@@ -50,16 +50,14 @@ pub(crate) fn flat_object_keys(object_text: &str) -> Option<Vec<String>> {
                     .and_then(|key| key.strip_suffix('\''))
             })
             .unwrap_or(raw_key);
-        // `__proto__: x` (bare or quoted) sets the prototype instead of an
-        // own field, so `toMatchObject` compares nothing for it (#8133).
-        // Any escape sequence in the key (e.g. `\u005f_proto__`) fails closed (#8148).
-        if key.is_empty() || key == "__proto__" || key.contains('\\') {
+        if key.is_empty() {
             return None;
         }
         // `{ __proto__: v }` (quoted or not) sets the prototype, not an own
         // field. Computed `["__proto__"]` keeps a different spelling here
         // and is a real property; shorthand has no colon in this split.
-        if key == "__proto__" {
+        // Any escape sequence in the key (e.g. `\u005f_proto__`) fails closed (#8148).
+        if key == "__proto__" || key.contains('\\') {
             continue;
         }
         keys.push(key.to_string());

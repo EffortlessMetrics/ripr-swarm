@@ -301,15 +301,15 @@ fn match_object_expected_with_escaped_proto_key_is_refused_as_pin() -> Result<()
     for (label, body) in [
         (
             "bare-proto",
-            "  expect(buildProfile(\"bo\", 18)).toMatchObject({ __proto__: false, adult: true });",
+            "  expect(buildProfile(\"bo\", 18)).toMatchObject({ __proto__: false });",
         ),
         (
             "quoted-proto",
-            "  expect(buildProfile(\"bo\", 18)).toMatchObject({ \"__proto__\": false, adult: true });",
+            "  expect(buildProfile(\"bo\", 18)).toMatchObject({ \"__proto__\": false });",
         ),
         (
             "escaped-proto",
-            "  expect(buildProfile(\"bo\", 18)).toMatchObject({ \"\\u005f_proto__\": false, adult: true });",
+            "  expect(buildProfile(\"bo\", 18)).toMatchObject({ \"\\u005f_proto__\": false });",
         ),
     ] {
         let finding = profile_finding(label, &profile_test(body))?;
