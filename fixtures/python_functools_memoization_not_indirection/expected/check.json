@@ -164,14 +164,14 @@
         "infect": {"state":"yes","confidence":"low","summary":"Changed Python return expression can alter the owner return value: `return \"%03d\" % (year % 100)`"},
         "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
-        "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `format_year`", "infection yes: Changed Python return expression can alter the owner return value: `return \"%03d\" % (year % 100)`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return \"%03d\" % (year % 100) (line 6)", "related test tests/test_memo.py:4 test_format_year_width uses strong exact value oracle: assert format_year(1999) == \"099\""],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `format_year`", "infection yes: Changed Python return expression can alter the owner return value: `return \"%03d\" % (year % 100)`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return \"%03d\" % (year % 100) (line 6)", "related test tests/test_memo.py:4 test_format_year_width uses strong exact value oracle: assert format_year(1999) == \"099\""],
       "flow_sinks": [
         {"kind":"return_value","text":"return \"%03d\" % (year % 100)","line":6}
       ],
       "evidence": ["owner: format_year", "owner_kind: function", "owner_decorators: lru_cache", "test_framework: pytest (test_format_year_width)", "test_verify_command: python -m pytest tests/test_memo.py::test_format_year_width (test_format_year_width)", "related_test_relation: syntactic_call (test_format_year_width)", "test_oracle: exact_value strong (test_format_year_width)"],
-      "missing": ["Related Python test reaches `format_year` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `format_year` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
       "assertion_texts": {
       },
       "activation": {

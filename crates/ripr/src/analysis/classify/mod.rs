@@ -7,6 +7,7 @@ mod changed_span;
 mod context;
 mod decision;
 mod effect_carrier;
+mod element_field_pin;
 mod flow;
 mod gap_admission;
 mod helper_transfer;
@@ -50,6 +51,7 @@ pub(in crate::analysis) use decision::{
     missing_evidence, recommended_next_step, stop_reasons,
 };
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
+pub(in crate::analysis) use element_field_pin::observes_returned_element_field;
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
 pub(in crate::analysis) use gap_admission::{
     REFUSALS_ARE_ANALYZER_LIMITS, withhold_log_capture_gap, withhold_should_panic_gap,
@@ -75,8 +77,8 @@ pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_observes_collection_argument,
     assertion_observes_direct_collection, current_path_witness_with,
-    direct_collection_mutation_receiver, field_assignment_target, retain_returned_ledger,
-    returned_ledger_witness,
+    direct_collection_mutation_receiver, field_assignment_target, owner_may_exit_before_line,
+    retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use propagation_witness::{
     constant_tail_witness, fallible_literal_witness, format_tail_witness,

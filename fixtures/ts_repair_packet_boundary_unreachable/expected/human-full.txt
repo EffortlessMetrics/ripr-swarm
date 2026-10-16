@@ -5,10 +5,10 @@ config: <cwd>/fixtures/ts_repair_packet_boundary_unreachable/input/ripr.toml
 
 Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
 
-Changed file(s) by language: typescript: 1.
+Changed file(s) by language: typescript = 1
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
 
 WARNING src/auth.ts:2
   id: probe:src_auth.ts:typescript_preview:23e9836b
@@ -42,14 +42,14 @@ Static exposure
 
 Evidence
   - reach yes: 1 related test(s) found for owner `login`
-  - infection unknown: TypeScript preview adapter does not yet model infection.
-  - propagation unknown: TypeScript preview adapter does not yet model propagation.
+  - infection unknown: TypeScript preview adapter does not yet model infection
+  - propagation unknown: TypeScript preview adapter does not yet model propagation
   - observation weak: Strongest extracted oracle kind: `relational_check` (rank 3)
-  - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `user.length == 3`.
+  - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `user.length == 3`
   - related test tests/auth.test.ts:3 login returns a long session token uses weak relational check oracle: expect(...).toBeGreaterThan(...)
 
 Weakness
-  - Related test reaches `login` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference).
+  - Related test reaches `login` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference)
   - missing discriminator user.length == 3: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator
 
 TypeScript preview card (advisory)
@@ -78,7 +78,7 @@ TypeScript repair packet (advisory)
   next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
 
 Next step
-  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `user.length == 3`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.
+  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `user.length == 3`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
 Drill in:
   ripr explain --root <cwd>/fixtures/ts_repair_packet_boundary_unreachable/input --diff <cwd>/fixtures/ts_repair_packet_boundary_unreachable/diff.patch --mode fast probe:src_auth.ts:typescript_preview:23e9836b
   ripr context --root <cwd>/fixtures/ts_repair_packet_boundary_unreachable/input --diff <cwd>/fixtures/ts_repair_packet_boundary_unreachable/diff.patch --mode fast --at probe:src_auth.ts:typescript_preview:23e9836b

@@ -5,14 +5,14 @@ config: <cwd>/fixtures/ts_repair_packet_boundary_constant_first/input/ripr.toml
 
 Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
 
-Changed file(s) by language: typescript: 1.
+Changed file(s) by language: typescript = 1
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
 
 Start here:
   State: preview language, advisory only (preview_limited)
-  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/pricing.test.ts`, add a focused assertion for the missing discriminator `DISCOUNT_THRESHOLD == amount`, shaped like `expect(discountedTotal(10000)).toBe(expected)`; run `npx --no-install jest tests/pricing.test.ts`, then rerun `ripr check`.
+  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/pricing.test.ts`, add a focused assertion for the missing discriminator `DISCOUNT_THRESHOLD == amount`, shaped like `expect(discountedTotal(10000)).toBe(expected)`; run `npx --no-install jest tests/pricing.test.ts`, then rerun `ripr check`
   File: src/pricing.ts:4
   Language: typescript
   Language status: preview
@@ -21,12 +21,12 @@ Start here:
   Changed behavior: if (DISCOUNT_THRESHOLD <= amount) {
   Missing discriminator (1 of 2): Related tests reach `discountedTotal` with a strong oracle, but no strong assertion observes a `discountedTotal(...)` call at the changed predicate boundary…
   Related test (1 of 2 matched rows): tests/pricing.test.ts:3 no discount below threshold
-  Next step: TypeScript preview advisory: add or strengthen a focused assertion for missing
+  Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `DISCOUNT_THRESHOLD == amount`; the repair packet is complete and delegatable
-    (advisory).
+    (advisory)
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     - reach yes: 2 related test(s) found for owner `discountedTotal`
-    - infection unknown: TypeScript preview adapter does not yet model infection.
+    - infection unknown: TypeScript preview adapter does not yet model infection
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:

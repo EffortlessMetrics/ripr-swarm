@@ -436,7 +436,7 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        json_support: true,
         example: "ripr pilot --root .",
         next_routes: &["check", "repair", "doctor"],
         stop_states: &[
@@ -2906,6 +2906,23 @@ mod tests {
                 "cmd:help summary {:?} still omits the machine catalog route",
                 row.summary
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn pilot_row_reports_stdout_json_support() -> Result<(), String> {
+        // #7428: `ripr pilot --format json` emits the packet summary on stdout.
+        let row = metadata()
+            .iter()
+            .find(|row| row.id == "cmd:pilot")
+            .ok_or("cmd:pilot has no metadata row")?;
+        if !row.json_support {
+            return Err(
+                "cmd:pilot reports json_support: false while `ripr pilot --format json` \
+                 emits the summary document"
+                    .to_string(),
+            );
         }
         Ok(())
     }

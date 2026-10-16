@@ -45,7 +45,7 @@ defaults into a file.
 "#;
 pub(super) const PILOT_HELP: &str = r#"Find the top test gap in this repo and write a packet you can act on.
 
-Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS] [--quiet]
+Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS] [--format json] [--quiet]
 
 Options:
   --root PATH       Workspace root to analyze. Defaults to current directory.
@@ -55,6 +55,9 @@ Options:
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to
                     30000; when the default passes, the same run continues for up to
                     240000 more. An explicit value is a hard limit.
+  --format FORMAT   human or json. Defaults to human. json writes the same
+                    pilot-summary.json document to stdout and suppresses the
+                    human terminal; packet files are still written.
   --quiet           Suppress analysis progress and heartbeats on stderr. Does not
                     change the pilot packet, exit codes, or error reporting.
 
@@ -254,12 +257,17 @@ Options:
                            codes, or error reporting.
 
 Exit status:
-  Complete and partial_with_limitations reports exit 0, regardless of findings.
+  Complete and partial_with_limitations reports exit 0, including `exposed`
+  and `weakly_exposed` findings. A non-zero exit means the analysis did not
+  complete, not that it disapproved of the diff.
   `unsupported_input` reports exit 2 after the original report is written;
   limitations and recovery routes remain available in that report. Usage and
-  operational errors also exit 2. Empty input is complete no_scope (exit 0).
-  Read the typed outcome to distinguish partial analysis from complete analysis;
-  a successful exit alone does not establish complete scope or a clean gate.
+  operational errors also exit 2.
+  Empty input is complete no_scope (exit 0). Read the typed outcome to
+  distinguish partial analysis from complete analysis; a successful exit
+  alone does not establish complete scope or a clean gate. Blocking belongs
+  to `ripr gate evaluate` (exit 3 on `blocked`). Do not build a CI gate on
+  check's exit code; read its output, or run the gate.
 
 Progress:
   Long-running check analysis writes producer stages to stderr as

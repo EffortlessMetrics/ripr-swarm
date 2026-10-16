@@ -462,7 +462,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// complete error-variant witness and an owner-return pin beside sibling
 /// variant exits, and a payload-only change needs that whole-value pin
 /// (#7063). Old entries keep those seams weakly exposed or variant-credited.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.79";
+/// `1.80`: compose the golden-file pin, the early error-variant pins and
+/// RIPR-SPEC-0225 decision 9's returned-array-element field credit (#7858);
+/// no standalone `1.79` is reusable. Old entries keep that field's gap.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.80";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -586,7 +589,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.79";
 /// `0.83`: same returned-comparison transition as full `1.77` (#8042).
 /// `0.84`: same golden-file pin evidence as full `1.78`.
 /// `0.85`: same early error-variant pins as full `1.79` (#7063).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.85";
+/// `0.86`: same composed golden-file, early error-variant and
+/// returned-element field pins as full `1.80`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.86";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -712,7 +717,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.85";
 /// `0.83`: same returned-comparison transition as full `1.77` (#8042).
 /// `0.84`: same golden-file pin evidence as full `1.78`.
 /// `0.85`: same early error-variant pins as full `1.79` (#7063).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.85";
+/// `0.86`: same composed golden-file, early error-variant and
+/// returned-element field pins as full `1.80`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.86";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4484,7 +4491,10 @@ mod tests {
         // 1.76 -> 1.77: same-line returned comparisons gain a real sink (#8042).
         // 1.77 -> 1.78: verified expect_file golden comparisons pin (#6578).
         // 1.78 -> 1.79: early error-variant pins and payload witness (#7063).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.79");
+        // 1.79 -> 1.80: compose golden-file pins, early error-variant pins
+        // and returned-element field pins (RIPR-SPEC-0225 decision 9); no
+        // standalone 1.79 is reusable.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.80");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4554,10 +4564,12 @@ mod tests {
         // 0.80 -> 0.81: same evidence as full 1.75.
         // 0.81 -> 0.82: same composed evidence as full 1.76 (#7818).
         // 0.82 -> 0.83: same returned-comparison evidence as full 1.77.
-        // 0.83 -> 0.84: same evidence as full 1.78.
-        // 0.84 -> 0.85: same evidence as full 1.79 (#7063).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.85");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.85");
+        // 0.83 -> 0.84: same golden-file pin evidence as full 1.78.
+        // 0.84 -> 0.85: same early error-variant pins as full 1.79 (#7063).
+        // 0.85 -> 0.86: same composed golden-file, early error-variant and
+        // returned-element field pins as full 1.80.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.86");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.86");
     }
 
     #[test]
