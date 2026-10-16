@@ -19,228 +19,13 @@
   },
   "seams": [
     {
-      "seam_id": "3ae99c9adc81465c",
-      "kind": "return_value",
-      "file": "src/lib.rs",
-      "line": 6,
-      "column": 5,
-      "end_line": 6,
-      "end_column": 32,
-      "owner": "src/lib.rs::make_record",
-      "expression": "Record { items: count + 0 }",
-      "grip_class": "strongly_gripped",
-      "headline_eligible": false,
-      "evidence": {
-        "reach": "yes",
-        "activate": "yes",
-        "propagate": "yes",
-        "observe": "yes",
-        "discriminate": "yes"
-      },
-      "related_tests_total": 1,
-      "related_tests": [
-        {
-          "name": "snapshot_field",
-          "file": "src/lib.rs",
-          "line": 14,
-          "oracle_kind": "snapshot",
-          "oracle_strength": "medium",
-          "evidence_summary": "snapshot oracle",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
-        }
-      ],
-      "observed_values": [
-        "2"
-      ],
-      "missing_discriminators": [],
-      "evidence_record": {
-        "actionability": {
-          "class": "not_policy_relevant",
-          "has_concrete_guidance": false,
-          "reason": "seam is already gripped or intentionally non-actionable under current policy",
-          "signals": {
-            "assertion_shape": false,
-            "candidate_value": true,
-            "missing_discriminator": false,
-            "recommended_test_target": true,
-            "related_test": true,
-            "verification_command": false
-          }
-        },
-        "calibration": {
-          "agreement": "no_runtime_data",
-          "availability": "not_imported",
-          "confidence": "unknown"
-        },
-        "canonical_gap_group_size": null,
-        "canonical_gap_id": null,
-        "canonical_gap_reason": null,
-        "canonical_item": {
-          "actionability": "already_observed",
-          "canonical_gap_id": null,
-          "canonical_item_kind": "observed",
-          "command_specs": {
-            "receipt": null,
-            "verify": null
-          },
-          "confidence": {
-            "basis": "static_only",
-            "notes": [
-              "no imported runtime calibration data"
-            ]
-          },
-          "evidence_class": "return_value",
-          "gap_state": "already_observed",
-          "group_reason": null,
-          "primary_anchor": {
-            "file": "src/lib.rs",
-            "kind": "strongly_gripped",
-            "line": 6,
-            "reason": "record_location",
-            "source_id": "3ae99c9adc81465c"
-          },
-          "raw_group_size": 1,
-          "raw_spans": [
-            {
-              "end_line": 6,
-              "file": "src/lib.rs",
-              "kind": "strongly_gripped",
-              "source_id": "3ae99c9adc81465c",
-              "start_line": 6
-            }
-          ],
-          "receipt_command": null,
-          "recommended_repair": "No new RIPR action; current static evidence already observes this seam.",
-          "related_test": {
-            "file": "src/lib.rs",
-            "line": 14,
-            "name": "snapshot_field",
-            "reason": "direct_owner_call"
-          },
-          "repair_command": null,
-          "repair_route": null,
-          "static_limitations": [],
-          "verify_command": null,
-          "why": "seam is already gripped or intentionally non-actionable under current policy"
-        },
-        "evidence_path": {
-          "activate": {
-            "confidence": "medium",
-            "state": "yes",
-            "summary": "Observed 1 concrete activation value(s) for seam `Record { items: count + 0 }`"
-          },
-          "discriminate": {
-            "confidence": "medium",
-            "state": "yes",
-            "summary": "Strongest oracle for seam kind `return_value` is `medium` (kind-match true)"
-          },
-          "observe": {
-            "confidence": "medium",
-            "state": "yes",
-            "summary": "Observation evidence is `yes`"
-          },
-          "propagate": {
-            "confidence": "low",
-            "state": "yes",
-            "summary": "Static propagation to `return_value` sink is yes"
-          },
-          "reach": {
-            "confidence": "medium",
-            "state": "yes",
-            "summary": "Related tests appear to reach `src/lib.rs::make_record`: snapshot_field"
-          }
-        },
-        "grip_class": "strongly_gripped",
-        "headline_eligible": false,
-        "location": {
-          "file": "src/lib.rs",
-          "line": 6
-        },
-        "missing_discriminators": [],
-        "observed_values": [
-          {
-            "context": "function_argument",
-            "line": 15,
-            "text": "let record = make_record(2);",
-            "value": "2"
-          }
-        ],
-        "owner": "src/lib.rs::make_record",
-        "presentation_text": null,
-        "raw_findings": [
-          {
-            "evidence_record_ref": "3ae99c9adc81465c",
-            "expression": "Record { items: count + 0 }",
-            "file": "src/lib.rs",
-            "kind": "strongly_gripped",
-            "language": "rust",
-            "language_status": "stable",
-            "line": 6,
-            "probe_kind": "return_value",
-            "source_id": "3ae99c9adc81465c"
-          }
-        ],
-        "recommendation": {
-          "action": "no_action",
-          "assertion_shape": null,
-          "candidate_values": [
-            {
-              "reason": "observed function_argument value from existing tests",
-              "value": "2"
-            }
-          ],
-          "nearest_test_to_imitate": {
-            "evidence_summary": "snapshot oracle",
-            "file": "src/lib.rs",
-            "line": 14,
-            "name": "snapshot_field",
-            "oracle_kind": "snapshot",
-            "oracle_semantics": {
-              "missing": "a small explicit discriminator if the snapshot is too broad to review",
-              "observes": "a snapshot of rendered or debug output",
-              "upgrade_suggestion": "add an exact assertion for the changed field or value when the snapshot is broad"
-            },
-            "oracle_strength": "medium",
-            "relation_confidence": "high",
-            "relation_reason": "direct_owner_call"
-          },
-          "reason": "seam is already gripped or intentionally non-actionable under current policy",
-          "recommended_test": null,
-          "verify_command": null
-        },
-        "related_tests": [
-          {
-            "evidence_summary": "snapshot oracle",
-            "file": "src/lib.rs",
-            "line": 14,
-            "name": "snapshot_field",
-            "oracle_kind": "snapshot",
-            "oracle_semantics": {
-              "missing": "a small explicit discriminator if the snapshot is too broad to review",
-              "observes": "a snapshot of rendered or debug output",
-              "upgrade_suggestion": "add an exact assertion for the changed field or value when the snapshot is broad"
-            },
-            "oracle_strength": "medium",
-            "relation_confidence": "high",
-            "relation_reason": "direct_owner_call"
-          }
-        ],
-        "related_tests_total": 1,
-        "schema_version": "0.1",
-        "seam_id": "3ae99c9adc81465c",
-        "seam_kind": "return_value",
-        "static_limitations": []
-      }
-    },
-    {
-      "seam_id": "968325968d2fa869",
+      "seam_id": "96862a968d31e6bf",
       "kind": "field_construction",
       "file": "src/lib.rs",
       "line": 6,
-      "column": 14,
+      "column": 27,
       "end_line": 6,
-      "end_column": 30,
+      "end_column": 43,
       "owner": "src/lib.rs::make_record",
       "expression": "items: count + 0",
       "grip_class": "weakly_gripped",
@@ -257,7 +42,7 @@
         {
           "name": "snapshot_field",
           "file": "src/lib.rs",
-          "line": 14,
+          "line": 15,
           "oracle_kind": "snapshot",
           "oracle_strength": "medium",
           "evidence_summary": "snapshot oracle",
@@ -314,7 +99,7 @@
             "kind": "weakly_gripped",
             "line": 6,
             "reason": "canonical_group_primary_raw_finding",
-            "source_id": "968325968d2fa869"
+            "source_id": "96862a968d31e6bf"
           },
           "raw_group_size": 1,
           "raw_spans": [
@@ -322,7 +107,7 @@
               "end_line": 6,
               "file": "src/lib.rs",
               "kind": "weakly_gripped",
-              "source_id": "968325968d2fa869",
+              "source_id": "96862a968d31e6bf",
               "start_line": 6
             }
           ],
@@ -330,7 +115,7 @@
           "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`.",
           "related_test": {
             "file": "src/lib.rs",
-            "line": 14,
+            "line": 15,
             "name": "snapshot_field",
             "reason": "direct_owner_call"
           },
@@ -385,7 +170,7 @@
         "observed_values": [
           {
             "context": "function_argument",
-            "line": 15,
+            "line": 16,
             "text": "let record = make_record(2);",
             "value": "2"
           }
@@ -394,7 +179,7 @@
         "presentation_text": null,
         "raw_findings": [
           {
-            "evidence_record_ref": "968325968d2fa869",
+            "evidence_record_ref": "96862a968d31e6bf",
             "expression": "items: count + 0",
             "file": "src/lib.rs",
             "kind": "weakly_gripped",
@@ -402,7 +187,7 @@
             "language_status": "stable",
             "line": 6,
             "probe_kind": "field_construction",
-            "source_id": "968325968d2fa869"
+            "source_id": "96862a968d31e6bf"
           }
         ],
         "recommendation": {
@@ -417,7 +202,7 @@
           "nearest_test_to_imitate": {
             "evidence_summary": "snapshot oracle",
             "file": "src/lib.rs",
-            "line": 14,
+            "line": 15,
             "name": "snapshot_field",
             "oracle_kind": "snapshot",
             "oracle_semantics": {
@@ -437,7 +222,7 @@
           {
             "evidence_summary": "snapshot oracle",
             "file": "src/lib.rs",
-            "line": 14,
+            "line": 15,
             "name": "snapshot_field",
             "oracle_kind": "snapshot",
             "oracle_semantics": {
@@ -452,7 +237,7 @@
         ],
         "related_tests_total": 1,
         "schema_version": "0.1",
-        "seam_id": "968325968d2fa869",
+        "seam_id": "96862a968d31e6bf",
         "seam_kind": "field_construction",
         "static_limitations": [
           {
@@ -463,6 +248,221 @@
             "state": "unknown"
           }
         ]
+      }
+    },
+    {
+      "seam_id": "e11abf24d68e701c",
+      "kind": "return_value",
+      "file": "src/lib.rs",
+      "line": 7,
+      "column": 5,
+      "end_line": 7,
+      "end_column": 11,
+      "owner": "src/lib.rs::make_record",
+      "expression": "record",
+      "grip_class": "strongly_gripped",
+      "headline_eligible": false,
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "yes"
+      },
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "snapshot_field",
+          "file": "src/lib.rs",
+          "line": 15,
+          "oracle_kind": "snapshot",
+          "oracle_strength": "medium",
+          "evidence_summary": "snapshot oracle",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "observed_values": [
+        "2"
+      ],
+      "missing_discriminators": [],
+      "evidence_record": {
+        "actionability": {
+          "class": "not_policy_relevant",
+          "has_concrete_guidance": false,
+          "reason": "seam is already gripped or intentionally non-actionable under current policy",
+          "signals": {
+            "assertion_shape": false,
+            "candidate_value": true,
+            "missing_discriminator": false,
+            "recommended_test_target": true,
+            "related_test": true,
+            "verification_command": false
+          }
+        },
+        "calibration": {
+          "agreement": "no_runtime_data",
+          "availability": "not_imported",
+          "confidence": "unknown"
+        },
+        "canonical_gap_group_size": null,
+        "canonical_gap_id": null,
+        "canonical_gap_reason": null,
+        "canonical_item": {
+          "actionability": "already_observed",
+          "canonical_gap_id": null,
+          "canonical_item_kind": "observed",
+          "command_specs": {
+            "receipt": null,
+            "verify": null
+          },
+          "confidence": {
+            "basis": "static_only",
+            "notes": [
+              "no imported runtime calibration data"
+            ]
+          },
+          "evidence_class": "return_value",
+          "gap_state": "already_observed",
+          "group_reason": null,
+          "primary_anchor": {
+            "file": "src/lib.rs",
+            "kind": "strongly_gripped",
+            "line": 7,
+            "reason": "record_location",
+            "source_id": "e11abf24d68e701c"
+          },
+          "raw_group_size": 1,
+          "raw_spans": [
+            {
+              "end_line": 7,
+              "file": "src/lib.rs",
+              "kind": "strongly_gripped",
+              "source_id": "e11abf24d68e701c",
+              "start_line": 7
+            }
+          ],
+          "receipt_command": null,
+          "recommended_repair": "No new RIPR action; current static evidence already observes this seam.",
+          "related_test": {
+            "file": "src/lib.rs",
+            "line": 15,
+            "name": "snapshot_field",
+            "reason": "direct_owner_call"
+          },
+          "repair_command": null,
+          "repair_route": null,
+          "static_limitations": [],
+          "verify_command": null,
+          "why": "seam is already gripped or intentionally non-actionable under current policy"
+        },
+        "evidence_path": {
+          "activate": {
+            "confidence": "medium",
+            "state": "yes",
+            "summary": "Observed 1 concrete activation value(s) for seam `record`"
+          },
+          "discriminate": {
+            "confidence": "medium",
+            "state": "yes",
+            "summary": "Strongest oracle for seam kind `return_value` is `medium` (kind-match true)"
+          },
+          "observe": {
+            "confidence": "medium",
+            "state": "yes",
+            "summary": "Observation evidence is `yes`"
+          },
+          "propagate": {
+            "confidence": "low",
+            "state": "yes",
+            "summary": "Static propagation to `return_value` sink is yes"
+          },
+          "reach": {
+            "confidence": "medium",
+            "state": "yes",
+            "summary": "Related tests appear to reach `src/lib.rs::make_record`: snapshot_field"
+          }
+        },
+        "grip_class": "strongly_gripped",
+        "headline_eligible": false,
+        "location": {
+          "file": "src/lib.rs",
+          "line": 7
+        },
+        "missing_discriminators": [],
+        "observed_values": [
+          {
+            "context": "function_argument",
+            "line": 16,
+            "text": "let record = make_record(2);",
+            "value": "2"
+          }
+        ],
+        "owner": "src/lib.rs::make_record",
+        "presentation_text": null,
+        "raw_findings": [
+          {
+            "evidence_record_ref": "e11abf24d68e701c",
+            "expression": "record",
+            "file": "src/lib.rs",
+            "kind": "strongly_gripped",
+            "language": "rust",
+            "language_status": "stable",
+            "line": 7,
+            "probe_kind": "return_value",
+            "source_id": "e11abf24d68e701c"
+          }
+        ],
+        "recommendation": {
+          "action": "no_action",
+          "assertion_shape": null,
+          "candidate_values": [
+            {
+              "reason": "observed function_argument value from existing tests",
+              "value": "2"
+            }
+          ],
+          "nearest_test_to_imitate": {
+            "evidence_summary": "snapshot oracle",
+            "file": "src/lib.rs",
+            "line": 15,
+            "name": "snapshot_field",
+            "oracle_kind": "snapshot",
+            "oracle_semantics": {
+              "missing": "a small explicit discriminator if the snapshot is too broad to review",
+              "observes": "a snapshot of rendered or debug output",
+              "upgrade_suggestion": "add an exact assertion for the changed field or value when the snapshot is broad"
+            },
+            "oracle_strength": "medium",
+            "relation_confidence": "high",
+            "relation_reason": "direct_owner_call"
+          },
+          "reason": "seam is already gripped or intentionally non-actionable under current policy",
+          "recommended_test": null,
+          "verify_command": null
+        },
+        "related_tests": [
+          {
+            "evidence_summary": "snapshot oracle",
+            "file": "src/lib.rs",
+            "line": 15,
+            "name": "snapshot_field",
+            "oracle_kind": "snapshot",
+            "oracle_semantics": {
+              "missing": "a small explicit discriminator if the snapshot is too broad to review",
+              "observes": "a snapshot of rendered or debug output",
+              "upgrade_suggestion": "add an exact assertion for the changed field or value when the snapshot is broad"
+            },
+            "oracle_strength": "medium",
+            "relation_confidence": "high",
+            "relation_reason": "direct_owner_call"
+          }
+        ],
+        "related_tests_total": 1,
+        "schema_version": "0.1",
+        "seam_id": "e11abf24d68e701c",
+        "seam_kind": "return_value",
+        "static_limitations": []
       }
     }
   ]
