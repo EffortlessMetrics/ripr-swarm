@@ -108,6 +108,44 @@ fn unknown_workflow_fails_with_a_family_distinct_from_unknown_command() -> Resul
 }
 
 #[test]
+fn default_help_has_one_canonical_first_run() -> Result<(), String> {
+    for args in [
+        [].as_slice(),
+        ["--help"].as_slice(),
+        ["-h"].as_slice(),
+        ["help"].as_slice(),
+    ] {
+        let stdout = rendered_help(args)?.replace("\r\n", "\n");
+        if stdout.lines().count() > 40 {
+            return Err("default help must keep the existing 40-line screen budget".to_string());
+        }
+        let (_, after) = stdout
+            .split_once("Try this first:\n")
+            .ok_or("default help lost its first-run section")?;
+        let section = after.split("\n\n").next().unwrap_or_default();
+        let commands: Vec<_> = section
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("ripr "))
+            .collect();
+        let [line] = commands.as_slice() else {
+            return Err(format!(
+                "first run must name exactly one command, got:\n{section}"
+            ));
+        };
+        let (command, _) = line
+            .split_once("  ")
+            .ok_or("first-run command must be separated from its description")?;
+        if normalized(command) != "ripr check" {
+            return Err(format!(
+                "first run must be `ripr check` without a fixed base, got `{command}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn default_help_keeps_the_task_roles_distinct() -> Result<(), String> {
     for args in [["--help"].as_slice(), ["help"].as_slice()] {
         let stdout = normalized(&rendered_help(args)?);

@@ -12025,6 +12025,9 @@ tests = [
   "crates/ripr/src/cli/command_metadata.rs::tests::hierarchy_doc_commands_resolve_to_catalog_rows",
   "crates/ripr/src/cli/command_metadata.rs::tests::pinned_task_rows_match_the_hierarchy_doc_labels",
   "crates/ripr/tests/cli_help_hierarchy.rs::exhaustive_help_marks_non_public_rows_visibly",
+  "crates/ripr/tests/cli_help_hierarchy.rs::default_help_has_one_canonical_first_run",
+  "xtask/tests/ripr_public_guide_contract.rs::docs_keep_the_canonical_role_vocabulary",
+  "xtask/tests/ripr_public_guide_contract.rs::first_run_guard_does_not_credit_a_later_correct_example",
 ]
 fixtures = []
 code = [

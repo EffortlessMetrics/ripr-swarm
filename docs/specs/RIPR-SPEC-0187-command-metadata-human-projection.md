@@ -10,6 +10,7 @@ Linked issues:
 
 - #4823 (command-discovery C2)
 - #1770 (parent controller under #1613; later slices remain separate)
+- #8164 (canonical first-run routing across help and guides)
 
 Support-tier impact:
 
@@ -82,6 +83,12 @@ Authority:
    contract (`docs/EXIT_CODES.md` / `CommandError`); other described rows
    use completed-or-failed. A contradicting `exit` field is a catalog
    integrity failure. Human help screens do not render this field (#5065).
+8. The default help's `Try this first:` section offers exactly one command,
+   `ripr check`, without a fixed base. The README's first-use example and the
+   Quickstart's CLI First Hour use that same analysis entrypoint. Setup
+   diagnosis (`doctor`) and whole-repository exploration (`pilot`) remain
+   separate tasks. Clean-base-branch guidance names a tracked source edit
+   before checking; an empty diff does not establish test quality (#8164).
 
 Metadata lookup is static data. It does not run analysis, spawn a process,
 open a network, mutate a workspace, or write a product artifact.
@@ -112,8 +119,8 @@ open a network, mutate a workspace, or write a product artifact.
   follow-ups is `metadata()` joined with `catalog()`; no consumer is added in
   this slice.
 - No rewrite of help prose, per-command option bodies, or the default screen
-  layout; the only rendered change is the line-end class markers in
-  `help --all`.
+  layout beyond the bounded first-run routing above and line-end class markers
+  in `help --all`.
 - No command rename, removal, execution, analyzer, durable-attempt, release,
   publication, credential, or repository-setting change.
 
@@ -139,6 +146,12 @@ open a network, mutate a workspace, or write a product artifact.
   hierarchy-doc resolution and pinned-label checks.
 - `crates/ripr/tests/cli_help_hierarchy.rs` pins the rendered `[advanced]` and
   `[compatibility]` markers against the built binary.
+  `default_help_has_one_canonical_first_run` checks all four default-help
+  spellings for exactly one unqualified first analysis command.
+- `xtask/tests/ripr_public_guide_contract.rs::docs_keep_the_canonical_role_vocabulary`
+  checks the first README and CLI quickstart command blocks.
+  `first_run_guard_does_not_credit_a_later_correct_example` rejects doctor,
+  pilot, and a fixed `--base origin/main` as substitutes in either guide.
 
 ## Implementation Mapping
 

@@ -1,5 +1,5 @@
 //! Current repository guides must agree with the candidate's rendered help.
-//! These seven source-checkout audits are deliberately outside the published crate.
+//! Source-checkout audits are deliberately outside the published crate.
 
 #[path = "../../crates/ripr/tests/common/help_contract.rs"]
 mod help_contract;
@@ -286,12 +286,35 @@ fn first_run_guard_does_not_credit_a_later_correct_example() -> Result<(), Strin
     if first_bash_block(changed)? == "ripr check" {
         return Err("a later command must not hide a wrong first-run route".to_string());
     }
-    let cli = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
-    let wrong = cli.replacen("ripr check", "ripr pilot", 1);
-    if first_bash_block(&wrong)? == "ripr check" {
-        return Err(
-            "the CLI section credited a later check instead of its first command".to_string(),
-        );
+    for (surface, section, expected) in [
+        (
+            "README",
+            doc_section(ROOT_README, "## The first useful run")?,
+            "cargo install ripr ripr check",
+        ),
+        (
+            "Quickstart CLI",
+            doc_section(QUICKSTART_DOC, "## CLI First Hour")?,
+            "ripr check",
+        ),
+    ] {
+        for command in [
+            "ripr doctor",
+            "ripr pilot --root .",
+            "ripr check --base origin/main",
+        ] {
+            let wrong = section.replacen("\nripr check\n", &format!("\n{command}\n"), 1);
+            if wrong == section {
+                return Err(format!(
+                    "{surface} negative control did not change a command"
+                ));
+            }
+            if first_bash_block(&wrong)? == expected {
+                return Err(format!(
+                    "{surface} first-run guard accepted `{command}` before a later correct example"
+                ));
+            }
+        }
     }
     Ok(())
 }
