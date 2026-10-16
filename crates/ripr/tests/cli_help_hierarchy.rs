@@ -686,8 +686,11 @@ fn check_help_default_is_one_screen_and_all_is_exhaustive() -> Result<(), String
 #[test]
 fn check_all_without_help_is_a_usage_error() -> Result<(), String> {
     let output = run_ripr(&["check", "--all"])?;
-    if output.status.success() {
-        return Err("`ripr check --all` must not succeed".to_string());
+    if output.status.code() != Some(2) {
+        return Err(format!(
+            "`ripr check --all` must exit with code 2, got {:?}",
+            output.status.code()
+        ));
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_contains(
