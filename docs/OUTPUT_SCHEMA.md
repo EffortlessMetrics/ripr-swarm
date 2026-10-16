@@ -433,7 +433,8 @@ code. The generated GitHub workflow's "Render RIPR preview promotion packets" st
 invokes `ripr doctor --root . --json` up to twice, and carries this disclosure in
 a comment beside that invocation.
 
-Known limitations and the start-here guidance block remain human-only. They are
+Known limitations and the start-here guidance block remain human-only, and the
+default human screen prints them only with the global `--verbose`. They are
 static product prose and a rendered recommendation, not observations of this
 root or this host, so typing them would duplicate documentation the CLI help and
 this document already own. The larger convergence of doctor's language and

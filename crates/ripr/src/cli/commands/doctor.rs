@@ -73,6 +73,9 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
         }
     }
     let root = root.map_or_else(|| PathBuf::from("."), PathBuf::from);
+    // The global `-v/--verbose` is extracted before dispatch, so doctor reads
+    // the one owner instead of parsing a second spelling (#8168).
+    let verbose = crate::is_verbose();
 
     // One marker scan per run, shared by both surfaces. `--json` used to branch
     // away before any of the environment facts were gathered, so the machine
@@ -127,6 +130,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
         &core_evaluation.config,
         environment.facts.config_defaults.as_ref(),
         core_report,
+        verbose,
         &mut ok,
     );
     report_cache_status(&root, &environment.facts.cache);
@@ -142,8 +146,12 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     );
     suggest_preview_language_enablement(&environment);
     report_detected_test_surfaces(&environment.facts);
-    report_perl_preview(environment.facts.perl_preview.as_ref());
-    report_known_limitations();
+    // Adapter diagnostics and the standing limitations are reference text, not
+    // setup failures; the default screen leaves them to `--verbose` (#8168).
+    if verbose {
+        report_perl_preview(environment.facts.perl_preview.as_ref());
+        report_known_limitations();
+    }
     if profile == output::doctor::DoctorProfile::SourceBuild {
         report_linker_temp_redirect_status(&root);
     }
@@ -158,7 +166,12 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     // ripr; its failing `!` lines already name the toolchain fix, so that
     // profile must not send the reader to run analysis (#7435).
     if profile == output::doctor::DoctorProfile::Analysis {
-        print_doctor_start_here_guidance(&root, &report, environment.preview_enablement.as_ref());
+        print_doctor_start_here_guidance(
+            &root,
+            &report,
+            environment.preview_enablement.as_ref(),
+            verbose,
+        );
     }
 
     if ok && report.status == output::doctor::DoctorStatus::Pass {
@@ -371,6 +384,7 @@ fn print_doctor_start_here_guidance(
     root: &Path,
     report: &output::doctor::DoctorReport,
     preview_enablement: Option<&PreviewEnablement>,
+    verbose: bool,
 ) {
     // Both the first action and the recommendation consume this one fallible
     // route. No-packet guidance must not point at a command below when its
@@ -446,9 +460,11 @@ fn print_doctor_start_here_guidance(
             ),
         }
     } else {
-        println!(
-            "- Start-here packet: target/ripr/reports/start-here.md (not yet generated; `ripr first-pr` composes it once analysis evidence exists)"
-        );
+        if verbose {
+            println!(
+                "- Start-here packet: target/ripr/reports/start-here.md (not yet generated; `ripr first-pr` composes it once analysis evidence exists)"
+            );
+        }
         match &recommendation {
             Ok(_) => {
                 // The missing-root recommendation is a recovery action, not a
@@ -458,7 +474,7 @@ fn print_doctor_start_here_guidance(
                     println!(
                         "- Safe next action: fix the selected root first (see below); no check command can run until it exists"
                     );
-                } else {
+                } else if verbose {
                     println!(
                         "- Safe next action: run the recommended first command below; it produces the evidence the packet is composed from"
                     );
@@ -469,12 +485,14 @@ fn print_doctor_start_here_guidance(
             ),
         }
     }
-    println!(
-        "- Recovery states: missing artifact, stale evidence, wrong root, malformed artifact, no actionable gap, preview-limited evidence"
-    );
-    println!(
-        "- Proof rail: verify command, receipt command, and receipt path are advisory static movement evidence"
-    );
+    if verbose {
+        println!(
+            "- Recovery states: missing artifact, stale evidence, wrong root, malformed artifact, no actionable gap, preview-limited evidence"
+        );
+        println!(
+            "- Proof rail: verify command, receipt command, and receipt path are advisory static movement evidence"
+        );
+    }
     // First-run honesty: when the working tree has uncommitted changes,
     // a committed-history `ripr check` analyzes committed history only and would
     // silently exclude the user's draft (the RIPR-SPEC-0112 dirty-worktree case).
@@ -2397,6 +2415,7 @@ fn report_config_status(
     config: &Result<RiprConfig, String>,
     defaults: Option<&output::doctor::DoctorConfigDefaults>,
     report: &output::doctor::DoctorReport,
+    verbose: bool,
     ok: &mut bool,
 ) {
     match config {
@@ -2422,12 +2441,14 @@ fn report_config_status(
                 }
                 None => println!("✓ Config: not found; using built-in defaults"),
             }
-            println!("- Analysis mode default: {}", defaults.analysis_mode);
-            println!(
-                "- LSP seam diagnostics default: {}",
-                defaults.lsp_seam_diagnostics
-            );
-            println!("- Suppressions path: {}", defaults.suppressions_path);
+            if verbose {
+                println!("- Analysis mode default: {}", defaults.analysis_mode);
+                println!(
+                    "- LSP seam diagnostics default: {}",
+                    defaults.lsp_seam_diagnostics
+                );
+                println!("- Suppressions path: {}", defaults.suppressions_path);
+            }
             println!("- Enabled languages: {}", report.languages.join(", "));
             if config
                 .as_ref()
@@ -2450,7 +2471,7 @@ fn report_config_status(
                 println!(
                     "- Bun UB authority: no runtime Bun, tsc, tsserver, generated tests, gates, badges, baselines, or support-tier promotion"
                 );
-            } else {
+            } else if verbose {
                 println!("- Bun UB profile: not configured");
             }
         }

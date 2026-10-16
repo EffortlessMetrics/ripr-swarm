@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr doctor` now fits an 80x24 terminal by default (20 to 22 lines, down from 35 to 47): setup checks, the `!` failures with their named fixes, and the one recommended command. Config defaults, Perl preview diagnostics, known limitations and the recovery/proof-rail notes move behind the existing global `-v/--verbose`. `ripr doctor --json` and exit codes are unchanged (#8168, #8158).

@@ -455,6 +455,10 @@ Usage: ripr doctor [--root PATH] [--json] [--profile analysis|source-build]
 Options:
   --root PATH  Diagnose the selected workspace (defaults to `.`).
   --json       Emit the core checks as stable JSON and use the same exit status.
+  -v, --verbose
+               Global flag. Also prints config defaults, Perl preview
+               diagnostics, known limitations, and recovery/proof-rail notes;
+               the default screen keeps to setup checks and the next command.
   --profile    Check installed-binary analysis (default) or prerequisites for
                building RIPR from source.
 

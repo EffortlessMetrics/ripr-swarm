@@ -155,7 +155,7 @@ fn init_omits_followups_for_an_unrepresentable_implicit_root() -> TestResult {
             let doctor = run_command(
                 env!("CARGO_BIN_EXE_ripr"),
                 Some(root),
-                &["doctor", "--root", "."],
+                &["doctor", "--verbose", "--root", "."],
             )?;
             assert!(doctor.status.success(), "{doctor:?}");
             let text = String::from_utf8(doctor.stdout)?;

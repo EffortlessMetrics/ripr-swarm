@@ -2547,6 +2547,13 @@ fn replay_printed_ripr(command: &str, from: &Path) -> Result<Output, String> {
     if args.first() != Some(&"ripr") {
         return Err(format!("printed command is not a ripr command: {command}"));
     }
+    // The default doctor screen omits config defaults (#8168). Replays of a
+    // printed `ripr doctor` use the global `--verbose` so the selected-root
+    // oracle (config path and default mode) stays observable.
+    let mut args = args;
+    if args.get(1) == Some(&"doctor") {
+        args.push("--verbose");
+    }
     run_command(env!("CARGO_BIN_EXE_ripr"), Some(from), &args[1..])
         .map_err(|err| format!("replay `{command}` from {}: {err}", from.display()))
 }
@@ -11216,7 +11223,7 @@ fn make_temp_workspace(report: Option<&str>) -> Result<PathBuf, String> {
 fn doctor_reports_missing_config_defaults() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
     let root = workspace.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root]);
+    let output = run_ripr(&["doctor", "--verbose", "--root", &root]);
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -11522,7 +11529,7 @@ fn doctor_reports_directory_squatting_packet_path_as_not_generated() -> Result<(
     let squat = workspace.join("target/ripr/reports/start-here.md");
     std::fs::create_dir_all(&squat).map_err(|e| format!("create squat dir: {e}"))?;
     let root = workspace.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root]);
+    let output = run_ripr(&["doctor", "--verbose", "--root", &root]);
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -11892,7 +11899,7 @@ fn doctor_json_for(root: &Path) -> Result<serde_json::Value, String> {
 
 fn doctor_human_stdout(root: &Path) -> Result<String, String> {
     let root_arg = root.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root_arg]);
+    let output = run_ripr(&["doctor", "--verbose", "--root", &root_arg]);
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
@@ -12853,7 +12860,7 @@ fn doctor_reports_loaded_config_path() -> Result<(), String> {
     .map_err(|e| format!("write ripr.toml: {e}"))?;
 
     let root = workspace.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root]);
+    let output = run_ripr(&["doctor", "--verbose", "--root", &root]);
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -12899,7 +12906,7 @@ fn doctor_reports_language_tiers_and_limitations() -> Result<(), String> {
     // A workspace with only Rust markers (Cargo.toml + src/lib.rs).
     let workspace = make_temp_workspace(None)?;
     let root = workspace.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root]);
+    let output = run_ripr(&["doctor", "--verbose", "--root", &root]);
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -12992,7 +12999,7 @@ fn doctor_reports_perl_preview_section_when_perl_markers_present() -> Result<(),
     .map_err(|err| err.to_string())?;
 
     let root_str = root.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root_str]);
+    let output = run_ripr(&["doctor", "--verbose", "--root", &root_str]);
     assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -13181,7 +13188,7 @@ fn doctor_perl_stdout_with_path(
     let output = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         root,
-        &["doctor", "--root", &root_str],
+        &["doctor", "--verbose", "--root", &root_str],
         &[("PATH", search_path)],
     )
     .map_err(|err| format!("run doctor: {err}"))?;
@@ -13201,7 +13208,7 @@ fn run_doctor_with_shims_first(root: &Path, shim_dir: &Path) -> Result<Output, S
     run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         root,
-        &["doctor", "--root", &root_str],
+        &["doctor", "--verbose", "--root", &root_str],
         &[("PATH", &search_path)],
     )
     .map_err(|err| format!("run doctor: {err}"))
@@ -13283,7 +13290,7 @@ fn doctor_omits_perl_preview_when_no_perl_markers() -> Result<(), String> {
     // A Rust-only workspace must NOT emit a Perl preview section.
     let workspace = make_temp_workspace(None)?;
     let root = workspace.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root]);
+    let output = run_ripr(&["doctor", "--verbose", "--root", &root]);
     assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -13372,7 +13379,7 @@ fn doctor_missing_root_recommends_recovery_and_outside_git_recommends_runnable_c
     )
     .map_err(|err| err.to_string())?;
     let root = outside.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root]);
+    let output = run_ripr(&["doctor", "--verbose", "--root", &root]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     // The recommendation names the physical root (#5010): the canonicalized
@@ -13860,7 +13867,7 @@ fn init_writes_conservative_config_and_doctor_loads_it() -> Result<(), String> {
     assert!(config.contains("seam_diagnostics = true"));
     assert!(config.contains("max_related_tests = 5"));
 
-    let doctor = run_ripr(&["doctor", "--root", &root]);
+    let doctor = run_ripr(&["doctor", "--verbose", "--root", &root]);
     assert_success(&doctor);
     let stdout = String::from_utf8_lossy(&doctor.stdout);
     assert!(stdout.contains("Config: loaded ripr.toml"));
@@ -28040,7 +28047,7 @@ fn repo_config_perl_executable_runs_only_with_user_opt_in() -> Result<(), Box<dy
         "refusal must name the ignored executable and the opt-in: {stderr}"
     );
 
-    let doctor = run_command_with_env(bin, &root, &["doctor"], &[(opt_in, "0")])?;
+    let doctor = run_command_with_env(bin, &root, &["doctor", "--verbose"], &[(opt_in, "0")])?;
     let stdout = String::from_utf8_lossy(&doctor.stdout);
     assert!(
         !marker.exists(),
@@ -29222,5 +29229,96 @@ fn first_pr_unresolvable_refs_warn_once_per_ref_with_uniform_spellings()
         );
     }
     std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// #8168 (first-five-minutes item 6): the default `ripr doctor` screen fits a
+/// 24-line terminal on a healthy workspace and keeps reference text behind the
+/// global `--verbose`.
+#[test]
+fn doctor_default_screen_fits_one_terminal_and_verbose_restores_reference_text()
+-> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+    let default = run_ripr(&["doctor", "--root", &root]);
+    assert_success(&default);
+    let default_text = String::from_utf8_lossy(&default.stdout).into_owned();
+    let lines = default_text.lines().count();
+    assert!(
+        lines <= 24,
+        "default doctor is {lines} lines, over one 80x24 screen:\n{default_text}"
+    );
+    assert!(
+        default_text.contains("✓ doctor checks passed"),
+        "{default_text}"
+    );
+    assert!(
+        default_text.contains("Recommended first command: ripr check"),
+        "the one next command stays on the default screen:\n{default_text}"
+    );
+    // Negative control: reference text must not leak into the default screen.
+    for absent in [
+        "Known limitations:",
+        "Perl preview:",
+        "Recovery states:",
+        "Proof rail:",
+        "Analysis mode default:",
+        "Suppressions path:",
+    ] {
+        assert!(
+            !default_text.contains(absent),
+            "default doctor leaked {absent:?}:\n{default_text}"
+        );
+    }
+
+    let verbose = run_ripr(&["doctor", "--verbose", "--root", &root]);
+    assert_success(&verbose);
+    let verbose_text = String::from_utf8_lossy(&verbose.stdout).into_owned();
+    for present in [
+        "Known limitations:",
+        "Recovery states:",
+        "Proof rail:",
+        "Analysis mode default: draft",
+        "Suppressions path:",
+    ] {
+        assert!(
+            verbose_text.contains(present),
+            "--verbose must restore {present:?}:\n{verbose_text}"
+        );
+    }
+    assert!(verbose_text.lines().count() > lines, "{verbose_text}");
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+/// A failing run keeps its `!` line, the specific fix, and the whole report
+/// inside one screen instead of burying the failure under boilerplate.
+#[test]
+fn doctor_failing_screen_keeps_the_named_fix_inside_one_terminal() -> Result<(), String> {
+    // A root that does not exist fails regardless of any ancestor repository
+    // the temp directory happens to sit in.
+    let missing = unique_temp_workspace("doctor-failing-one-screen");
+    let root = missing.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    assert!(!output.status.success(), "a missing root must fail doctor");
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let lines = text.lines().count();
+    assert!(
+        lines <= 24,
+        "failing doctor is {lines} lines, over one 80x24 screen:\n{text}"
+    );
+    assert!(text.contains("! root directory does not exist"), "{text}");
+    assert!(
+        text.contains("create the directory or pass an existing path with `--root`"),
+        "the fix must be named:\n{text}"
+    );
+    assert!(text.contains("! doctor checks failed"), "{text}");
+    for absent in ["Known limitations:", "Recovery states:", "Proof rail:"] {
+        assert!(
+            !text.contains(absent),
+            "failing doctor leaked {absent:?}:\n{text}"
+        );
+    }
     Ok(())
 }

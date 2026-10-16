@@ -386,7 +386,11 @@ disabled preview runtimes and optional test/package runners remain visible as
 `required: false` advisory results, so their absence does not make a Rust-only
 workspace fail.
 
-`doctor` also reports the repository config status for the selected root:
+`doctor` also reports the repository config status for the selected root. The
+default screen prints the `Config:` and `Config path:` lines and fits an 80x24
+terminal; the effective defaults below, plus Perl preview diagnostics, known
+limitations and recovery notes, print with the global `ripr doctor --verbose`
+(`-v`):
 
 ```text
 Config: loaded ripr.toml
