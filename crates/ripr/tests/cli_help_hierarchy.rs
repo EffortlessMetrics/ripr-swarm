@@ -666,6 +666,8 @@ fn check_help_default_is_one_screen_and_all_is_exhaustive() -> Result<(), String
     }
     for hidden in [
         "RIPR_MAX_DIFF_CHANGED_RUST_LINES",
+        "RIPR_GIT_TIMEOUT",
+        "RIPR_ALLOW_REPO_PERL_EXECUTABLE",
         "repo-badge-plus-shields",
     ] {
         if short_n.contains(hidden) {
@@ -679,7 +681,7 @@ fn check_help_default_is_one_screen_and_all_is_exhaustive() -> Result<(), String
     }
     assert_contains("check help --all", &all, "RIPR_MAX_DIFF_CHANGED_RUST_LINES")?;
     assert_contains("check help --all", &all, "repo-badge-plus-shields")?;
-    if all.lines().count() <= lines * 3 {
+    if all == short || all.lines().count() < 150 {
         return Err("`check --help --all` should remain the exhaustive reference".to_string());
     }
     Ok(())
