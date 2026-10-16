@@ -1,0 +1,36 @@
+{
+  "schema_version": "0.8",
+  "kind": "ripr",
+  "scope": "diff",
+  "basis": "finding_exposure",
+  "label": "ripr",
+  "message": "refused: analysis_failed",
+  "status": "warn",
+  "color": "lightgrey",
+  "analysis_complete": null,
+  "analysis_outcome": null,
+  "counts": {
+    "unsuppressed_exposure_gaps": 0,
+    "unsuppressed_test_efficiency_findings": 0,
+    "intentional_test_efficiency_findings": 0,
+    "suppressed_exposure_gaps": 0,
+    "suppressed_test_efficiency_findings": 0,
+    "unknowns": 0,
+    "unknowns_test_efficiency": 0,
+    "analyzed_findings": 0,
+    "analyzed_seams": 0,
+    "analyzed_gap_records": 0,
+    "analyzed_tests": 0
+  },
+  "reason_counts": {},
+  "policy": {
+    "include_unknowns": false,
+    "fail_on_nonzero": false,
+    "test_intent_path": ".ripr/test_intent.toml",
+    "suppressions_path": ".ripr/suppressions.toml"
+  },
+  "warnings": [
+    "run refused: --output-dir cannot bind module reads outside the root or under Git metadata/Cargo target directories; use standalone formats for this input; repair route: analysis/failure"
+  ],
+  "preview_skipped": []
+}

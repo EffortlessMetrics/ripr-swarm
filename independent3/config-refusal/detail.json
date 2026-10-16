@@ -1,0 +1,38 @@
+{
+  "analysis_scope": {
+    "basis": "config_invalid",
+    "downstream_consumable": false,
+    "limitation": "config_invalid",
+    "repair_route": "analysis/config-load",
+    "run_status": "config_invalid",
+    "scope": "diff"
+  },
+  "findings": [],
+  "mode": "draft",
+  "root": "/workspace/8201-evidence/independent3/corpus/python",
+  "run_limitations": [
+    {
+      "basis": "config_invalid",
+      "category": "config_invalid",
+      "downstream_consumable": false,
+      "message": "/workspace/8201-evidence/independent3/corpus/python/ripr.toml: invalid ripr.toml: TOML parse error at line 1, column 8",
+      "repair_route": "analysis/config-load",
+      "run_status": "config_invalid"
+    }
+  ],
+  "schema_version": "0.2",
+  "summary": {
+    "changed_files_by_language": [],
+    "changed_rust_files": 0,
+    "exposed": 0,
+    "findings": 0,
+    "infection_unknown": 0,
+    "no_static_path": 0,
+    "probes": 0,
+    "propagation_unknown": 0,
+    "reachable_unrevealed": 0,
+    "static_unknown": 0,
+    "weakly_exposed": 0
+  },
+  "tool": "ripr"
+}

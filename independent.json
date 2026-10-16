@@ -1,0 +1,243 @@
+{
+  "status": "failed: AssertionError()",
+  "binary": "/workspace/8201-evidence/ripr",
+  "binary_sha256": "17ce729bd5016c1e9edba48fdc514ee160af626a8f933d0ead870f8a3f899d57",
+  "records": [
+    {
+      "label": "policy-effective",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/corpus/policy",
+        "--diff",
+        "/workspace/8201-evidence/corpus/policy/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/policy-effective",
+        "--mode",
+        "deep",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.042861723999976675,
+      "cpu": 0.044874,
+      "stdout_bytes": 0,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "policy-effective-badge-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/corpus/policy",
+        "--diff",
+        "/workspace/8201-evidence/corpus/policy/input.diff",
+        "--format",
+        "badge-json",
+        "--mode",
+        "deep",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.028454085000021223,
+      "cpu": 0.029716999999999993,
+      "stdout_bytes": 1810,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "policy-effective-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/corpus/policy",
+        "--diff",
+        "/workspace/8201-evidence/corpus/policy/input.diff",
+        "--format",
+        "json",
+        "--mode",
+        "deep",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.03110198299998501,
+      "cpu": 0.03223300000000001,
+      "stdout_bytes": 61589,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "policy-effective-human",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/corpus/policy",
+        "--diff",
+        "/workspace/8201-evidence/corpus/policy/input.diff",
+        "--format",
+        "human",
+        "--mode",
+        "deep",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.035444870999981504,
+      "cpu": 0.03700800000000001,
+      "stdout_bytes": 3630,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "policy-expired",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/corpus/policy",
+        "--diff",
+        "/workspace/8201-evidence/corpus/policy/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/policy-expired",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.03525520700003426,
+      "cpu": 0.03728099999999997,
+      "stdout_bytes": 0,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "policy-expired-badge-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/corpus/policy",
+        "--diff",
+        "/workspace/8201-evidence/corpus/policy/input.diff",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.026754207999999835,
+      "cpu": 0.027863000000000013,
+      "stdout_bytes": 1885,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "policy-expired-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/corpus/policy",
+        "--diff",
+        "/workspace/8201-evidence/corpus/policy/input.diff",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.02755356599999459,
+      "cpu": 0.028565999999999973,
+      "stdout_bytes": 61593,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "policy-expired-human",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/corpus/policy",
+        "--diff",
+        "/workspace/8201-evidence/corpus/policy/input.diff",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.028965782999989642,
+      "cpu": 0.02996999999999999,
+      "stdout_bytes": 3633,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "python-native",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/corpus/python/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/python-native",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.010908986000004006,
+      "cpu": 0.010709999999999997,
+      "stdout_bytes": 0,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "python-native-badge-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/corpus/python/input.diff",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.008155580000050122,
+      "cpu": 0.008482000000000031,
+      "stdout_bytes": 1815,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "python-native-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/corpus/python/input.diff",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.00865870399996993,
+      "cpu": 0.008482999999999977,
+      "stdout_bytes": 7444,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "python-native-human",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/corpus/python/input.diff",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.0072702340000319055,
+      "cpu": 0.00721999999999999,
+      "stdout_bytes": 2358,
+      "stderr_bytes": 0
+    }
+  ]
+}

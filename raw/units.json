@@ -1,0 +1,17 @@
+{
+  "label": "units",
+  "args": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--lib",
+    "fanout_"
+  ],
+  "cwd": "/workspace/review-8201",
+  "started": 1792127328.229414,
+  "elapsed": 145.88224935531616,
+  "exit": 0,
+  "head": "6a47f5bf094e5b010845b544f9464333a8b90d7d"
+}

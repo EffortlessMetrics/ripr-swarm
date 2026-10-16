@@ -1,0 +1,34 @@
+{
+  "command_success": false,
+  "complete_set": false,
+  "error": "--output-dir input drift: diff, config, source, suppression, date or rendering environment changed; retry on stable inputs",
+  "identity": {
+    "available_languages": [
+      "rust",
+      "python",
+      "typescript",
+      "javascript"
+    ],
+    "binding": "refused_incomplete",
+    "producer": "0.11.0+6a47f5bf094e5b010845b544f9464333a8b90d7d",
+    "requested_input": "CheckInput { root: \"/workspace/8201-evidence/independent3/corpus/drift-membership\", base: None, diff_file: Some(\"/workspace/8201-evidence/independent3/corpus/drift-membership/input.diff\"), mode: Ready, format: Human, include_unchanged_tests: true, perl_facts_path: None, suppression_policy: None, git_timeout: Some(300s), git_candidate: None }"
+  },
+  "members": [
+    {
+      "bytes": 1077,
+      "file": "badge.json",
+      "sha256": "0ada89952ce176a6f88401362b84e3281d37d59fd98cd2a0d03ed22c398b2d15"
+    },
+    {
+      "bytes": 1064,
+      "file": "detail.json",
+      "sha256": "8b2be3ec0e162d714ff526a04cf2443cc0c7e723b9358ffd4e7fb828096ae60c"
+    },
+    {
+      "bytes": 0,
+      "file": "human.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "schema_version": "ripr-native-diff-output-set-v1"
+}

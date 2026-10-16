@@ -1,0 +1,1 @@
+ripr: diff changed source in languages ripr does not analyze (Go); no analyzable Rust, TypeScript, Python, or Perl files found. Those changes were not analyzed, so this empty result is not a clean pass.

@@ -1,0 +1,6 @@
+failed: AssertionError()
+Traceback (most recent call last):
+  File "/workspace/8201-evidence/independent.py", line 61, in <module>
+    py=fixture('python',python=True);parity(py,'python-native');detail=json.loads((E/'python-native/detail.json').read_bytes());assert detail['findings'];assert detail['canonical_next_action'];stamps=detail['source_subject']['files'];assert len(stamps)>=2
+                                                                                                                                                                                                                                                 ^^^^^^^^^^^^^^
+AssertionError

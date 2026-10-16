@@ -1,0 +1,174 @@
+{
+  "command_success": true,
+  "complete_set": true,
+  "error": null,
+  "identity": {
+    "available_languages": [
+      "rust",
+      "python",
+      "typescript",
+      "javascript"
+    ],
+    "cargo_input_identity": "fnv1a64:dbd8ebfbca0b03db",
+    "effective_config": "RiprConfig { analysis: AnalysisConfig { mode: Some(Ready), include_unchanged_tests: None, production_like_targets: {}, test_harnesses: [] }, oracles: OraclePolicy { snapshot_strength: Medium, mock_expectation_strength: Medium, broad_error_strength: Weak }, severity: SeverityConfig { findings: FindingSeverityConfig { exposed: Info, weakly_exposed: Warning, reachable_unrevealed: Warning, no_static_path: Info, infection_unknown: Warning, propagation_unknown: Note, static_unknown: Note }, seams: SeamSeverityConfig { strongly_gripped: Off, weakly_gripped: Warning, ungripped: Warning, reachable_unrevealed: Warning, activation_unknown: Info, propagation_unknown: Info, observation_unknown: Info, discrimination_unknown: Info, opaque: Info, intentional: Off, suppressed: Off } }, lsp: LspConfig { seam_diagnostics: Some(true), diagnostic_profile: None }, reports: ReportsConfig { max_related_tests: 5 }, suppressions: SuppressionsConfig { path: \".ripr/suppressions.toml\" }, languages: LanguagesConfig { enabled: [Rust, Python], rust: RustLanguageConfig { generated_file_patterns: [], handwritten_files: [] }, python: PythonLanguageConfig { handwritten_files: [] }, typescript: TypescriptLanguageConfig { handwritten_files: [] } }, profiles: ProfilesConfig { bun_ub: None }, typescript: TypescriptConfig { resolve_tsconfig_paths: false }, perl: PerlConfig { producer: None, executable: None, timeout_ms: 0, cache_dir: None }, source_path: Some(\"/workspace/8201-evidence/independent3/corpus/python/ripr.toml\"), source_text: Some(\"[analysis]\\nmode=\\\"ready\\\"\\n[languages]\\nenabled=[\\\"rust\\\",\\\"python\\\"]\\n[severity.findings]\\nno_static_path=\\\"info\\\"\\n\") }",
+    "effective_input": "CheckInput { root: \"/workspace/8201-evidence/independent3/corpus/python\", base: None, diff_file: Some(\"/workspace/8201-evidence/independent3/corpus/python/input.diff\"), mode: Ready, format: Human, include_unchanged_tests: true, perl_facts_path: None, suppression_policy: None, git_timeout: Some(300s), git_candidate: None }",
+    "findings_budget": null,
+    "observed_inputs": [
+      {
+        "kind": "absent",
+        "path": "/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/ripr.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/independent3/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/independent3/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/independent3/corpus/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/independent3/corpus/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/independent3/corpus/python/.ripr/suppressions.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/independent3/corpus/python/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent3/corpus/python/Cargo.toml",
+        "sha256": "b3abc5cea755ac3da8c153c01a0535693325341262ef8c203183f2ef49adc9dc"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent3/corpus/python/input.diff",
+        "sha256": "d4021e0cc1ebf2277a321168a374d516b34d3e7ba7f489c61529ece6e024f250"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent3/corpus/python/ripr.toml",
+        "sha256": "d65faad4bc6621dc5007dd8144abe0273dd5dc220693f954b19d0c4874464f7c"
+      },
+      {
+        "kind": "directory",
+        "path": "/workspace/8201-evidence/independent3/corpus/python/src",
+        "sha256": null
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent3/corpus/python/src/lib.rs",
+        "sha256": "706640a5f1f2975f9343f6c909d40dd2d18756f1396ca8153a19c6df897cfe14"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent3/corpus/python/src/m0.rs",
+        "sha256": "b7cff215ecaa104e60de7a79c1d6dfa91df8ef60e72e46414d48fb79d1ae9452"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent3/corpus/python/src/price.py",
+        "sha256": "42c214e6597acb5f6f4ebbe35d9f95d6a8657cd686bf58143c2dda307d28c5ae"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent3/corpus/python/test_note.py",
+        "sha256": "010bf94cdc179e8d48af6eb905a44091f950ec90a5c0c22eff68e3372eea6d33"
+      },
+      {
+        "kind": "directory",
+        "path": "/workspace/8201-evidence/independent3/corpus/python/tests",
+        "sha256": null
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent3/corpus/python/tests/test_price.py",
+        "sha256": "fc57a3fbe6c02e1510e20b338e0ff2a035504b9892c2f9aa3e9e3dff14a03940"
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/independent3/corpus/ripr.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/independent3/ripr.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/ripr.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/ripr.toml",
+        "sha256": null
+      }
+    ],
+    "producer": "0.11.0+6a47f5bf094e5b010845b544f9464333a8b90d7d",
+    "utc_date": "2026-10-16"
+  },
+  "members": [
+    {
+      "bytes": 2262,
+      "file": "badge.json",
+      "sha256": "3804110be58960693b3446bd592943737655d1fa2ce09ea88a1eba1effdada6b"
+    },
+    {
+      "bytes": 2234,
+      "file": "detail.json",
+      "sha256": "82836499e165972058a774625643b0995b5bee02b34bbcbb12904cb5f9a59e6f"
+    },
+    {
+      "bytes": 915,
+      "file": "human.txt",
+      "sha256": "9e7aa2c70dc206cccfd855997dc7b0aab31ef57d1f4c3eac54dcbb129b957722"
+    }
+  ],
+  "schema_version": "ripr-native-diff-output-set-v1"
+}

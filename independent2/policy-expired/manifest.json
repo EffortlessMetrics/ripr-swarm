@@ -1,0 +1,194 @@
+{
+  "command_success": true,
+  "complete_set": true,
+  "error": null,
+  "identity": {
+    "available_languages": [
+      "rust",
+      "python",
+      "typescript",
+      "javascript"
+    ],
+    "cargo_input_identity": "fnv1a64:e9c02ac4cf14c709",
+    "effective_config": "RiprConfig { analysis: AnalysisConfig { mode: Some(Ready), include_unchanged_tests: None, production_like_targets: {}, test_harnesses: [] }, oracles: OraclePolicy { snapshot_strength: Medium, mock_expectation_strength: Medium, broad_error_strength: Weak }, severity: SeverityConfig { findings: FindingSeverityConfig { exposed: Info, weakly_exposed: Warning, reachable_unrevealed: Warning, no_static_path: Info, infection_unknown: Warning, propagation_unknown: Note, static_unknown: Note }, seams: SeamSeverityConfig { strongly_gripped: Off, weakly_gripped: Warning, ungripped: Warning, reachable_unrevealed: Warning, activation_unknown: Info, propagation_unknown: Info, observation_unknown: Info, discrimination_unknown: Info, opaque: Info, intentional: Off, suppressed: Off } }, lsp: LspConfig { seam_diagnostics: Some(true), diagnostic_profile: None }, reports: ReportsConfig { max_related_tests: 5 }, suppressions: SuppressionsConfig { path: \"selected.toml\" }, languages: LanguagesConfig { enabled: [Rust, Python], rust: RustLanguageConfig { generated_file_patterns: [], handwritten_files: [] }, python: PythonLanguageConfig { handwritten_files: [] }, typescript: TypescriptLanguageConfig { handwritten_files: [] } }, profiles: ProfilesConfig { bun_ub: None }, typescript: TypescriptConfig { resolve_tsconfig_paths: false }, perl: PerlConfig { producer: None, executable: None, timeout_ms: 0, cache_dir: None }, source_path: Some(\"/workspace/8201-evidence/independent2/corpus/policy/ripr.toml\"), source_text: Some(\"[analysis]\\nmode=\\\"ready\\\"\\n[languages]\\nenabled=[\\\"rust\\\",\\\"python\\\"]\\n[severity.findings]\\nno_static_path=\\\"info\\\"\\n[suppressions]\\npath=\\\"selected.toml\\\"\\n\") }",
+    "effective_input": "CheckInput { root: \"/workspace/8201-evidence/independent2/corpus/policy\", base: None, diff_file: Some(\"/workspace/8201-evidence/independent2/corpus/policy/input.diff\"), mode: Ready, format: Human, include_unchanged_tests: true, perl_facts_path: None, suppression_policy: None, git_timeout: Some(300s), git_candidate: None }",
+    "findings_budget": null,
+    "observed_inputs": [
+      {
+        "kind": "absent",
+        "path": "/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/ripr.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/independent2/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/independent2/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/independent2/corpus/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/independent2/corpus/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/independent2/corpus/policy/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent2/corpus/policy/Cargo.toml",
+        "sha256": "b3abc5cea755ac3da8c153c01a0535693325341262ef8c203183f2ef49adc9dc"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent2/corpus/policy/input.diff",
+        "sha256": "ffc335d5c07f87bff21cd6716860f559f49797e41b35c8338584ea28d073a31f"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent2/corpus/policy/ripr.toml",
+        "sha256": "1a3223202c6d2ee6058cfc655889b4f8336ad38274621ab841431bc8f15d41c4"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent2/corpus/policy/selected.toml",
+        "sha256": "7442271bcc5bb084237740bb0ae7a0a4023168e507b00e875b08b3c52a259b89"
+      },
+      {
+        "kind": "directory",
+        "path": "/workspace/8201-evidence/independent2/corpus/policy/src",
+        "sha256": null
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent2/corpus/policy/src/lib.rs",
+        "sha256": "4632b0e51ca83dbf1163002f86d26e161724cc5bc25febd9878943dc382b6a0c"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent2/corpus/policy/src/m0.rs",
+        "sha256": "b7cff215ecaa104e60de7a79c1d6dfa91df8ef60e72e46414d48fb79d1ae9452"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent2/corpus/policy/src/m1.rs",
+        "sha256": "2ccac30473f8dc2c31509b2428364010d39259a755020b0456fca7c6a63e3e47"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent2/corpus/policy/src/m2.rs",
+        "sha256": "ec8d8b7a2d33adf6103791ec11c4573f60b41f20b5c4d61b86b89961310db68e"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent2/corpus/policy/src/m3.rs",
+        "sha256": "80631cac3a4ca6f5d99742b6431f663605d41c8b604f89cb9eca52866585aaa7"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent2/corpus/policy/src/m4.rs",
+        "sha256": "df976e1ffee7962c7f21bc239ff598b30404c0ebdd42b62b92816a2d63027859"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent2/corpus/policy/src/m5.rs",
+        "sha256": "92657f34f5e5f55ee3fd7292246e35bc1f5d0e08734f106031ceb554556f2627"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent2/corpus/policy/src/m6.rs",
+        "sha256": "173a1e2cc2067daa97fee63ba4fc3ae4b625ec25b5f5f23bcc202cb840d0d850"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent2/corpus/policy/src/m7.rs",
+        "sha256": "393404b1fd71cbd04295f1b35895dfb4cf05afb8e2eee3f4f224b15b4b0c1db0"
+      },
+      {
+        "kind": "file",
+        "path": "/workspace/8201-evidence/independent2/corpus/policy/test_note.py",
+        "sha256": "010bf94cdc179e8d48af6eb905a44091f950ec90a5c0c22eff68e3372eea6d33"
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/independent2/corpus/ripr.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/independent2/ripr.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/8201-evidence/ripr.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/Cargo.lock",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/Cargo.toml",
+        "sha256": null
+      },
+      {
+        "kind": "absent",
+        "path": "/workspace/ripr.toml",
+        "sha256": null
+      }
+    ],
+    "producer": "0.11.0+6a47f5bf094e5b010845b544f9464333a8b90d7d",
+    "utc_date": "2026-10-16"
+  },
+  "members": [
+    {
+      "bytes": 1885,
+      "file": "badge.json",
+      "sha256": "92fa4708b18edf42a5fad9938ef1c9fb150d6dcc426ce6fba9bbca9c56477890"
+    },
+    {
+      "bytes": 61710,
+      "file": "detail.json",
+      "sha256": "17c569d2e5cc677a97887364631d0085cfc6dac55239e4d46e244b104605ee1e"
+    },
+    {
+      "bytes": 3724,
+      "file": "human.txt",
+      "sha256": "73e3c5d416a6820ce898a7cbf26bc2e91b4e343826f9c8783d890d3e205a0c41"
+    }
+  ],
+  "schema_version": "ripr-native-diff-output-set-v1"
+}

@@ -1,0 +1,18 @@
+{
+  "label": "composition-cli",
+  "args": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "cli_smoke",
+    "native_fanout"
+  ],
+  "cwd": "/workspace/review-8201-composition",
+  "started": 1792127665.1814673,
+  "elapsed": 68.84429049491882,
+  "exit": 0,
+  "head": "0b562e491cbb2740fccb23505641be646a5a7e83"
+}

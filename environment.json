@@ -1,0 +1,30 @@
+{
+  "candidate": "6a47f5bf094e5b010845b544f9464333a8b90d7d",
+  "tree": "2a15b485aa9684ff9ea05159e429641433dd550b",
+  "author_basis": "b772d9e13cafcdc84a19ea77d9b90fbc6cb91ecc",
+  "observed_main": "fbc8f7e58f11f25a8196495dfb88e7b393a5f4c4",
+  "merge": "0b562e491cbb2740fccb23505641be646a5a7e83",
+  "merge_tree": "1990f84a574e410c4a6599f4cbe9e399e66289d0",
+  "shell": "bash",
+  "platform": "Linux 2512f455fd5e 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux\n",
+  "path": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+  "cargo_home": "/workspace/.cargo",
+  "rustup_home": "/workspace/.rustup",
+  "build_target": "/workspace/ripr-swarm/target",
+  "incremental": false,
+  "peak_additional_budget_bytes": 10737418240,
+  "free_reserve_bytes": 10737418240,
+  "review_worktree": "/workspace/review-8201",
+  "composition_worktree": "/workspace/review-8201-composition",
+  "git_common_dir": "/workspace/ripr-swarm/.git",
+  "evidence_root": "/workspace/8201-evidence",
+  "author_evidence": "c0abff3ed8c193f5b2031c5073cf5f154257a71f",
+  "author_manifest_sha256": "c5349ecba3ded9e5c566bc774f3f53757cca0bb7ac2d038609f9d8352be40bd5",
+  "author_payloads_verified": 24,
+  "author_omissions": [
+    "binary",
+    "corpus",
+    "native payloads",
+    "full traceability report"
+  ]
+}

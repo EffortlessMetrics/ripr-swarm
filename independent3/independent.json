@@ -1,0 +1,959 @@
+{
+  "status": "passed",
+  "binary": "/workspace/8201-evidence/ripr",
+  "binary_sha256": "17ce729bd5016c1e9edba48fdc514ee160af626a8f933d0ead870f8a3f899d57",
+  "records": [
+    {
+      "label": "policy-effective",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/policy",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/policy/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/independent3/policy-effective",
+        "--mode",
+        "deep",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.037112296000032075,
+      "cpu": 0.038481,
+      "stdout_bytes": 0,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "policy-effective-badge-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/policy",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/policy/input.diff",
+        "--format",
+        "badge-json",
+        "--mode",
+        "deep",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.02730131399999891,
+      "cpu": 0.028592999999999993,
+      "stdout_bytes": 1810,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "policy-effective-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/policy",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/policy/input.diff",
+        "--format",
+        "json",
+        "--mode",
+        "deep",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.027299100999982784,
+      "cpu": 0.028215000000000004,
+      "stdout_bytes": 61706,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "policy-effective-human",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/policy",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/policy/input.diff",
+        "--format",
+        "human",
+        "--mode",
+        "deep",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.031307733000005555,
+      "cpu": 0.03288199999999998,
+      "stdout_bytes": 3721,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "policy-expired",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/policy",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/policy/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/independent3/policy-expired",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.03325167499997406,
+      "cpu": 0.034438999999999984,
+      "stdout_bytes": 0,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "policy-expired-badge-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/policy",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/policy/input.diff",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.02561491900002011,
+      "cpu": 0.026767,
+      "stdout_bytes": 1885,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "policy-expired-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/policy",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/policy/input.diff",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.03006602400000702,
+      "cpu": 0.031682000000000016,
+      "stdout_bytes": 61710,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "policy-expired-human",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/policy",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/policy/input.diff",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.03041996500002142,
+      "cpu": 0.03160900000000001,
+      "stdout_bytes": 3724,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "python-native",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/independent3/python-native",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.011585029000002578,
+      "cpu": 0.011235000000000009,
+      "stdout_bytes": 0,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "python-native-badge-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python/input.diff",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.008002394000016011,
+      "cpu": 0.007880000000000012,
+      "stdout_bytes": 1815,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "python-native-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python/input.diff",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.008776993000026323,
+      "cpu": 0.008562000000000028,
+      "stdout_bytes": 7509,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "python-native-human",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python/input.diff",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.006627905000016199,
+      "cpu": 0.006405999999999981,
+      "stdout_bytes": 2436,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "python-weak-native",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python-weak",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python-weak/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/independent3/python-weak-native",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.01271562200003018,
+      "cpu": 0.012445999999999943,
+      "stdout_bytes": 0,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "python-weak-native-badge-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python-weak",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python-weak/input.diff",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.00858363399999007,
+      "cpu": 0.008416000000000062,
+      "stdout_bytes": 1815,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "python-weak-native-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python-weak",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python-weak/input.diff",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.008155523000027642,
+      "cpu": 0.008049999999999974,
+      "stdout_bytes": 10569,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "python-weak-native-human",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python-weak",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python-weak/input.diff",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.0070519860000217705,
+      "cpu": 0.007279999999999988,
+      "stdout_bytes": 2733,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "partial-write",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/policy",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/policy/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/independent3/partial-write",
+        "--quiet"
+      ],
+      "exit": 2,
+      "wall": 0.038791290999995454,
+      "cpu": 0.040435000000000006,
+      "stdout_bytes": 0,
+      "stderr_bytes": 138
+    },
+    {
+      "label": "unsupported",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/independent3/unsupported",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.010007515999973293,
+      "cpu": 0.009766999999999956,
+      "stdout_bytes": 0,
+      "stderr_bytes": 203
+    },
+    {
+      "label": "unsupported-badge-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python/input.diff",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.007889755000007881,
+      "cpu": 0.007553000000000018,
+      "stdout_bytes": 2262,
+      "stderr_bytes": 203
+    },
+    {
+      "label": "unsupported-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python/input.diff",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.007634342999949695,
+      "cpu": 0.007999999999999993,
+      "stdout_bytes": 2234,
+      "stderr_bytes": 203
+    },
+    {
+      "label": "unsupported-human",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python/input.diff",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.006639172000006965,
+      "cpu": 0.006409999999999957,
+      "stdout_bytes": 915,
+      "stderr_bytes": 203
+    },
+    {
+      "label": "malformed",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/independent3/malformed",
+        "--quiet"
+      ],
+      "exit": 2,
+      "wall": 0.008321822000027623,
+      "cpu": 0.007985999999999993,
+      "stdout_bytes": 0,
+      "stderr_bytes": 537
+    },
+    {
+      "label": "malformed-badge-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python/input.diff",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "exit": 2,
+      "wall": 0.005485224000040034,
+      "cpu": 0.005324000000000051,
+      "stdout_bytes": 2115,
+      "stderr_bytes": 537
+    },
+    {
+      "label": "malformed-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python/input.diff",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 2,
+      "wall": 0.006017440999983137,
+      "cpu": 0.005750999999999951,
+      "stdout_bytes": 2094,
+      "stderr_bytes": 537
+    },
+    {
+      "label": "malformed-human",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python/input.diff",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "exit": 2,
+      "wall": 0.005142811999974128,
+      "cpu": 0.0050060000000000104,
+      "stdout_bytes": 748,
+      "stderr_bytes": 537
+    },
+    {
+      "label": "config-refusal",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/independent3/config-refusal",
+        "--quiet"
+      ],
+      "exit": 2,
+      "wall": 0.004224116000045797,
+      "cpu": 0.004116999999999996,
+      "stdout_bytes": 0,
+      "stderr_bytes": 184
+    },
+    {
+      "label": "config-refusal-badge-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python/input.diff",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "exit": 2,
+      "wall": 0.00294354300001487,
+      "cpu": 0.002841000000000024,
+      "stdout_bytes": 1076,
+      "stderr_bytes": 184
+    },
+    {
+      "label": "config-refusal-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python/input.diff",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 2,
+      "wall": 0.0029450499999938984,
+      "cpu": 0.002845999999999946,
+      "stdout_bytes": 1052,
+      "stderr_bytes": 184
+    },
+    {
+      "label": "config-refusal-human",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/python",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/python/input.diff",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "exit": 2,
+      "wall": 0.0025593529999810016,
+      "cpu": 0.002451999999999996,
+      "stdout_bytes": 0,
+      "stderr_bytes": 184
+    },
+    {
+      "label": "drift-source",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/drift-source",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/drift-source/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/independent3/drift-source"
+      ],
+      "exit": 2,
+      "wall": 0.0554271530000392,
+      "cpu": 0.058970999999999996,
+      "stdout_bytes": 0,
+      "stderr_bytes": 264
+    },
+    {
+      "label": "drift-diff",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/drift-diff",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/drift-diff/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/independent3/drift-diff"
+      ],
+      "exit": 2,
+      "wall": 0.059139302999994925,
+      "cpu": 0.06326000000000002,
+      "stdout_bytes": 0,
+      "stderr_bytes": 264
+    },
+    {
+      "label": "drift-config",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/drift-config",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/drift-config/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/independent3/drift-config"
+      ],
+      "exit": 2,
+      "wall": 0.05750985299999911,
+      "cpu": 0.06151799999999999,
+      "stdout_bytes": 0,
+      "stderr_bytes": 264
+    },
+    {
+      "label": "drift-suppression",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/drift-suppression",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/drift-suppression/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/independent3/drift-suppression"
+      ],
+      "exit": 2,
+      "wall": 0.05835239999998976,
+      "cpu": 0.06223699999999996,
+      "stdout_bytes": 0,
+      "stderr_bytes": 442
+    },
+    {
+      "label": "drift-membership",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/drift-membership",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/drift-membership/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/independent3/drift-membership"
+      ],
+      "exit": 2,
+      "wall": 0.055694865000020854,
+      "cpu": 0.06030200000000009,
+      "stdout_bytes": 0,
+      "stderr_bytes": 264
+    },
+    {
+      "label": "destination-retarget",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/destination",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/destination/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/independent3/selected-parent/result"
+      ],
+      "exit": 2,
+      "wall": 0.05806465900002422,
+      "cpu": 0.06118600000000002,
+      "stdout_bytes": 0,
+      "stderr_bytes": 202
+    },
+    {
+      "label": "excluded-read",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/exclusion",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/exclusion/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/independent3/excluded-read",
+        "--quiet"
+      ],
+      "exit": 2,
+      "wall": 0.014234246000000894,
+      "cpu": 0.014234000000000024,
+      "stdout_bytes": 0,
+      "stderr_bytes": 443
+    },
+    {
+      "label": "excluded-standalone",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/exclusion",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/exclusion/input.diff",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.010980964999987464,
+      "cpu": 0.010744000000000115,
+      "stdout_bytes": 9736,
+      "stderr_bytes": 296
+    },
+    {
+      "label": "timing-warmup",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/timing",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/timing/input.diff",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.031543908000003285,
+      "cpu": 0.033106,
+      "stdout_bytes": 3724,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "time-0-badge-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/timing",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/timing/input.diff",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.02825705600002948,
+      "cpu": 0.030000999999999958,
+      "stdout_bytes": 1816,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "time-0-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/timing",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/timing/input.diff",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.03025162299996964,
+      "cpu": 0.03125599999999992,
+      "stdout_bytes": 61710,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "time-0-human",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/timing",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/timing/input.diff",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.035067625000010594,
+      "cpu": 0.03589100000000009,
+      "stdout_bytes": 3724,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "time-0-fanout",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/timing",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/timing/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/independent3/time-0",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.03524050400000078,
+      "cpu": 0.037381,
+      "stdout_bytes": 0,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "time-1-fanout",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/timing",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/timing/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/independent3/time-1",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.034200005999991845,
+      "cpu": 0.03594700000000006,
+      "stdout_bytes": 0,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "time-1-badge-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/timing",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/timing/input.diff",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.025543912999978602,
+      "cpu": 0.026893999999999835,
+      "stdout_bytes": 1816,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "time-1-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/timing",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/timing/input.diff",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.028354310999986865,
+      "cpu": 0.029294999999999988,
+      "stdout_bytes": 61710,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "time-1-human",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/timing",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/timing/input.diff",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.02920927199994594,
+      "cpu": 0.030919999999999975,
+      "stdout_bytes": 3724,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "time-2-badge-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/timing",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/timing/input.diff",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.027105701999971643,
+      "cpu": 0.028043000000000012,
+      "stdout_bytes": 1816,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "time-2-json",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/timing",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/timing/input.diff",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.05504476200002273,
+      "cpu": 0.055894000000000194,
+      "stdout_bytes": 61710,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "time-2-human",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/timing",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/timing/input.diff",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.030904550000002473,
+      "cpu": 0.03261699999999995,
+      "stdout_bytes": 3724,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "time-2-fanout",
+      "args": [
+        "/workspace/8201-evidence/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/independent3/corpus/timing",
+        "--diff",
+        "/workspace/8201-evidence/independent3/corpus/timing/input.diff",
+        "--output-dir",
+        "/workspace/8201-evidence/independent3/time-2",
+        "--quiet"
+      ],
+      "exit": 0,
+      "wall": 0.03274546700004066,
+      "cpu": 0.033862000000000114,
+      "stdout_bytes": 0,
+      "stderr_bytes": 0
+    }
+  ]
+}

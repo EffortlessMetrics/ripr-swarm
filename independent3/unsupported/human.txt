@@ -1,0 +1,12 @@
+ripr static RIPR exposure analysis
+mode: ready
+root: /workspace/8201-evidence/independent3/corpus/python
+config: /workspace/8201-evidence/independent3/corpus/python/ripr.toml
+
+Summary: 0 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 0 of 0 finding(s) unsuppressed
+
+Analysis outcome: limitations below (analysis incomplete; partial_with_limitations)
+  Zero findings is not a clean result because the analyzed scope is incomplete.
+  Limitation: some changed files were not analyzed during language analysis (language_scope_unsupported at language_adapter); affected items: 1; recovery: inspect the failure (inspect_failure) — Not analyzed (Go: 1): file.go. ripr analyzes Rust, plus TypeScript/JavaScript and Python as previews; review these changes with their own tests.
+
+No diff-derived static exposure probes found.

@@ -1,0 +1,136 @@
+{
+  "observed_utc": "2026-10-16",
+  "head": "6a47f5bf094e5b010845b544f9464333a8b90d7d",
+  "job": 116820786244,
+  "run": 38853841460,
+  "logs_excerpt": [
+    "2026-10-16T05:04:08.5585827Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +0b562e491cbb2740fccb23505641be646a5a7e83:refs/remotes/pull/8201/merge",
+    "2026-10-16T05:04:11.4989282Z  * [new ref]         0b562e491cbb2740fccb23505641be646a5a7e83 -> pull/8201/merge",
+    "2026-10-16T05:04:12.1175830Z HEAD is now at 0b562e4 Merge 6a47f5bf094e5b010845b544f9464333a8b90d7d into fbc8f7e58f11f25a8196495dfb88e7b393a5f4c4",
+    "2026-10-16T05:04:12.1228368Z [command]/usr/bin/git log -1 --format=%H",
+    "2026-10-16T05:04:12.1249480Z 0b562e491cbb2740fccb23505641be646a5a7e83",
+    "2026-10-16T05:04:29.4469881Z error[yanked]: detected yanked crate (try `cargo update -p zip`)",
+    "2026-10-16T05:04:29.4482586Z 257 │ zip 8.6.0 registry+https://github.com/rust-lang/crates.io-index",
+    "2026-10-16T05:04:29.4567664Z advisories FAILED, bans ok, licenses ok, sources ok",
+    "2026-10-16T05:04:29.4584908Z ##[error]Process completed with exit code 1."
+  ],
+  "connector_runs_first_page_only": {
+    "workflow_runs": [
+      {
+        "id": 38853841476,
+        "name": "CI",
+        "status": "in_progress",
+        "conclusion": null,
+        "run_number": 17044,
+        "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841476/jobs",
+        "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841476/logs",
+        "workflow_id": 279750501
+      },
+      {
+        "id": 38853841439,
+        "name": "ub-review",
+        "status": "in_progress",
+        "conclusion": null,
+        "run_number": 11649,
+        "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841439/jobs",
+        "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841439/logs",
+        "workflow_id": 307106043
+      },
+      {
+        "id": 38853841486,
+        "name": "Windows Advisory",
+        "status": "in_progress",
+        "conclusion": null,
+        "run_number": 9449,
+        "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841486/jobs",
+        "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841486/logs",
+        "workflow_id": 320138673
+      },
+      {
+        "id": 38853841470,
+        "name": "Future Clippy (advisory)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "run_number": 16952,
+        "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841470/jobs",
+        "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841470/logs",
+        "workflow_id": 279750507
+      },
+      {
+        "id": 38853841437,
+        "name": "Coverage",
+        "status": "completed",
+        "conclusion": "skipped",
+        "run_number": 16599,
+        "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841437/jobs",
+        "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841437/logs",
+        "workflow_id": 279750502
+      },
+      {
+        "id": 38853841419,
+        "name": "Test Analytics",
+        "status": "completed",
+        "conclusion": "skipped",
+        "run_number": 16593,
+        "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841419/jobs",
+        "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841419/logs",
+        "workflow_id": 279750515
+      },
+      {
+        "id": 38853841466,
+        "name": "Droid Tag",
+        "status": "completed",
+        "conclusion": "skipped",
+        "run_number": 74702,
+        "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841466/jobs",
+        "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841466/logs",
+        "workflow_id": 279750505
+      },
+      {
+        "id": 38853841460,
+        "name": "Security",
+        "status": "completed",
+        "conclusion": "failure",
+        "run_number": 16367,
+        "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841460/jobs",
+        "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841460/logs",
+        "workflow_id": 279750513
+      },
+      {
+        "id": 38853841441,
+        "name": "Qualify ripr-rs Python Wheel (read-only)",
+        "status": "in_progress",
+        "conclusion": null,
+        "run_number": 3770,
+        "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841441/jobs",
+        "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841441/logs",
+        "workflow_id": 369738926
+      },
+      {
+        "id": 38853841539,
+        "name": "Source of Truth",
+        "status": "completed",
+        "conclusion": "success",
+        "run_number": 11606,
+        "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841539/jobs",
+        "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841539/logs",
+        "workflow_id": 280973842
+      },
+      {
+        "id": 38853841475,
+        "name": "Printed Command Paste",
+        "status": "completed",
+        "conclusion": "success",
+        "run_number": 2509,
+        "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841475/jobs",
+        "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/38853841475/logs",
+        "workflow_id": 374385460
+      }
+    ]
+  },
+  "api_check_runs": {
+    "action": "gh api repos/EffortlessMetrics/ripr-swarm/commits/6a47f5bf094e5b010845b544f9464333a8b90d7d/check-runs --paginate",
+    "result": "Forbidden",
+    "scope": "Complete paginated hosted check-run coverage unavailable; no retry attempted"
+  }
+}

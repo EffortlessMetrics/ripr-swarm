@@ -1,0 +1,9 @@
+failed: AssertionError((0, b'ripr: diff changed source in languages ripr does not analyze (Go); no analyzable Rust, TypeScript, Python, or Perl files found. Those changes were not analyzed, so this empty result is not a clean pass.\n'))
+Traceback (most recent call last):
+  File "/workspace/8201-evidence/independent.py", line 67, in <module>
+    write(py/'input.diff','--- a/file.go\n+++ b/file.go\n@@ -0,0 +1 @@\n+package main\n');m=parity(py,'unsupported',expected=2);assert m['complete_set'] and not m['command_success']
+                                                                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/8201-evidence/independent.py", line 50, in parity
+    code,out,err,rec=run(r,label,['--output-dir',str(d)]+args,extra);assert code==expected,(code,err);assert not out
+                                                                            ^^^^^^^^^^^^^^
+AssertionError: (0, b'ripr: diff changed source in languages ripr does not analyze (Go); no analyzable Rust, TypeScript, Python, or Perl files found. Those changes were not analyzed, so this empty result is not a clean pass.\n')

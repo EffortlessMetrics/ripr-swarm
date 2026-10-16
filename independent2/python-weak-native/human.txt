@@ -1,0 +1,44 @@
+ripr static RIPR exposure analysis
+mode: ready
+root: /workspace/8201-evidence/independent2/corpus/python-weak
+config: /workspace/8201-evidence/independent2/corpus/python-weak/ripr.toml
+
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+Start here:
+  State: preview language, advisory only (preview_limited)
+  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it
+  File: src/price.py:2
+  Language: python
+  Language status: preview
+  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:python:src/price.py:price:predicate_boundary:predicate:n>=10
+  Changed behavior: if n >= 10:
+  Missing discriminator (1 of 2): Related Python test reaches `price` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the changed boundary
+  Related test: tests/test_price.py:2 test_price
+  Suggested test file: tests/test_price.py
+  Suggested test: test_price
+  Test node: tests/test_price.py::test_price
+  Verify command: python -m pytest tests/test_price.py::test_price (high)
+  Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `n == 10`
+  Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+    - reach yes: 1 related Python test(s) found for owner `price`
+    - infection yes: Changed Python predicate can alter branch selection: `if n >= 10:`
+    - 5 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root /workspace/8201-evidence/independent2/corpus/python-weak --diff /workspace/8201-evidence/independent2/corpus/python-weak/input.diff --mode ready probe:src_price.py:python_preview:c75c58ca
+  ripr context --root /workspace/8201-evidence/independent2/corpus/python-weak --diff /workspace/8201-evidence/independent2/corpus/python-weak/input.diff --mode ready --at probe:src_price.py:python_preview:c75c58ca
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

@@ -1,0 +1,18 @@
+{
+  "label": "cli",
+  "args": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "cli_smoke",
+    "native_fanout"
+  ],
+  "cwd": "/workspace/review-8201",
+  "started": 1792127521.1173475,
+  "elapsed": 68.21842670440674,
+  "exit": 0,
+  "head": "6a47f5bf094e5b010845b544f9464333a8b90d7d"
+}

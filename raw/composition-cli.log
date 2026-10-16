@@ -1,0 +1,17 @@
+   Compiling ripr v0.11.0 (/workspace/review-8201-composition/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 08s
+     Running tests/cli_smoke.rs (/workspace/ripr-swarm/target/debug/deps/cli_smoke-544169fd588b0e87)
+
+running 9 tests
+test native_fanout::fanout_invalid_configuration_refusals_match_native ... ok
+test native_fanout::fanout_external_module_reads_refuse_without_changing_standalone ... ok
+test native_fanout::fanout_python_source_stamp_and_navigation_are_native ... ok
+test native_fanout::fanout_rejects_stale_destinations_and_conflicting_interfaces ... ok
+test native_fanout::fanout_refusal_documents_and_unsupported_exit_are_native ... ok
+test native_fanout::fanout_limited_json_keeps_native_counts_and_admission_policy ... ok
+test native_fanout::fanout_render_failures_never_admit_a_successful_set ... ok
+test native_fanout::fanout_typescript_native_projections_match ... ok
+test native_fanout::fanout_matches_native_projections_and_binds_members ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 532 filtered out; finished in 0.17s
+
