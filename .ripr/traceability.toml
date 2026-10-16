@@ -10156,6 +10156,9 @@ id = "RIPR-SPEC-0140"
 name = "check-artifact reuse for explain/context"
 spec = "docs/specs/RIPR-SPEC-0140-check-artifact-reuse.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/unsupported_artifact.rs::unsupported_artifact_preserves_destinations_and_incomplete_report",
+  "crates/ripr/tests/cli_smoke/unsupported_artifact.rs::unsupported_artifact_preserves_valid_artifact_and_its_context",
+  "crates/ripr/tests/cli_smoke/unsupported_artifact.rs::unsupported_artifact_keeps_advisory_partial_write_and_reuse",
   "crates/ripr/tests/cli_smoke/artifact_mode_precedence.rs::context_artifact_navigation_preserves_mode_precedence",
   "crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::python_stdin_artifact_refusal_preserves_named_recovery",
   "crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::javascript_stdin_artifact_refusal_preserves_named_recovery",
