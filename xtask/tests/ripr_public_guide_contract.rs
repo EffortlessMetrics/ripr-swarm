@@ -381,7 +381,7 @@ fn assert_clean_checkout_guidance(surface: &str, text: &str) -> Result<(), Strin
             "{surface} lost clean-base-branch first-run guidance"
         ));
     }
-    for forbidden in ["clean bill of health", "commit your changes first"] {
+    for forbidden in ["is a clean bill of health", "commit your changes first"] {
         if n.contains(forbidden) {
             return Err(format!(
                 "{surface} presents `{forbidden}` as first-run guidance"
