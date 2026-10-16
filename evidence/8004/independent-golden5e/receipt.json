@@ -1,0 +1,71 @@
+{
+  "at": "2026-10-16T08:20:24.744358+00:00",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "pr": 8004,
+  "head": "5e34bad2a9d066387d72777f37d1134987c27698",
+  "reviewed_parent": "36dbb87430ef858aa143b5fc3205b376b0caee11",
+  "actual_merge": "740b6da9b2cc9fd402b9f588fe1c1f972d64745a",
+  "actual_parents": [
+    "fabf21c8f8e5a06e61cb3e7c77c96f713dec8a13",
+    "5e34bad2a9d066387d72777f37d1134987c27698"
+  ],
+  "actual_tree": "778347a67ee2953192d7fd35ffcfde72175c7877",
+  "disposition": "BOUNDED_TECHNICAL_REVIEW_COMPLETE / NO_NEW_BLOCKING_FINDING / REVIEW_INCOMPLETE_FOR_MERGE",
+  "new_delta": {
+    "human_files": 15,
+    "changelogs": 11,
+    "terminal_periods_removed": 60,
+    "other_changed_paths": 0
+  },
+  "fresh_actual_merge_validation": {
+    "golden_fixtures": 465,
+    "golden_surfaces": 1157,
+    "normalized_complete_json_objects": 465,
+    "unprojected_complete_json_controls": 11,
+    "rust_test_cases": 45,
+    "subprocess_entry_harness_included": 1,
+    "native_originals_pass": 50,
+    "native_mutants_fail": 22,
+    "native_mutants_survive": 28,
+    "wrong_expectation_rejected_then_restored": true,
+    "honesty_contract_exit": 0
+  },
+  "same_binary_dependency_experiment": {
+    "subject": "740b6da9b2cc9fd402b9f588fe1c1f972d64745a",
+    "same_binary_sha256": "e3ff450dbaee91e7bd99c426750d7c0758d2a4c1f4b4e1d435f401fae8ff6f67",
+    "metadata_before_exit": 101,
+    "metadata_after_exit": 0,
+    "before_class": "weakly_exposed",
+    "after_class": "exposed",
+    "locked_anyhow_checksum": "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61",
+    "source_or_expectation_edits": false,
+    "fresh_fact_caches": true,
+    "method": "same executable; absent locked crate then cargo fetch --locked; complete raw JSON retained"
+  },
+  "author_packet_verification": {
+    "commit": "59fa3fed861480270ed5286a4408f343730ae9ef",
+    "readback_commit": "16bbd81bb53893c2c6458b8b088c9aee463b6571",
+    "five_public_files_equal": true,
+    "members_verified_bytes_sizes_modes_inventory": 239,
+    "fresh_source_head_check_fast_precommit": false,
+    "selector_paths_independently_equal": 173
+  },
+  "threads": {
+    "total": 13,
+    "unresolved": 12,
+    "resolved": 1,
+    "mutations": 0
+  },
+  "hosted_check_inventory": {
+    "at": "2026-10-16 08:19:45 UTC",
+    "total_count": 25,
+    "returned": 25,
+    "success": 16,
+    "skipped": 9,
+    "required_protection_clearance": false
+  },
+  "performance": "not remeasured; 15.225s residual, per-query/unique-key costs, two censored 120s predecessor runs and two unrun dependent warms retained",
+  "public_archive_members": 1789,
+  "archive_excludes": "100 native executables retained locally with hashes and replayable source/logs; inherited author raw packet is referenced and independently verified rather than republished",
+  "prohibited_actions_performed": []
+}
