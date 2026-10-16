@@ -165,12 +165,14 @@ official SDK transport:
 - The tool envelope carries the document once at full fidelity (#6021):
   `content[0].text` is the compact JSON serialization of the structured
   document (no pretty-print inflation), and `structuredContent` repeats
-  the same document only while the complete double-carry envelope still
-  measures under the id-aware response budget; past that point the response
-  ships the compact text without `structuredContent` rather than failing a
-  response the document guard already approved. A tool response is never
-  sent over the cap: when even the compact-text envelope cannot fit, the
-  call fails closed with `result_too_large` naming both sizes. The
+  the same document in every successful response. Every tool advertises an
+  `outputSchema`, so a success whose structured copy is absent is an
+  undeclared contract break: when the complete double-carry envelope does
+  not measure under the id-aware response budget, the call fails closed
+  with `result_too_large` naming both sizes and the caller's recovery
+  route instead of shipping a text-only success (#7768 — the former
+  fallback that dropped `structuredContent` past the budget was the
+  silent drop this contract removes). The
   id-aware budget is the 128-KiB response bound minus the JSON-serialized
   request id of the call being answered (so client-controlled id escaping
   is charged exactly) minus a fixed reserve for the JSON-RPC frame fields
@@ -233,13 +235,14 @@ official SDK transport:
   On a usable root, reads before the first successful refresh fail closed
   with `no_snapshot`; reads during an
   attempt report `analysis_in_flight`; unknown item ids fail closed with
-  `item_not_found`; a document that cannot fit the 128-KiB response bound
-  fails closed with `result_too_large` — for tool and resource responses
-  the envelope is measured in its final form against the id-aware budget
-  (the bound minus the actual JSON-escaped request id and the fixed
-  JSON-RPC/`resultType` overhead, #7768) before it is sent (#6021), so an
-  approval from the document-level guard can no longer be overturned by
-  the wire for any legal request id. A request id so large that even the
+  `item_not_found`; a document whose complete tool envelope cannot fit the
+  128-KiB response bound fails closed with `result_too_large` — for tool
+  and resource responses the envelope is measured in its final form
+  against the id-aware budget (the bound minus the actual JSON-escaped
+  request id and the fixed JSON-RPC/`resultType` overhead, #7768) before
+  it is sent (#6021), so neither the document-level guard nor a legal
+  request id can downgrade a success into a response without
+  `structuredContent`. A request id so large that even the
   typed refusal cannot fit keeps the documented correlated generic
   fallback, and a fallback that also cannot fit still terminates with
   `MCP output limit`.
@@ -287,10 +290,10 @@ is not evidence that a resource with a particular identity exists.
   RIPR-SPEC-0214), strict resource-URI parsing.
 - `cargo test -p ripr --lib mcp` — descriptor contracts, positive
   LLM-facing tool descriptions, resource-template discovery, dispatch-edge
-  argument rejection, and the #6021 envelope calibration: the tool
-  envelope carries the document once (compact text always,
-  `structuredContent` only while the complete envelope fits) and fails
-  closed past the bound.
+  argument rejection, and the #6021/#7768 envelope calibration: the tool
+  envelope carries the document once, every success keeps
+  `structuredContent`, and anything past the envelope budget fails closed
+  with `result_too_large`.
 - `crates/ripr/tests/mcp_sdk.rs` — the pinned official SDK client
   discovers the slice-B tools (four at that slice; the surface is seven
   tools and four templates after RIPR-SPEC-0214), the static resource, and
@@ -413,6 +416,19 @@ is not evidence that a resource with a particular identity exists.
   fallback), a second id one notch smaller whose call still ships a
   structured page, the same refusal/fit pair for the status resource read,
   and same-session recovery after all of them.
+- `crates/ripr/tests/mcp_stdio.rs::window_sized_envelope_refuses_typed_instead_of_dropping_structured_content`
+  — the #7768 silent-drop control at the raw stdio wire: a legal request
+  id sized from the actually measured `ripr_workspace_status` envelope
+  puts the id-aware budget inside the refusal window (structured envelope
+  over it, compact text under it) and must be answered with the typed
+  `result_too_large` refusal carrying structured failure content — where
+  the text-only fallback shipped a success without `structuredContent` —
+  and a shorter id one notch below keeps the structured status as an
+  over-reservation control.
+- `crates/ripr/src/mcp/server_tests.rs::window_sized_gap_item_refuses_typed_instead_of_dropping_structured_content`
+  — the same window at the real `ripr_get_gap` dispatch with a
+  document-guard-approved item, asserting the serialized wire shape
+  (`isError` plus structured `failure.code`), not a Debug rendering.
 
 - `crates/ripr/src/mcp/workspace.rs::tests` — session lifecycle, typed
   failures, identity portability, boundedness, last-known-good retention;
@@ -431,7 +447,10 @@ is not evidence that a resource with a particular identity exists.
   owned with RIPR-SPEC-0214).
 - `crates/ripr/src/mcp/protocol.rs::tests::tool_result_carries_the_document_once_when_the_double_envelope_overflows`
   + `crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_offset_and_limit_at_the_dispatch_edge`
-  — the #6021 envelope calibration and paging dispatch contract.
+  — the #6021 envelope calibration and paging dispatch contract; the
+  first also pins the #7768 refusal window (a document the document guard
+  approves whose double-carry envelope cannot fit fails closed instead of
+  shipping text-only).
 - `crates/ripr/tests/mcp_workspace_config.rs::list_gaps_pages_over_the_wire_with_offset_and_limit`
   — the #6021 wire contract: `offset`/`limit` accepted, the window
   disclosed, an over-selection offset an empty final page.
