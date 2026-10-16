@@ -1,0 +1,35 @@
+{
+  "at": "2026-10-16T07:59:54.175731+00:00",
+  "packet_commit": "59fa3fed861480270ed5286a4408f343730ae9ef",
+  "candidate_head": "5e34bad2a9d066387d72777f37d1134987c27698",
+  "source_push": "ordinary canonical branch push verified",
+  "readback_route": "fresh remote fetch into separate filtered bare store, no local alternates; lazy blob recovery",
+  "all_five_public_files_byte_equal": {
+    "README.md": "2ac503890cfe5835f69f444ae87f7cd5fee2c198869a995fce7497eb041eb9b7",
+    "receipt.json": "4bd941c99d491e7cca0697354e9929b54e314b3057659104f10eb58ec4b34819",
+    "MANIFEST.json": "4ec5dd8cf230d63448ef7589898de54094bb6fb618d3a17841cfe2d7fe6be44d",
+    "raw.tar.xz": "c2b02aded16deb0c29170fa5f5622aa76e6983b6bc05f26f4431f7c415735109",
+    "SHA256SUMS": "d60500ca18429cb70b263ab76e6889f3bbd277bb940aec23ded051031ec1937c"
+  },
+  "all_archive_member_bytes_sizes_modes_inventory_verified": 239,
+  "semantic_review": "fresh independent exact-head and actual-subject review still required",
+  "actual_new_merge": {
+    "sha": "740b6da9b2cc9fd402b9f588fe1c1f972d64745a",
+    "tree": "778347a67ee2953192d7fd35ffcfde72175c7877",
+    "executed": false
+  },
+  "resources": {
+    "source_worktree": "/workspace/review36db retained for parent/reviewer",
+    "target": "/workspace/review36db-target retained exact binaries",
+    "raw": "/workspace/golden8004-evidence retained",
+    "publication_worktree": "remove after sibling receipt readback",
+    "inherited_root": "/workspace/ripr-swarm preserved"
+  },
+  "executor_checkpoint": {
+    "notification": "parent reported disconnected at07:59 UTC",
+    "observed_at": "2026-10-16T08:00:40Z",
+    "actual_connection": "executor responded; same workspace, clean source head5e, all8 validation commands terminal0",
+    "recovery": "no restart or alternate environment needed; cause of notification unestablished",
+    "source_and_raw_evidence": "preserved"
+  }
+}
