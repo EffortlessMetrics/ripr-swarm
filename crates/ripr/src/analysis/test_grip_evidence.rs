@@ -297,27 +297,36 @@ impl<'index> EvidencePass<'index> {
         let token = cancellation::current_token();
         let overlay = crate::analysis::committed_source::current_overlay();
         let processed = AtomicUsize::new(0);
+        // OwnerPinSyntax contains Rc/RefCell state. Rayon initializes it privately
+        // inside each job; no syntax memo crosses this invocation's immutable
+        // index/source overlay or survives a clear_window_memos boundary.
         let mut out: Vec<TestGripEvidence> = seams
             .par_iter()
-            .filter_map(|seam| {
-                cancellation::with_optional_token(token.as_ref(), || {
-                    crate::analysis::committed_source::with_overlay(overlay.clone(), || {
-                        cancellation::checkpoint().ok()?;
-                        let evidence = evidence_for_seam_with_context(seam, context);
-                        let processed = processed.fetch_add(1, Ordering::Relaxed) + 1;
-                        if processed.is_multiple_of(EVIDENCE_PROGRESS_CHUNK)
-                            || processed == seams.len()
-                        {
-                            trace_latency_phase(
-                                "evidence_for_seams_progress",
-                                &format!("processed_{processed}_of_{}", seams.len()),
-                                evidence_started.elapsed(),
+            .map_init(
+                crate::analysis::classify::OwnerPinSyntax::default,
+                |pin_syntax, seam| {
+                    cancellation::with_optional_token(token.as_ref(), || {
+                        crate::analysis::committed_source::with_overlay(overlay.clone(), || {
+                            cancellation::checkpoint().ok()?;
+                            let evidence = evidence_for_seam_with_context_and_syntax(
+                                seam, context, pin_syntax,
                             );
-                        }
-                        Some(evidence)
+                            let processed = processed.fetch_add(1, Ordering::Relaxed) + 1;
+                            if processed.is_multiple_of(EVIDENCE_PROGRESS_CHUNK)
+                                || processed == seams.len()
+                            {
+                                trace_latency_phase(
+                                    "evidence_for_seams_progress",
+                                    &format!("processed_{processed}_of_{}", seams.len()),
+                                    evidence_started.elapsed(),
+                                );
+                            }
+                            Some(evidence)
+                        })
                     })
-                })
-            })
+                },
+            )
+            .filter_map(std::convert::identity)
             .collect();
         out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
         out
@@ -331,13 +340,32 @@ pub(crate) fn evidence_for_seam(seam: &RepoSeam, index: &RustIndex) -> TestGripE
     evidence_for_seam_with_context(seam, &context)
 }
 
+#[cfg(test)]
 fn evidence_for_seam_with_context(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
 ) -> TestGripEvidence {
+    evidence_for_seam_with_context_and_syntax(
+        seam,
+        context,
+        &crate::analysis::classify::OwnerPinSyntax::default(),
+    )
+}
+
+fn evidence_for_seam_with_context_and_syntax(
+    seam: &RepoSeam,
+    context: &CompactGripContext<'_>,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+) -> TestGripEvidence {
     let mut related_with_reason = find_related_tests_with_context(seam, context);
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
-    sort_related_tests_for_seam(seam, context, owner_fn, &mut related_with_reason);
+    sort_related_tests_for_seam(
+        seam,
+        context,
+        owner_fn,
+        &mut related_with_reason,
+        pin_syntax,
+    );
     let related_indexed: Vec<&CompactTest<'_>> = related_with_reason
         .iter()
         .map(|(indexed, _reason)| *indexed)
@@ -352,10 +380,9 @@ fn evidence_for_seam_with_context(
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
-    let pin_syntax = crate::analysis::classify::OwnerPinSyntax::default();
-    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
+    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&related);
-    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
+    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
 
     let related_tests: Vec<Arc<RelatedTestGrip>> = related_with_reason
         .iter()
@@ -366,7 +393,7 @@ fn evidence_for_seam_with_context(
                 *reason,
                 context,
                 owner_fn,
-                &pin_syntax,
+                pin_syntax,
             ))
         })
         .collect();
@@ -420,7 +447,8 @@ pub(crate) fn compact_evidence_for_seam(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
 ) -> TestGripEvidence {
-    let ranked = find_related_tests_ranked(seam, context);
+    let pin_syntax = crate::analysis::classify::OwnerPinSyntax::default();
+    let ranked = find_related_tests_ranked(seam, context, &pin_syntax);
     let related_reasons: Vec<(&TestSummary, RelationReason)> = ranked
         .iter()
         .map(|(indexed, reason)| (indexed.test, *reason))
@@ -436,7 +464,6 @@ pub(crate) fn compact_evidence_for_seam(
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
-    let pin_syntax = crate::analysis::classify::OwnerPinSyntax::default();
     let propagate = propagate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
     let observe = observe_evidence(&related);
     let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);

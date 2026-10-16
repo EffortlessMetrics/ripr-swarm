@@ -19578,3 +19578,5 @@ fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), S
     }
     Ok(())
 }
+
+mod syntax_reuse;

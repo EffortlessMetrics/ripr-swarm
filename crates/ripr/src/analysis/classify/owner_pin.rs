@@ -135,8 +135,22 @@ const STD_ROOTED_ASSERT_EQ: [&str; 4] = [
     "::core::assert_eq",
 ];
 
+#[cfg(test)]
+thread_local! {
+    static STD_ROOTED_FILE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+impl OwnerPinSyntax {
+    pub(in crate::analysis) fn std_rooted_file_parse_count() -> usize {
+        STD_ROOTED_FILE_PARSES.with(std::cell::Cell::get)
+    }
+}
+
 impl StdRootedCalls {
     fn of(source: &str) -> Self {
+        #[cfg(test)]
+        STD_ROOTED_FILE_PARSES.with(|count| count.set(count.get() + 1));
         let Some(file) = parse_clean_source_file(source) else {
             return Self::default();
         };

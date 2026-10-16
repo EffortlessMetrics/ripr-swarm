@@ -614,11 +614,15 @@ pub(super) fn find_related_tests_compact<'a>(
     seam: &RepoSeam,
     context: &'a CompactGripContext<'_>,
 ) -> Vec<&'a CompactTest<'a>> {
-    find_related_tests_ranked(seam, context)
-        .into_iter()
-        .take(COMPACT_RELATED_TEST_LIMIT)
-        .map(|(indexed, _reason)| indexed)
-        .collect()
+    find_related_tests_ranked(
+        seam,
+        context,
+        &crate::analysis::classify::OwnerPinSyntax::default(),
+    )
+    .into_iter()
+    .take(COMPACT_RELATED_TEST_LIMIT)
+    .map(|(indexed, _reason)| indexed)
+    .collect()
 }
 
 /// Every related test for `seam` with its relation, in rank order. Compact
@@ -627,10 +631,11 @@ pub(super) fn find_related_tests_compact<'a>(
 pub(super) fn find_related_tests_ranked<'a>(
     seam: &RepoSeam,
     context: &'a CompactGripContext<'_>,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> Vec<(&'a CompactTest<'a>, RelationReason)> {
     let mut related = find_related_tests_with_context(seam, context);
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
-    sort_related_tests_for_seam(seam, context, owner_fn, &mut related);
+    sort_related_tests_for_seam(seam, context, owner_fn, &mut related, pin_syntax);
     related
 }
 
@@ -650,11 +655,20 @@ pub(super) fn sort_related_tests_for_seam(
     context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
     related: &mut [(&CompactTest<'_>, RelationReason)],
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) {
     let owner = seam_owner_activation(seam, context);
     related.sort_by_cached_key(|entry| {
         let (indexed, reason) = *entry;
-        related_test_rank_key(seam, context, indexed, reason, owner.as_ref(), owner_fn)
+        related_test_rank_key(
+            seam,
+            context,
+            indexed,
+            reason,
+            owner.as_ref(),
+            owner_fn,
+            pin_syntax,
+        )
     });
 }
 
@@ -665,14 +679,10 @@ pub(super) fn related_test_rank_key(
     reason: RelationReason,
     owner: Option<&SeamOwnerActivation<'_>>,
     owner_fn: Option<&FunctionSummary>,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> RelatedTestRankKey {
-    let (_oracle_kind, oracle_strength, _contradiction) = best_oracle(
-        indexed.test,
-        seam,
-        owner_fn,
-        context.index,
-        &crate::analysis::classify::OwnerPinSyntax::default(),
-    );
+    let (_oracle_kind, oracle_strength, _contradiction) =
+        best_oracle(indexed.test, seam, owner_fn, context.index, pin_syntax);
     RelatedTestRankKey {
         relation_confidence: reason.confidence().rank(),
         relation_reason: reason.priority(),
