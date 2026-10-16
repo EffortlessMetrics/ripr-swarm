@@ -1,0 +1,85 @@
+{
+  "source_old": "def fee(amount):\n    if amount < 0:\n        raise ValueError('negative')\n    return amount * 2\n",
+  "source_new": "def fee(amount):\n    if amount < 0:\n        raise ValueError('negative')\n    return amount * 3\n",
+  "source_other": "def fee(amount):\n    return 30\n\ndef price(amount):\n    return 30\n",
+  "cases": [
+    {
+      "id": "cross_test_alias",
+      "test": "from src.shop import fee\nfrom unittest.mock import Mock\n\ndef test_donor():\n    from src.shop import fee as price\n    price(10)\n\ndef test_fee():\n    fee(10)\n    price = Mock(return_value=30)\n    assert price(10) == 30\n",
+      "expected_class": "weakly_exposed",
+      "expected_test_bodies": 2
+    },
+    {
+      "id": "duplicate_test_names",
+      "test": "from src.shop import fee\n\nclass TestDonor:\n    def test_fee(self):\n        fee(10)\n\nclass TestShadow:\n    def test_fee(self):\n        def fee(amount):\n            return 30\n        assert fee(10) == 30\n",
+      "expected_class": "weakly_exposed",
+      "expected_test_bodies": 2
+    },
+    {
+      "id": "tuple_shadow",
+      "test": "from src.shop import fee\n\ndef test_fee():\n    fee, spare = (lambda amount: 30), None\n    assert fee(10) == 30\n",
+      "expected_class": "weakly_exposed",
+      "expected_test_bodies": 1
+    },
+    {
+      "id": "annotated_shadow",
+      "test": "from src.shop import fee\n\ndef test_fee():\n    fee: object = lambda amount: 30\n    assert fee(10) == 30\n",
+      "expected_class": "weakly_exposed",
+      "expected_test_bodies": 1
+    },
+    {
+      "id": "chained_shadow",
+      "test": "from src.shop import fee\n\ndef test_fee():\n    spare = fee = lambda amount: 30\n    assert fee(10) == 30\n",
+      "expected_class": "weakly_exposed",
+      "expected_test_bodies": 1
+    },
+    {
+      "id": "conflicting_body_import",
+      "test": "from src.shop import fee\n\ndef test_fee():\n    from src.other import fee\n    assert fee(10) == 30\n",
+      "expected_class": "weakly_exposed",
+      "expected_test_bodies": 1
+    },
+    {
+      "id": "unrelated_receiver_fee",
+      "test": "from src.shop import fee\n\nclass Other:\n    def fee(self, amount):\n        return 30\n\ndef test_fee():\n    fee(10)\n    assert Other().fee(10) == 30\n",
+      "expected_class": "weakly_exposed",
+      "expected_test_bodies": 1
+    },
+    {
+      "id": "unrelated_receiver_price",
+      "test": "from src.shop import fee as price\n\nclass Other:\n    def price(self, amount):\n        return 30\n\ndef test_fee():\n    price(10)\n    assert Other().price(10) == 30\n",
+      "expected_class": "weakly_exposed",
+      "expected_test_bodies": 1
+    },
+    {
+      "id": "foreign_global_alias_donation",
+      "test": "from src.shop import fee\nfrom src.other import price\n\ndef test_donor():\n    from src.shop import fee as price\n    price(10)\n\ndef test_fee():\n    fee(10)\n    assert price(10) == 30\n",
+      "expected_class": "weakly_exposed",
+      "expected_test_bodies": 2
+    },
+    {
+      "id": "local_walrus_substitute",
+      "test": "from src.shop import fee\n\ndef test_fee():\n    (fee := lambda amount: 30)\n    assert fee(10) == 30\n",
+      "expected_class": "weakly_exposed",
+      "expected_test_bodies": 1
+    },
+    {
+      "id": "local_fstring_substitute",
+      "test": "from src.shop import fee\n\ndef test_fee():\n    note = f\"{(fee := lambda amount: 30)}\"\n    assert fee(10) == 30\n",
+      "expected_class": "weakly_exposed",
+      "expected_test_bodies": 1
+    },
+    {
+      "id": "module_substitute",
+      "test": "from src.shop import fee\nfee = lambda amount: 30\n\ndef test_fee():\n    assert fee(10) == 30\n",
+      "expected_class": "weakly_exposed",
+      "expected_test_bodies": 1
+    },
+    {
+      "id": "match_capture_substitute",
+      "test": "from src.shop import fee\n\ndef test_fee():\n    match (lambda amount: 30):\n        case fee:\n            assert fee(10) == 30\n",
+      "expected_class": "weakly_exposed",
+      "expected_test_bodies": 1
+    }
+  ]
+}

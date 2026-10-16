@@ -1,0 +1,27 @@
+{
+  "head": "1ed9c33f6ca1d4aa11a1aedfff2c1f694a81b62d",
+  "binary": "/workspace/python-oracle-evidence/8252-source-ripr",
+  "compiler_executable": "/workspace/python-oracle-target/debug/ripr",
+  "sha256": "b715336b525a791d1a49a6d56205f3c1c717e21c7f4f34197aa093aaedfe1b98",
+  "version": "ripr 0.11.0 (1ed9c33f6ca1d4aa11a1aedfff2c1f694a81b62d)",
+  "features": [
+    "default",
+    "lang-python",
+    "lang-rust",
+    "lang-typescript"
+  ],
+  "package_id": "path+file:///workspace/python-oracle-review-8252/crates/ripr#0.11.0",
+  "build_exit": 0,
+  "profile": "dev unoptimized debug0",
+  "command": [
+    "cargo",
+    "build",
+    "--locked",
+    "-p",
+    "ripr",
+    "--bin",
+    "ripr",
+    "--message-format=json"
+  ],
+  "cwd": "/workspace/python-oracle-review-8252"
+}

@@ -1,0 +1,834 @@
+diff --git a/crates/ripr/src/analysis/language/python.rs b/crates/ripr/src/analysis/language/python.rs
+index 492340e35..8b44b5a0c 100644
+--- a/crates/ripr/src/analysis/language/python.rs
++++ b/crates/ripr/src/analysis/language/python.rs
+@@ -69,6 +69,8 @@ mod hypothesis;
+ mod module_constants;
+ mod no_behavior;
+ mod oracles;
++#[cfg(test)]
++mod owner_import_identity_tests;
+ mod owners_tests;
+ mod parametrize;
+ mod parse_budget;
+diff --git a/crates/ripr/src/analysis/language/python/owner_import_identity_tests.rs b/crates/ripr/src/analysis/language/python/owner_import_identity_tests.rs
+new file mode 100644
+index 000000000..3a6cd9c66
+--- /dev/null
++++ b/crates/ripr/src/analysis/language/python/owner_import_identity_tests.rs
+@@ -0,0 +1,263 @@
++//! #8247: literal, independently executed controls for imported-owner identity.
++
++use super::classify::classify_change_with_source;
++use super::owners_tests::{extract_owners, extract_tests};
++use crate::domain::ExposureClass;
++use serde::Deserialize;
++use std::collections::BTreeSet;
++use std::path::Path;
++
++#[derive(Deserialize)]
++struct Corpus {
++    source_old: String,
++    source_new: String,
++    cases: Vec<Case>,
++}
++
++#[derive(Deserialize)]
++struct Case {
++    id: String,
++    test: String,
++    expected_class: String,
++}
++
++fn corpus() -> Result<Corpus, String> {
++    serde_json::from_str(include_str!(concat!(
++        env!("CARGO_MANIFEST_DIR"),
++        "/../../fixtures/python_shadowed_owner/corpus.json"
++    )))
++    .map_err(|error| format!("read literal #8247 corpus: {error}"))
++}
++
++fn classify_test(test_source: &str) -> Result<ExposureClass, String> {
++    let corpus = corpus()?;
++    classify_sources(test_source, &corpus.source_old, &corpus.source_new)
++}
++
++fn classify_sources(
++    test_source: &str,
++    source_old: &str,
++    source_new: &str,
++) -> Result<ExposureClass, String> {
++    let file = Path::new("src/shop.py");
++    let owners = extract_owners(file, source_new);
++    let tests = extract_tests(Path::new("tests/test_shop.py"), test_source);
++    assert_eq!(
++        owners
++            .iter()
++            .filter(|owner| owner.qualified_name == "fee")
++            .count(),
++        1
++    );
++    assert!(!tests.is_empty(), "the control must parse a test");
++    assert!(
++        tests.iter().any(|test| !test.assertions.is_empty()),
++        "the control must contain an oracle"
++    );
++    let new_line = source_new.lines().nth(3).ok_or("missing changed return")?;
++    let old_line = source_old.lines().nth(3).ok_or("missing prior return")?;
++    let finding = classify_change_with_source(
++        file,
++        4,
++        new_line,
++        Some(old_line),
++        &owners,
++        &tests,
++        Some(source_new),
++    )
++    .ok_or("changed return must produce a finding")?;
++    assert_eq!(finding.probe.location.line, 4);
++    assert!(
++        !finding.related_tests.is_empty(),
++        "retain the bounded syntactic relation"
++    );
++    Ok(finding.class)
++}
++
++#[test]
++fn owner_import_identity_preserves_the_eleven_independent_literal_cases() -> Result<(), String> {
++    let corpus = corpus()?;
++    let ids: BTreeSet<&str> = corpus.cases.iter().map(|case| case.id.as_str()).collect();
++    assert_eq!(corpus.cases.len(), 11);
++    assert_eq!(
++        ids,
++        BTreeSet::from([
++            "direct_literal",
++            "local_def",
++            "local_lambda",
++            "mock_payload",
++            "alias_mock_payload",
++            "exception_only",
++            "unrelated_local_def",
++            "bare_shadow_with_other_alias",
++            "real_alias",
++            "local_import",
++            "nested_helper_local_shadow",
++        ])
++    );
++    let mut mismatches = Vec::new();
++    for case in corpus.cases {
++        let actual = classify_test(&case.test)?;
++        if actual.as_str() != case.expected_class {
++            mismatches.push(format!(
++                "{}: expected {}, actual {}",
++                case.id,
++                case.expected_class,
++                actual.as_str()
++            ));
++        }
++    }
++    assert_eq!(mismatches, Vec::<String>::new());
++    Ok(())
++}
++
++#[test]
++fn owner_import_identity_does_not_borrow_an_alias_from_another_test() -> Result<(), String> {
++    let test = "from src.shop import fee\nfrom unittest.mock import Mock\n\ndef test_donor():\n    from src.shop import fee as price\n    price(10)\n\ndef test_fee():\n    fee(10)\n    price = Mock(return_value=30)\n    assert price(10) == 30\n";
++    assert_eq!(classify_test(test)?, ExposureClass::WeaklyExposed);
++    Ok(())
++}
++
++#[test]
++fn owner_import_identity_does_not_borrow_a_same_named_test_row() -> Result<(), String> {
++    let test = "from src.shop import fee\n\nclass TestDonor:\n    def test_fee(self):\n        fee(10)\n\nclass TestShadow:\n    def test_fee(self):\n        def fee(amount):\n            return 30\n        assert fee(10) == 30\n";
++    assert_eq!(classify_test(test)?, ExposureClass::WeaklyExposed);
++    Ok(())
++}
++
++#[test]
++fn owner_import_identity_rejects_the_same_alias_on_an_unrelated_receiver() -> Result<(), String> {
++    for import in [
++        "from src.shop import fee",
++        "from src.shop import fee as price",
++    ] {
++        let callee = if import.ends_with("price") {
++            "price"
++        } else {
++            "fee"
++        };
++        let test = format!(
++            "{import}\n\nclass Other:\n    def {callee}(self, amount):\n        return 30\n\ndef test_fee():\n    {callee}(10)\n    assert Other().{callee}(10) == 30\n"
++        );
++        assert_eq!(
++            classify_test(&test)?,
++            ExposureClass::WeaklyExposed,
++            "{callee}"
++        );
++    }
++    Ok(())
++}
++
++#[test]
++fn owner_import_identity_rejects_other_local_binding_shapes() -> Result<(), String> {
++    for binding in [
++        "fee, unused = (lambda amount: 30), None",
++        "fee: object = lambda amount: 30",
++        "fee = substitute = lambda amount: 30",
++        "from src.other import fee",
++        "if True:\n        from src.other import fee",
++        "assert (fee := lambda amount: 30)",
++        "note = f\"{(fee := lambda amount: 30)}\"",
++    ] {
++        let test = format!(
++            "from src.shop import fee\n\ndef test_fee():\n    {binding}\n    assert fee(10) == 30\n"
++        );
++        assert_eq!(
++            classify_test(&test)?,
++            ExposureClass::WeaklyExposed,
++            "{binding}"
++        );
++    }
++    Ok(())
++}
++
++#[test]
++fn owner_import_identity_preserves_a_body_import_restoring_a_module_shadow() -> Result<(), String> {
++    let test = "from src.shop import fee\nfee = lambda amount: 30\n\ndef test_fee():\n    from src.shop import fee\n    assert fee(10) == 30\n";
++    assert_eq!(classify_test(test)?, ExposureClass::Exposed);
++    Ok(())
++}
++
++#[test]
++fn owner_import_identity_preserves_a_real_call_beside_an_unrelated_patch_helper()
++-> Result<(), String> {
++    let test = "from src.shop import fee\n\ndef patch():\n    return 30\n\ndef test_fee():\n    assert fee(10) == 30\n";
++    assert_eq!(classify_test(test)?, ExposureClass::Exposed);
++    Ok(())
++}
++
++#[test]
++fn owner_import_identity_rejects_wrong_receiver_through_changed_literal_branch()
++-> Result<(), String> {
++    let test = "from src.shop import fee\n\nclass Other:\n    def fee(self, amount):\n        return 30\n\ndef test_fee():\n    fee(10)\n    assert Other().fee(10) == 30\n";
++    let old = "def fee(amount):\n    if amount < 0:\n        raise ValueError('negative')\n    return amount * 20\n";
++    let new = "def fee(amount):\n    if amount < 0:\n        raise ValueError('negative')\n    return amount * 30\n";
++    assert_eq!(
++        classify_sources(test, old, new)?,
++        ExposureClass::WeaklyExposed
++    );
++    Ok(())
++}
++
++#[test]
++fn owner_import_identity_preserves_grouped_real_calls() -> Result<(), String> {
++    for (import, assertion) in [
++        ("from src.shop import fee", "assert (fee(10)) == 30"),
++        (
++            "from src.shop import fee as price",
++            "assert ((price(10))) == 30",
++        ),
++    ] {
++        let test = format!("{import}\n\ndef test_fee():\n    {assertion}\n");
++        assert_eq!(classify_test(&test)?, ExposureClass::Exposed, "{assertion}");
++    }
++    let test = "from src.shop import fee\nimport unittest\n\nclass FeeTest(unittest.TestCase):\n    def test_fee(self):\n        self.assertEqual((fee(10)), 30)\n";
++    assert_eq!(classify_test(test)?, ExposureClass::Exposed);
++    Ok(())
++}
++
++#[test]
++fn owner_import_identity_grouping_does_not_erase_a_wrapper_call() -> Result<(), String> {
++    let test = "from src.shop import fee\n\ndef fixed(value):\n    return 30\n\ndef test_fee():\n    assert fixed((fee(10))) == 30\n";
++    assert_eq!(classify_test(test)?, ExposureClass::WeaklyExposed);
++    Ok(())
++}
++
++#[test]
++fn owner_import_identity_walrus_names_stay_in_their_executable_scope() -> Result<(), String> {
++    for context in [
++        "def helper():\n    (fee := lambda amount: 30)\n",
++        "def test_other():\n    (fee := lambda amount: 30)\n    assert fee(10) == 30\n",
++    ] {
++        let test = format!(
++            "from src.shop import fee\n\n{context}\ndef test_fee():\n    assert fee(10) == 30\n"
++        );
++        assert_eq!(classify_test(&test)?, ExposureClass::Exposed, "{context}");
++    }
++    for statement in [
++        "def helper():\n        (fee := lambda amount: 30)",
++        "# fee := substitute",
++        "note = 'fee := substitute'",
++        "assert (unrelated := 30) == 30",
++    ] {
++        let test = format!(
++            "from src.shop import fee\n\ndef test_fee():\n    {statement}\n    assert fee(10) == 30\n"
++        );
++        assert_eq!(classify_test(&test)?, ExposureClass::Exposed, "{statement}");
++    }
++    for context in [
++        "(fee := lambda amount: 30)",
++        "note = f\"{(fee := lambda amount: 30)}\"",
++        "def helper(value=(fee := lambda amount: 30)):\n    return value",
++    ] {
++        let test = format!(
++            "from src.shop import fee\n\n{context}\n\ndef test_fee():\n    assert fee(10) == 30\n"
++        );
++        assert_eq!(
++            classify_test(&test)?,
++            ExposureClass::WeaklyExposed,
++            "{context}"
++        );
++    }
++    Ok(())
++}
+diff --git a/fixtures/evidence-promotion-honesty-corpus/corpus.json b/fixtures/evidence-promotion-honesty-corpus/corpus.json
+index 8a827d841..3872ccf41 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/corpus.json
++++ b/fixtures/evidence-promotion-honesty-corpus/corpus.json
+@@ -4,6 +4,21 @@
+   "spec": "RIPR-SPEC-0108",
+   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
+   "cases": [
++    {
++      "id": "py_local_mock_cannot_observe_imported_owner_return",
++      "language": "python",
++      "tier": "pure",
++      "source_fixture": "fixtures/python_shadowed_owner",
++      "vector": "imported_function_shadowed_by_unrelated_mock_payload",
++      "probe_family": "return_value",
++      "assertions": [
++        { "type": "must_not_report_clean" },
++        { "type": "expected_finding_count", "count": 1 },
++        { "type": "must_not_promote" },
++        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
++        { "type": "expected_class", "class": "weakly_exposed" }
++      ]
++    },
+     {
+       "id": "rust_closing_propagation_cannot_borrow_a_sibling_error",
+       "language": "rust",
+diff --git a/fixtures/python_shadowed_owner/SPEC.md b/fixtures/python_shadowed_owner/SPEC.md
+new file mode 100644
+index 000000000..f858900a7
+--- /dev/null
++++ b/fixtures/python_shadowed_owner/SPEC.md
+@@ -0,0 +1,37 @@
++# Fixture: python_shadowed_owner
++
++Spec: RIPR-SPEC-0028; issue #8247.
++
++## Given
++
++The imported production function changes `amount * 2` to `amount * 3`, while
++the test replaces its local `fee` with `Mock(return_value=30)`. Both production
++versions pass that test: the exact assertion reads the substitute's fixed
++payload.
++
++## When
++
++`ripr check` analyzes the changed return through the Python preview adapter.
++
++## Then
++
++The changed production return remains `weakly_exposed` under the existing
++syntactic relation, without a strong observation alignment.
++
++`corpus.json` retains all eleven independently authored literal cases from
++[the immutable evidence](https://github.com/EffortlessMetrics/ripr-swarm/blob/8e091dc8b6bfca3649cd8c778bffccdb905f160e/README.md).
++The five owner-shadow false credits must be refused, the exception-only
++control remains weak, and the five genuine output controls remain exposed.
++The nested helper control binds `fee` only in the helper's own scope: the
++outer assertion still calls the production owner. Do not reject it with a
++whole-body text scan. The retained native verifier also checks AssertionError
++for every expected old-value failure; no setup error is a behavioral witness.
++
++## Must Not
++
++Credit the imported owner from a substitute result, a different test row, or
++a same-named method on an unrelated receiver.
++
++The corpus labels are literal and independent of the analyzer. A justified
++relation-layer change to `no_static_path` requires an explicit contract
++revision; it cannot justify blessing a false `exposed` result.
+diff --git a/fixtures/python_shadowed_owner/corpus.json b/fixtures/python_shadowed_owner/corpus.json
+new file mode 100644
+index 000000000..bc968ec53
+--- /dev/null
++++ b/fixtures/python_shadowed_owner/corpus.json
+@@ -0,0 +1,83 @@
++{
++  "source_old": "def fee(amount):\n    if amount < 0:\n        raise ValueError('negative')\n    return amount * 2\n",
++  "source_new": "def fee(amount):\n    if amount < 0:\n        raise ValueError('negative')\n    return amount * 3\n",
++  "cases": [
++    {
++      "id": "direct_literal",
++      "test": "from src.shop import fee\n\ndef test_fee():\n    assert fee(10) == 30\n",
++      "expected_class": "exposed",
++      "old_test_passes": false,
++      "new_test_passes": true
++    },
++    {
++      "id": "local_def",
++      "test": "from src.shop import fee\n\ndef test_fee():\n    def fee(amount):\n        return 30\n    assert fee(10) == 30\n",
++      "expected_class": "weakly_exposed",
++      "old_test_passes": true,
++      "new_test_passes": true
++    },
++    {
++      "id": "local_lambda",
++      "test": "from src.shop import fee\n\ndef test_fee():\n    fee = lambda amount: 30\n    assert fee(10) == 30\n",
++      "expected_class": "weakly_exposed",
++      "old_test_passes": true,
++      "new_test_passes": true
++    },
++    {
++      "id": "mock_payload",
++      "test": "from unittest.mock import Mock\nfrom src.shop import fee\n\ndef test_fee():\n    fee = Mock(return_value=30)\n    assert fee(10) == 30\n",
++      "expected_class": "weakly_exposed",
++      "old_test_passes": true,
++      "new_test_passes": true
++    },
++    {
++      "id": "alias_mock_payload",
++      "test": "from unittest.mock import Mock\nfrom src.shop import fee as price\n\ndef test_fee():\n    price = Mock(return_value=30)\n    assert price(10) == 30\n",
++      "expected_class": "weakly_exposed",
++      "old_test_passes": true,
++      "new_test_passes": true
++    },
++    {
++      "id": "exception_only",
++      "test": "from src.shop import fee\nimport unittest\n\nclass FeeTest(unittest.TestCase):\n    def test_fee(self):\n        with self.assertRaisesRegex(ValueError, 'negative'):\n            fee(-1)\n",
++      "expected_class": "weakly_exposed",
++      "old_test_passes": true,
++      "new_test_passes": true
++    },
++    {
++      "id": "unrelated_local_def",
++      "test": "from src.shop import fee\n\ndef test_fee():\n    def helper(amount):\n        return 30\n    assert fee(10) == 30\n",
++      "expected_class": "exposed",
++      "old_test_passes": false,
++      "new_test_passes": true
++    },
++    {
++      "id": "bare_shadow_with_other_alias",
++      "test": "from src.shop import fee as price\n\ndef test_fee():\n    def fee(amount):\n        return 30\n    assert fee(10) == 30\n",
++      "expected_class": "weakly_exposed",
++      "old_test_passes": true,
++      "new_test_passes": true
++    },
++    {
++      "id": "real_alias",
++      "test": "from src.shop import fee as price\n\ndef test_fee():\n    assert price(10) == 30\n",
++      "expected_class": "exposed",
++      "old_test_passes": false,
++      "new_test_passes": true
++    },
++    {
++      "id": "local_import",
++      "test": "def test_fee():\n    from src.shop import fee\n    assert fee(10) == 30\n",
++      "expected_class": "exposed",
++      "old_test_passes": false,
++      "new_test_passes": true
++    },
++    {
++      "id": "nested_helper_local_shadow",
++      "test": "from src.shop import fee\n\ndef test_fee():\n    def helper():\n        fee = lambda amount: 30\n        return fee(10)\n    assert fee(10) == 30\n",
++      "expected_class": "exposed",
++      "old_test_passes": false,
++      "new_test_passes": true
++    }
++  ]
++}
+diff --git a/fixtures/python_shadowed_owner/diff.patch b/fixtures/python_shadowed_owner/diff.patch
+new file mode 100644
+index 000000000..02d95cda6
+--- /dev/null
++++ b/fixtures/python_shadowed_owner/diff.patch
+@@ -0,0 +1,9 @@
++diff --git a/src/shop.py b/src/shop.py
++--- a/src/shop.py
+++++ b/src/shop.py
++@@ -1,4 +1,4 @@
++ def fee(amount):
++     if amount < 0:
++         raise ValueError('negative')
++-    return amount * 2
+++    return amount * 3
+diff --git a/fixtures/python_shadowed_owner/expected/CHANGELOG.md b/fixtures/python_shadowed_owner/expected/CHANGELOG.md
+new file mode 100644
+index 000000000..2f852abb5
+--- /dev/null
++++ b/fixtures/python_shadowed_owner/expected/CHANGELOG.md
+@@ -0,0 +1,14 @@
++# Golden Output Changes
++
++## Pending — python_shadowed_owner (1)
++
++Reason:
++RIPR-SPEC-0028: A fixed Mock payload passes both production versions and cannot observe the changed return; the independent literal corpus requires weakly_exposed (#8247).
++
++Command:
++`cargo xtask goldens bless python_shadowed_owner --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
++- `expected/human-full.txt`
+diff --git a/fixtures/python_shadowed_owner/expected/check.json b/fixtures/python_shadowed_owner/expected/check.json
+new file mode 100644
+index 000000000..c5462a5e0
+--- /dev/null
++++ b/fixtures/python_shadowed_owner/expected/check.json
+@@ -0,0 +1,150 @@
++{
++  "schema_version": "0.2",
++  "tool": "ripr",
++  "mode": "fast",
++  "root": "fixtures/python_shadowed_owner/input",
++  "config_path": "<cwd>/fixtures/python_shadowed_owner/input/ripr.toml",
++  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
++  "analysis_outcome": {
++    "analysis_complete": true,
++    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:7a760cb3f7a1b0e309c39f671056308160c955fb4b73e16e3830c27113c37dde","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
++  },
++  "findings": [
++    {
++      "id": "probe:src_shop.py:python_preview:3e5b25e0",
++      "canonical_gap_id": "gap:python:src/shop.py:fee:return_value:return_value:amount*3",
++      "canonical_gap_group_size": 1,
++      "canonical_gap": {
++        "id": "gap:python:src/shop.py:fee:return_value:return_value:amount*3",
++        "language": "python",
++        "file": "src/shop.py",
++        "owner": "fee",
++        "behavior_kind": "return_value",
++        "probe_kind": "return_value",
++        "normalized_discriminator": "amount*3"
++
++      },
++      "classification": "weakly_exposed",
++      "severity": "warning",
++      "confidence": 0.40,
++      "probe": {
++        "id": "probe:src_shop.py:python_preview:3e5b25e0",
++        "family": "return_value",
++        "delta": "value",
++        "file": "src/shop.py",
++        "line": 4,
++        "expression": "    return amount * 3",
++        "owner": "python:src/shop.py::fee"
++       },
++      "ripr": {
++        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `fee`"},
++        "infect": {"state":"yes","confidence":"low","summary":"Changed Python return expression can alter the owner return value: `return amount * 3`"},
++        "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
++        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
++        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
++       },
++      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `fee`", "infection yes: Changed Python return expression can alter the owner return value: `return amount * 3`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return amount * 3 (line 4)", "related test tests/test_shop.py:4 test_fee uses strong exact value oracle: assert fee(10) == 30", "missing discriminator return value == <expected value>: changed Python returned-value at line 4 lacks a concrete repair discriminator"],
++      "flow_sinks": [
++        {"kind":"return_value","text":"return amount * 3","line":4}
++      ],
++      "evidence": ["owner: fee", "owner_kind: function", "missing_discriminator: return value == <expected value>", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_shop.py", "suggested_test_name: test_fee", "suggested_test_node_id: tests/test_shop.py::test_fee", "suggested_verify_command: python -m pytest tests/test_shop.py::test_fee", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_fee)", "test_verify_command: python -m pytest tests/test_shop.py::test_fee (test_fee)", "related_test_relation: syntactic_call (test_fee)", "test_oracle: exact_value strong (test_fee)"],
++      "missing": ["A strong Python oracle reaches `fee`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output."],
++      "assertion_texts": {
++      },
++      "activation": {
++        "observed_values": [
++        ],
++        "missing_discriminators": [
++          {
++            "value": "return value == <expected value>",
++            "reason": "changed Python returned-value at line 4 lacks a concrete repair discriminator",
++            "flow_sink": {"kind":"return_value","text":"return amount * 3","line":4}
++          }
++        ]
++      },
++      "observed_values": [
++      ],
++      "missing_discriminators": [
++        {
++          "value": "return value == <expected value>",
++          "reason": "changed Python returned-value at line 4 lacks a concrete repair discriminator",
++          "flow_sink": {"kind":"return_value","text":"return amount * 3","line":4}
++        }
++      ],
++      "related_tests_total": 1,
++      "related_tests": [
++        {
++          "name": "test_fee",
++          "file": "tests/test_shop.py",
++          "line": 4,
++          "oracle_strength": "strong",
++          "oracle_kind": "exact_value",
++          "oracle": "assert fee(10) == 30"
++        }
++      ],
++      "repair_placement": {
++        "suggested_test_file": "tests/test_shop.py",
++        "suggested_test_name": "test_fee",
++        "suggested_test_node_id": "tests/test_shop.py::test_fee",
++        "verify_command": "python -m pytest tests/test_shop.py::test_fee",
++        "verify_command_confidence": "high"
++       },
++      "python_repair_card": {
++        "card_version": "python_repair_card.v1",
++        "source": "check_python_preview",
++        "canonical_gap_id": "gap:python:src/shop.py:fee:return_value:return_value:amount*3",
++        "language": "python",
++        "language_status": "preview",
++        "authority_boundary": "preview_advisory_only",
++        "repair_action": "strengthen_existing_test",
++        "changed_owner": "fee",
++        "changed_behavior": "return_value changed at src/shop.py:4: `return amount * 3`",
++        "current_test_evidence": "tests/test_shop.py:4 test_fee currently has oracle_strength=strong, oracle_kind=exact_value: assert fee(10) == 30",
++        "missing_discriminator": "return value == <expected value>",
++        "recommended_test_shape": "Strengthen the existing pytest exact return-value assertion for `return value == <expected value>`.",
++        "suggested_assertion": "Assert the returned value equals the expected value for the changed inputs.",
++        "suggested_location": {
++          "test_file": "tests/test_shop.py",
++          "test_name": "test_fee",
++          "pytest_node_id": "tests/test_shop.py::test_fee"
++         },
++        "verify": {
++          "command": "python -m pytest tests/test_shop.py::test_fee",
++          "confidence": "high"
++         },
++        "receipt": {
++          "command": null,
++          "status": "unavailable_until_python_gap_ledger",
++          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
++         },
++        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit."],
++        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
++       },
++      "stop_reasons": [],
++      "oracle_kind": "exact_value",
++      "oracle_strength": "strong",
++      "recommended_next_step": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`.",
++      "suggested_next_action": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`.",
++      "language": "python",
++      "language_status": "preview",
++      "owner_kind": "function",
++      "changed_sink": "amount",
++      "observed_sink": "assert fee(10) == 30",
++      "oracle_alignment": "orthogonal",
++      "alignment_reason": "strong_oracle_observes_different_sink",
++      "source_currentness": "candidate_current"
++    }
++  ],
++  "preview_languages": [
++    {
++      "language": "python",
++      "file_count": 1,
++      "sample_paths": ["src/shop.py"],
++      "enabled": true,
++      "analyzed": true,
++      "category": "preview_language_advisory",
++      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
++    }
++  ],
++  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/shop.py","digest":"sha256:54c8265a0096f7d2d40756468f1edd96d5696b459316f55c1f47001dc85542c7"},{"path":"tests/test_shop.py","digest":"sha256:a55583295e761abad5c107a23966bb5853929c5519cf192cc7f5f66a5f55b52d"}]}
++}
+diff --git a/fixtures/python_shadowed_owner/expected/human-full.txt b/fixtures/python_shadowed_owner/expected/human-full.txt
+new file mode 100644
+index 000000000..d02599829
+--- /dev/null
++++ b/fixtures/python_shadowed_owner/expected/human-full.txt
+@@ -0,0 +1,79 @@
++ripr static RIPR exposure analysis
++mode: fast
++root: fixtures/python_shadowed_owner/input
++config: <cwd>/fixtures/python_shadowed_owner/input/ripr.toml
++
++Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
++
++Changed file(s) by language: python = 1
++
++Analysis outcome: findings below (analysis complete; complete_with_findings)
++  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
++
++WARNING src/shop.py:4
++  id: probe:src_shop.py:python_preview:3e5b25e0
++
++Changed
++  after:      return amount * 3
++
++Probe
++  family: return_value
++  delta:  value
++  owner:  python:src/shop.py::fee
++  canonical gap: gap:python:src/shop.py:fee:return_value:return_value:amount*3
++
++Language
++  language: python
++  status: preview
++  owner kind: function
++
++Static exposure
++  weakly_exposed (warning, confidence 0.40)
++
++Evidence
++  - reach yes: 1 related Python test(s) found for owner `fee`
++  - infection yes: Changed Python return expression can alter the owner return value: `return amount * 3`
++  - propagation yes: Changed Python return value is already at the owner output boundary
++  - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
++  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
++  - local flow reaches returned value: return amount * 3 (line 4)
++  - related test tests/test_shop.py:4 test_fee uses strong exact value oracle: assert fee(10) == 30
++
++Weakness
++  - A strong Python oracle reaches `fee`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
++  - missing discriminator return value == <expected value>: changed Python returned-value at line 4 lacks a concrete repair discriminator
++
++Python repair card (preview/advisory)
++  card version: python_repair_card.v1
++  canonical gap: gap:python:src/shop.py:fee:return_value:return_value:amount*3
++  authority: preview_advisory_only (python/preview)
++  repair action: strengthen_existing_test
++  changed owner: fee
++  changed behavior: return_value changed at src/shop.py:4: `return amount * 3`
++  current test evidence: tests/test_shop.py:4 test_fee currently has oracle_strength=strong, oracle_kind=exact_value: assert fee(10) == 30
++  missing discriminator: return value == <expected value>
++  recommended test shape: Strengthen the existing pytest exact return-value assertion for `return value == <expected value>`.
++  suggested assertion: Assert the returned value equals the expected value for the changed inputs.
++  suggested file: tests/test_shop.py
++  suggested test: test_fee
++  pytest node: tests/test_shop.py::test_fee
++  verify: python -m pytest tests/test_shop.py::test_fee (high)
++  receipt: unavailable_until_python_gap_ledger
++  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
++  stop conditions:
++    - Stop if imports, fixtures, or test setup cannot call the changed owner.
++    - Stop if the expected value for the missing discriminator is ambiguous.
++    - Stop if adding the test appears to require a production-code edit.
++  limits:
++    - Syntax-first Python preview evidence only.
++    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
++    - Verify success alone is not a gap-closure receipt.
++
++Next step
++  Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`
++Drill in:
++  ripr explain --root <cwd>/fixtures/python_shadowed_owner/input --diff <cwd>/fixtures/python_shadowed_owner/diff.patch --mode fast probe:src_shop.py:python_preview:3e5b25e0
++  ripr context --root <cwd>/fixtures/python_shadowed_owner/input --diff <cwd>/fixtures/python_shadowed_owner/diff.patch --mode fast --at probe:src_shop.py:python_preview:3e5b25e0
++
++
++Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
+diff --git a/fixtures/python_shadowed_owner/expected/human.txt b/fixtures/python_shadowed_owner/expected/human.txt
+new file mode 100644
+index 000000000..51ce9ce8d
+--- /dev/null
++++ b/fixtures/python_shadowed_owner/expected/human.txt
+@@ -0,0 +1,44 @@
++ripr static RIPR exposure analysis
++mode: fast
++root: fixtures/python_shadowed_owner/input
++config: <cwd>/fixtures/python_shadowed_owner/input/ripr.toml
++
++Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
++
++Changed file(s) by language: python = 1
++
++Analysis outcome: findings below (analysis complete; complete_with_findings)
++  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
++
++Start here:
++  State: preview language, advisory only (preview_limited)
++  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it
++  File: src/shop.py:4
++  Language: python
++  Language status: preview
++  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
++  Why weak: a related test reaches this change but does not observe the exact changed value
++  Canonical gap: gap:python:src/shop.py:fee:return_value:return_value:amount*3
++  Changed behavior: return amount * 3
++  Missing discriminator (1 of 2): A strong Python oracle reaches `fee`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an…
++  Related test: tests/test_shop.py:4 test_fee
++  Suggested test file: tests/test_shop.py
++  Suggested test: test_fee
++  Test node: tests/test_shop.py::test_fee
++  Verify command: python -m pytest tests/test_shop.py::test_fee (high)
++  Next step — Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`
++  Evidence: reach yes · infection yes · propagation yes · observation weak · discriminator weak
++    - reach yes: 1 related Python test(s) found for owner `fee`
++    - infection yes: Changed Python return expression can alter the owner return value: `return amount * 3`
++    - 5 more detail line(s) in --format human-full
++
++Next: drill into the top finding:
++  ripr explain --root <cwd>/fixtures/python_shadowed_owner/input --diff <cwd>/fixtures/python_shadowed_owner/diff.patch --mode fast probe:src_shop.py:python_preview:3e5b25e0
++  ripr context --root <cwd>/fixtures/python_shadowed_owner/input --diff <cwd>/fixtures/python_shadowed_owner/diff.patch --mode fast --at probe:src_shop.py:python_preview:3e5b25e0
++
++More:
++  Full evidence: rerun with --format human-full
++  Machine data: rerun with --format json
++
++
++Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
+diff --git a/fixtures/python_shadowed_owner/input/pyproject.toml b/fixtures/python_shadowed_owner/input/pyproject.toml
+new file mode 100644
+index 000000000..9696f99ea
+--- /dev/null
++++ b/fixtures/python_shadowed_owner/input/pyproject.toml
+@@ -0,0 +1,3 @@
++[project]
++name = "oracle-corpus"
++version = "0.0.0"
+diff --git a/fixtures/python_shadowed_owner/input/ripr.toml b/fixtures/python_shadowed_owner/input/ripr.toml
+new file mode 100644
+index 000000000..c7eeafc91
+--- /dev/null
++++ b/fixtures/python_shadowed_owner/input/ripr.toml
+@@ -0,0 +1,2 @@
++[languages]
++enabled = ["python"]
+diff --git a/fixtures/python_shadowed_owner/input/src/shop.py b/fixtures/python_shadowed_owner/input/src/shop.py
+new file mode 100644
+index 000000000..9fedfd7ed
+--- /dev/null
++++ b/fixtures/python_shadowed_owner/input/src/shop.py
+@@ -0,0 +1,4 @@
++def fee(amount):
++    if amount < 0:
++        raise ValueError('negative')
++    return amount * 3
+diff --git a/fixtures/python_shadowed_owner/input/tests/test_shop.py b/fixtures/python_shadowed_owner/input/tests/test_shop.py
+new file mode 100644
+index 000000000..b2b6e7bbe
+--- /dev/null
++++ b/fixtures/python_shadowed_owner/input/tests/test_shop.py
+@@ -0,0 +1,6 @@
++from unittest.mock import Mock
++from src.shop import fee
++
++def test_fee():
++    fee = Mock(return_value=30)
++    assert fee(10) == 30
+diff --git a/.ripr/traceability.toml b/.ripr/traceability.toml
+--- a/.ripr/traceability.toml
++++ b/.ripr/traceability.toml
+@@ -3192,6 +3192,17 @@
+ name = "Python preview static facts"
+ spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
+ tests = [
++  "crates/ripr/src/analysis/language/python/owner_import_identity_tests.rs::owner_import_identity_preserves_the_eleven_independent_literal_cases",
++  "crates/ripr/src/analysis/language/python/owner_import_identity_tests.rs::owner_import_identity_does_not_borrow_an_alias_from_another_test",
++  "crates/ripr/src/analysis/language/python/owner_import_identity_tests.rs::owner_import_identity_does_not_borrow_a_same_named_test_row",
++  "crates/ripr/src/analysis/language/python/owner_import_identity_tests.rs::owner_import_identity_rejects_the_same_alias_on_an_unrelated_receiver",
++  "crates/ripr/src/analysis/language/python/owner_import_identity_tests.rs::owner_import_identity_rejects_other_local_binding_shapes",
++  "crates/ripr/src/analysis/language/python/owner_import_identity_tests.rs::owner_import_identity_preserves_a_body_import_restoring_a_module_shadow",
++  "crates/ripr/src/analysis/language/python/owner_import_identity_tests.rs::owner_import_identity_preserves_a_real_call_beside_an_unrelated_patch_helper",
++  "crates/ripr/src/analysis/language/python/owner_import_identity_tests.rs::owner_import_identity_rejects_wrong_receiver_through_changed_literal_branch",
++  "crates/ripr/src/analysis/language/python/owner_import_identity_tests.rs::owner_import_identity_preserves_grouped_real_calls",
++  "crates/ripr/src/analysis/language/python/owner_import_identity_tests.rs::owner_import_identity_grouping_does_not_erase_a_wrapper_call",
++  "crates/ripr/src/analysis/language/python/owner_import_identity_tests.rs::owner_import_identity_walrus_names_stay_in_their_executable_scope",
+   "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_observes_whole_return_including_short_elements",
+   "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_preserves_ast_call_identity",
+   "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_withholds_unresolved_or_nonobserving_calls",
+@@ -3297,6 +3308,7 @@
+   "xtask::tests::dogfood_python_real_repo_eval_receipts_are_checked",
+ ]
+ fixtures = [
++  "fixtures/python_shadowed_owner",
+   "fixtures/benches_harness_evidence",
+   "fixtures/python/basic",
+   "fixtures/python_boundary_gap",

@@ -1,0 +1,9 @@
+{
+  "native_exit": 0,
+  "native_stdout": "32 native old/new test bodies pass; none discriminate the production return\n",
+  "cli_verifier_exit": 1,
+  "cli_stdout": "cross_test_alias weakly_exposed weakly_exposed orthogonal\nduplicate_test_names weakly_exposed weakly_exposed orthogonal\ntuple_shadow weakly_exposed weakly_exposed orthogonal\nannotated_shadow weakly_exposed weakly_exposed orthogonal\nchained_shadow weakly_exposed weakly_exposed orthogonal\nconflicting_body_import weakly_exposed weakly_exposed orthogonal\nunrelated_receiver_fee weakly_exposed exposed direct\nunrelated_receiver_price weakly_exposed exposed alias\nforeign_global_alias_donation weakly_exposed exposed alias\nlocal_walrus_substitute weakly_exposed exposed direct\nlocal_fstring_substitute weakly_exposed exposed direct\nmodule_substitute weakly_exposed exposed direct\nmatch_capture_substitute weakly_exposed exposed direct\n",
+  "cli_stderr": "",
+  "worktree_source_mutated": false,
+  "argv_placeholder": "<task-local replay> replaces the removed temporary replay directory only"
+}

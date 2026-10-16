@@ -1,0 +1,37 @@
+{
+  "reason": "compiler-artifact",
+  "package_id": "path+file:///workspace/python-oracle-review-8252/crates/ripr#0.11.0",
+  "manifest_path": "/workspace/python-oracle-review-8252/crates/ripr/Cargo.toml",
+  "target": {
+    "kind": [
+      "bin"
+    ],
+    "crate_types": [
+      "bin"
+    ],
+    "name": "ripr",
+    "src_path": "/workspace/python-oracle-review-8252/crates/ripr/src/main.rs",
+    "edition": "2024",
+    "doc": true,
+    "doctest": false,
+    "test": true
+  },
+  "profile": {
+    "opt_level": "0",
+    "debuginfo": 0,
+    "debug_assertions": true,
+    "overflow_checks": true,
+    "test": false
+  },
+  "features": [
+    "default",
+    "lang-python",
+    "lang-rust",
+    "lang-typescript"
+  ],
+  "filenames": [
+    "/workspace/python-oracle-target/debug/ripr"
+  ],
+  "executable": "/workspace/python-oracle-target/debug/ripr",
+  "fresh": false
+}
