@@ -1,0 +1,31 @@
+{
+  "observed_at": "2026-10-16T06:21:59.825194+00:00",
+  "remote_packet_commit": "b63899f8309b749e5029830c7606c39e8d6658ea",
+  "branch": "evidence/8004-independent-36db-20261016",
+  "public_files_byte_equal": {
+    "README.md": "e958dccde4471ee4cd34690b54561085cdfd0924725430593b36ee7a99039ba4",
+    "receipt.json": "cd6d2027be9dd9378bb47d24786a91749105910e27cfe2422a76a645f3fcbb4b",
+    "MANIFEST.json": "eeffdaca0ae7ac3d69062ae25f0ccfd6e6eedea3a116090d38c1e46c102097b0",
+    "raw.tar.xz": "d3c2173a7264ee56dded5b2d461fc04f41a1252d291eeafc2179a4a919135a30",
+    "SHA256SUMS": "d028f985b4547180b2d0812da5b9d8dd32655cacb8c7ac75954220af519b136d"
+  },
+  "archive_member_bytes_sizes_modes_inventory_verified": 90,
+  "candidate_head_unchanged": "36dbb87430ef858aa143b5fc3205b376b0caee11",
+  "evidence_only_files": 5,
+  "readback_route": "fresh filtered bare Git clone and lazy blob reads at immutable commit",
+  "attempts": [
+    "Unfiltered bare fetch was stopped after about90s to avoid unrelated blob restoration; its known read-only process tree terminated with143. No successful full-fetch claim.",
+    "gh api raw contents GET of published README returned transport Forbidden with no headers; no CLI retry. Subsequently supported connector directory and text-blob reads succeeded on the exact published commit, independently establishing connected repository read scope. No global repository denial/quota inference.",
+    "Connector fetch/fetch_blob cannot decode xz as UTF8; binary recovery then used the supported Git transport, no credentials/security settings change."
+  ],
+  "resources": {
+    "review_worktree": "removed after local proof",
+    "publication_worktree": "owned checkout retained until sibling receipt readback, then removed; final review carries closeout",
+    "target": "/workspace/review36db-target retained for parent replay (2.1GiB)",
+    "inputs": "/workspace/review36db-inputs retained",
+    "raw": "/workspace/review36db-evidence retained",
+    "filtered_bare": "/workspace/review36db-filtered.git retained",
+    "partial_bare": "/workspace/review36db-readback.git retained, incomplete fetch",
+    "inherited": "/workspace/ripr-swarm and target unchanged"
+  }
+}
