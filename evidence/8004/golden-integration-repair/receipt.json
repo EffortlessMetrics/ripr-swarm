@@ -1,0 +1,242 @@
+{
+  "at": "2026-10-16T07:58:07.825169+00:00",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "pr": 8004,
+  "head": "5e34bad2a9d066387d72777f37d1134987c27698",
+  "tree": "8a27c0f5dfa06586715b68b448a04625aac5f1f9",
+  "parent": "36dbb87430ef858aa143b5fc3205b376b0caee11",
+  "canonical_branch": "rook/7415-private-target-attribution",
+  "disposition": "CANDIDATE_REPAIRED / FRESH_INDEPENDENT_REVIEW_REQUIRED",
+  "source_push": "ordinary non-force36db\u21925e; remote readback verified",
+  "pr_state": "open/Ready unchanged; no Ready/Draft action",
+  "adjustment": {
+    "human_files": 15,
+    "fixture_changelogs": 11,
+    "terminal_periods_removed": 60,
+    "json_files_changed": 0,
+    "production_native_corpus_changes": 0
+  },
+  "validation": {
+    "golden_fixtures": 465,
+    "golden_surfaces": 1157,
+    "goldens": "pass",
+    "fixtures": "pass",
+    "honesty_contract": "pass; does not clear accuracy costs",
+    "tests_passed": 14,
+    "test_counts": [
+      2,
+      9,
+      3
+    ],
+    "check_fast_gates": 15,
+    "selected_paths": 173,
+    "precommit": "pass; zero skips/limitations",
+    "raw_json_controls": 11,
+    "commands": [
+      {
+        "argv": [
+          "cargo",
+          "run",
+          "--locked",
+          "-p",
+          "xtask",
+          "--",
+          "goldens",
+          "check"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 207.72429203987122,
+        "log": "post-0.log",
+        "head": "5e34bad2a9d066387d72777f37d1134987c27698"
+      },
+      {
+        "argv": [
+          "cargo",
+          "run",
+          "--locked",
+          "-p",
+          "xtask",
+          "--",
+          "fixtures"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 12.288445234298706,
+        "log": "post-1.log",
+        "head": "5e34bad2a9d066387d72777f37d1134987c27698"
+      },
+      {
+        "argv": [
+          "cargo",
+          "run",
+          "--locked",
+          "-p",
+          "xtask",
+          "--",
+          "check-evidence-promotion-honesty"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 0.3447301387786865,
+        "log": "post-2.log",
+        "head": "5e34bad2a9d066387d72777f37d1134987c27698"
+      },
+      {
+        "argv": [
+          "cargo",
+          "run",
+          "--locked",
+          "-p",
+          "xtask",
+          "--",
+          "check-fast"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 378.3612287044525,
+        "log": "post-3.log",
+        "head": "5e34bad2a9d066387d72777f37d1134987c27698"
+      },
+      {
+        "argv": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "ripr",
+          "--lib",
+          "trim_field_period_tests"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 165.4099247455597,
+        "log": "post-4.log",
+        "head": "5e34bad2a9d066387d72777f37d1134987c27698"
+      },
+      {
+        "argv": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "ripr",
+          "--test",
+          "private_inherent_receiver"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 2.786468505859375,
+        "log": "post-5.log",
+        "head": "5e34bad2a9d066387d72777f37d1134987c27698"
+      },
+      {
+        "argv": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "xtask",
+          "--bin",
+          "xtask",
+          "evidence_promotion_semantic_assertions_reject_missing_human"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 0.20294761657714844,
+        "log": "post-6.log",
+        "head": "5e34bad2a9d066387d72777f37d1134987c27698"
+      },
+      {
+        "argv": [
+          "cargo",
+          "run",
+          "--locked",
+          "-p",
+          "xtask",
+          "--",
+          "precommit"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 295.3068838119507,
+        "log": "post-7.log",
+        "head": "5e34bad2a9d066387d72777f37d1134987c27698"
+      }
+    ]
+  },
+  "baseline_failures": {
+    "doctor": "behind-only7 commits; no restack",
+    "first_goldens": "15 presentation plus3 owner-fallible semantic surfaces from absent pinned anyhow100",
+    "hydrated_goldens": "15 presentation only, all465 JSON equal"
+  },
+  "semantic_diagnosis": {
+    "classification": "environmental locked fixture dependency availability; no introduced source drift",
+    "local_subject": "36dbb87430ef858aa143b5fc3205b376b0caee11",
+    "whole_tree_equals_original_hosted_merge": true,
+    "original_hosted_merge": "4232b0459b58eb3283c9f9d1ee42faf690679446",
+    "literal_hosted_merge_rebuilt_locally": false,
+    "hosted_failure_drift_entries": 15,
+    "hosted_owner_return_semantic_drift_reported": false,
+    "console_generator_enumerates_all_entries_without_cap": true,
+    "offline_metadata_before_exit": 101,
+    "missing": "anyhow1.0.100",
+    "cache_version_previously_present": "1.0.104",
+    "crate_sha256_matches_unchanged_lock": "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61",
+    "offline_metadata_after_exit": 0,
+    "before_summary": {
+      "changed_rust_files": 2,
+      "probes": 1,
+      "findings": 1,
+      "exposed": 0,
+      "weakly_exposed": 1,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 2
+        }
+      ]
+    },
+    "after_summary": {
+      "changed_rust_files": 2,
+      "probes": 1,
+      "findings": 1,
+      "exposed": 1,
+      "weakly_exposed": 0,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 2
+        }
+      ]
+    },
+    "semantic_expectation_changes": 0,
+    "fixture_input_or_lock_changes": 0,
+    "production_source_changes": 0
+  },
+  "actual_new_merge": {
+    "sha": "740b6da9b2cc9fd402b9f588fe1c1f972d64745a",
+    "parents": [
+      "fabf21c8f8e5a06e61cb3e7c77c96f713dec8a13",
+      "5e34bad2a9d066387d72777f37d1134987c27698"
+    ],
+    "tree": "778347a67ee2953192d7fd35ffcfde72175c7877",
+    "executed": false,
+    "pr_base_metadata": "d08c77d144c016078364fcc1fcf2fa593d21cefc"
+  },
+  "remaining": [
+    "fresh independent head/expectation and actual integration review",
+    "new required hosted qualification; no manual rerun or Ready action here",
+    "later-main combined tree unexecuted",
+    "old residual performance/censoring/unique-key-memory limits retained"
+  ],
+  "resources": {
+    "source_worktree": "/workspace/review36db retained for parent/reviewer",
+    "target": "/workspace/review36db-target retained exact-head binaries/log replay",
+    "raw": "/workspace/golden8004-evidence retained",
+    "publication_worktree": "remove after verified publication/readback",
+    "inherited_root": "/workspace/ripr-swarm untouched"
+  }
+}
