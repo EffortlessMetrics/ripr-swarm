@@ -648,9 +648,9 @@ const PORTABLE_TESTS: &[&str] = &[
 ];
 
 #[test]
-fn packaged_help_target_compiles_and_runs_every_portable_case() -> Result<(), String> {
+fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Result<(), String> {
     use ripr_help::{Scratch, compile_portable, extracted_package, require_success, run};
-    let scratch = Scratch::new("packaged-help-positive")?;
+    let scratch = Scratch::new("packaged-help-contract")?;
     let package = extracted_package(&scratch.0)?;
     let executable = scratch
         .0
@@ -686,21 +686,10 @@ fn packaged_help_target_compiles_and_runs_every_portable_case() -> Result<(), St
             "extracted target did not run all 20 portable cases:\n{text}"
         ));
     }
-    Ok(())
-}
-
-#[test]
-fn packaged_help_target_rejects_a_missing_shared_test_asset() -> Result<(), String> {
-    use ripr_help::{Scratch, compile_portable, extracted_package, require_success};
-    let scratch = Scratch::new("packaged-help-negative")?;
-    let package = extracted_package(&scratch.0)?;
-    let pristine = scratch
-        .0
-        .join(format!("pristine-tests{}", std::env::consts::EXE_SUFFIX));
-    require_success(
-        compile_portable(&package, &pristine)?,
-        "negative-control precondition",
-    )?;
+    // The successful compile, exact inventory and execution above establish
+    // the pristine precondition for this same archive. Keeping the removal
+    // control in this transaction avoids repeating package/build/compile setup
+    // in a separate nextest process; no test result is reused across runs.
     let helper = package.join("tests/common/help_contract.rs");
     std::fs::remove_file(&helper).map_err(|error| error.to_string())?;
     let broken = scratch
