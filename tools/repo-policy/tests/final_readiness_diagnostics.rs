@@ -1,6 +1,8 @@
 //! Replay the exact final-readiness shell; diagnostics must not change admission.
 #![cfg(target_os = "linux")]
 use serde_json::{Value, json};
+#[path = "support/native_subject.rs"]
+mod native_subject;
 #[path = "support/review_disposition.rs"]
 mod review_disposition;
 use std::{
@@ -68,13 +70,14 @@ struct Case {
 }
 
 fn positive() -> Case {
+    // Historical oracle uses coherent S=B; S!=B has dedicated contract proof.
+    let pr = native_subject::api_pr(&json!({"state":"open", "draft":false,
+        "head":{"repo":{"full_name":"EffortlessMetrics/ripr-swarm"},"sha":"a".repeat(40)},
+        "base":{"ref":"main","sha":"b".repeat(40)}, "mergeable":true,
+        "merge_commit_sha":"c".repeat(40), "labels":[{"name":"merge-ready"}],
+        "user":{"login":"author"}}));
     Case {
-        pr: json!({"state":"open", "draft":false,
-            "head":{"repo":{"full_name":"EffortlessMetrics/ripr-swarm"},"sha":"a".repeat(40)},
-            "base":{"ref":"main","sha":"b".repeat(40)}, "mergeable":true,
-            "merge_commit_sha":"c".repeat(40), "labels":[{"name":"merge-ready"}],
-            "user":{"login":"author"}})
-        .to_string(),
+        pr: pr.to_string(),
         reviews: json!([{"id":1, "user":{"login":"reviewer"}, "state":"COMMENTED",
             "commit_id":"a".repeat(40), "submitted_at":"2026-10-15T11:51:29Z",
             "body":format!("SOURCE_REVIEW_READY {REVIEW_SECRET}")}])
@@ -111,7 +114,8 @@ fn run(script: &str, case: &Case) -> Result<(Output, String), String> {
       case "$1" in
         */pulls/8008) endpoint=pr;;
         */pulls/8008/reviews*) endpoint=reviews;;
-        graphql) endpoint=threads;;
+        */git/commits/*) endpoint=commit;;
+        graphql) case "$*" in *potentialMergeCommit*) endpoint=frame;; *) endpoint=threads;; esac;;
         *) echo 'Unexpected API endpoint' >&2; return 82;;
       esac
       printf '%s\n' "$endpoint" >> "$MOCK_ROOT/calls"
@@ -126,12 +130,23 @@ fn run(script: &str, case: &Case) -> Result<(Output, String), String> {
       fi
     }
     "#;
+    fs::write(
+        temp.join("frame"),
+        native_subject::fixture()?["FRAME"].to_string(),
+    )
+    .map_err(|e| e.to_string())?;
+    fs::write(
+        temp.join("commit"),
+        native_subject::fixture()?["COMMIT"].to_string(),
+    )
+    .map_err(|e| e.to_string())?;
     let stderr_setup = if case.closed_stderr {
         "exec 2>&-\n"
     } else {
         ""
     };
-    let output = std::process::Command::new("timeout")
+    let mut command = std::process::Command::new("timeout");
+    command
         .args([
             "--kill-after=1s",
             "10s",
@@ -153,9 +168,9 @@ fn run(script: &str, case: &Case) -> Result<(Output, String), String> {
         .env("SUBJECT_SHA", "c".repeat(40))
         .env("GH_TOKEN", TOKEN_SECRET)
         .env("MOCK_ROOT", &temp)
-        .env("MOCK_FAIL", case.fail)
-        .output()
-        .map_err(|e| e.to_string())?;
+        .env("MOCK_FAIL", case.fail);
+    native_subject::configure(&mut command, WORKFLOW)?;
+    let output = command.output().map_err(|e| e.to_string())?;
     if matches!(output.status.code(), Some(124 | 137)) {
         return Err(format!(
             "bounded replay timed out; retained {}",
@@ -172,17 +187,37 @@ fn run(script: &str, case: &Case) -> Result<(Output, String), String> {
 }
 
 fn paired(case: &Case, expected: i32, phase: Option<&str>) -> Result<Value, String> {
+    paired_statuses(case, expected, expected, phase)
+}
+
+fn paired_statuses(
+    case: &Case,
+    predecessor_status: i32,
+    expected: i32,
+    phase: Option<&str>,
+) -> Result<Value, String> {
     let (before, old_calls) = run(ORIGINAL, case)?;
     let (after, new_calls) = run(&body()?, case)?;
-    assert_eq!(before.status.code(), Some(expected), "predecessor oracle");
     assert_eq!(
-        after.status.code(),
         before.status.code(),
-        "native exit changed"
+        Some(predecessor_status),
+        "predecessor oracle"
     );
     assert_eq!(
-        new_calls, old_calls,
-        "diagnostics must not fetch more API state"
+        after.status.code(),
+        Some(expected),
+        "current native exit differs from its contract"
+    );
+    assert_eq!(
+        new_calls
+            .lines()
+            .filter(|call| matches!(*call, "reviews" | "threads"))
+            .collect::<Vec<_>>(),
+        old_calls
+            .lines()
+            .filter(|call| matches!(*call, "reviews" | "threads"))
+            .collect::<Vec<_>>(),
+        "review and thread observation order remains unchanged"
     );
     let stderr = String::from_utf8(after.stderr).map_err(|e| e.to_string())?;
     assert!(!stderr.contains(REVIEW_SECRET), "review body leaked");
@@ -214,37 +249,12 @@ fn paired(case: &Case, expected: i32, phase: Option<&str>) -> Result<Value, Stri
 }
 
 #[test]
-fn only_comment_interpretation_changes_in_original_decision_lines() -> Result<(), String> {
+fn live_subject_contract_replaces_historical_base_and_fetch_parity() -> Result<(), String> {
     let current = body()?;
-    let (prefix, inserted) = current
-        .split_once("readiness_refused() { # Advisory diagnostics preserve the original status.\n")
-        .ok_or("handler missing")?;
-    let (_, original) = inserted
-        .split_once("trap readiness_refused ERR\n")
-        .ok_or("trap missing")?;
-    let stripped = prefix.to_owned()
-        + &original
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("readiness_phase="))
-            .map(|line| format!("{line}\n"))
-            .collect::<String>();
-    let interpreted = ORIGINAL
-        .replace(
-            "--arg author \"$author\" '",
-            "--arg author \"$author\" \"$REVIEW_DISPOSITION_JQ\"'",
-        )
-        .replace(
-            "(.body | test(\"(^|[^A-Z_])(SOURCE_REVIEW_READY|REVIEW_READY)([^A-Z_]|$)\"))",
-            "(.body | current_comment_ready)",
-        );
-    assert_ne!(
-        interpreted, ORIGINAL,
-        "bounded parser replacement must engage"
-    );
-    assert_eq!(
-        stripped, interpreted,
-        "all other decisions must be unchanged"
-    );
+    assert!(current.contains("subject_before=$(read_subject)"));
+    assert!(current.contains("subject_after=$(read_subject)"));
+    assert!(current.contains("$subject_after\" == \"$EXPECTED_SUBJECT"));
+    assert!(!current.contains(".base.sha == $base and"));
     paired(&positive(), 0, None)?;
     let mut nonrequest = positive();
     nonrequest.label = "ordinary";
@@ -292,7 +302,6 @@ fn every_pr_comparison_reports_false_null_and_missing_without_relaxing() -> Resu
         ("base/ref", "main_base"),
         ("mergeable", "mergeable"),
         ("head/sha", "exact_head"),
-        ("base/sha", "exact_base"),
         ("merge_commit_sha", "exact_subject"),
         ("labels", "merge_ready"),
     ];
@@ -475,7 +484,16 @@ fn unavailable_diagnostic_stderr_cannot_replace_the_original_failure() -> Result
         let (after, calls_after) = run(&body()?, &case)?;
         assert_eq!(before.status.code(), Some(73));
         assert_eq!(after.status.code(), before.status.code());
-        assert_eq!(calls_after, calls_before);
+        assert_eq!(
+            calls_after
+                .lines()
+                .filter(|call| matches!(*call, "reviews" | "threads"))
+                .collect::<Vec<_>>(),
+            calls_before
+                .lines()
+                .filter(|call| matches!(*call, "reviews" | "threads"))
+                .collect::<Vec<_>>()
+        );
     }
     Ok(())
 }
@@ -536,8 +554,8 @@ fn thread_pagination_errors_and_missing_fields_preserve_native_refusals() -> Res
         let detail = paired(&case, 1, Some("threads-check"))?;
         assert_eq!(detail["checks"]["all_resolved"], false);
     }
-    // Preserve the predecessor's tostring/break behavior. This diagnostic-only
-    // change does not silently add a new pagination-schema admission predicate.
+    // Record the historical acceptance without carrying it into the live-subject
+    // contract: incomplete pagination cannot establish that all threads were read.
     for field in ["missing", "null"] {
         let mut case = positive();
         let mut page: Value = serde_json::from_str(&case.threads[0]).map_err(|e| e.to_string())?;
@@ -550,7 +568,7 @@ fn thread_pagination_errors_and_missing_fields_preserve_native_refusals() -> Res
             info["hasNextPage"] = Value::Null;
         }
         case.threads[0] = page.to_string();
-        paired(&case, 0, None)?;
+        paired_statuses(&case, 0, 5, Some("threads-page-parse"))?;
     }
     Ok(())
 }

@@ -30,7 +30,16 @@ fn job(name: &str) -> TestResult<&str> {
 }
 
 fn shell(name: &str) -> TestResult<String> {
-    shell_body(job(name)?)
+    let source = job(name)?;
+    let source = if name == "detect-docs-only" {
+        source
+            .split_once("      - name: Check whether every changed file is docs/spec/markdown\n")
+            .ok_or("selector step")?
+            .1
+    } else {
+        source
+    };
+    shell_body(source)
 }
 
 fn shell_body(source: &str) -> TestResult<String> {
@@ -253,7 +262,11 @@ impl Drop for Fixture {
 #[test]
 fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
     let detector = job("detect-docs-only")?;
-    let (step, _) = detector
+    let selector = detector
+        .split_once("      - name: Check whether every changed file is docs/spec/markdown\n")
+        .ok_or("selector step")?
+        .1;
+    let (step, _) = selector
         .split_once("        run: |\n")
         .ok_or("detector step")?;
     let (_, env) = step
@@ -261,8 +274,8 @@ fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
         .ok_or("detector step env")?;
     for binding in [
         "          EVENT_NAME: ${{ github.event_name }}",
-        "          BASE_SHA: ${{ github.event.pull_request.base.sha }}",
-        "          HEAD_SHA: ${{ github.event.pull_request.head.sha }}",
+        "          BASE_SHA: ${{ steps.admitted.outputs.base }}",
+        "          HEAD_SHA: ${{ steps.admitted.outputs.head }}",
     ] {
         assert_eq!(
             env.lines().filter(|line| *line == binding).count(),

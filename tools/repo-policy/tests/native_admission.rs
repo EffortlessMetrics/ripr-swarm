@@ -1,6 +1,8 @@
 //! Execute retained native readiness/result shell against independent API vectors.
 #![cfg(target_os = "linux")]
 use serde_json::{Value, json};
+#[path = "support/native_subject.rs"]
+mod native_subject;
 #[path = "support/review_disposition.rs"]
 mod review_disposition;
 use std::{
@@ -63,7 +65,7 @@ fn execute_review_stream(
         */git/commits/*) printf '%s\n' "$MOCK_COMMIT";;
         */actions/workflows/*) printf '%s\n' 1;;
         */actions/runs\?*) printf '%s\n' '{"workflow_runs":[]}' ;;
-        graphql*) printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}';;
+        graphql*) case "$*" in *potentialMergeCommit*) printf '%s\n' "$MOCK_FRAME";; *) printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}';; esac;;
         *) echo 'Unexpected API endpoint' >&2; return 82;;
       esac
     }
@@ -87,14 +89,15 @@ fn execute_review_stream(
         .env("ACTOR", "trusted")
         .env("GITHUB_WORKFLOW_REF", "EffortlessMetrics/ripr-swarm/.github/workflows/routed-rust.yml@refs/pull/8008/merge")
         .env("GITHUB_RUN_NUMBER", "100")
-        .env("MOCK_COMMIT", json!({"parents": [{"sha": "b".repeat(40)}, {"sha": "a".repeat(40)}], "tree": {"sha": "d".repeat(40)}}).to_string())
+        .env("MOCK_COMMIT", json!({"sha":"c".repeat(40), "parents": [{"sha": "b".repeat(40)}, {"sha": "a".repeat(40)}], "tree": {"sha": "d".repeat(40)}}).to_string())
         .env("HEAD_SHA", "a".repeat(40))
         .env("BASE_SHA", "b".repeat(40))
         .env("SUBJECT_SHA", "c".repeat(40))
-        .env("MOCK_PR", pr.to_string())
+        .env("MOCK_PR", native_subject::api_pr(pr).to_string())
         .env("MOCK_REVIEWS", reviews)
         .env("GITHUB_OUTPUT", temp.join("out"))
         .env("GITHUB_STEP_SUMMARY", temp.join("summary"));
+    native_subject::configure(&mut command, WORKFLOW)?;
     for key in [
         "ADMISSION_RESULT",
         "EXECUTE",
@@ -140,6 +143,12 @@ fn execute_review_stream(
     }
     if let Some(commit) = environment.get("MOCK_COMMIT") {
         command.env("MOCK_COMMIT", commit.to_string());
+    }
+    if let Some(frame) = environment.get("MOCK_FRAME") {
+        command.env("MOCK_FRAME", frame.to_string());
+    }
+    if let Some(stored) = environment.get("STORED_BASE_SHA").and_then(Value::as_str) {
+        command.env("STORED_BASE_SHA", stored);
     }
     let output = command.output().map_err(|e| e.to_string())?;
     let result = output.status.success();
@@ -303,10 +312,12 @@ fn admission_rejects_event_base_that_disagrees_with_actual_merge_parent() -> Res
     // another, while the immutable merge object names a different base.
     // A matching PR payload alone must not authorize product allocation.
     let coherent = json!({"MOCK_COMMIT": {
+        "sha":"c".repeat(40),
         "parents": [{"sha": "b".repeat(40)}, {"sha": "a".repeat(40)}],
         "tree": {"sha": "d".repeat(40)}
     }});
     let inconsistent = json!({"MOCK_COMMIT": {
+        "sha":"c".repeat(40),
         "parents": [{"sha": "e".repeat(40)}, {"sha": "a".repeat(40)}],
         "tree": {"sha": "d".repeat(40)}
     }});
@@ -322,12 +333,8 @@ fn admission_rejects_event_base_that_disagrees_with_actual_merge_parent() -> Res
         &live["reviews"],
         &inconsistent
     )?);
-    let parent_guard = "'.parents | map(.sha) == [$base, $head]'";
-    let missing_guard = script
-        .lines()
-        .filter(|line| !line.contains(parent_guard))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let parent_guard = " and (.parents | map(.sha) == [$base,$head])";
+    let missing_guard = script.replace(parent_guard, "");
     assert_ne!(
         missing_guard, script,
         "production parent guard must be exercised"
@@ -358,7 +365,14 @@ fn final_readiness_replays_all_independent_live_drift_vectors() -> Result<(), St
                 &script,
                 &case["live_pull_request"],
                 &case["reviews"],
-                &json!({})
+                &if case["id"] == "base_after_preflight" {
+                    let mut frame = native_subject::fixture()?["FRAME"].clone();
+                    frame["data"]["repository"]["pullRequest"]["baseRef"]["target"]["oid"] =
+                        json!("e".repeat(40));
+                    json!({"MOCK_FRAME":frame})
+                } else {
+                    json!({})
+                }
             )?,
             case["expected"]["contract_allows_required_success"]
                 .as_bool()
@@ -868,9 +882,9 @@ fn printed_call_binds_every_admitted_input_and_required_dependency() -> Result<(
     for binding in [
         "proof_profile: qualification",
         "request_id: ${{ format('{0}-{1}', github.run_id, github.run_attempt) }}",
-        "head_sha: ${{ github.event.pull_request.head.sha }}",
-        "base_sha: ${{ github.event.pull_request.base.sha }}",
-        "subject_sha: ${{ github.sha }}",
+        "head_sha: ${{ needs.admission.outputs.head }}",
+        "base_sha: ${{ needs.admission.outputs.base }}",
+        "subject_sha: ${{ needs.admission.outputs.merge }}",
         "subject_tree: ${{ needs.admission.outputs.tree }}",
         "workflow_generation: ${{ github.workflow_sha }}",
     ] {
@@ -949,9 +963,9 @@ fn ci_call_binds_identities_and_conservatively_freezes_all_rows() -> Result<(), 
     for binding in [
         "proof_profile: qualification",
         "request_id: ${{ format('{0}-{1}', github.run_id, github.run_attempt) }}",
-        "head_sha: ${{ github.event.pull_request.head.sha }}",
-        "base_sha: ${{ github.event.pull_request.base.sha }}",
-        "subject_sha: ${{ github.sha }}",
+        "head_sha: ${{ needs.admission.outputs.head }}",
+        "base_sha: ${{ needs.admission.outputs.base }}",
+        "subject_sha: ${{ needs.admission.outputs.merge }}",
         "subject_tree: ${{ needs.admission.outputs.tree }}",
         "workflow_generation: ${{ github.workflow_sha }}",
         "run_rust_only: true",
@@ -1032,9 +1046,9 @@ fn wheel_call_binds_every_identity_and_native_result() -> Result<(), String> {
     for binding in [
         "proof_profile: qualification",
         "request_id: ${{ format('{0}-{1}', github.run_id, github.run_attempt) }}",
-        "head_sha: ${{ github.event.pull_request.head.sha }}",
-        "base_sha: ${{ github.event.pull_request.base.sha }}",
-        "subject_sha: ${{ github.sha }}",
+        "head_sha: ${{ needs.admission.outputs.head }}",
+        "base_sha: ${{ needs.admission.outputs.base }}",
+        "subject_sha: ${{ needs.admission.outputs.merge }}",
         "subject_tree: ${{ needs.admission.outputs.tree }}",
         "workflow_generation: ${{ github.workflow_sha }}",
     ] {
@@ -1155,5 +1169,28 @@ fn legacy_profiles_retain_selected_runner_failure_and_declared_fallback() -> Res
             &json!({"EVENT_NAME":event,"REF":reference,"LABEL":""})
         )?);
     }
+    Ok(())
+}
+
+#[test]
+fn stored_base_is_provenance_and_live_candidate_remains_exact() -> Result<(), String> {
+    let literal = native_subject::fixture()?;
+    let script = body("Reconcile native request and current readiness")?;
+    assert!(execute(
+        &script,
+        &literal["PR"],
+        &literal["REVIEWS"],
+        &json!({"STORED_BASE_SHA":"e".repeat(40)})
+    )?);
+    let mut bad = literal["FRAME"].clone();
+    bad["data"]["repository"]["pullRequest"]["potentialMergeCommit"]["parents"]["nodes"] = json!([
+        {"oid":"e".repeat(40)}, {"oid":"a".repeat(40)}
+    ]);
+    assert!(!execute(
+        &script,
+        &literal["PR"],
+        &literal["REVIEWS"],
+        &json!({"MOCK_FRAME":bad})
+    )?);
     Ok(())
 }

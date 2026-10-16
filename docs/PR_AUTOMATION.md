@@ -52,8 +52,9 @@ Before submission, bind H, current base B and the actual integration subject T;
 read native runs for the exact subject and preserve a queued/running request.
 Do not remove/re-add the label to refresh slow work. Native concurrency preserves
 running work but another identical request can replace an existing pending run;
-it is not exactly-once admission. Sequential duplicates reconcile prior native
-results, and failed proof requires repair or an explicitly justified native retry.
+it is not exactly-once admission. Pending duplicates and completed requests without qualified same-attempt producer
+receipts refuse without replacement. Failed proof requires repair or an explicitly
+justified native retry; adding the label again is not that authorization.
 
 A current COMMENT review can record `SOURCE_REVIEW_READY` when independent source
 review and applicable local proof are complete and only admitted hosted evidence
@@ -87,6 +88,29 @@ reviews and paginated unresolved threads without executing candidate code. The
 result refreshes the same readiness after selected proof; failed/missing/stale
 admission or selected evidence cannot emit required success. Ordinary unrelated
 labels use a distinct non-required name and per-run metadata concurrency.
+
+The staged v2 subject binds repository and PR object IDs, destination repository
+and fully qualified ref, H, live B, actual GitHub merge G, tree, complete ordered
+parents `[B,H]`, and workflow generation. Stored PR/event base metadata S is
+provenance only. The PR's live base ref and the independently named destination
+must both resolve to the same Commit B. Bounded REST refresh must establish
+mergeable=true before candidate reliance; missing, partial, malformed or changed
+identities refuse. Fresh observations bracket review/thread checks and repeat
+before the final required result. These observations do not exclude ABA changes
+or establish a transaction with check publication or merge.
+
+The docs selector, separate docs producer and Rust producer each pin and verify
+the admitted G/tree/parents before substantive execution. PR diff evidence and
+the advisory proof route consume the verified B/H rather than event S/H.
+Explicit legacy profiles preserve push/manual behavior.
+
+A successful v2 admission marker discovers identity; it does not prove producer
+execution. Successful prior-result reuse is currently unavailable because exact
+same-attempt callable MSRV/VSCode producer-step receipt identities have not been
+qualified. Pending or matching ineligible completed origins refuse without
+replacement. A reused-success aggregate with skipped children cannot supply
+origin proof, and no recursive origin chain is followed. Qualification and
+source-stage corrections do not activate the caller or retire existing triggers.
 
 After qualification is green, refresh `review-pr` on exact H and current
 integration inputs, then make the final vision/current-state decision. Only a

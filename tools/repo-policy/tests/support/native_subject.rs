@@ -1,0 +1,57 @@
+//! Literal API identity fixtures for actual production-shell replays.
+use serde_json::{Value, json};
+use std::process::Command;
+
+pub fn fixture() -> Result<Value, String> {
+    serde_json::from_str(include_str!(
+        "../../../../fixtures/convergence/native-late-admission/live-base-contract.json"
+    ))
+    .map_err(|error| format!("invalid literal live-base fixture: {error}"))
+}
+
+pub fn program(workflow: &str, name: &str) -> String {
+    workflow
+        .split_once(&format!("  {name}: |\n"))
+        .map(|(_, tail)| {
+            tail.lines()
+                .take_while(|line| line.is_empty() || line.starts_with("    "))
+                .map(|line| line.strip_prefix("    ").unwrap_or(line))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
+pub fn api_pr(pr: &Value) -> Value {
+    let mut pr = pr.clone();
+    if let Some(object) = pr.as_object_mut() {
+        object.insert("node_id".into(), json!("PR_fixture"));
+        object.insert("number".into(), json!(8008));
+        if let Some(repo) = pr.pointer_mut("/head/repo").and_then(Value::as_object_mut) {
+            repo.insert("node_id".into(), json!("R_fixture"));
+        }
+        if let Some(base) = pr.get_mut("base").and_then(Value::as_object_mut) {
+            base.insert("repo".into(), json!({"node_id":"R_fixture"}));
+        }
+    }
+    pr
+}
+
+pub fn configure(command: &mut Command, workflow: &str) -> Result<(), String> {
+    let literal = fixture()?;
+    command
+        .env("REPOSITORY_ID", "R_fixture")
+        .env("PR_ID", "PR_fixture")
+        .env("PR_DATABASE_ID", "8008")
+        .env("GENERATION", "f".repeat(40))
+        .env("GITHUB_WORKFLOW_SHA", "f".repeat(40))
+        .env("STORED_BASE_SHA", "b".repeat(40))
+        .env(
+            "NATIVE_SUBJECT_QUERY",
+            program(workflow, "NATIVE_SUBJECT_QUERY"),
+        )
+        .env("NATIVE_SUBJECT_JQ", program(workflow, "NATIVE_SUBJECT_JQ"))
+        .env("MOCK_FRAME", literal["FRAME"].to_string())
+        .env("EXPECTED_SUBJECT", literal["SUBJECT"].to_string());
+    Ok(())
+}
