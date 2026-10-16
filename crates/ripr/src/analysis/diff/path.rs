@@ -407,9 +407,12 @@ where
 /// at the repository-relative start: a hand-written `target/ripr` directory
 /// at any other depth is not an artifact path.
 pub(crate) fn is_ripr_artifact_path(path: &Path) -> bool {
-    let mut components = path.components();
-    matches!(components.next(), Some(Component::Normal(head)) if head == "target")
-        && matches!(components.next(), Some(Component::Normal(head)) if head == "ripr")
+    // Diff paths are git-spelled (forward slashes), but consumers also pass
+    // platform-native spellings; normalize both separator families before
+    // segmenting so the predicate answers the same question on every host.
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    let mut segments = normalized.split('/');
+    matches!(segments.next(), Some("target")) && matches!(segments.next(), Some("ripr"))
 }
 
 #[cfg(test)]
