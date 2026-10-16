@@ -509,7 +509,7 @@ fn help_index_routes_agent_repair_to_repair_help() -> Result<(), String> {
 #[test]
 fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), String> {
     for command in ["check", "context"] {
-        let help = normalized(&rendered_help(&[command, "--help"])?);
+        let help = normalized(&rendered_help(&[command, "--help", "--all"])?);
         for needle in [
             "instant (changed files only, cheapest)",
             "deep and ready (whole workspace, slowest)",
@@ -526,7 +526,7 @@ fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), Stri
 /// base through the same authority (#3952), so its help states the same order.
 #[test]
 fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
-    let check = normalized(&rendered_help(&["check", "--help"])?);
+    let check = normalized(&rendered_help(&["check", "--help", "--all"])?);
     for needle in [
         "the local origin/HEAD ref, then origin/main, origin/master, main, and master in order",
         "when none of those resolves, the analysis does not run",
@@ -556,7 +556,7 @@ fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
 /// the group list. Each task below must keep exactly its recommended path.
 #[test]
 fn check_help_chooses_one_format_per_task() -> Result<(), String> {
-    let check = normalized(&rendered_help(&["check", "--help"])?);
+    let check = normalized(&rendered_help(&["check", "--help", "--all"])?);
     for needle in [
         "Choose by task:",
         "eye review -> human",
@@ -631,6 +631,62 @@ fn doc_flag_guard_rejects_removed_flags_and_accepts_prose() -> Result<(), String
     let drift = undocumented_doc_flags(&[("good.md", good)], &mut cache, &run_ripr)?;
     if !drift.is_empty() {
         return Err(format!("guard rejected valid prose: {drift:?}"));
+    }
+    Ok(())
+}
+
+/// #8158 item 2: `check --help` is one screen that still answers the first
+/// questions (which base, which format, what the exit code means) and points
+/// at the exhaustive reference, which stays reachable and complete.
+#[test]
+fn check_help_is_one_screen_and_all_is_the_full_reference() -> Result<(), String> {
+    let short = rendered_help(&["check", "--help"])?;
+    let lines = short.lines().count();
+    if lines > 40 {
+        return Err(format!(
+            "`ripr check --help` must fit one screen (<= 40 lines), got {lines}"
+        ));
+    }
+    let short = normalized(&short);
+    for needle in [
+        "--base REV",
+        "--format FORMAT",
+        "origin/HEAD ref, then origin/main",
+        "Exit status:",
+        "ripr check --help --all",
+    ] {
+        assert_contains("`ripr check --help`", &short, needle)?;
+    }
+    for deep in ["RIPR_PARTIAL_DIFF_FILE_BUDGET", "--candidate-tree"] {
+        if short.contains(deep) {
+            return Err(format!("short check help leaked reference detail {deep:?}"));
+        }
+    }
+    let full = rendered_help(&["check", "--help", "--all"])?;
+    if full.lines().count() <= lines * 3 {
+        return Err("`--help --all` must be the exhaustive reference".to_string());
+    }
+    assert_contains(
+        "`ripr check --help --all`",
+        &full,
+        "RIPR_PARTIAL_DIFF_FILE_BUDGET",
+    )?;
+    // Every spelling of "help for check" agrees, and `--all` order is free.
+    let help_check_all = rendered_help(&["help", "check", "--all"])?;
+    let all_first = rendered_help(&["check", "--all", "--help"])?;
+    if help_check_all != full || all_first != full {
+        return Err(
+            "`help check --all` and `check --all --help` must equal `check --help --all`"
+                .to_string(),
+        );
+    }
+    if rendered_help(&["help", "check"])? != rendered_help(&["check", "--help"])? {
+        return Err("`help check` must equal `check --help`".to_string());
+    }
+    // `--all` is not a general check flag: without `--help` it stays unknown.
+    let bare = run_ripr(&["check", "--all"])?;
+    if bare.status.success() {
+        return Err("`ripr check --all` must not be accepted without --help".to_string());
     }
     Ok(())
 }
