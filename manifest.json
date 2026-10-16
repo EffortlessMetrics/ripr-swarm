@@ -347,6 +347,10 @@
     "bytes": 730,
     "sha256": "1c3dc8cb9ca390c9f7231dc6ba742b3849e0515b53942b2d5dcdb3daaf151f9d"
   },
+  "prior-diagnostic/manifest.json": {
+    "bytes": 3310,
+    "sha256": "4b8e0f48c32a5fd2c9081dacc4f9556248c459a17cfaa225bddee1d754ea9b98"
+  },
   "prior-diagnostic/observer.py": {
     "bytes": 3708,
     "sha256": "b95619265b1ab94ba854fa61552c914b547e07a99117e63bc9957075a21f3b6a"

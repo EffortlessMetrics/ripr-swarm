@@ -1,0 +1,111 @@
+{
+  "format": 1,
+  "scope": "diagnostic evidence excluding cache payloads and retained executable; binary hash in receipt/report",
+  "files": [
+    {
+      "path": "admission.txt",
+      "bytes": 1812,
+      "sha256": "8dbb9c557e23a90805a783bea72dc24a453e96ef68e105a516ef2ea0a3ef8a68"
+    },
+    {
+      "path": "analysis.json",
+      "bytes": 6249,
+      "sha256": "0a4a99fe203056510ce5145ef887b4459fcf8c9baf05654d60f648980eb3e676"
+    },
+    {
+      "path": "analysis.log",
+      "bytes": 6306,
+      "sha256": "1561520478e917ced7a5f8d08698db9e5e568ea47b620ae63c4dead21933d4fa"
+    },
+    {
+      "path": "analyze.py",
+      "bytes": 5670,
+      "sha256": "7cbd89c11121f1356f1d38ae22f3f52047ac0b875dfacac2caa4b7b43949335f"
+    },
+    {
+      "path": "diagnostic/phase-timeline.jsonl",
+      "bytes": 1409,
+      "sha256": "e5baeecd1a66ebe513b37475a6e3485f0091ff54b5776b4fb0ce25f67eefaa7c"
+    },
+    {
+      "path": "diagnostic/receipt.json",
+      "bytes": 2727,
+      "sha256": "a5f42432bd79323ba2cb8813fed3049c32af58652b668b385315fee45ba03521"
+    },
+    {
+      "path": "diagnostic/samples.jsonl",
+      "bytes": 571016,
+      "sha256": "be9949249c0dce2842dfdf6804402da9a213226b9ef221da1203be66e32e68c3"
+    },
+    {
+      "path": "diagnostic/stacks.jsonl",
+      "bytes": 203059,
+      "sha256": "a81c645158e0eb098a54e6fc0570c7e588e4e6db29758e1bca433fc559427652"
+    },
+    {
+      "path": "diagnostic/stderr.log",
+      "bytes": 671,
+      "sha256": "0a8eb7380bc767130c9a40f959aeca1d6f54be6e7d2934880f0fb1f9d4c8a797"
+    },
+    {
+      "path": "diagnostic/stdout.json",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "finalize.py",
+      "bytes": 5123,
+      "sha256": "786a3f34a77e041ec27a97b6c18492104ef619f7ef5549fc5d1c595df738f209"
+    },
+    {
+      "path": "input.json",
+      "bytes": 730,
+      "sha256": "1c3dc8cb9ca390c9f7231dc6ba742b3849e0515b53942b2d5dcdb3daaf151f9d"
+    },
+    {
+      "path": "observer.py",
+      "bytes": 3708,
+      "sha256": "b95619265b1ab94ba854fa61552c914b547e07a99117e63bc9957075a21f3b6a"
+    },
+    {
+      "path": "probe-detach.log",
+      "bytes": 1158,
+      "sha256": "3abf08855b9557fe15594263059685bc911c418d23fd3a4188b5fd98f3c4e763"
+    },
+    {
+      "path": "probe.log",
+      "bytes": 1084,
+      "sha256": "eee3e1e0c9864e19221484fc6baff820bfd88006ec278c422406195fe79c6d74"
+    },
+    {
+      "path": "probe.py",
+      "bytes": 862,
+      "sha256": "41f94d5746990a3f142d3c7ffd4b4e4b8a3f1f6d90dd292c2aa03582f8501ce1"
+    },
+    {
+      "path": "report.json",
+      "bytes": 6650,
+      "sha256": "655754299970375a9c27d90e22cfc3f168e5219a4c88893cef88ec8082d4c48b"
+    },
+    {
+      "path": "run.py",
+      "bytes": 7845,
+      "sha256": "98ea79b574b57dc1a73c97a4ffc598a18eef360e4d6eefbe470ae6fdfe5a558d"
+    },
+    {
+      "path": "symbolized-stacks.jsonl",
+      "bytes": 1340557,
+      "sha256": "47d63f38fae5b20ca08a9d52b5a578738e41c573dce23a528d92d1d1bdc869d5"
+    },
+    {
+      "path": "symbols.json",
+      "bytes": 440298,
+      "sha256": "a3e16f9b22f17d29dcaa88bf5ccaaa1f8f4b79a5ee5148ab44d578ceb4e97b68"
+    },
+    {
+      "path": "verified.diff",
+      "bytes": 40870,
+      "sha256": "e437f1a3015580d482ec9debeee7b7a35a27e398e6b01f564128a2600a97b687"
+    }
+  ]
+}
