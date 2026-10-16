@@ -1509,6 +1509,10 @@ mod tests {
     }
 
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMPORARY_GIT_ROOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    const TEMPORARY_GIT_ROOT_ATTEMPTS: usize = 32;
 
     fn run_git(root: &Path, args: &[&str]) -> Result<String, String> {
         git_output(root, args)
@@ -1519,22 +1523,212 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|error| format!("clock error: {error}"))?
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("ripr-artifact-identity-{stamp}"));
-        std::fs::create_dir_all(&root).map_err(|error| format!("create temp root: {error}"))?;
-        let init = (|| -> Result<(), String> {
-            run_git(&root, &["init", "--quiet"])?;
-            run_git(&root, &["config", "user.name", "RIPR test"])?;
-            run_git(
-                &root,
-                &["config", "user.email", "ripr-test@example.invalid"],
-            )?;
-            Ok(())
-        })();
-        if let Err(error) = init {
-            let _ = std::fs::remove_dir_all(&root);
-            return Err(error);
+        let parent = std::env::temp_dir();
+        std::fs::create_dir_all(&parent).map_err(|error| format!("create temp parent: {error}"))?;
+        // Nextest processes need distinct namespaces; the sequence also
+        // separates libtest threads. Exclusive creation remains the owner
+        // check even if a clock value or a process identifier is reused.
+        temporary_git_root_from_candidates((0..TEMPORARY_GIT_ROOT_ATTEMPTS).map(|_attempt| {
+            parent.join(format!(
+                "ripr-artifact-identity-{}-{}-{stamp}",
+                std::process::id(),
+                TEMPORARY_GIT_ROOT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            ))
+        }))
+    }
+
+    fn temporary_git_root_from_candidates(
+        candidates: impl IntoIterator<Item = PathBuf>,
+    ) -> Result<PathBuf, String> {
+        for root in candidates.into_iter().take(TEMPORARY_GIT_ROOT_ATTEMPTS) {
+            match std::fs::create_dir(&root) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(format!("create temp root {}: {error}", root.display())),
+            }
+            let init = (|| -> Result<(), String> {
+                run_git(&root, &["init", "--quiet"])?;
+                run_git(&root, &["config", "user.name", "RIPR test"])?;
+                run_git(
+                    &root,
+                    &["config", "user.email", "ripr-test@example.invalid"],
+                )?;
+                Ok(())
+            })();
+            if let Err(error) = init {
+                let _ = std::fs::remove_dir_all(&root);
+                return Err(error);
+            }
+            return Ok(root);
         }
-        Ok(root)
+        Err(format!(
+            "artifact fixture root candidates exhausted after at most {TEMPORARY_GIT_ROOT_ATTEMPTS} attempts"
+        ))
+    }
+
+    fn with_temporary_git_root(
+        check: impl FnOnce(&Path) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let root = temporary_git_root()?;
+        let result = check(&root);
+        let cleanup = std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove fixture parent: {error}"));
+        result?;
+        cleanup
+    }
+
+    #[test]
+    fn temporary_git_root_skips_occupied_directory_without_mutation() -> Result<(), String> {
+        with_temporary_git_root(|parent| {
+            let occupied = parent.join("occupied");
+            let fresh = parent.join("fresh");
+            std::fs::create_dir(&occupied).map_err(|error| error.to_string())?;
+            let marker = occupied.join("owner");
+            std::fs::write(&marker, "another fixture owns this")
+                .map_err(|error| error.to_string())?;
+            let allocated = temporary_git_root_from_candidates([occupied.clone(), fresh.clone()])?;
+            if allocated != fresh {
+                return Err(format!(
+                    "allocator reused occupied root: {}",
+                    allocated.display()
+                ));
+            }
+            if std::fs::read_to_string(&marker).map_err(|error| error.to_string())?
+                != "another fixture owns this"
+                || occupied.join(".git").exists()
+            {
+                return Err("allocation mutated an occupied fixture".to_string());
+            }
+            if !allocated.join(".git/config").is_file() {
+                return Err("fresh allocation is not an initialized repository".to_string());
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn temporary_git_root_collision_budget_preserves_poisoned_root() -> Result<(), String> {
+        with_temporary_git_root(|parent| {
+            let occupied = parent.join("occupied");
+            std::fs::create_dir(&occupied).map_err(|error| error.to_string())?;
+            let marker = occupied.join("owner");
+            let git_marker = occupied.join(".git");
+            std::fs::write(&marker, "preserve occupied root").map_err(|error| error.to_string())?;
+            std::fs::write(&git_marker, "not a git directory\n")
+                .map_err(|error| error.to_string())?;
+            let forbidden = parent.join("thirty-third-candidate");
+            let requested = std::cell::Cell::new(0);
+            let candidates = (0..33).map(|index| {
+                requested.set(requested.get() + 1);
+                if index == 32 {
+                    forbidden.clone()
+                } else {
+                    occupied.clone()
+                }
+            });
+            let result = temporary_git_root_from_candidates(candidates);
+            let marker_after = std::fs::read_to_string(&marker)
+                .map_err(|error| format!("occupied root was removed: {error}"))?;
+            let git_after = std::fs::read_to_string(&git_marker)
+                .map_err(|error| format!("occupied git marker was removed: {error}"))?;
+            if marker_after != "preserve occupied root" || git_after != "not a git directory\n" {
+                return Err("allocation modified an unclaimed root".to_string());
+            }
+            let error = result
+                .err()
+                .ok_or("exhausted collision budget admitted a root")?;
+            if !error.contains("candidates exhausted")
+                || requested.get() != 32
+                || forbidden.exists()
+            {
+                return Err(format!("allocation exceeded its collision budget: {error}"));
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn temporary_git_root_propagates_admission_errors_without_retry() -> Result<(), String> {
+        with_temporary_git_root(|parent| {
+            let blocked = parent.join("not-a-directory");
+            std::fs::write(&blocked, "preserve blocking file")
+                .map_err(|error| error.to_string())?;
+            let fallback = parent.join("must-not-be-requested");
+            let requested = std::cell::Cell::new(0);
+            let candidates = [blocked.join("child"), fallback.clone()]
+                .into_iter()
+                .inspect(|_candidate| requested.set(requested.get() + 1));
+            let error = temporary_git_root_from_candidates(candidates)
+                .err()
+                .ok_or("an invalid parent admitted a root")?;
+            if requested.get() != 1 || fallback.exists() {
+                return Err(format!("admission error was retried: {error}"));
+            }
+            if std::fs::read_to_string(&blocked).map_err(|error| error.to_string())?
+                != "preserve blocking file"
+            {
+                return Err("admission failure modified an unclaimed path".to_string());
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn temporary_git_root_contending_callers_keep_distinct_repositories() -> Result<(), String> {
+        with_temporary_git_root(|parent| {
+            let shared = parent.join("contended");
+            let barrier = std::sync::Barrier::new(8);
+            let roots = std::thread::scope(|scope| -> Result<Vec<PathBuf>, String> {
+                let mut handles = Vec::new();
+                for index in 0..8 {
+                    let first = shared.clone();
+                    let fallback = parent.join(format!("private-{index}"));
+                    let start = &barrier;
+                    handles.push(scope.spawn(move || -> Result<PathBuf, String> {
+                        start.wait();
+                        let root = temporary_git_root_from_candidates([first, fallback])?;
+                        std::fs::write(root.join("allocation-owner"), index.to_string())
+                            .map_err(|error| error.to_string())?;
+                        Ok(root)
+                    }));
+                }
+                let mut roots = Vec::new();
+                for handle in handles {
+                    roots.push(
+                        handle
+                            .join()
+                            .map_err(|_panic_payload| "allocation worker panicked")??,
+                    );
+                }
+                Ok(roots)
+            })?;
+            let distinct: std::collections::BTreeSet<_> = roots.iter().collect();
+            if distinct.len() != 8 || roots.iter().filter(|root| **root == shared).count() != 1 {
+                return Err(format!("contending callers shared a fixture: {roots:?}"));
+            }
+            // Read only after every writer has joined: an early marker read
+            // could miss a later overwrite in an incorrectly shared root.
+            for (index, root) in roots.iter().enumerate() {
+                if std::fs::read_to_string(root.join("allocation-owner"))
+                    .map_err(|error| error.to_string())?
+                    != index.to_string()
+                    || !root.join(".git/config").is_file()
+                {
+                    return Err(format!(
+                        "fixture ownership or repository missing: {}",
+                        root.display()
+                    ));
+                }
+                let observed = run_git(root, &["rev-parse", "--show-toplevel"])?;
+                let top = Path::new(observed.trim())
+                    .canonicalize()
+                    .map_err(|error| error.to_string())?;
+                if top != root.canonicalize().map_err(|error| error.to_string())? {
+                    return Err("allocation borrowed another repository".to_string());
+                }
+            }
+            Ok(())
+        })
     }
 
     fn commit_file(root: &Path, name: &str, body: &str) -> Result<(), String> {
