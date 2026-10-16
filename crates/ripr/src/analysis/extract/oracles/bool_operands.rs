@@ -592,7 +592,13 @@ fn conjunct_states_relation(conjunct: &str) -> bool {
 /// other side may be `false`, so the test may be asserted false: like a
 /// `matches!` compared with a non-literal, it fails closed.
 fn compares_test_with_non_literal(line: &str) -> bool {
-    let literal = |side: &str| literal_spelling_value(&mask_comments_and_strings(side)).is_some();
+    // A constructor wrapper keeps a literal a literal (`Some(true)`;
+    // #8101).
+    let literal_value = |side: &str| {
+        let side = constructor_argument(side).unwrap_or(side);
+        literal_spelling_value(&mask_comments_and_strings(side))
+    };
+    let literal = |side: &str| literal_value(side).is_some();
     let comparison = assertion_comparison(line);
     let (mut left, mut right): (&str, &str) = match &comparison {
         Some(AssertionComparison::Operands { left, right, .. }) => (left, right),
@@ -609,6 +615,20 @@ fn compares_test_with_non_literal(line: &str) -> bool {
     // true)`; review of #8110).
     loop {
         (left, right) = (left.trim(), right.trim());
+        // `Some(test)` against `Some(false)` asserts the test false, which
+        // excludes it like a bare `false` does.
+        let wrapped = constructor_argument(left).is_some() && constructor_argument(right).is_some();
+        if wrapped {
+            let (inner_left, inner_right) = (
+                constructor_argument(left).unwrap_or(left),
+                constructor_argument(right).unwrap_or(right),
+            );
+            match (literal_value(left), literal_value(right)) {
+                (Some(false), None) if is_bool_test(inner_right) => return true,
+                (None, Some(false)) if is_bool_test(inner_left) => return true,
+                _ => {}
+            }
+        }
         let other = match (literal(left), literal(right)) {
             (false, false) => return is_bool_test(left) || is_bool_test(right),
             (true, false) => right,
@@ -642,6 +662,11 @@ fn whole_comparison_sides(condition: &str) -> Option<(&str, &str)> {
 /// a value).
 fn is_bool_test(side: &str) -> bool {
     let (core, _, _) = strip_negations(side);
+    // A constructor wrapper keeps whether its one argument is a test
+    // (`Some(r == Err(E::Bad))`; #8101).
+    if let Some(inner) = constructor_argument(core) {
+        return is_bool_test(inner);
+    }
     // A comparison inside a call's arguments is the callee's input, not an
     // operand of the bitwise operator (`flags | compute(|v| v == 1)`; #8101).
     let masked = blank_call_arguments(&mask_comments_and_strings(core));
@@ -658,6 +683,34 @@ fn is_bool_test(side: &str) -> bool {
         || (holds_test
             && (has_top_level_bitwise_operator(core)
                 || split_top_level_conjuncts(&conjoin_single_ampersands(core)).len() > 1))
+}
+
+/// The one argument of an `Option` or `Result` variant constructor that is
+/// the whole of `text` (`Some(x)`, `Ok(x)`, `Err(x)`, `Option::Some(x)`).
+/// Such a wrapper cannot turn its argument into a different kind of value,
+/// so a comparison or pattern inside it is still the side's test.
+fn constructor_argument(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let masked = mask_comments_and_strings(text);
+    let open = masked.find('(')?;
+    let callee = masked.get(..open)?.trim_end();
+    let name = callee.rsplit("::").next()?;
+    if !matches!(name, "Some" | "Ok" | "Err") {
+        return None;
+    }
+    let path = callee.strip_suffix(name)?.trim_end();
+    if !(path.is_empty()
+        || path.strip_suffix("::").is_some_and(|head| {
+            matches!(
+                head.trim_end().rsplit("::").next(),
+                Some("Option" | "Result")
+            )
+        }))
+    {
+        return None;
+    }
+    let argument = super::arguments::parenthesized_contents(text.get(open..)?)?;
+    (super::arguments::split_top_level_commas(argument).len() == 1).then_some(argument)
 }
 
 /// Masked `text` with the inside of every call's argument list blanked: a

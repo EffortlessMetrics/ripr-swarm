@@ -3,5 +3,6 @@
   (`!(flag || matches!(..))`, `!{ matches!(..) }`,
   `Some(matches!(..)).unwrap().not()`, `(matches!(..),).0.eq(&false)`), a
   block under `^` or `|`, and a comparison or pattern compared with a
-  non-literal side (`assert_eq!(r == Err(E::Bad), expected)`) no longer
+  non-literal side (`assert_eq!(r == Err(E::Bad), expected)`; the reading also
+  caps `||`, `&&`, relational operators and comparison calls) no longer
   earn `exact_value`/strong credit (RIPR-SPEC-0231 rule 1; #8006).

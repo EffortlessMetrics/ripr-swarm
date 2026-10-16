@@ -1097,6 +1097,12 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!(<u8 as From<bool>>::from(r == Err(E::Bad)), 0);",
         "assert_eq!(Into::<u8>::into(r == Err(E::Bad)), n);",
         "assert_eq!(std::primitive::u8::from(r == Err(E::Bad)), 0);",
+        // #8101: a constructor wrapper carries the test, and its other side
+        // (`Some(false)`) is no boolean literal.
+        "assert_eq!(Some(r == Err(E::Bad)), Some(expected));",
+        "assert_eq!(Some(matches!(r, Err(E::Bad))), Some(false));",
+        "assert_eq!(Ok(r == Err(E::Bad)), Ok(expected));",
+        "assert_eq!(Option::Some(!matches!(r, Err(E::Bad))), Some(flag));",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
@@ -1116,6 +1122,8 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert!(matches!(r, Err(E::Bad)).eq(&true));",
         "assert!(foo::<T>(matches!(x, A)).is_ok());",
         "assert_eq!(flags | compute(|v| v == 1), EXPECTED);",
+        "assert_eq!(Some(score(2)), Some(4));",
+        "assert_eq!(Ok(parse(x)), Ok(4));",
     ] {
         if is_inequality_assertion(text) {
             return Err(format!("{text}: must not read as an inequality"));
@@ -1174,6 +1182,17 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         require_classification(text, expected)?;
     }
     for (text, plain) in [
+        // A constructor wrapper that is asserted true pins like its bare
+        // spelling; a negated conjunction conjoined with a comparison reads
+        // as its pattern-free twin does (#8101 control).
+        (
+            "assert_eq!(Some(r == Err(E::Bad)), Some(true));",
+            "assert_eq!(r == Err(E::Bad), true);",
+        ),
+        (
+            "assert!(!(flag && matches!(r, Err(E::Bad))) && x == 4);",
+            "assert!(!(flag && other) && x == 4);",
+        ),
         (
             "assert!(foo::<T>(matches!(x, A)).is_ok());",
             "assert!(foo(matches!(x, A)).is_ok());",
