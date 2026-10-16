@@ -12178,6 +12178,9 @@ fixtures = []
 code = [
   "crates/ripr/src/main.rs",
   "crates/ripr/src/cli/help_json.rs",
+  "crates/ripr/src/cli/commands_context.rs",
+  "crates/ripr/src/cli/commands/agent_card.rs",
+  "crates/ripr/src/cli/commands/agent_stub.rs",
   "crates/ripr/src/cli/command.rs",
   "crates/ripr/src/cli/execute.rs",
   "crates/ripr/src/cli/mod.rs",
