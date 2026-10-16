@@ -544,16 +544,22 @@ fn keys_mock_once(literal: &str, property: &str, is_mock: fn(&str) -> bool) -> b
 /// itself be the arrow: a wrapper that merely contains one (a call such as
 /// `(() => recordTwo)()`, a conditional such as
 /// `ready ? (v) => v : recordTwo`, a grouping) can evaluate to a named
-/// implementation, so it refuses too (#8148 review).
+/// implementation, so it refuses too (#8148 review). A space between the
+/// factory or its type arguments and `(` is the same call, as in
+/// [`is_bare_mock_factory`]. String contents arrive masked (see
+/// `ts_mask_literals_and_comments`), so a `)` inside a string in the
+/// implementation never ends the call.
 fn closed_mock_call(text: &str) -> Option<&str> {
     let rest = MOCK_FACTORIES
         .iter()
         .find_map(|factory| text.strip_prefix(factory))?;
+    let rest = rest.trim_start();
     let rest = if rest.starts_with('<') {
         &rest[closing_offset(rest, '<', '>')?..]
     } else {
         rest
     };
+    let rest = rest.trim_start();
     if !rest.starts_with('(') {
         return None;
     }
@@ -737,18 +743,26 @@ fn without_closed_mock_factories(text: &str) -> String {
         let mut end = 0;
         if rest.starts_with('<') {
             match closing_offset(rest, '<', '>') {
-                Some(close) if rest[close..].starts_with('(') && type_like(&rest[1..close - 1]) => {
+                Some(close)
+                    if rest[close..].trim_start().starts_with('(')
+                        && type_like(&rest[1..close - 1]) =>
+                {
                     end = close
                 }
                 _ => continue,
             }
         }
-        if rest[end..].starts_with('(') {
-            let Some(close) = closing_offset(&rest[end..], '(', ')') else {
+        // A space between the factory or its type arguments and `(` is the
+        // same call, as in [`is_bare_mock_factory`] and
+        // [`closed_mock_call`].
+        let tail = &rest[end..];
+        let whitespace = tail.len() - tail.trim_start().len();
+        if tail[whitespace..].starts_with('(') {
+            let Some(close) = closing_offset(&tail[whitespace..], '(', ')') else {
                 kept.push_str(rest);
                 return kept;
             };
-            end += close;
+            end += whitespace + close;
         }
         rest = &rest[end..];
     }

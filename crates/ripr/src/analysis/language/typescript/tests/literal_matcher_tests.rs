@@ -376,6 +376,12 @@ fn mock_payload_binding_must_be_exactly_a_fresh_mock() {
         "const db = { write: jest.fn(() => 2) }; save(db, 1);",
         "const db = { write: jest.fn(async (v) => v) }; save(db, 1);",
         "const db = { write: jest.fn(v => v) }; save(db, 1);",
+        // A space before the call's `(` is the same call.
+        "const db = { write: jest.fn () }; save(db, 1);",
+        "const db = { write: jest.fn ((v) => v) }; save(db, 1);",
+        // A `)` inside a string in the implementation is masked, so the
+        // call closes at its real parenthesis (#8148 review).
+        "const db = { write: jest.fn(() => \")\") }; save(db, 1);",
         "const db = { write: vi.fn<(v: number) => void>() };\nsave(db, 1);",
     ] {
         assert!(facts.credits(&db_payload, test), "{test}");
@@ -406,6 +412,8 @@ fn mock_payload_binding_must_be_exactly_a_fresh_mock() {
         "const send = jest.fn();",
         "const send = jest.fn((m: string) => m);",
         "const send = jest.fn(async (m: string) => m);",
+        // A space before the call's `(` is the same call.
+        "const send = jest.fn ();",
         "const send = vi.fn<(m: string) => void>();",
         // A line break before a new statement ends it.
         "const send = jest.fn()",
