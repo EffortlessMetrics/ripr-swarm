@@ -642,6 +642,11 @@ fn whole_comparison_sides(condition: &str) -> Option<(&str, &str)> {
 /// a value).
 fn is_bool_test(side: &str) -> bool {
     let (core, _, _) = strip_negations(side);
+    // A constructor or one-element array holds its operand's value, so a
+    // test wrapped in one is still a test (`Some(r == Err(E::Bad))`; #8101).
+    if let Some(inner) = peel_value_wrapper(core) {
+        return is_bool_test(inner);
+    }
     // A comparison inside a call's arguments is the callee's input, not an
     // operand of the bitwise operator (`flags | compute(|v| v == 1)`; #8101).
     let masked = blank_call_arguments(&mask_comments_and_strings(core));
@@ -658,6 +663,74 @@ fn is_bool_test(side: &str) -> bool {
         || (holds_test
             && (has_top_level_bitwise_operator(core)
                 || split_top_level_conjuncts(&conjoin_single_ampersands(core)).len() > 1))
+}
+
+/// The one operand of a value wrapper that keeps it: a `Some`, `Ok` or `Err`
+/// constructor (through a path or turbofish), a one-element array, or an
+/// `.unwrap()` or `.expect(..)` on such a constructor (`Some(x).unwrap()`).
+/// Comparing the wrapped test with a non-literal may assert it false, like
+/// the bare test (#8101).
+fn peel_value_wrapper(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let masked = mask_comments_and_strings(text);
+    let masked = masked.trim_end();
+    if text.starts_with('[') && masked.ends_with(']') {
+        let mut depth = 0usize;
+        for (index, ch) in masked.char_indices() {
+            match ch {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 && index + 1 != masked.len() {
+                        return None;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let inner = text.get(1..masked.len().checked_sub(1)?)?;
+        return (super::arguments::split_top_level_commas(inner).len() == 1).then_some(inner);
+    }
+    let open = final_group_open(masked)?;
+    let callee = masked.get(..open)?.trim_end();
+    if let Some(receiver) = callee
+        .strip_suffix(".unwrap")
+        .or_else(|| callee.strip_suffix(".expect"))
+    {
+        // Only a constructor receiver keeps the wrapped value; any other
+        // call's result is its own value.
+        return peel_value_wrapper(text.get(..receiver.len())?)
+            .and_then(|_| text.get(..receiver.len()));
+    }
+    let argument = super::arguments::parenthesized_contents(text.get(open..)?.trim_end())?;
+    if super::arguments::split_top_level_commas(argument).len() != 1 {
+        return None;
+    }
+    let mut callee = callee;
+    if callee.ends_with('>') {
+        // Skip a turbofish (`Ok::<bool, ()>(..)`), whose `->` is no close.
+        let mut depth = 0usize;
+        let mut start = None;
+        for (index, ch) in callee.char_indices().rev() {
+            match ch {
+                '>' if !callee.get(..index)?.ends_with('-') => depth += 1,
+                '<' => {
+                    depth = depth.checked_sub(1)?;
+                    if depth == 0 {
+                        start = Some(index);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        callee = callee.get(..start?)?.trim_end().strip_suffix("::")?;
+    }
+    let path = callee.trim_end_matches(|ch: char| ch.is_alphanumeric() || ch == '_');
+    let name = callee.get(path.len()..)?;
+    let path = path.trim_end();
+    (matches!(name, "Some" | "Ok" | "Err") && (path.is_empty() || is_path_head(path)))
+        .then_some(argument)
 }
 
 /// Masked `text` with the inside of every call's argument list blanked: a

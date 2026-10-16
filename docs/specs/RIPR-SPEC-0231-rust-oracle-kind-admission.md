@@ -310,7 +310,12 @@ Two pattern terms are used below.
    `assert_eq!(u8::from(r == Err(E::Bad)), n)`; #8093), and so do the
    `From`/`Into` path spellings of that conversion (`From::from(..)`,
    `<u8 as From<bool>>::from(..)`, `Into::<u8>::into(..)`,
-   `std::primitive::u8::from(..)`; #8101); a cast of a value
+   `std::primitive::u8::from(..)`; #8101); a `Some`, `Ok` or `Err`
+   constructor, a one-element array, or an `.unwrap()`/`.expect(..)` on such a
+   constructor keeps the test it holds, so it caps against a non-literal
+   (`assert_eq!(Some(r == Err(E::Bad)), Some(expected))`; a wrapped literal is
+   no literal side, so `Some(true) == Some(matches!(..))` caps too, a safe
+   underclaim; #8101); a cast of a value
    still pins (`assert_eq!(x as u8, 3)`). Such a comparison asserted by a
    boolean literal caps the same way (`assert_eq!((r == Err(E::Bad)) as u8
    == 0, true)`, `assert_eq!((r == Err(E::Bad)) == flag, true)`), and a

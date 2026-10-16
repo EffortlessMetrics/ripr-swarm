@@ -945,7 +945,6 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             &exact,
         ),
         ("assert!(foo(matches!(x, A)).is_ok());", &exact),
-        ("assert!(Some(true) == Some(matches!(r, Ok(3))));", &exact),
         (
             "assert!(xs.iter().any(|x| f(matches!(x, Some(3)))));",
             &exact,
@@ -1170,6 +1169,34 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             "assert!(flag == if (ready && matches!(r, Ok(3))) { false } else { true });",
             &weak,
         ),
+        // #8101: a value wrapper keeps the test it holds, so it caps when
+        // compared with a non-literal; a wrapped plain value, a call's own
+        // `unwrap` and a multi-element array stay pinned values.
+        ("assert_eq!(Some(r == Err(E::Bad)), Some(expected));", &weak),
+        (
+            "assert_eq!(Some(matches!(r, Err(E::Bad))), Some(false));",
+            &weak,
+        ),
+        (
+            "assert_eq!(Ok::<bool, ()>(r == Err(E::Bad)), Ok(expected));",
+            &weak,
+        ),
+        ("assert_eq!([r == Err(E::Bad)], [expected]);", &weak),
+        (
+            "assert_eq!(Some(r == Err(E::Bad)).unwrap(), expected);",
+            &weak,
+        ),
+        (
+            "assert_eq!(Option::Some(r == Err(E::Bad)).expect(\"set\"), expected);",
+            &weak,
+        ),
+        // A wrapped literal is no literal side: its polarity is not read, so
+        // this safe underclaim caps (it read exact before #8101).
+        ("assert!(Some(true) == Some(matches!(r, Ok(3))));", &weak),
+        ("assert_eq!(Some(total(3)), Some(7));", &exact),
+        ("assert_eq!(Some(total(3)).unwrap(), 7);", &exact),
+        ("assert_eq!(lookup(total(3)).unwrap(), x);", &exact),
+        ("assert_eq!(MySome(total(3)), expected);", &exact),
     ] {
         require_classification(text, expected)?;
     }
