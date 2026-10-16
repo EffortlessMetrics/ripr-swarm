@@ -27,21 +27,26 @@ pub(super) enum WorkspaceRootResolution {
 /// RIPR-SPEC-0129). This is the single source of truth for the advertised
 /// set: the code-action parity tests in `lsp/tests.rs` assert every emitted
 /// kind against these constants so the advertisement and the emitters
-/// cannot drift in the same direction. `quickfix.ripr` and
-/// `quickfix.ripr.verify` are advertised-but-unemitted (reserved); the emitters
-/// in `lsp/actions.rs` use `quickfix.ripr.inspect` / `quickfix.ripr.navigate`
-/// for per-diagnostic actions and `source.ripr.refresh` for the
-/// workspace-level refresh. Per-diagnostic actions sit under `quickfix`
+/// cannot drift in the same direction. `quickfix.ripr` is the hierarchy root,
+/// never emitted itself: under LSP 3.17 hierarchical kind semantics a request
+/// for it keeps every `quickfix.ripr.*` action. Every other advertised kind
+/// has an emitter, and a kind with no emitter stays unadvertised (#7773): the
+/// closed set can grow later without changing what a client already
+/// configured against. The emitters in `lsp/actions.rs` use
+/// `quickfix.ripr.inspect` / `quickfix.ripr.navigate` for per-diagnostic
+/// actions and `source.ripr.refresh` for the workspace-level refresh. Per-diagnostic actions sit under `quickfix`
 /// because VS Code's lightbulb / Quick Fix menu never lists `source.*`
 /// actions (they appear only under "Source Action..."); refresh is not a fix
 /// for one diagnostic, so it stays a source action.
-pub(super) const ADVERTISED_CODE_ACTION_KINDS: [&str; 5] = [
-    "quickfix.ripr",
+pub(super) const ADVERTISED_CODE_ACTION_KINDS: [&str; 4] = [
+    CODE_ACTION_KIND_HIERARCHY_ROOT,
     "quickfix.ripr.inspect",
     "quickfix.ripr.navigate",
-    "quickfix.ripr.verify",
     "source.ripr.refresh",
 ];
+
+/// The advertised kind that only names the `quickfix.ripr.*` subtree.
+pub(super) const CODE_ACTION_KIND_HIERARCHY_ROOT: &str = "quickfix.ripr";
 
 #[cfg(test)]
 pub(super) fn initialize_result() -> InitializeResult {

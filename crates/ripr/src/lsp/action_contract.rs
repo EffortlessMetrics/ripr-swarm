@@ -157,8 +157,9 @@ pub(super) fn disabled_reason_emittable(reason: ActionDisabledReason) -> bool {
 }
 
 /// Bounded action classes mirroring the advertised kind hierarchy
-/// (`quickfix.ripr.*` / `source.ripr.refresh`). `verify` is reserved for the
-/// advertised-but-unemitted `quickfix.ripr.verify` kind.
+/// (`quickfix.ripr.*` / `source.ripr.refresh`). `verify` is reserved for a
+/// future `quickfix.ripr.verify` kind, which is not advertised until an
+/// emitter exists (#7773).
 pub(super) fn action_class_for_kind(kind: &str) -> &'static str {
     match kind {
         "quickfix.ripr.navigate" => "navigate",

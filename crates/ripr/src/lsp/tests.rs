@@ -7,8 +7,8 @@ use super::backend::{
     refresh_completed_log_message, refresh_failed_log_message, workspace_input_path_is_relevant,
 };
 use super::capabilities::{
-    ADVERTISED_CODE_ACTION_KINDS, WorkspaceRootResolution, initialize_result,
-    root_from_initialize_params,
+    ADVERTISED_CODE_ACTION_KINDS, CODE_ACTION_KIND_HIERARCHY_ROOT, WorkspaceRootResolution,
+    initialize_result, root_from_initialize_params,
 };
 use super::client_features::ClientFeatureProfile;
 use super::config::{
@@ -6016,6 +6016,7 @@ fn code_action_response_emitted_kinds_stay_within_the_advertised_set() -> Result
             code_action_response(&gap_params, Some(&gap_snapshot), &vscode),
         ),
     ];
+    let mut emitted = std::collections::BTreeSet::new();
     for (scenario, actions) in &scenarios {
         if actions.len() < 2 {
             return Err(format!(
@@ -6029,7 +6030,20 @@ fn code_action_response_emitted_kinds_stay_within_the_advertised_set() -> Result
                     "{scenario}: emitted kind {kind} is not in the advertised code-action kinds"
                 ));
             }
+            emitted.insert(kind);
         }
+    }
+    // The reverse direction (#7773): an advertised kind with no emitter is a
+    // promise the server never keeps. Only the hierarchy root may be silent.
+    for kind in ADVERTISED_CODE_ACTION_KINDS {
+        if kind != CODE_ACTION_KIND_HIERARCHY_ROOT && !emitted.contains(kind) {
+            return Err(format!(
+                "advertised kind {kind} is emitted by no scenario; stop advertising it or emit it"
+            ));
+        }
+    }
+    if ADVERTISED_CODE_ACTION_KINDS.contains(&"quickfix.ripr.verify") {
+        return Err("quickfix.ripr.verify has no emitter and must stay unadvertised".to_string());
     }
     Ok(())
 }
