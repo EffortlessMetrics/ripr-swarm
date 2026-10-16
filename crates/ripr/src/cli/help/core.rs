@@ -458,6 +458,11 @@ Options:
   --profile    Check installed-binary analysis (default) or prerequisites for
                building RIPR from source.
 
+Default human output fits one 80x24 screen: failures first, each with a Fix
+line, then compact passing groups. `-v`/`--verbose` prints binary identity,
+config defaults, test surfaces, Perl preview, known limitations, and start-here
+detail. `--json` is unchanged and remains the complete typed report.
+
 The JSON report is machine-readable advisory setup evidence. A `fail` status or
 non-zero exit means at least one core check failed; it is not a release or gate
 decision.
@@ -492,11 +497,11 @@ First-run diagnosis:
     no overclaiming. Printed for every profile.
   - Detected test surfaces: per detected language, the first recognizable
     framework marker (cargo test, pytest, jest, vitest, bun). Prints
-    "test framework not detected" rather than guessing. Printed for every
-    profile.
+    "test framework not detected" rather than guessing. Printed with
+    `-v`/`--verbose`.
   - Known limitations: static notes on preview coverage, cross-language
     oracle visibility (fail-closed), large-repo scan bounds, and advisory
-    nature of preview-language evidence. Printed for every profile.
+    nature of preview-language evidence. Printed with `-v`/`--verbose`.
   - Recommended first command (analysis profile; not printed for --profile
     source-build): ripr check (no base: the loader resolves this
     repository's own default branch). When git is not on PATH, the `!` git line

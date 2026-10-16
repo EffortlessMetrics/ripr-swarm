@@ -9,7 +9,8 @@
 mod fallible_check;
 mod literal_json;
 use literal_json::{
-    json_namespace_rebound, literal_json_import_visible, literal_json_tokens, literal_json_tree,
+    json_namespace_rebound, literal_json_import_visible_among, literal_json_tokens,
+    literal_json_tree, literal_json_uses,
 };
 mod slice_table;
 pub(crate) use fallible_check::{decimal_u8, literal_check_syntax, literal_owner_syntax};
@@ -565,6 +566,11 @@ fn macro_binding_ambiguities(
     let Some(parse) = parse_clean_source_file(source) else {
         return all(0, MacroBindingKind::Unparsed, false);
     };
+    let tree = parse.tree();
+    // `binding_free_local_wrapper` used to walk every descendant for each
+    // untrusted macro. On a 20k-line test file that is macros × file size
+    // and hung PR evidence after the unseen-reach cache landed.
+    let binding_free = BindingFreeFileIndex::collect(tree.syntax());
     // Built only when a binding site is found, which most files lack.
     let lines = std::cell::OnceCell::new();
     let line_of = |node: &SyntaxNode| {
@@ -728,7 +734,7 @@ fn macro_binding_ambiguities(
             // tests then use it. The one exception is a wrapper whose only
             // definition this file shows and whose expansion cannot bind a
             // name at all (#6648).
-            if binding_free_local_wrapper(parse.tree().syntax(), &call, &tokens, trusted) {
+            if binding_free_local_wrapper(&binding_free, &call, &tokens, trusted) {
                 continue;
             }
             for token in &tokens {
@@ -901,6 +907,59 @@ const INERT_ATTRIBUTES: &[&str] = &[
     "doc",
 ];
 
+/// File-scoped nodes [`binding_free_local_wrapper`] filters per call.
+/// Collected once per parse; walking them per untrusted macro is quadratic.
+struct BindingFreeFileIndex {
+    uses: Vec<ast::UseTree>,
+    rules: Vec<ast::MacroRules>,
+    modules: Vec<SyntaxNode>,
+    calls: Vec<ast::MacroCall>,
+}
+
+#[cfg(test)]
+thread_local! {
+    static BINDING_FREE_INDEX_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_binding_free_index_count() -> usize {
+    BINDING_FREE_INDEX_COUNT.with(|count| count.replace(0))
+}
+
+impl BindingFreeFileIndex {
+    fn collect(root: &SyntaxNode) -> Self {
+        #[cfg(test)]
+        BINDING_FREE_INDEX_COUNT.with(|count| count.set(count.get() + 1));
+        let mut uses = Vec::new();
+        let mut rules = Vec::new();
+        let mut modules = Vec::new();
+        let mut calls = Vec::new();
+        for node in root.descendants() {
+            if let Some(tree) = ast::UseTree::cast(node.clone()) {
+                uses.push(tree);
+                continue;
+            }
+            if let Some(item) = ast::MacroRules::cast(node.clone()) {
+                rules.push(item);
+                continue;
+            }
+            if ast::Module::can_cast(node.kind()) {
+                modules.push(node);
+                continue;
+            }
+            if let Some(call) = ast::MacroCall::cast(node) {
+                calls.push(call);
+            }
+        }
+        Self {
+            uses,
+            rules,
+            modules,
+            calls,
+        }
+    }
+}
+
 /// Whether `call` invokes a `macro_rules!` this file defines once, in
 /// textual scope before the call, whose expansion cannot bind a macro name
 /// (#6648). The definition and the call arguments hold no binding word
@@ -915,7 +974,7 @@ const INERT_ATTRIBUTES: &[&str] = &[
 /// may be a macro ripr cannot see. Attribute proc macros stay invisible here
 /// as everywhere else.
 fn binding_free_local_wrapper(
-    root: &SyntaxNode,
+    facts: &BindingFreeFileIndex,
     call: &ast::MacroCall,
     argument_tokens: &[ra_ap_syntax::SyntaxToken],
     trusted: &[&str],
@@ -929,24 +988,18 @@ fn binding_free_local_wrapper(
     let named = |candidate: Option<ast::Name>| {
         candidate.is_some_and(|candidate| candidate.text().trim_start_matches("r#") == name)
     };
-    let imported = root
-        .descendants()
-        .filter_map(ast::UseTree::cast)
-        .any(|tree| {
-            tree.rename().is_some_and(|rename| named(rename.name()))
-                || tree
-                    .path()
-                    .and_then(|path| path.segment())
-                    .and_then(|segment| segment.name_ref())
-                    .is_some_and(|segment| segment.text().trim_start_matches("r#") == name)
-        });
+    let imported = facts.uses.iter().any(|tree| {
+        tree.rename().is_some_and(|rename| named(rename.name()))
+            || tree
+                .path()
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .is_some_and(|segment| segment.text().trim_start_matches("r#") == name)
+    });
     if imported {
         return false;
     }
-    let mut definitions = root
-        .descendants()
-        .filter_map(ast::MacroRules::cast)
-        .filter(|rules| named(rules.name()));
+    let mut definitions = facts.rules.iter().filter(|rules| named(rules.name()));
     let (Some(definition), None) = (definitions.next(), definitions.next()) else {
         return false;
     };
@@ -997,11 +1050,7 @@ fn binding_free_local_wrapper(
         let start = node.text_range().start();
         start >= definition_end && start < call_start
     };
-    if root
-        .descendants()
-        .filter(|node| ast::Module::can_cast(node.kind()))
-        .any(|node| between(&node))
-    {
+    if facts.modules.iter().any(&between) {
         return false;
     }
     // A macro expanded between the definition and the call could emit a
@@ -1009,11 +1058,12 @@ fn binding_free_local_wrapper(
     // but which shadows the first at the call. Even a trusted name may be
     // a local or imported macro there (`macro_rules! vec`), so only inert
     // calls of this same wrapper may sit between them.
-    root.descendants()
-        .filter_map(ast::MacroCall::cast)
+    facts
+        .calls
+        .iter()
         .filter(|other| between(other.syntax()))
         .all(|other| {
-            bare_macro_name(&other).is_some_and(|other_name| other_name == name)
+            bare_macro_name(other).is_some_and(|other_name| other_name == name)
                 && other.token_tree().is_some_and(|tree| {
                     inert_tokens(&non_trivia_tokens(tree.syntax()), trusted, false)
                 })
@@ -1333,6 +1383,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
     result.parsed = true;
     let lines = LineIndex::new(source);
     let empty_macros = local_empty_macros(parse.tree().syntax());
+    let json_uses = literal_json_uses(&parse.tree());
     // A guard twin's discrimination assumes its `return Err(..)` is the
     // prelude variant: only then does a changed owner fail the test. A file
     // that binds the value name `Err` anywhere may route that return to an
@@ -1411,7 +1462,8 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                 .any(|attr| tokio_test_runs_body(&attr, function.syntax()))
         {
             Some(AssertionContextRefusal::AsyncTest)
-        } else if let Some(refusal) = has_escape(body.syntax(), trusted, &empty_macros) {
+        } else if let Some(refusal) = has_escape(body.syntax(), trusted, &empty_macros, &json_uses)
+        {
             Some(refusal)
         } else if let Some(attr) = function
             .attrs()
@@ -1556,6 +1608,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                 (source, &lines),
                 trusted,
                 &empty_macros,
+                &json_uses,
             )
         } else {
             BTreeMap::new()
@@ -1656,6 +1709,7 @@ fn local_helper_assertions(
     (source, lines): (&str, &LineIndex),
     trusted: &[&str],
     empty_macros: &BTreeMap<String, ast::MacroRules>,
+    json_uses: &[ast::Use],
 ) -> BTreeMap<AssertionKey, BorrowedAssertion> {
     let mut borrowed = BTreeMap::new();
     let Some(module) = test.syntax().parent() else {
@@ -1726,7 +1780,7 @@ fn local_helper_assertions(
         };
         if helper.syntax() == test.syntax()
             || helper.syntax().parent().as_ref() != Some(&module)
-            || !plain_check_helper(helper, trusted, empty_macros)
+            || !plain_check_helper(helper, trusted, empty_macros, json_uses)
         {
             continue;
         }
@@ -1824,6 +1878,7 @@ fn plain_check_helper(
     helper: &ast::Fn,
     trusted: &[&str],
     empty_macros: &BTreeMap<String, ast::MacroRules>,
+    json_uses: &[ast::Use],
 ) -> bool {
     let Some(body) = helper.body() else {
         return false;
@@ -1842,7 +1897,7 @@ fn plain_check_helper(
         && !body.syntax().descendants().any(|node| {
             ast::ReturnExpr::can_cast(node.kind()) || ast::TryExpr::can_cast(node.kind())
         })
-        && has_escape(body.syntax(), trusted, empty_macros).is_none()
+        && has_escape(body.syntax(), trusted, empty_macros, json_uses).is_none()
         && supported_item_context(helper.syntax())
 }
 
@@ -2912,6 +2967,7 @@ fn has_escape(
     body: &SyntaxNode,
     trusted: &[&str],
     empty: &BTreeMap<String, ast::MacroRules>,
+    json_uses: &[ast::Use],
 ) -> Option<AssertionContextRefusal> {
     body.descendants().find_map(|node| {
         if let Some(call) = ast::MacroCall::cast(node.clone()) {
@@ -2924,10 +2980,11 @@ fn has_escape(
                 .path()
                 .map(|path| path.syntax().text().to_string())
                 .unwrap_or_default();
+            let json_visible = literal_json_import_visible_among(json_uses, call.syntax());
             if (!is_trusted_macro(&path, trusted)
                 && !is_standard_qualified_macro(&path, &call, trusted))
                 || path == "json"
-                    && (!literal_json_import_visible(call.syntax())
+                    && (!json_visible
                         || !call
                             .token_tree()
                             .is_some_and(|tree| literal_json_tree(&tree)))
@@ -2937,10 +2994,7 @@ fn has_escape(
             // Macro operands are opaque to AST descendant walks. Refuse
             // hidden exits and nested expansion, but not boolean negation.
             if call.token_tree().is_some_and(|tree| {
-                opaque_macro_operand_with_json(
-                    &tree,
-                    trusted.contains(&"json") && literal_json_import_visible(call.syntax()),
-                )
+                opaque_macro_operand_with_json(&tree, trusted.contains(&"json") && json_visible)
             }) {
                 return Some(AssertionContextRefusal::MacroOperandExit(path));
             }
@@ -3969,4 +4023,32 @@ fn closure_invocation(
 fn no_arguments(call: &ast::CallExpr) -> bool {
     call.arg_list()
         .is_some_and(|args| args.args().next().is_none())
+}
+
+#[cfg(test)]
+mod binding_free_index_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn binding_free_index_is_collected_once_per_file_not_per_macro() {
+        let mut src = String::from("macro_rules! wrap { ($e:expr) => { $e }; }\nfn f() {\n");
+        for i in 0..40 {
+            src.push_str(&format!("    wrap!(format!(\"{i}\"));\n"));
+        }
+        src.push_str("}\n");
+        let _ = take_binding_free_index_count();
+        let _sites = trusted_macro_binding_sites(
+            &src,
+            &BTreeSet::new(),
+            &["assert_eq", "assert", "format"],
+            &|_, _| true,
+            &|_| false,
+        );
+        assert_eq!(
+            take_binding_free_index_count(),
+            1,
+            "wrapper facts must be collected once per parsed file, not once per macro"
+        );
+    }
 }

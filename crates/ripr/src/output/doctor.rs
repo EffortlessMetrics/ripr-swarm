@@ -67,6 +67,14 @@ pub(crate) enum DoctorFirstCommand {
     /// has no commit to diff against, so every diff-scoped first command
     /// fails; name the commit-first path and keep the repository-free scan.
     UnbornHead,
+    /// The `config` check failed: `ripr check` loads the same `ripr.toml`
+    /// and would hit the same error. Name the config correction, not a
+    /// check command (#8168).
+    InvalidConfig,
+    /// A cargo_toml or required-runtime failure already named its `Fix:`.
+    /// `ripr check` would hit the same prerequisite, so name the repairs
+    /// above rather than a check command (#8168).
+    FailedPrerequisites,
     SavedDiff,
     Worktree,
     DefaultCheck,
@@ -109,14 +117,36 @@ impl DoctorFirstCommand {
                 .iter()
                 .any(|check| check.name == name && check.status == DoctorCheckStatus::Pass)
         };
+        let failed_prerequisites = report
+            .checks
+            .iter()
+            .any(|check| check.name == "cargo_toml" && check.status == DoctorCheckStatus::Fail)
+            || report
+                .runtime_probes
+                .iter()
+                .any(|probe| probe.required && probe.status == DoctorStatus::Fail);
         if !passed("root_directory") {
             // #5010 renders the lossless root spelling for recovery, and the
             // work-tree probe stays withheld (#4531). No `--diff` route is
             // kept: it renders with the same explicit `--root`, which
             // `ensure_command_root` rejects before the diff is read.
             Self::MissingRoot
+        } else if report
+            .checks
+            .iter()
+            .any(|check| check.name == "config" && check.status == DoctorCheckStatus::Fail)
+        {
+            Self::InvalidConfig
         } else if !git_tool_can_run(report) {
-            Self::SavedDiff
+            // `--diff PATH` still loads the same crate and required
+            // runtimes. A named cargo_toml / runtime failure outranks the
+            // git-recovery command (#8168). OutsideGit stays later so an
+            // empty or non-git root still gets the repository-free scan.
+            if failed_prerequisites {
+                Self::FailedPrerequisites
+            } else {
+                Self::SavedDiff
+            }
         } else if !passed("git_repository") {
             Self::OutsideGit
         } else if report
@@ -127,6 +157,11 @@ impl DoctorFirstCommand {
             // #5259: the work tree is real but `HEAD` is unborn, so no base
             // can resolve; the diff-scoped first commands would all fail.
             Self::UnbornHead
+        } else if failed_prerequisites {
+            // Missing Cargo.toml and a required runtime are named on the
+            // bang lines. DefaultCheck / Worktree would still print
+            // `ripr check`, which hits the same failure (#8168).
+            Self::FailedPrerequisites
         } else {
             Self::resolve(true, dirty_worktree)
         }
@@ -140,7 +175,11 @@ impl DoctorFirstCommand {
             Self::SavedDiff => Some(Self::SAVED_DIFF_LINE),
             Self::Worktree => Some(Self::WORKTREE_LINE),
             Self::DefaultCheck => Some(Self::DEFAULT_LINE),
-            Self::MissingRoot | Self::OutsideGit | Self::UnbornHead => None,
+            Self::MissingRoot
+            | Self::OutsideGit
+            | Self::UnbornHead
+            | Self::InvalidConfig
+            | Self::FailedPrerequisites => None,
         }
     }
 
@@ -165,7 +204,9 @@ impl DoctorFirstCommand {
             Ok(resolved) => doctor_command_root_display(root, &resolved)?,
             Err(_) => absolute_doctor_root_display(root)?,
         };
-        Ok(format!("ripr check --root {}{flags}", shell_arg(&bound)))
+        let line = format!("ripr check --root {}{flags}", shell_arg(&bound));
+        require_single_line_command(&line)?;
+        Ok(line)
     }
 
     /// The full recommendation for `root`: the runnable variants render
@@ -183,6 +224,14 @@ impl DoctorFirstCommand {
                 let action = guidance.strip_prefix("- ").unwrap_or(guidance);
                 vec![format!("- Recommended first command: {action}")]
             }
+            Self::InvalidConfig => vec![
+                "- Recommended first command: correct `ripr.toml` so it loads, then rerun `ripr doctor`"
+                    .to_string(),
+            ],
+            Self::FailedPrerequisites => vec![
+                "- Recommended first command: fix the `!` checks above, then rerun `ripr doctor`"
+                    .to_string(),
+            ],
             Self::OutsideGit => {
                 use crate::agent::loop_commands::shell_arg;
                 // The repository-free scan is a runnable command, so its root
@@ -195,11 +244,12 @@ impl DoctorFirstCommand {
                     Ok(resolved) => doctor_command_root_display(root, &resolved),
                     Err(_) => absolute_doctor_root_display(root),
                 };
-                let bash = bound.map(|bound| {
-                    format!(
+                let bash = bound.and_then(|bound| {
+                    let bash = format!(
                         "ripr check --root {} --format repo-exposure-md",
                         shell_arg(&bound)
-                    )
+                    );
+                    require_single_line_command(&bash).map(|()| bash)
                 });
                 match bash {
                     Ok(bash) => {
@@ -231,11 +281,12 @@ impl DoctorFirstCommand {
                     Ok(resolved) => doctor_command_root_display(root, &resolved),
                     Err(_) => absolute_doctor_root_display(root),
                 };
-                let bash = bound.map(|bound| {
-                    format!(
+                let bash = bound.and_then(|bound| {
+                    let bash = format!(
                         "ripr check --root {} --format repo-exposure-md",
                         shell_arg(&bound)
-                    )
+                    );
+                    require_single_line_command(&bash).map(|()| bash)
                 });
                 match bash {
                     Ok(bash) => {
@@ -283,6 +334,17 @@ impl DoctorFirstCommand {
             ));
         }
         lines
+    }
+}
+
+fn require_single_line_command(line: &str) -> Result<(), String> {
+    if line.contains('\n') || line.contains('\r') {
+        Err(
+            "selected root cannot be represented as one pasteable command line; rerun doctor from a parent using a single-line alias"
+                .to_string(),
+        )
+    } else {
+        Ok(())
     }
 }
 
@@ -4963,6 +5025,107 @@ mod tests {
         assert_eq!(
             DoctorFirstCommand::resolve_for_report(&healthy, || false),
             DoctorFirstCommand::DefaultCheck
+        );
+
+        let mut invalid = DoctorReport::new(".");
+        pass(&mut invalid, "root_directory");
+        pass(&mut invalid, "tool_git");
+        pass(&mut invalid, "git_repository");
+        invalid.add_check(
+            "config",
+            DoctorStatus::Fail,
+            Some("invalid ripr.toml".to_string()),
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&invalid, || false),
+            DoctorFirstCommand::InvalidConfig,
+            "a failing config check must not recommend ripr check"
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&invalid, || true),
+            DoctorFirstCommand::InvalidConfig,
+            "invalid config outranks a dirty worktree first command"
+        );
+        assert!(DoctorFirstCommand::InvalidConfig.command_line().is_none());
+
+        let mut missing_manifest = DoctorReport::new(".");
+        pass(&mut missing_manifest, "root_directory");
+        pass(&mut missing_manifest, "tool_git");
+        pass(&mut missing_manifest, "git_repository");
+        missing_manifest.add_check(
+            "cargo_toml",
+            DoctorStatus::Fail,
+            Some("no Cargo.toml found".to_string()),
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&missing_manifest, || false),
+            DoctorFirstCommand::FailedPrerequisites,
+            "a cargo_toml failure must not recommend ripr check"
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&missing_manifest, || true),
+            DoctorFirstCommand::FailedPrerequisites,
+            "a cargo_toml failure outranks a dirty worktree first command"
+        );
+        assert!(
+            DoctorFirstCommand::FailedPrerequisites
+                .command_line()
+                .is_none()
+        );
+
+        let mut runtime_fail = DoctorReport::new(".");
+        pass(&mut runtime_fail, "root_directory");
+        pass(&mut runtime_fail, "tool_git");
+        pass(&mut runtime_fail, "git_repository");
+        pass(&mut runtime_fail, "cargo_toml");
+        runtime_fail.add_runtime_probe(
+            "python",
+            "python3",
+            DoctorStatus::Fail,
+            "python3 not available",
+            true,
+            "install python3",
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&runtime_fail, || false),
+            DoctorFirstCommand::FailedPrerequisites,
+            "a required runtime failure must not recommend ripr check"
+        );
+
+        let mut gitless_missing_manifest = DoctorReport::new(".");
+        pass(&mut gitless_missing_manifest, "root_directory");
+        gitless_missing_manifest.add_check(
+            "tool_git",
+            DoctorStatus::Fail,
+            Some("not found".to_string()),
+        );
+        gitless_missing_manifest.add_check(
+            "cargo_toml",
+            DoctorStatus::Fail,
+            Some("no Cargo.toml found".to_string()),
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&gitless_missing_manifest, || true),
+            DoctorFirstCommand::FailedPrerequisites,
+            "a cargo_toml failure outranks SavedDiff: check --diff still needs the crate"
+        );
+        let mut non_git_missing_manifest = DoctorReport::new(".");
+        pass(&mut non_git_missing_manifest, "root_directory");
+        pass(&mut non_git_missing_manifest, "tool_git");
+        non_git_missing_manifest.add_check(
+            "git_repository",
+            DoctorStatus::Fail,
+            Some("refused".to_string()),
+        );
+        non_git_missing_manifest.add_check(
+            "cargo_toml",
+            DoctorStatus::Fail,
+            Some("no Cargo.toml found".to_string()),
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&non_git_missing_manifest, || false),
+            DoctorFirstCommand::OutsideGit,
+            "empty/non-git roots keep the repository-free scan even when cargo_toml failed"
         );
     }
 
