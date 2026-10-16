@@ -6782,6 +6782,7 @@ id = "RIPR-SPEC-0084"
 name = "default base resolution"
 spec = "docs/specs/RIPR-SPEC-0084-default-base-resolution.md"
 tests = [
+  "crates/ripr/tests/hostile_repos.rs::submodule_ignore_settings_cannot_hide_pointer_changes",
   "crates/ripr/src/analysis/diff/load.rs::tests::resolve_default_base_uses_origin_master_when_symbolic_ref_points_there",
   "crates/ripr/src/analysis/diff/load.rs::tests::resolve_default_base_uses_local_main_when_no_remote",
   "crates/ripr/src/analysis/diff/load.rs::tests::resolve_default_base_returns_named_error_when_nothing_resolves",
@@ -6825,6 +6826,7 @@ tests = [
 fixtures = []
 code = [
   "crates/ripr/src/analysis/diff/load.rs",
+  "crates/ripr/src/app/pr_evidence.rs",
   "crates/ripr/src/analysis/diff/parse.rs",
   "crates/ripr/src/analysis/diff/parse/stream.rs",
   "crates/ripr/src/output/first_pr.rs",
@@ -9010,6 +9012,7 @@ id = "RIPR-SPEC-0116"
 name = "check worktree mode"
 spec = "docs/specs/RIPR-SPEC-0116-check-worktree-mode.md"
 tests = [
+  "crates/ripr/tests/hostile_repos.rs::submodule_ignore_settings_cannot_hide_pointer_changes",
   "crates/ripr/tests/cli_smoke.rs::check_worktree_base_head_analyzes_uncommitted_tracked_edit",
   "crates/ripr/tests/cli_smoke.rs::check_worktree_drill_in_commands_reach_the_uncommitted_finding",
   "crates/ripr/src/app/navigation.rs::tests::finding_navigation_carries_worktree_scope_after_the_base",
