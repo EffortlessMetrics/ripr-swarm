@@ -2186,6 +2186,8 @@ Enabled example carries `"enabled": true`, `"analyzed": true`, and a
 - `language` — stable wire string; one of `typescript`, `javascript`, `python`
 - `file_count` — enabled adapters count admitted files; generated/excluded paths
   and Python paths carrying `changed_file_absent_from_worktree` are omitted.
+  Under `limited_partial_scope`, enabled counts and samples cover only the
+  selected partition. A wholly omitted enabled language has no advisory row.
   Disabled adapters retain the raw routed count (RIPR-SPEC-0082).
 - `sample_paths` — up to three normalized (forward-slash) file paths
 - `enabled` — whether the preview adapter was enabled (ran) for this analysis
@@ -2195,8 +2197,10 @@ Enabled example carries `"enabled": true`, `"analyzed": true`, and a
 - `why` — advisory rationale string (case-specific)
 
 An empty or absent `preview_languages` array can also mean every enabled
-preview path was withheld. Consult `analysis_outcome` for skipped or missing
-source limitations; absence of an advisory is not a completeness claim. A non-empty array is an honesty signal: either the listed
+preview path was withheld. Consult `analysis_scope` for selected partitions and
+`analysis_outcome` for skipped or missing source limitations; absence of an
+advisory is not a completeness claim. A non-empty array is an honesty signal:
+either the listed
 preview-language files were not analyzed at all (`enabled == false`) or were
 analyzed under advisory preview support that may be incomplete
 (`enabled == true`). In neither case is an empty result a Rust-grade clean

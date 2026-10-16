@@ -56,6 +56,12 @@ mod javascript_awaited_roots;
 mod next_action;
 #[path = "cli_smoke/output_leaf_identity.rs"]
 mod output_leaf_identity;
+#[cfg(all(
+    feature = "lang-rust",
+    any(feature = "lang-python", feature = "lang-typescript")
+))]
+#[path = "cli_smoke/partial_preview_disclosure.rs"]
+mod partial_preview_disclosure;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
