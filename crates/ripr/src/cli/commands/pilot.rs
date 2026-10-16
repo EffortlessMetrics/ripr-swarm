@@ -1,11 +1,11 @@
 use crate::analysis;
 use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::commands_numeric::{parse_positive_u64, parse_positive_usize};
-use crate::cli::commands_options::PilotOptions;
+use crate::cli::commands_options::{PilotOptions, PilotStdoutFormat};
 use crate::cli::help;
 use crate::cli::parse::{expect_value, parse_mode};
 use crate::cli::progress::{CliProgressSink, ProgressPolicy};
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use crate::core_error::CoreError;
 use crate::output;
@@ -194,15 +194,20 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             current_change: None,
             seam_limit: None,
         };
-        write_pilot_file(
-            &artifacts.pilot_summary_json,
-            output::pilot::render_pilot_timeout_summary_json(context),
-        )?;
+        let summary_json = output::pilot::render_pilot_timeout_summary_json(context);
+        write_pilot_file(&artifacts.pilot_summary_json, &summary_json)?;
         write_pilot_file(
             &artifacts.pilot_summary_md,
             output::pilot::render_pilot_timeout_summary_md(context),
         )?;
-        print!("{}", output::pilot::render_pilot_timeout_terminal(context));
+        print!(
+            "{}",
+            pilot_stdout(
+                options.format,
+                &summary_json,
+                &output::pilot::render_pilot_timeout_terminal(context),
+            )
+        );
         return Ok(());
     };
 
@@ -384,10 +389,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         ),
     )?;
 
-    write_pilot_file(
-        &artifacts.pilot_summary_json,
-        output::pilot::render_pilot_summary_json(&classified, context),
-    )?;
+    let summary_json = output::pilot::render_pilot_summary_json(&classified, context);
+    write_pilot_file(&artifacts.pilot_summary_json, &summary_json)?;
     write_pilot_file(
         &artifacts.pilot_summary_md,
         output::pilot::render_pilot_summary_md(&classified, context),
@@ -395,7 +398,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
 
     print!(
         "{}",
-        output::pilot::render_pilot_terminal(&classified, context)
+        pilot_stdout(
+            options.format,
+            &summary_json,
+            &output::pilot::render_pilot_terminal(&classified, context),
+        )
     );
     // #5019: producer `completed` was held until every artifact write and
     // the terminal render succeeded; commit it now. An earlier failure
@@ -634,6 +641,7 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
         timeout_ms: DEFAULT_PILOT_TIMEOUT_MS,
         timeout_explicit: false,
         quiet: false,
+        format: PilotStdoutFormat::Human,
     };
     let mut out_explicit = false;
     let mut i = 0usize;
@@ -667,6 +675,10 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
             "--quiet" => {
                 options.quiet = true;
             }
+            "--format" => {
+                i += 1;
+                options.format = parse_pilot_format(expect_value(args, i, "--format")?)?;
+            }
             other => return Err(unknown_argument("pilot", other)),
         }
         i += 1;
@@ -675,6 +687,27 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
         options.out_dir = default_pilot_out_dir(&options.root);
     }
     Ok(options)
+}
+
+fn parse_pilot_format(value: &str) -> Result<PilotStdoutFormat, String> {
+    const ACCEPTED: &[&str] = &["human", "json"];
+    match value {
+        "human" => Ok(PilotStdoutFormat::Human),
+        "json" => Ok(PilotStdoutFormat::Json),
+        other => Err(unknown_value("format", other, ACCEPTED)),
+    }
+}
+
+/// Choose the stdout body for one finished pilot run (#7428).
+///
+/// `--format json` emits the same `pilot-summary.json` document already
+/// written under `--out` and suppresses the human terminal. Packet files
+/// and stderr progress are unchanged.
+fn pilot_stdout<'a>(format: PilotStdoutFormat, json: &'a str, terminal: &'a str) -> &'a str {
+    match format {
+        PilotStdoutFormat::Human => terminal,
+        PilotStdoutFormat::Json => json,
+    }
 }
 
 /// Where pilot writes its packet when `--out` is not given, relative to the
@@ -834,6 +867,10 @@ mod tests {
             pilot(&args(&["--timeout-ms"])),
             Err("missing value for --timeout-ms".to_string())
         );
+        assert_eq!(
+            pilot(&args(&["--format"])),
+            Err("missing value for --format".to_string())
+        );
     }
 
     #[test]
@@ -890,7 +927,51 @@ mod tests {
                 timeout_ms: 120_000,
                 timeout_explicit: true,
                 quiet: true,
+                format: PilotStdoutFormat::Human,
             })
+        );
+    }
+
+    #[test]
+    fn parse_pilot_options_accepts_format_json_and_human() -> Result<(), String> {
+        // #7428: `ripr check --format json` is the machine path; pilot must
+        // accept the same flag rather than failing closed as unknown.
+        let json = parse_pilot_options(&args(&["--format", "json"]))?;
+        assert_eq!(json.format, PilotStdoutFormat::Json);
+        let human = parse_pilot_options(&args(&["--format", "human"]))?;
+        assert_eq!(human.format, PilotStdoutFormat::Human);
+        let omitted = parse_pilot_options(&args(&[]))?;
+        assert_eq!(omitted.format, PilotStdoutFormat::Human);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_pilot_options_rejects_unknown_format_and_json_alias() {
+        assert_eq!(
+            parse_pilot_options(&args(&["--format", "yaml"])),
+            Err("unknown format \"yaml\". Accepted: human, json.".to_string())
+        );
+        assert_eq!(
+            parse_pilot_options(&args(&["--format", "jsonn"])),
+            Err(
+                "unknown format \"jsonn\". Did you mean `json`? Accepted: human, json.".to_string()
+            )
+        );
+        // `--json` never existed on this command; do not invent an alias.
+        assert_eq!(
+            parse_pilot_options(&args(&["--json"])),
+            Err("unknown pilot argument \"--json\". Run `ripr pilot --help`.".to_string())
+        );
+    }
+
+    #[test]
+    fn json_stdout_is_the_summary_document_not_the_human_block() {
+        let json = "{\n  \"status\": \"complete\"\n}\n";
+        let terminal = "Next: add a focused test\n";
+        assert_eq!(pilot_stdout(PilotStdoutFormat::Json, json, terminal), json);
+        assert_eq!(
+            pilot_stdout(PilotStdoutFormat::Human, json, terminal),
+            terminal
         );
     }
 

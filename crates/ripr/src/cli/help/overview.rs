@@ -90,7 +90,7 @@ Setup:
   ripr cache clear [--dry-run] [--force]
 
 Analysis:
-  ripr pilot [--root PATH] [--out PATH] [--mode draft] [--max-seams 5] [--timeout-ms 30000]
+  ripr pilot [--root PATH] [--out PATH] [--mode draft] [--max-seams 5] [--timeout-ms 30000] [--format json]
   ripr check [--base REV] [--worktree] [--diff PATH] [--mode draft] [--format FORMAT]
   ripr diff [--root .] [--base REV] [--head HEAD] [--mode draft] [--json]
   ripr explain [--base REV] [--worktree|--diff PATH] <finding-id|file:line>

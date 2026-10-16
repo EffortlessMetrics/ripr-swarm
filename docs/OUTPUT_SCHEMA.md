@@ -16012,6 +16012,10 @@ target/ripr/pilot/pilot-summary.json
 target/ripr/pilot/pilot-summary.md
 ```
 
+`ripr pilot --format json` writes that same `pilot-summary.json` document to
+stdout and suppresses the human terminal. Packet files are still written under
+`--out`. There is no `--json` alias.
+
 `pilot-summary.json` uses schema `0.3`:
 
 ```json

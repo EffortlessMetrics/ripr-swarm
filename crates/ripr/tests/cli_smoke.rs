@@ -15812,6 +15812,58 @@ fn pilot_prints_a_module_confined_repair_for_one_inline_test_module() -> Result<
     Ok(())
 }
 
+/// #7428: `ripr pilot --format json` emits the same `pilot-summary.json`
+/// document already written under `--out`, with the human terminal
+/// suppressed, so `ripr pilot --format json | jq` is a valid CI path.
+#[test]
+fn pilot_format_json_prints_the_packet_summary_and_suppresses_the_human_block() -> Result<(), String>
+{
+    let root = unique_temp_workspace("pilot-format-json");
+    let src = root.join("src");
+    std::fs::create_dir_all(&src).map_err(|e| format!("create src: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|e| format!("write manifest: {e}"))?;
+    std::fs::write(
+        src.join("lib.rs"),
+        "pub fn price(amount: u32, threshold: u32) -> u32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n\n#[cfg(test)]\nmod t {\n    use super::*;\n    #[test]\n    fn below() {\n        assert_eq!(price(1, 100), 1);\n    }\n}\n",
+    )
+    .map_err(|e| format!("write lib: {e}"))?;
+    let out_dir = unique_temp_workspace("pilot-format-json-out");
+    let output = run_ripr(&[
+        "pilot",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &out_dir.display().to_string(),
+        "--format",
+        "json",
+        "--quiet",
+    ]);
+    assert_success(&output);
+    let stdout = String::from_utf8(output.stdout.clone()).map_err(|e| e.to_string())?;
+    let file = std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+        .map_err(|e| format!("read pilot-summary.json: {e}"))?;
+    assert_eq!(
+        stdout, file,
+        "stdout must be the packet summary document, not a second encoding"
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|e| format!("stdout JSON: {e}\n{stdout}"))?;
+    assert_eq!(parsed["schema_version"], "0.3", "{parsed}");
+    assert!(parsed.get("status").is_some(), "{parsed}");
+    assert!(parsed.get("actionable_seams_total").is_some(), "{parsed}");
+    assert!(
+        !stdout.contains("focused test:"),
+        "human terminal must not mix into JSON stdout:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    Ok(())
+}
+
 fn pilot_inline_only_stdout(label: &str, extra_source: &str) -> Result<String, String> {
     let root = unique_temp_workspace(label);
     let src = root.join("src");
