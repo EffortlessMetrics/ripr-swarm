@@ -1910,3 +1910,9 @@ mod git_candidate_entry_tests {
         Ok(())
     }
 }
+
+pub(crate) mod input_boundary;
+#[cfg(test)]
+pub(crate) use pipeline::diff_pipeline_entry_count;
+
+pub(crate) use workspace::cargo_input_identity;
