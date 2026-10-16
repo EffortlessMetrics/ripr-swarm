@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
@@ -612,20 +613,61 @@ impl LiteralJsonIdentity {
 pub(crate) fn eligible_json_root(root: &Path) -> bool {
     read_optional(&root.join("Cargo.toml"))
         .flatten()
-        .and_then(|b| parse(&b))
-        .is_some_and(|manifest| {
-            ["dependencies", "dev-dependencies", "workspace"]
-                .iter()
-                .any(|key| {
-                    let table = if *key == "workspace" {
-                        manifest.get(key).and_then(|w| w.get("dependencies"))
-                    } else {
-                        manifest.get(key)
-                    };
-                    table.and_then(|t| t.get("serde_json")).is_some()
-                })
-        })
+        .is_some_and(|bytes| eligible_json_manifest_bytes(&bytes))
 }
+
+/// One previously parsed manifest, scoped to a drop-in authority. Every query
+/// still reads the current bounded bytes; only the pure parse is reusable.
+#[derive(Debug, Default)]
+pub(crate) struct JsonRootEligibilityMemo {
+    previous: Mutex<Option<(Vec<u8>, bool)>>,
+}
+
+impl JsonRootEligibilityMemo {
+    pub(crate) fn eligible(&self, root: &Path) -> bool {
+        // Read before locking or consulting the memo. Absence and read errors
+        // cannot reuse a previously eligible manifest.
+        let Some(bytes) = read_optional(&root.join("Cargo.toml")).flatten() else {
+            return false;
+        };
+        let Ok(mut previous) = self.previous.lock() else {
+            return eligible_json_manifest_bytes(&bytes);
+        };
+        if let Some((old, verdict)) = previous.as_ref()
+            && old == &bytes
+        {
+            return *verdict;
+        }
+        let verdict = eligible_json_manifest_bytes(&bytes);
+        *previous = Some((bytes, verdict));
+        verdict
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static JSON_ROOT_ELIGIBILITY_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn eligible_json_manifest_bytes(bytes: &[u8]) -> bool {
+    #[cfg(test)]
+    JSON_ROOT_ELIGIBILITY_PARSES.with(|count| count.set(count.get() + 1));
+    parse(bytes).is_some_and(|manifest| {
+        ["dependencies", "dev-dependencies", "workspace"]
+            .iter()
+            .any(|key| {
+                let table = if *key == "workspace" {
+                    manifest.get(key).and_then(|w| w.get("dependencies"))
+                } else {
+                    manifest.get(key)
+                };
+                table.and_then(|t| t.get("serde_json")).is_some()
+            })
+    })
+}
+
+#[cfg(test)]
+mod json_eligibility_tests;
 
 fn json_manifest_digests(
     metadata: &serde_json::Value,
