@@ -51,7 +51,7 @@ use rayon::prelude::*;
 
 use super::cargo_targets::{
     collect_explicit_paths, declared_targets_from_manifest, lexical, nearest_manifest_dir,
-    normalize, owning_package_dir,
+    normalize, owning_package_dir, skipped_declared_test_roots,
 };
 use super::source_role::SourceRoleContext;
 use crate::analysis::syntax::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
@@ -673,7 +673,13 @@ fn evidence_roots(
 ) -> BTreeSet<PathBuf> {
     let declared = declared_targets_from_manifest(manifest_text, package_dir);
     let mut roots = BTreeSet::new();
-    roots.extend(declared.tests);
+    let skipped_tests = skipped_declared_test_roots(manifest, package_dir);
+    roots.extend(
+        declared
+            .tests
+            .into_iter()
+            .filter(|root| !skipped_tests.contains(&lexical(&normalize(root)))),
+    );
     roots.extend(declared.benches);
     roots.extend(declared.build_script);
     collect_explicit_paths(manifest.get("example"), package_dir, &mut roots);
@@ -693,7 +699,16 @@ fn evidence_roots(
             .and_then(toml::Value::as_bool)
             != Some(false);
         if discovers {
-            roots.extend(autodiscovered(&dir));
+            let found = autodiscovered(&dir);
+            if section == "test" {
+                roots.extend(
+                    found
+                        .into_iter()
+                        .filter(|root| !skipped_tests.contains(&lexical(&normalize(root)))),
+                );
+            } else {
+                roots.extend(found);
+            }
         } else {
             roots.extend(named_default_roots(manifest.get(section), &dir));
         }

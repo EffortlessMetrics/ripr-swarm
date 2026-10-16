@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A declared `[[test]]` target with `test = false`, or with `required-features` outside the manifest's default feature set, no longer relates its tests to changed behavior: `cargo test` never runs it, so it reads `no_static_path` instead of a false `exposed`. `harness = false` targets stay with the custom-harness registry, and `[lib]`/`[[bin]]` `test = false`, examples, benches and non-member packages remain open on #8016 (#8016).

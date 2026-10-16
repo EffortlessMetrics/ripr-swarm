@@ -712,6 +712,75 @@ fn local_feature_enable(item: &str) -> Option<String> {
     Some(item.to_string())
 }
 
+/// Roots of declared `[[test]]` entries that `cargo test` never runs
+/// (#8016): `test = false`, or `required-features` outside the
+/// manifest's default feature set. An entry without `path` resolves to
+/// `<name>.rs` / `<name>/main.rs` under `tests/`, and a declaration
+/// replaces the autodiscovered target of that name, so these roots are
+/// subtracted from the evidence roots. `harness = false` is not a skip:
+/// the custom-harness registry (#3608) owns that premise.
+pub(crate) fn skipped_declared_test_roots(
+    manifest: &toml::Value,
+    package_dir: &Path,
+) -> BTreeSet<PathBuf> {
+    let mut skipped = BTreeSet::new();
+    let Some(entries) = manifest.get("test").and_then(toml::Value::as_array) else {
+        return skipped;
+    };
+    let features: BTreeMap<String, Vec<String>> = manifest
+        .get("features")
+        .and_then(toml::Value::as_table)
+        .map(|table| {
+            table
+                .iter()
+                .filter_map(|(name, enables)| {
+                    let items = enables.as_array()?;
+                    Some((
+                        name.clone(),
+                        items
+                            .iter()
+                            .filter_map(toml::Value::as_str)
+                            .map(str::to_string)
+                            .collect(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let enabled = expand_default_features(&features);
+    for entry in entries {
+        let test_off = entry.get("test").and_then(toml::Value::as_bool) == Some(false);
+        let features_unmet = match entry.get("required-features") {
+            None => false,
+            Some(toml::Value::Array(items)) => !items
+                .iter()
+                .all(|item| item.as_str().is_some_and(|name| enabled.contains(name))),
+            Some(_) => true,
+        };
+        if !(test_off || features_unmet) {
+            continue;
+        }
+        let explicit = entry
+            .get("path")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty());
+        if let Some(path) = explicit {
+            skipped.insert(lexical(&normalize(&package_dir.join(path))));
+        } else if let Some(name) = entry
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            let dir = package_dir.join("tests");
+            skipped.insert(lexical(&normalize(&dir.join(format!("{name}.rs")))));
+            skipped.insert(lexical(&normalize(&dir.join(name).join("main.rs"))));
+        }
+    }
+    skipped
+}
+
 /// Whether every `required-features` name is in the analyzed default set.
 /// A missing field is no requirement. A malformed field fails closed.
 fn required_features_satisfied(target: &serde_json::Value, enabled: &BTreeSet<String>) -> bool {

@@ -32,7 +32,9 @@ use crate::analysis::committed_source::{self, CommittedSourceRead};
 use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_findings};
 use crate::analysis::facts::RustIndex;
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
-use crate::analysis::workspace::limitations_for_absent_changed_files;
+use crate::analysis::workspace::{
+    limitations_for_absent_changed_files, skipped_declared_test_roots,
+};
 use crate::config::OraclePolicy;
 use crate::domain::{
     ExposureClass, Finding, Probe, SourceCurrentness, StaticLimitKind, StopReason,
@@ -524,6 +526,9 @@ fn may_be_unreached(
                             .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
                             .is_some_and(|manifest| {
                                 let package = manifest.get("package");
+                                // A declared `[[test]]` cargo never runs
+                                // (#8016) also makes target roots suspects;
+                                // the walk decides which one is unreached.
                                 ["autotests", "autobenches", "autoexamples"]
                                     .iter()
                                     .any(|key| {
@@ -532,6 +537,8 @@ fn may_be_unreached(
                                             .and_then(toml::Value::as_bool)
                                             == Some(false)
                                     })
+                                    || !skipped_declared_test_roots(&manifest, package_dir)
+                                        .is_empty()
                             })
                     })
             });
@@ -7358,6 +7365,55 @@ fn absent_delimiter_boundary_returns_head() {
                 .any(|name| name == "discount_applies_unbuilt"),
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_declared_test_targets_cargo_test_never_runs() -> Result<(), String> {
+        // #8016: `test = false` and `required-features` outside the default
+        // feature set keep a declared `[[test]]` target out of `cargo test`;
+        // a default-enabled requirement and a plain declaration still run.
+        let root = temp_root("module-graph-test-targets-skipped")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n\
+             [features]\ndefault=['on']\non=[]\nnever=[]\n\n\
+             [[test]]\nname='off'\ntest=false\n\n\
+             [[test]]\nname='gated'\nrequired-features=['never']\n\n\
+             [[test]]\nname='enabled'\nrequired-features=['on']\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        for (file, name) in [
+            ("off", "discount_applies_off"),
+            ("gated", "discount_applies_gated"),
+            ("enabled", "discount_applies_enabled"),
+            ("plain", "discount_applies_plain"),
+        ] {
+            write(
+                &root.join(format!("tests/{file}.rs")),
+                &format!(
+                    "use shop::used::discount;\n\n#[test]\nfn {name}() {{\n    assert_eq!(discount(150), 140);\n}}\n"
+                ),
+            )?;
+        }
+
+        let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+        let related = related_test_names(&root, &result, "src/used.rs");
+        for kept in ["discount_applies_enabled", "discount_applies_plain"] {
+            assert!(
+                related.iter().any(|name| name == kept),
+                "{kept} runs under cargo test and must relate: {related:?}"
+            );
+        }
+        for dropped in ["discount_applies_off", "discount_applies_gated"] {
+            assert!(
+                !related.iter().any(|name| name == dropped),
+                "{dropped} is never run by cargo test and must not relate: {related:?}"
+            );
+        }
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
