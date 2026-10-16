@@ -51,7 +51,7 @@ use rayon::prelude::*;
 
 use super::cargo_targets::{
     collect_explicit_paths, declared_targets_from_manifest, lexical, nearest_manifest_dir,
-    normalize, owning_package_dir,
+    normalize, owning_package_dir, unrun_test_target_roots,
 };
 use super::source_role::SourceRoleContext;
 use crate::analysis::syntax::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
@@ -698,9 +698,15 @@ fn evidence_roots(
             roots.extend(named_default_roots(manifest.get(section), &dir));
         }
     }
+    // A `[[test]]` cargo never runs through libtest (`test = false`,
+    // `harness = false`, unmet `required-features`) is no root: its
+    // `#[test]` functions never execute, so only another target's module
+    // tree can still reach the file (#8016).
+    let unrun = unrun_test_target_roots(manifest, package_dir);
     roots
         .into_iter()
         .map(|root| lexical(&normalize(&root)))
+        .filter(|root| !unrun.contains(root))
         .collect()
 }
 

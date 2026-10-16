@@ -724,6 +724,77 @@ fn required_features_satisfied(target: &serde_json::Value, enabled: &BTreeSet<St
     }
 }
 
+/// Root files of the manifest's `[[test]]` targets that `cargo test` does
+/// not run through libtest (#8016): `test = false`, `harness = false`
+/// (its `#[test]` functions are plain functions beside a custom `main`), or
+/// `required-features` outside cargo's default feature set (the same
+/// analyzed set the metadata probe uses, #7266). An entry without `path`
+/// defaults to `tests/<name>.rs` or `tests/<name>/main.rs`, and both
+/// spellings count. A malformed flag or `required-features` is no skip: an
+/// unreadable declaration never costs a real target its credit.
+pub(crate) fn unrun_test_target_roots(
+    manifest: &toml::Value,
+    package_dir: &Path,
+) -> BTreeSet<PathBuf> {
+    let mut roots = BTreeSet::new();
+    let Some(entries) = manifest.get("test").and_then(toml::Value::as_array) else {
+        return roots;
+    };
+    let features = manifest
+        .get("features")
+        .and_then(toml::Value::as_table)
+        .map(|table| {
+            table
+                .iter()
+                .filter_map(|(name, enables)| {
+                    let items = enables.as_array()?;
+                    let items = items
+                        .iter()
+                        .filter_map(toml::Value::as_str)
+                        .map(str::to_string)
+                        .collect();
+                    Some((name.clone(), items))
+                })
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let enabled = expand_default_features(&features);
+    for entry in entries {
+        let flag_off = |key: &str| entry.get(key).and_then(toml::Value::as_bool) == Some(false);
+        let unmet = entry
+            .get("required-features")
+            .and_then(toml::Value::as_array)
+            .is_some_and(|items| {
+                items
+                    .iter()
+                    .any(|item| item.as_str().is_some_and(|name| !enabled.contains(name)))
+            });
+        if !(flag_off("test") || flag_off("harness") || unmet) {
+            continue;
+        }
+        let declared = entry
+            .get("path")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty());
+        let mut spellings = Vec::new();
+        if let Some(path) = declared {
+            spellings.push(package_dir.join(path));
+        } else if let Some(name) = entry
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            let dir = package_dir.join("tests");
+            spellings.push(dir.join(format!("{name}.rs")));
+            spellings.push(dir.join(name).join("main.rs"));
+        }
+        roots.extend(spellings.iter().map(|path| lexical(&normalize(path))));
+    }
+    roots
+}
+
 /// The workspace test-target inventory from parsed `cargo metadata`
 /// (#3634). With `--no-deps`, `packages` is exactly the workspace member
 /// set — cargo's own membership resolution. Each `kind: ["test"]` target

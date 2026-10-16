@@ -317,6 +317,7 @@ fn drop_unreached_test_files(
     let mut mentioned = None;
     let mut manifests = BTreeMap::new();
     let mut discovery_off = BTreeMap::new();
+    let mut unrun_roots = BTreeMap::new();
     let suspects = loaded_files
         .iter()
         .filter(|(path, bytes)| {
@@ -325,7 +326,14 @@ fn drop_unreached_test_files(
         .filter(|(path, _)| {
             let mentioned = mentioned
                 .get_or_insert_with(|| mentioned_module_names(root, &loaded_files, &mut manifests));
-            may_be_unreached(root, path, mentioned, &mut manifests, &mut discovery_off)
+            may_be_unreached(
+                root,
+                path,
+                mentioned,
+                &mut manifests,
+                &mut discovery_off,
+                &mut unrun_roots,
+            )
         })
         .map(|(path, _)| path.as_path())
         .collect::<Vec<_>>();
@@ -356,6 +364,17 @@ fn drop_unreached_test_files(
                 .iter()
                 .map(|path| workspace::normalize_path(path)),
         );
+    }
+    // A `harness = false` target is no libtest root, so the walk calls it
+    // unreached (#8016). A registered custom harness is what runs it, and
+    // its trials are the evidence: that file stays loaded.
+    for harness in test_harnesses.iter().filter(|harness| {
+        matches!(
+            harness.kind,
+            crate::config::TestHarnessKind::CustomHarnessTarget
+        )
+    }) {
+        orphans.remove(&workspace::normalize_path(&harness.target));
     }
     if orphans.is_empty() {
         return loaded_files;
@@ -482,6 +501,7 @@ fn may_be_unreached(
     mentioned: &MentionedModules,
     manifests: &mut BTreeMap<PathBuf, bool>,
     discovery_off: &mut BTreeMap<PathBuf, Option<bool>>,
+    unrun_roots: &mut BTreeMap<PathBuf, BTreeSet<String>>,
 ) -> bool {
     let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
@@ -492,6 +512,29 @@ fn may_be_unreached(
         .parent()
         .and_then(Path::file_name)
         .and_then(|name| name.to_str());
+    // A `[[test]]` root `cargo test` never runs through libtest (`test =
+    // false`, `harness = false`, unmet `required-features`, #8016) is a
+    // suspect wherever it sits: the walk drops it unless another target
+    // reaches it.
+    if let Some(package_dir) = owning_manifest_dir(root, path, manifests) {
+        let unrun = unrun_roots.entry(package_dir.clone()).or_insert_with(|| {
+            committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
+                .ok()
+                .flatten()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+                .map(|manifest| {
+                    workspace::unrun_test_target_roots(&manifest, &package_dir)
+                        .iter()
+                        .map(|root| workspace::normalize_path(root))
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
+        if unrun.contains(&workspace::normalize_path(path)) {
+            return true;
+        }
+    }
     let is_target_dir = |name: Option<&str>| matches!(name, Some("tests" | "benches" | "examples"));
     // A target root: `tests/x.rs`, or `tests/x/main.rs` (and the bench and
     // example twins).
@@ -7358,6 +7401,61 @@ fn absent_delimiter_boundary_returns_head() {
                 .any(|name| name == "discount_applies_unbuilt"),
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_declared_test_targets_cargo_test_never_runs() -> Result<(), String> {
+        // #8016: `test = false`, `harness = false` and `required-features`
+        // outside the default set keep a declared `[[test]]` from running its
+        // `#[test]` functions. Controls: a declared target whose required
+        // feature is on by default, and a plain autodiscovered target.
+        let root = temp_root("module-graph-unrun-test-targets")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n\
+             [features]\ndefault=['on']\non=[]\noff=[]\n\n\
+             [[test]]\nname='skipped'\ntest=false\n\n\
+             [[test]]\nname='custom'\nharness=false\n\n\
+             [[test]]\nname='gated'\nrequired-features=['off']\n\n\
+             [[test]]\nname='featured'\nrequired-features=['on']\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        for name in ["skipped", "custom", "gated", "featured", "plain"] {
+            let main = if name == "custom" {
+                "fn main() {}\n\n"
+            } else {
+                ""
+            };
+            write(
+                &root.join(format!("tests/{name}.rs")),
+                &format!(
+                    "{main}use shop::used::discount;\n\n#[test]\nfn discount_applies_{name}() {{\n    assert_eq!(discount(150), 140);\n}}\n"
+                ),
+            )?;
+        }
+
+        let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+        let related = related_test_names(&root, &result, "src/used.rs");
+        for run in ["featured", "plain"] {
+            assert!(
+                related
+                    .iter()
+                    .any(|name| *name == format!("discount_applies_{run}")),
+                "{run} runs under cargo test and must relate: {related:?}"
+            );
+        }
+        for unrun in ["skipped", "custom", "gated"] {
+            assert!(
+                !related
+                    .iter()
+                    .any(|name| *name == format!("discount_applies_{unrun}")),
+                "{unrun} never runs under cargo test and must not relate: {related:?}"
+            );
+        }
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }

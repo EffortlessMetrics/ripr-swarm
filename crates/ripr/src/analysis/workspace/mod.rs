@@ -15,7 +15,7 @@ pub(crate) use assertion_dependency::{
 pub(crate) use cargo_input_identity::cargo_input_identity;
 pub(crate) use cargo_targets::{
     CargoHarnessVerdict, ManifestInventory, context_for_files,
-    declared_crate_root_paths_from_manifest,
+    declared_crate_root_paths_from_manifest, unrun_test_target_roots,
 };
 pub(crate) use module_graph::apply_module_graph_evidence;
 pub(crate) use path_dependencies::{
