@@ -337,6 +337,7 @@ fn cache_status(root: &Path) -> output::doctor::DoctorCacheStatus {
         relocated_by_env: relocated,
         size_bytes,
         size_display: format_bytes(size_bytes),
+        artifact_ignore: ripr_artifact_ignore(root),
     }
 }
 
@@ -1964,7 +1965,9 @@ fn report_cache_status(root: &Path, cache: &output::doctor::DoctorCacheStatus) {
     if !cache.relocated_by_env && !root.is_dir() {
         return;
     }
-    if let Some(warning) = ripr_artifact_unignored_warning(root) {
+    // The human line renders the typed evidence the JSON report carries, so
+    // both surfaces state the same fact (#8257 review).
+    if let output::doctor::DoctorArtifactIgnore::Unignored { warning } = &cache.artifact_ignore {
         println!("{warning}");
     }
     if let Some(reason) = cache_unwritable_reason(&analysis::seam_cache::cache_base_dir(root)) {
@@ -1977,38 +1980,42 @@ Point RIPR_CACHE_DIR at a writable directory."
     }
 }
 
-/// The doctor warning when ripr's artifact root exists under the root but
-/// git does not ignore it (#7663). Standard Python `.gitignore` templates
-/// cover `__pycache__/` and `.pytest_cache/` but never Rust-conventional
-/// `target/`, so a routine `git add -A` commits ripr's own reports and
-/// caches into the user's history; the next `ripr check` then diffs them.
-/// `git check-ignore` applies the full ignore semantics (nested
-/// `.gitignore` files, `.git/info/exclude`, global excludes), so it — not a
-/// line-by-line reimplementation — decides coverage. Exit 1 means the path
-/// is positively not ignored; exit 0 means covered (no warning); any other
+/// The typed evidence on whether git ignore rules cover ripr's own artifact
+/// root under the doctor root (#7663). Standard Python `.gitignore`
+/// templates cover `__pycache__/` and `.pytest_cache/` but never
+/// Rust-conventional `target/`, so a routine `git add -A` commits ripr's
+/// own reports and caches into the user's history; the next `ripr check`
+/// then diffs them. `git check-ignore` applies the full ignore semantics
+/// (nested `.gitignore` files, `.git/info/exclude`, global excludes), so it
+/// — not a line-by-line reimplementation — decides coverage. Exit 1 means
+/// the path is positively not ignored; exit 0 means covered; any other
 /// outcome (not a repository, git unavailable, deadline) keeps doctor
-/// honest by staying quiet instead of claiming a checked fact it could not
-/// establish.
-fn ripr_artifact_unignored_warning(root: &Path) -> Option<String> {
+/// honest by reporting `NotChecked` instead of claiming a checked fact it
+/// could not establish.
+fn ripr_artifact_ignore(root: &Path) -> output::doctor::DoctorArtifactIgnore {
+    use output::doctor::DoctorArtifactIgnore;
     let artifact_root = root.join("target").join("ripr");
     if !artifact_root.is_dir() {
-        return None;
+        return DoctorArtifactIgnore::NoArtifacts;
     }
-    let probe = crate::git::run_git_output_with_deadline(
+    let probe = match crate::git::run_git_output_with_deadline(
         root,
         &["check-ignore", "-q", "--", "target/ripr"],
         Some(std::time::Duration::from_secs(5)),
-    )
-    .ok()?;
-    if probe.status.code() != Some(1) {
-        return None;
+    ) {
+        Ok(probe) => probe,
+        Err(_) => return DoctorArtifactIgnore::NotChecked,
+    };
+    match probe.status.code() {
+        Some(0) => DoctorArtifactIgnore::Ignored,
+        Some(1) => DoctorArtifactIgnore::Unignored {
+            warning: "! ripr artifacts under target/ripr are not covered by git ignore rules; \
+                      `git add -A` would commit ripr's own reports into your history. \
+                      Add this line to .gitignore: /target/ripr/"
+                .to_string(),
+        },
+        _ => DoctorArtifactIgnore::NotChecked,
     }
-    Some(
-        "! ripr artifacts under target/ripr are not covered by git ignore rules; \
-         `git add -A` would commit ripr's own reports into your history. \
-         Add this line to .gitignore: /target/ripr/"
-            .to_string(),
-    )
 }
 
 /// Why a cache entry could not be created under `cache_dir`, or `None` when
@@ -2578,18 +2585,23 @@ mod tests {
     }
 
     #[test]
-    fn ripr_artifact_unignored_warning_names_the_gitignore_entry() -> Result<(), String> {
+    fn ripr_artifact_ignore_names_the_gitignore_entry() -> Result<(), String> {
+        use output::doctor::DoctorArtifactIgnore;
         let root = unique_command_test_dir("artifact-unignored");
         std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
         // No artifact root: nothing to warn about, and no git probe needed.
-        assert_eq!(ripr_artifact_unignored_warning(&root), None);
+        assert_eq!(
+            ripr_artifact_ignore(&root),
+            DoctorArtifactIgnore::NoArtifacts
+        );
 
         let artifact = root.join("target").join("ripr").join("pilot");
         std::fs::create_dir_all(&artifact).map_err(|error| error.to_string())?;
-        // No git repository at all: coverage is not established, so doctor
-        // stays quiet rather than claiming an unchecked fact.
-        assert_eq!(ripr_artifact_unignored_warning(&root), None);
-
+        // Establish the repository before asserting coverage: outside a
+        // repository the probe's outcome depends on the machine (an
+        // ancestor worktree or a global exclude file can answer for a
+        // directory that is not itself a repo), so the NotChecked arm is
+        // not pinned here.
         for args in [
             ["init"].as_slice(),
             ["config", "user.email", "ripr@example.invalid"].as_slice(),
@@ -2598,18 +2610,18 @@ mod tests {
             crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
         }
         // A repository whose ignore rules do not cover target/ripr warns and
-        // names the exact entry to add (#7663).
-        let warning = ripr_artifact_unignored_warning(&root);
-        assert!(
-            warning
-                .as_deref()
-                .is_some_and(|text| text.contains("/target/ripr/")),
-            "{warning:?}"
-        );
+        // names the exact entry to add (#7663). The typed evidence is what
+        // both the human line and the JSON report carry (#8257 review).
+        match ripr_artifact_ignore(&root) {
+            DoctorArtifactIgnore::Unignored { warning } => {
+                assert!(warning.contains("/target/ripr/"), "{warning}");
+            }
+            other => return Err(format!("expected Unignored, got {other:?}")),
+        }
         // The covering entry silences it.
         std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
             .map_err(|error| error.to_string())?;
-        assert_eq!(ripr_artifact_unignored_warning(&root), None);
+        assert_eq!(ripr_artifact_ignore(&root), DoctorArtifactIgnore::Ignored);
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
