@@ -138,7 +138,9 @@ Common options:
   --format FORMAT   human (default), human-full (every finding with drill-in
                     commands), json (--json, for jq and CI scripts), github,
                     sarif. Badge, repo-scope and agent formats: see --help --all.
-  --root PATH       Workspace root. Defaults to the current directory.
+  --root PATH       Workspace root. When omitted, ripr walks up from the current
+                    directory to the enclosing workspace or project; pass
+                    `--root .` to use the current directory.
   --quiet           Suppress progress on stderr.
 
 Examples:
@@ -291,6 +293,8 @@ Options:
   --quiet                  Suppress analysis progress and heartbeats on
                            stderr. Does not change machine stdout, exit
                            codes, or error reporting.
+  --all                    Only with --help: print this full reference instead
+                           of the one-screen summary.
 
 Exit status:
   Complete and partial_with_limitations reports exit 0, regardless of findings.
