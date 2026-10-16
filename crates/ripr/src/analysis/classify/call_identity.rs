@@ -50,8 +50,7 @@ use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::FunctionContainer;
 use crate::analysis::syntax::{
-    NameScope, NameScopes, RustModuleTreeEdge, UseBinding, name_scopes_for_fn,
-    rust_module_tree_scan,
+    NameScope, NameScopes, RustModuleTreeEdge, UseBinding, rust_module_tree_scan,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -68,12 +67,15 @@ pub(in crate::analysis) enum CallTarget {
     Unsettled,
 }
 
-type TestKey = (PathBuf, usize);
+// A line can contain several differently named caller functions.
+type TestKey = (PathBuf, usize, String);
 
-/// One identity per owner definition per run, built on first ask. Keyed by
-/// the owner's parser symbol id, which is unique per definition even when
+/// One identity per owner and purpose per run, built on first ask. Keyed by
+/// the identity purpose and owner's parser symbol id, which is unique per definition even when
 /// two same-named owners share one source line (inline sibling modules).
-type SharedIdentities = BTreeMap<String, Option<std::sync::Arc<OwnerCallIdentity>>>;
+type SharedOwnerScopes = BTreeMap<PathBuf, (Arc<str>, Option<Arc<super::owner_pin::FileScopes>>)>;
+
+type SharedIdentities = BTreeMap<(bool, String), Option<std::sync::Arc<OwnerCallIdentity>>>;
 
 /// Per-index memos for the call-identity family (#7716 residual).
 ///
@@ -94,6 +96,8 @@ pub(crate) struct CallIdentityMemos {
     /// scope parses then serve every probe and every pin of the run instead
     /// of dying with each construction.
     identities: Mutex<SharedIdentities>,
+    /// Lexical source facts shared by all short-lived owner-pin syntax contexts.
+    pub(super) owner_file_scopes: Mutex<SharedOwnerScopes>,
     /// RIPR-SPEC-0035: every workspace `const`/`static` by name with its
     /// file and masked initializer, built once per index on first use by
     /// the owner-return pin's self-computed expected-value check.
@@ -240,7 +244,25 @@ pub(in crate::analysis) fn shared_owner_call_identity(
     index: &RustIndex,
     owner: &FunctionSummary,
 ) -> Option<std::sync::Arc<OwnerCallIdentity>> {
-    let key = owner.id.0.clone();
+    shared_call_identity(index, owner, false)
+}
+
+/// Same-file helper identity is lexical, independent of Cargo target layout and
+/// `#[path]` composition. It also checks a unique helper: a foreign module path
+/// cannot borrow that helper merely because no indexed function shares its name.
+pub(in crate::analysis) fn shared_same_file_helper_identity(
+    index: &RustIndex,
+    helper: &FunctionSummary,
+) -> Option<std::sync::Arc<OwnerCallIdentity>> {
+    shared_call_identity(index, helper, true)
+}
+
+fn shared_call_identity(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    same_file_helper: bool,
+) -> Option<std::sync::Arc<OwnerCallIdentity>> {
+    let key = (same_file_helper, owner.id.0.clone());
     if let Some(memo) = index
         .call_identity_memos
         .identities
@@ -250,8 +272,12 @@ pub(in crate::analysis) fn shared_owner_call_identity(
     {
         return memo;
     }
-    let built =
-        OwnerCallIdentity::new(owner, index.functions().iter(), index).map(std::sync::Arc::new);
+    let built = if same_file_helper {
+        OwnerCallIdentity::same_file_helper(owner, index)
+    } else {
+        OwnerCallIdentity::new(owner, index.functions().iter(), index)
+    }
+    .map(std::sync::Arc::new);
     // A poisoned lock only costs the sharing, never a wrong answer: the
     // fallback rebuilds fresh, exactly as before the memo existed.
     if let Ok(mut identities) = index.call_identity_memos.identities.lock() {
@@ -276,7 +302,6 @@ pub(in crate::analysis) struct OwnerCallIdentity {
     /// definition could not be placed, so it matches every spelled path.
     definitions: Vec<Option<Vec<String>>>,
     memo: Mutex<BTreeMap<TestKey, CallTarget>>,
-    scopes: Mutex<BTreeMap<TestKey, Option<Arc<NameScopes>>>>,
 }
 
 /// Which definitions a spelled path can name.
@@ -317,6 +342,63 @@ struct TestScope {
 }
 
 impl OwnerCallIdentity {
+    /// One source file's module/function namespace, using the same scope and
+    /// path resolver as repository owner identity. This grants no crate/target
+    /// provenance and does not change the production-owner constructor.
+    fn same_file_helper(helper: &FunctionSummary, index: &RustIndex) -> Option<Self> {
+        if helper.item.container != FunctionContainer::Free || !helper.item.has_body {
+            return None;
+        }
+        let mut definitions = vec![Some(definition_module_path(helper)?)];
+        for function in index.functions().iter().filter(|function| {
+            function.file == helper.file && function.name == helper.name && function.id != helper.id
+        }) {
+            match function.item.container {
+                FunctionContainer::Free if function.item.has_body => {
+                    definitions.push(definition_module_path(function));
+                }
+                FunctionContainer::Unknown => definitions.push(None),
+                _ => {}
+            }
+        }
+        Some(Self {
+            name: helper.name.clone(),
+            owner_crate: None,
+            layout: CrateLayout::default(),
+            owner_file: helper.file.clone(),
+            owner_package: package_key(&helper.file),
+            definitions,
+            memo: Mutex::new(BTreeMap::new()),
+        })
+    }
+
+    pub(in crate::analysis) fn resolve_same_file_call(
+        &self,
+        caller: &TestSummary,
+        index: &RustIndex,
+        qualifier: &[String],
+    ) -> CallTarget {
+        if caller.file != self.owner_file {
+            return CallTarget::Unsettled;
+        }
+        let file_segments = file_module_segments(&caller.file);
+        // A same-file lexical relation does not establish the external module
+        // path of a non-root file included through `#[path]` or another target.
+        if qualifier.first().is_some_and(|head| head == "crate")
+            && file_segments
+                .as_ref()
+                .is_none_or(|segments| !segments.is_empty())
+        {
+            return CallTarget::Unsettled;
+        }
+        let scope = TestScope {
+            file_segments,
+            scopes: self.name_scopes(caller, index),
+            crate_names: BTreeSet::new(),
+        };
+        self.target_of(&self.resolve_spelled(qualifier, &scope))
+    }
+
     /// `None` when the rule does not apply: the owner is not a placed
     /// module-level `fn`, no other module-level `fn` of its name exists in
     /// its crate among `same_named`, the package remaps a module file with
@@ -392,7 +474,6 @@ impl OwnerCallIdentity {
             owner_package,
             definitions,
             memo: Mutex::new(BTreeMap::new()),
-            scopes: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -419,7 +500,7 @@ impl OwnerCallIdentity {
         test: &TestSummary,
         index: &RustIndex,
     ) -> CallTarget {
-        let key = (test.file.clone(), test.start_line);
+        let key = (test.file.clone(), test.start_line, test.name.clone());
         if let Some(known) = self
             .memo
             .lock()
@@ -523,26 +604,15 @@ impl OwnerCallIdentity {
         false
     }
 
+    fn name_scopes(&self, test: &TestSummary, index: &RustIndex) -> Option<Arc<NameScopes>> {
+        index
+            .source_syntax
+            .get(index, &test.file)?
+            .name_scopes(test)
+    }
+
     fn test_scope(&self, test: &TestSummary, index: &RustIndex) -> TestScope {
-        let key = (test.file.clone(), test.start_line);
-        let cached = self
-            .scopes
-            .lock()
-            .ok()
-            .and_then(|scopes| scopes.get(&key).cloned());
-        let scopes = match cached {
-            Some(scopes) => scopes,
-            None => {
-                let scopes = index.files().get(&test.file).and_then(|facts| {
-                    name_scopes_for_fn(&facts.data().source, test.start_line, &test.name)
-                        .map(Arc::new)
-                });
-                if let Ok(mut memo) = self.scopes.lock() {
-                    memo.insert(key, scopes.clone());
-                }
-                scopes
-            }
-        };
+        let scopes = self.name_scopes(test, index);
         // `crate::`, `self::`, `super::` and local modules name the owner's
         // modules only from the owner's own crate: same package, same crate
         // within it.
@@ -2247,7 +2317,6 @@ mod tests {
             owner_package: None,
             definitions: vec![Some(strings(&["a"])), Some(strings(&["b"])), None],
             memo: Mutex::new(BTreeMap::new()),
-            scopes: Mutex::new(BTreeMap::new()),
         };
         let target =
             |module: &[&str]| identity.target_of(&identity.matches_module(Some(strings(module))));
