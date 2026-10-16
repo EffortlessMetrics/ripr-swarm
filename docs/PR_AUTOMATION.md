@@ -138,6 +138,20 @@ in the paragraph, while cmark-gfm starts a list. Existing interpretation and
 accepted syntax are preserved; these new alternate-renderer limitations are
 recorded alongside, without changing the earlier12 CDATA limitations. Adopting
 the alternative interpretation requires a separate evidence-format decision.
+Item-content classification and inline list interruption share one explicit ASCII
+whitespace class (space, tab, CR, LF, VT and FF), preserving the retained target's
+existing ASCII-control behavior. Unicode-aware `\S` cannot stand in for this
+class: all19 non-ASCII Unicode White_Space characters are literal content. Marker
+separators remain ASCII space/tab. `unicode-list-content-rendering.json` retains
+978 bodies covering those characters, invalid non-ASCII separators, ASCII/empty/
+zero-width controls, marker bounds and both current-field directions. Both mature
+renderer HTML outputs and independently traversed AST fields are retained.
+The new corpus also exposes64 inherited alternate-renderer bodies in the VT/FF
+and zero-padded-one families. Their old/new decisions are identical; cmark-gfm
+accepts VT/FF as nonempty item content where the retained target does not. These
+alternatives do not change the earlier12 CDATA or16 leading-zero matrix disclosures.
+Adopting the alternative ASCII-control interpretation requires a separate evidence
+format decision; this correction does not make that policy change.
 A source-ready declaration may separately report overall `REVIEW_INCOMPLETE`
 while qualification remains outstanding. Both admission and the final refresh,
 including diagnostics, use the same parser.

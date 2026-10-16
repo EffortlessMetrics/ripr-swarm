@@ -32,10 +32,15 @@ env:
     # Reuse this rule for interruption and the remaining line-level fallback.
     def review_fence_open:
       "(?:`{3,}(?!`)[^`\n]*|~{3,}[^\n]*)";
+    # Retain the CommonMark target's ASCII whitespace class for item content.
+    # Unicode whitespace is literal content; marker separators remain space/tab.
+    # The same class governs item recognition and inline paragraph interruption.
+    def review_list_content:
+      "[^ \t\r\n\u000b\u000c]";
     # Block indicators precede inline parsing. A code span can cross a soft
     # line break, never a blank line or an interrupting heading/fence/block.
     def review_inline_end:
-      "[ \t]*(?:\n|\\z)| {0,3}(?:#{1,6}(?:[ \t]|$)|" + review_fence_open + "$|(?:=+|-+)[ \t]*$|(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$|>|[-+*][ \t]+\\S|1[.)][ \t]+\\S|<" + review_html_interrupt + ")";
+      "[ \t]*(?:\n|\\z)| {0,3}(?:#{1,6}(?:[ \t]|$)|" + review_fence_open + "$|(?:=+|-+)[ \t]*$|(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$|>|(?:[-+*]|1[.)])[ \t]+" + review_list_content + "|<" + review_html_interrupt + ")";
     # Complete tags require valid names, separated attributes and a value after
     # '='. Quoted values may contain angle brackets; unquoted values may not.
     # Closing tags have no attributes or self-closing slash.
@@ -69,7 +74,7 @@ env:
       if test("^ {0,3}(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$") then null
       elif test("^ {0,3}(?:[-+*]|[0-9]{1,9}[.)])(?:[ \t]+|$)") then
         capture("^(?<offset> {0,3})(?<marker>[-+*]|[0-9]{1,9}[.)])(?=[ \t]|$)(?<space>[ \t]*)(?<rest>.*)$") as $m |
-        if $paragraph and (($m.marker | test("^(?:[-+*]|1[.)])$") | not) or ($m.rest | test("\\S") | not)) then null
+        if $paragraph and (($m.marker | test("^(?:[-+*]|1[.)])$") | not) or ($m.rest | test(review_list_content) | not)) then null
         else
           (($m.offset|length) + ($m.marker|length)) as $width |
           (if ($m.space|length) == 0 or ($m.space|length) > 4 then 1 else ($m.space|length) end) as $padding |
