@@ -32,6 +32,7 @@ use crate::analysis::committed_source::{self, CommittedSourceRead};
 use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_findings};
 use crate::analysis::facts::RustIndex;
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
+use crate::analysis::workspace::declares_not_run_test_target;
 use crate::analysis::workspace::limitations_for_absent_changed_files;
 use crate::config::OraclePolicy;
 use crate::domain::{
@@ -532,6 +533,8 @@ fn may_be_unreached(
                                             .and_then(toml::Value::as_bool)
                                             == Some(false)
                                     })
+                                    // #8016: a `[[test]]` cargo never runs.
+                                    || declares_not_run_test_target(&manifest, package_dir)
                             })
                     })
             });
@@ -7359,6 +7362,47 @@ fn absent_delimiter_boundary_returns_head() {
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_test_targets_cargo_never_runs() -> Result<(), String> {
+        // #8016: a `[[test]]` with `test = false`, `harness = false` or
+        // required features outside the defaults is not run by `cargo test`.
+        // The controls (plain entry, features met by `default`) still relate,
+        // so the refusal is the manifest key and not the entry's presence.
+        let cases = [
+            ("test = false\n", false),
+            ("harness = false\n", false),
+            ("required-features = [\"never\"]\n", false),
+            ("required-features = [\"on\"]\n", true),
+            ("test = true\nharness = true\n", true),
+        ];
+        for (index, (keys, relates)) in cases.into_iter().enumerate() {
+            let root = temp_root(&format!("module-graph-not-run-test-{index}"))?;
+            write(
+                &root.join("Cargo.toml"),
+                &format!(
+                    "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[features]\ndefault=['on']\non=[]\n\n[[test]]\nname='pin'\n{keys}"
+                ),
+            )?;
+            write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+            write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+            write(
+                &root.join("tests/pin.rs"),
+                "use shop::used::discount;\n\n#[test]\nfn discount_applies_pin() {\n    assert_eq!(discount(150), 140);\n}\n",
+            )?;
+
+            let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+            let related = related_test_names(&root, &result, "src/used.rs");
+            assert_eq!(
+                related.iter().any(|name| name == "discount_applies_pin"),
+                relates,
+                "keys={keys:?} related={related:?}"
+            );
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
         Ok(())
     }
 

@@ -49,6 +49,7 @@ use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
 
+use super::cargo_targets::expand_default_features;
 use super::cargo_targets::{
     collect_explicit_paths, declared_targets_from_manifest, lexical, nearest_manifest_dir,
     normalize, owning_package_dir,
@@ -698,10 +699,106 @@ fn evidence_roots(
             roots.extend(named_default_roots(manifest.get(section), &dir));
         }
     }
+    // A `[[test]]` entry with `test = false`, `harness = false` or unmet
+    // `required-features` is built (or skipped) but never runs its `#[test]`
+    // functions under `cargo test`, so its file is no evidence root (#8016).
+    for skipped in not_run_test_roots(manifest, package_dir) {
+        roots.remove(&skipped);
+    }
     roots
         .into_iter()
         .map(|root| lexical(&normalize(&root)))
         .collect()
+}
+
+/// Test-target files the manifest declares but `cargo test` never runs
+/// (#8016): `test = false`, `harness = false` (no libtest collection), or
+/// `required-features` outside the package's default feature set. An entry
+/// also overrides the autodiscovered target of the same name, so its default
+/// `<name>.rs` and `<name>/main.rs` paths are included. A malformed flag or
+/// feature list fails closed to "not run". A file some running entry also
+/// names stays a root.
+fn not_run_test_roots(manifest: &toml::Value, package_dir: &Path) -> BTreeSet<PathBuf> {
+    let Some(entries) = manifest.get("test").and_then(toml::Value::as_array) else {
+        return BTreeSet::new();
+    };
+    let enabled = default_enabled_manifest_features(manifest);
+    let tests_dir = package_dir.join("tests");
+    let mut skipped = BTreeSet::new();
+    let mut running = BTreeSet::new();
+    for entry in entries {
+        let runs = test_entry_runs(entry, &enabled);
+        let mut files = Vec::new();
+        if let Some(path) = entry
+            .get("path")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+        {
+            files.push(package_dir.join(path));
+        }
+        if let Some(name) = entry
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            files.push(tests_dir.join(format!("{name}.rs")));
+            files.push(tests_dir.join(name).join("main.rs"));
+        }
+        let target = if runs { &mut running } else { &mut skipped };
+        target.extend(files.into_iter().map(|file| lexical(&normalize(&file))));
+    }
+    skipped.retain(|file| !running.contains(file));
+    skipped
+}
+
+/// Whether the manifest declares a `[[test]]` target `cargo test` never runs
+/// (#8016): a test-root file in such a package may be unreached.
+pub(crate) fn declares_not_run_test_target(manifest: &toml::Value, package_dir: &Path) -> bool {
+    !not_run_test_roots(manifest, package_dir).is_empty()
+}
+
+/// Whether `cargo test` runs the `#[test]` functions of one `[[test]]` entry.
+fn test_entry_runs(entry: &toml::Value, enabled: &BTreeSet<String>) -> bool {
+    let flag_set = |key: &str| match entry.get(key) {
+        None => true,
+        Some(toml::Value::Boolean(value)) => *value,
+        Some(_) => false,
+    };
+    if !flag_set("test") || !flag_set("harness") {
+        return false;
+    }
+    match entry.get("required-features") {
+        None => true,
+        Some(toml::Value::Array(items)) => items
+            .iter()
+            .all(|item| item.as_str().is_some_and(|name| enabled.contains(name))),
+        Some(_) => false,
+    }
+}
+
+/// Features a plain `cargo test` enables: `default` and what it names.
+fn default_enabled_manifest_features(manifest: &toml::Value) -> BTreeSet<String> {
+    let features = manifest
+        .get("features")
+        .and_then(toml::Value::as_table)
+        .map(|table| {
+            table
+                .iter()
+                .filter_map(|(name, enables)| {
+                    let items = enables.as_array()?;
+                    let items = items
+                        .iter()
+                        .filter_map(toml::Value::as_str)
+                        .map(str::to_string)
+                        .collect();
+                    Some((name.clone(), items))
+                })
+                .collect::<BTreeMap<String, Vec<String>>>()
+        })
+        .unwrap_or_default();
+    expand_default_features(&features)
 }
 
 /// The default paths of declared targets that name no `path`:
