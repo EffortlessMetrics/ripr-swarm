@@ -150,9 +150,10 @@ Common options:
   --quiet           Suppress progress on stderr.
   --help --all      Show every option, format, and environment variable.
 
-Exit status: complete and partial_with_limitations reports exit 0
-regardless of findings; unsupported_input and usage errors exit 2. Do not
-use `check` as a CI gate; `ripr gate evaluate` owns blocking decisions.
+Exit status: complete and partial_with_limitations reports exit 0,
+including `exposed` and `weakly_exposed` findings; unsupported_input and
+usage errors exit 2. Do not build a CI gate on check's exit code;
+`ripr gate evaluate` owns blocking decisions (exit 3 on `blocked`).
 
 Progress: long runs write `ripr progress: <stage>` lines to stderr. Totals
 are unknown, so there is never a percentage or ETA, and progress makes no
