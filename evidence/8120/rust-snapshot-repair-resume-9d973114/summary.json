@@ -1,0 +1,318 @@
+{
+  "head": "9d9731148780613ec27b70b0d77fe612fdd282e5",
+  "tree": "77aa5a4041e5686b8a38b005ae9eb472202c5739",
+  "integration_basis": "b0d507333e98f3cf30af4c72fa43c7d2bdaf1659",
+  "remote_merge_subject": {
+    "head": "9d9731148780613ec27b70b0d77fe612fdd282e5",
+    "head_tree": "77aa5a4041e5686b8a38b005ae9eb472202c5739",
+    "merge": "b3c9aa138e6edcd3ddd0ec27b0df195b8675102e",
+    "merge_tree": "77aa5a4041e5686b8a38b005ae9eb472202c5739",
+    "parents": [
+      "b0d507333e98f3cf30af4c72fa43c7d2bdaf1659",
+      "9d9731148780613ec27b70b0d77fe612fdd282e5"
+    ],
+    "head_merge_content_diff": "",
+    "material_hooks": {
+      ".github/workflows/rust-gates.yml": {
+        "blob": "a451139bba39b9f6648d2d0d04f792b90631d20f",
+        "sha256": "56e32fd825fe61a9641068ab87555b0d46b7c567fedbc50fdba4199fb0b8bf13"
+      },
+      ".github/workflows/routed-rust.yml": {
+        "blob": "57878643f92039a47e2c1ed85a50fd4587988929",
+        "sha256": "3acfa4c3206e9c7014eb24ae5a89619818df6f5f7cd53bc7f45598650cefa90e"
+      },
+      "Cargo.lock": {
+        "blob": "d05467baee84fcbb7cd8426930576cf6a7244e69",
+        "sha256": "f96e64645af5fdffd1fb626ff7aedf9d2d7060e50fbda752ed87d93daad64def"
+      },
+      "rust-toolchain.toml": {
+        "blob": "6360c1888da69d2599c73ae7732b64a5b863d011",
+        "sha256": "12dc5d64dbd96c1b07be2943241d52d9f6127a79ba47a820455ba7b873fc896a"
+      }
+    },
+    "preparation_honesty_nextest_hooks_present": true
+  },
+  "validation": [
+    {
+      "stage": "snapshot-tests",
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--test",
+        "snapshot_field_admission",
+        "--message-format=json-render-diagnostics",
+        "--",
+        "--test-threads=1"
+      ],
+      "head": "9d9731148780613ec27b70b0d77fe612fdd282e5",
+      "integration_basis": "b0d507333e98f3cf30af4c72fa43c7d2bdaf1659",
+      "exit": 0,
+      "seconds": 104.434
+    },
+    {
+      "stage": "field-unit",
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--lib",
+        "unbound_snapshot_owner_result_field_stays_weak",
+        "--",
+        "--test-threads=1"
+      ],
+      "head": "9d9731148780613ec27b70b0d77fe612fdd282e5",
+      "integration_basis": "b0d507333e98f3cf30af4c72fa43c7d2bdaf1659",
+      "exit": 0,
+      "seconds": 222.63
+    },
+    {
+      "stage": "honesty",
+      "argv": [
+        "cargo",
+        "run",
+        "--locked",
+        "-p",
+        "xtask",
+        "--",
+        "check-evidence-promotion-honesty"
+      ],
+      "head": "9d9731148780613ec27b70b0d77fe612fdd282e5",
+      "integration_basis": "b0d507333e98f3cf30af4c72fa43c7d2bdaf1659",
+      "exit": 0,
+      "seconds": 161.805
+    },
+    {
+      "stage": "check-fast",
+      "argv": [
+        "cargo",
+        "run",
+        "--locked",
+        "-p",
+        "xtask",
+        "--",
+        "check-fast"
+      ],
+      "head": "9d9731148780613ec27b70b0d77fe612fdd282e5",
+      "integration_basis": "b0d507333e98f3cf30af4c72fa43c7d2bdaf1659",
+      "exit": 0,
+      "seconds": 552.984
+    },
+    {
+      "stage": "goldens",
+      "argv": [
+        "cargo",
+        "run",
+        "--locked",
+        "-p",
+        "xtask",
+        "--",
+        "goldens",
+        "check"
+      ],
+      "head": "9d9731148780613ec27b70b0d77fe612fdd282e5",
+      "integration_basis": "b0d507333e98f3cf30af4c72fa43c7d2bdaf1659",
+      "exit": 0,
+      "seconds": 143.058
+    },
+    {
+      "stage": "dogfood",
+      "argv": [
+        "cargo",
+        "run",
+        "--locked",
+        "-p",
+        "xtask",
+        "--",
+        "dogfood"
+      ],
+      "head": "9d9731148780613ec27b70b0d77fe612fdd282e5",
+      "integration_basis": "b0d507333e98f3cf30af4c72fa43c7d2bdaf1659",
+      "exit": 0,
+      "seconds": 1.57
+    },
+    {
+      "stage": "precommit",
+      "argv": [
+        "cargo",
+        "run",
+        "--locked",
+        "-p",
+        "xtask",
+        "--",
+        "precommit"
+      ],
+      "head": "9d9731148780613ec27b70b0d77fe612fdd282e5",
+      "integration_basis": "b0d507333e98f3cf30af4c72fa43c7d2bdaf1659",
+      "exit": 0,
+      "seconds": 318.117
+    },
+    {
+      "stage": "cli-build",
+      "argv": [
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "ripr",
+        "--bin",
+        "ripr",
+        "--message-format=json-render-diagnostics"
+      ],
+      "head": "9d9731148780613ec27b70b0d77fe612fdd282e5",
+      "integration_basis": "b0d507333e98f3cf30af4c72fa43c7d2bdaf1659",
+      "exit": 0,
+      "seconds": 0.215
+    }
+  ],
+  "binary_witness": {
+    "head": "9d9731148780613ec27b70b0d77fe612fdd282e5",
+    "version": "ripr 0.11.0 (9d9731148780613ec27b70b0d77fe612fdd282e5)",
+    "compiler_artifact": {
+      "reason": "compiler-artifact",
+      "package_id": "path+file:///workspace/scratch/snapshot-audit/source/crates/ripr#0.11.0",
+      "manifest_path": "/workspace/scratch/snapshot-audit/source/crates/ripr/Cargo.toml",
+      "target": {
+        "kind": [
+          "bin"
+        ],
+        "crate_types": [
+          "bin"
+        ],
+        "name": "ripr",
+        "src_path": "/workspace/scratch/snapshot-audit/source/crates/ripr/src/main.rs",
+        "edition": "2024",
+        "doc": true,
+        "doctest": false,
+        "test": true
+      },
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": 0,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": false
+      },
+      "features": [
+        "default",
+        "lang-python",
+        "lang-rust",
+        "lang-typescript"
+      ],
+      "filenames": [
+        "/workspace/scratch/snapshot-audit/target/debug/ripr"
+      ],
+      "executable": "/workspace/scratch/snapshot-audit/target/debug/ripr",
+      "fresh": true
+    },
+    "frozen_path": "/workspace/scratch/snapshot-audit/repair-evidence/resume-8251/ripr-9d973114",
+    "sha256": "3108fc96e495f4dadc87e2006b8cc0f92faba17a764e121fe2719c3916aa5c47"
+  },
+  "report_denominators": {
+    "head": "9d9731148780613ec27b70b0d77fe612fdd282e5",
+    "check_fast": {
+      "native_exit": 0,
+      "gates": 15,
+      "selected_paths": [
+        ".ripr/traceability.toml",
+        "changelog.d/8120-field-snapshot-admission.md",
+        "crates/ripr/src/analysis/classify/mod.rs",
+        "crates/ripr/src/analysis/classify/reveal.rs",
+        "crates/ripr/src/analysis/test_grip_evidence.rs",
+        "crates/ripr/src/analysis/test_grip_evidence/tests.rs",
+        "crates/ripr/tests/snapshot_field_admission.rs",
+        "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md",
+        "fixtures/evidence-promotion-honesty-corpus/corpus.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-missing-expected.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-wrong-receiver.json"
+      ],
+      "skipped_gates": []
+    },
+    "goldens": {
+      "native_exit": 0,
+      "fixtures": 455,
+      "surfaces": 1134,
+      "violations": "None detected."
+    },
+    "dogfood": {
+      "native_exit": 0,
+      "status": "Status: pass"
+    },
+    "honesty": {
+      "native_exit": 0,
+      "total": 301,
+      "passed": 300,
+      "failed": 0,
+      "not_run": 1,
+      "not_run_case": "rust_semver_matches_greater_external_limitation",
+      "reason": "Requires --pinned-external; default gate intentionally omits this external control."
+    }
+  },
+  "later_main_relevance": {
+    "candidate": "9d9731148780613ec27b70b0d77fe612fdd282e5",
+    "tested_basis": "b0d507333e98f3cf30af4c72fa43c7d2bdaf1659",
+    "later_main": "14afcde1c5e7777ecb5697bdbfb80394dd9e5fb2",
+    "later_main_commits": [
+      "14afcde1c5e7777ecb5697bdbfb80394dd9e5fb2 fix(pilot): apply generated policy to capped absence warnings (#8253)",
+      "0bd1d34904f9a92574cb4454771415619121c044 fix(ux): clear four Windows path and quoting frictions (#8152)",
+      "91f85b81496376787b91de96844938647bbe4c99 fix(ux): clear guidance and explain copy frictions (unknown-sink row, verdict-change signature) (#8191)"
+    ],
+    "later_changed_path_count": 162,
+    "clean_composition_preview_tree": "82bba3cd0e7d390db3c3f357d746313a623c0534",
+    "merge_tree_exit": 0,
+    "critical_upstream_paths_unchanged": [
+      "crates/ripr/src/analysis/test_grip_evidence.rs",
+      "crates/ripr/src/analysis/test_grip_evidence/tests.rs",
+      "crates/ripr/src/analysis/classify/reveal.rs",
+      "crates/ripr/src/analysis/classify/owner_pin.rs",
+      "crates/ripr/src/output/repo_exposure.rs",
+      "crates/ripr/src/output/render.rs",
+      "fixtures/evidence-promotion-honesty-corpus",
+      ".github/workflows/rust-gates.yml",
+      ".github/workflows/routed-rust.yml",
+      "Cargo.lock",
+      "Cargo.toml",
+      "rust-toolchain.toml"
+    ],
+    "actual_remote_subject_observed": "b3c9aa138e6edcd3ddd0ec27b0df195b8675102e",
+    "judgment": "Three unrelated landed UX/pilot changes; affected source review finds no new known-red dependency or material prerequisite missing. No behind-only branch update. Hosted actual checkout and combined execution remain pending."
+  },
+  "thread_disposition": {
+    "thread": "PRRT_kwDOSiSx0c6tIUEB",
+    "repair": "9d9731148780613ec27b70b0d77fe612fdd282e5",
+    "reply": 4293544240,
+    "confirmed_resolved": true
+  },
+  "historical_hosted_subject": {
+    "run": 38876223230,
+    "source_head": "014238d1256fa283fece5679d520e511bcd460d0",
+    "checkout": "4990b322c7fef18ea998f759b3164809c8e57f20",
+    "nextest_passed": 16351,
+    "nextest_skipped": 3,
+    "doctests_passed": 2,
+    "doctests_ignored": 1
+  },
+  "artifact_denial": {
+    "action": "retrieve supplied workflow artifact file URL to task-local ZIP",
+    "target": {
+      "run_id": 38876223230,
+      "artifact_id": 12035929570,
+      "name": "ripr-rust-small-github-nextest-1"
+    },
+    "status": "denied",
+    "reason": "Tunnel connection failed: 403 Forbidden",
+    "completed": "artifact metadata and file reference obtained; no ZIP bytes downloaded",
+    "follow_up": "stopped; no alternate route attempted or authorized",
+    "independent_evidence": "previously retrieved supported job log independently verified checkout and named tests"
+  },
+  "limits": [
+    "New-head hosted qualification remains separate and pending.",
+    "Field-construction guard only; broader #8120/#8121 and non-field seam work remain open.",
+    "Snapshot presence/test success alone is not field-relevance proof.",
+    "No package, installed artifact, platform or release equivalence claim."
+  ]
+}
