@@ -1,0 +1,259 @@
+{
+  "scope": "Observed first-page connector run/job inventory; no complete required-check or merge clearance",
+  "run_id": 38840869131,
+  "job_id": 116780497752,
+  "checkout": "f49a166040664644e20a97bc1f7d199026a71092",
+  "evidence": [
+    "2026-10-16T02:32:13.4221874Z HEAD is now at f49a16604 Merge 425317d867f4639ad5ec878c3ba44c82730d7af7 into 116598e5207372cdca620a8931600dcb8890b514",
+    "2026-10-16T04:18:13.3369461Z xtask: PR evidence producer failed; review-comments must not run: ripr check for PR evidence timed out after 3600 seconds; retry command (Bash): cargo xtask ripr-pr --base 116598e5207372cdca620a8931600dcb8890b514 --head 425317d867f4639ad5ec878c3ba44c82730d7af7 --root .",
+    "2026-10-16T04:18:13.3403147Z ##[error]Process completed with exit code 1."
+  ],
+  "jobSteps": [
+    {
+      "name": "Set up job",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 1
+    },
+    {
+      "name": "Run actions/checkout@v6",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 2
+    },
+    {
+      "name": "Acquire scratch lease",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 3
+    },
+    {
+      "name": "Reclaim terminal scratch",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 4
+    },
+    {
+      "name": "Prepare toolchain temp",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 5
+    },
+    {
+      "name": "Configure scratch environment",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 6
+    },
+    {
+      "name": "Prepare scratch",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 7
+    },
+    {
+      "name": "Run dtolnay/rust-toolchain@v1",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 8
+    },
+    {
+      "name": "Formatting preflight",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 9
+    },
+    {
+      "name": "Install CI tools",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 10
+    },
+    {
+      "name": "Restore hosted Rust cache",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 11
+    },
+    {
+      "name": "Start sccache server",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 12
+    },
+    {
+      "name": "Agent skill contracts",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 13
+    },
+    {
+      "name": "Prepare locked owner-return fixture dependencies",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 14
+    },
+    {
+      "name": "Repository policy preflight",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 15
+    },
+    {
+      "name": "Evidence promotion honesty",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 16
+    },
+    {
+      "name": "Dependency policy",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 17
+    },
+    {
+      "name": "Process policy",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 18
+    },
+    {
+      "name": "Network policy",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 19
+    },
+    {
+      "name": "Workspace and all-target check",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 20
+    },
+    {
+      "name": "All-features ripr target check",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 21
+    },
+    {
+      "name": "Strict workspace Clippy",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 22
+    },
+    {
+      "name": "Required Rust tests",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 23
+    },
+    {
+      "name": "Upload required Rust test results",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 24
+    },
+    {
+      "name": "Required Rust doctests",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 25
+    },
+    {
+      "name": "Golden output contracts",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 26
+    },
+    {
+      "name": "Retain wildcard calibration producer outputs",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 27
+    },
+    {
+      "name": "Fixture contracts",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 28
+    },
+    {
+      "name": "Verdict corpora",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 29
+    },
+    {
+      "name": "PR evidence",
+      "status": "completed",
+      "conclusion": "failure",
+      "number": 30
+    },
+    {
+      "name": "Proof route dry-run (advisory)",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 31
+    },
+    {
+      "name": "Advisory reports",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 32
+    },
+    {
+      "name": "Show sccache stats",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 33
+    },
+    {
+      "name": "Write gate summary",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 34
+    },
+    {
+      "name": "Remove RIPR analysis cache before artifact upload",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 35
+    },
+    {
+      "name": "Upload RIPR reports",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 36
+    },
+    {
+      "name": "Clean scratch",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 37
+    },
+    {
+      "name": "Release scratch lease",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 38
+    },
+    {
+      "name": "Post Restore hosted Rust cache",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 75
+    },
+    {
+      "name": "Post Run actions/checkout@v6",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 76
+    },
+    {
+      "name": "Complete job",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 77
+    }
+  ]
+}

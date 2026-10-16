@@ -1,0 +1,289 @@
+{
+  "as_of_utc": "2026-10-16T05:49:16.243716+00:00",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "pr": 8147,
+  "reviewed_head": "425317d867f4639ad5ec878c3ba44c82730d7af7",
+  "reviewed_tree": "ba7d480ccfcbe7f6acfcdf6a4191c34fa8a0f90e",
+  "parent": "20022bbfeb0d29882f97f51dc5f83ead26919dd4",
+  "observed_pr_base": "116598e5207372cdca620a8931600dcb8890b514",
+  "source_status": "",
+  "source_blobs": {
+    "Cargo.lock": "531197c1eae385730a8c6ad5e8f4d984b4067a3c",
+    "crates/ripr/src/analysis/syntax/owner_pin.rs": "f6c627d058e1fb4ff97e0873d12212aaade97616",
+    "crates/ripr/src/analysis/classify/owner_pin.rs": "142adc7c6a89a1e7a6d9254eb4561352172d0ce7"
+  },
+  "platform": "Linux x86_64-unknown-linux-gnu",
+  "rustc": "1.95.0 59807616e1fa2540724bfbac14d7976d7e4a3860",
+  "features": "default",
+  "profiles": "dev/test debug=0",
+  "cli_build_exit": 0,
+  "unit_exit": 0,
+  "unit_counts": {
+    "pass": 6,
+    "fail": 0,
+    "ignored": 0,
+    "filtered": 11041
+  },
+  "matrix_exit": 0,
+  "native_test_runs": 22,
+  "syntax_component_exit": 101,
+  "syntax_counts": {
+    "pass": 4,
+    "intentional_assertion_fail": 2
+  },
+  "candidate_source_changes": false,
+  "archive_members": 196,
+  "archive_sha256": "e06996d3d79a3b7f3660c3d7b3cdb084a78b9d77505b5f5b81d03d528c60fb6e",
+  "local_paths": {
+    "worktree": "/workspace/review8147",
+    "common_git_directory": "/workspace/ripr-swarm/.git",
+    "cargo_target": "/workspace/review8147-target",
+    "raw_and_native_witnesses": "/workspace/review8147-evidence",
+    "frozen_analyzer": "/workspace/review8147-evidence/witness/ripr",
+    "inherited_checkout": "/workspace/ripr-swarm"
+  },
+  "storage": {
+    "observed_free_before_build": "30 GiB",
+    "conservative_peak_additional_budget": "8 GiB",
+    "task_floor": "10 GiB free; no host reserve configured/overridden",
+    "preserved": "inherited checkout/target; review worktrees and all witnesses; no cleanup"
+  },
+  "witnesses": [
+    {
+      "path": "/workspace/review8147-evidence/witness/ripr",
+      "bytes": 122200624,
+      "sha256": "6dd285dec123615fc0c9ea519c51db182275e29f4c85d6ef7520b8981d6fefb5"
+    },
+    {
+      "path": "/workspace/review8147-evidence/syntax-controls",
+      "bytes": 8604200,
+      "sha256": "e43a3ed894c622b4664d6423087e5ce1870279d191b1d2f98cd2553a71b2eb5e"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/direct_alias_away/correct",
+      "bytes": 6884480,
+      "sha256": "019aa44747e552228fb896ab3d531caadbb32a5487b860f59037c93cb01bbad3"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/direct_alias_away/correct.rs",
+      "bytes": 173,
+      "sha256": "6b745f6d343a874532875b2912b007738a143fb45c1ba4f50b5b8d6d3ea02e69"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/direct_alias_away/wrong",
+      "bytes": 6884472,
+      "sha256": "58791c9e8f66062dc3b5b556dfd44111910709da3ff65dcbcefe05296b3b5da0"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/direct_alias_away/wrong.rs",
+      "bytes": 173,
+      "sha256": "94aff2bfab160a95a06110ef89266bf9ca17df5eca9c395febda9fde129a9b2c"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/direct_glob_other_crate/correct",
+      "bytes": 6884480,
+      "sha256": "dc9074adccc6c39060323a7e20ab9cd4f7486e255df634cd031b955b57e61445"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/direct_glob_other_crate/correct.rs",
+      "bytes": 90,
+      "sha256": "6b07cb66e05c79009d6ef1f3b6138db73c03bf27205bb3b8725e8affbc5ac402"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/direct_glob_other_crate/wrong",
+      "bytes": 6884472,
+      "sha256": "0738289361edff6e3df7b8799e8d6b61fdabe170e6339ac24561fd47f40b2d7f"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/direct_glob_other_crate/wrong.rs",
+      "bytes": 90,
+      "sha256": "3e3a0348a88d58108c2a6e2801de06f87797e66d817e40ccfa472b2993ba9540"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/direct_leaf_path/correct",
+      "bytes": 6884376,
+      "sha256": "953c32d8f291d3fdc37ba71201f93868920802f70f62f79825c97dfe2021ffb8"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/direct_leaf_path/correct.rs",
+      "bytes": 164,
+      "sha256": "8a469cfe1b5ce601f5b5b1a516c3778ebe82e74fa5aa1dfa9e6ab972d41792fe"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/direct_leaf_path/wrong",
+      "bytes": 6884368,
+      "sha256": "e6e6d5bfeaf11a70c9f88f23bcc33d4cce47cec7ce36102a151e51622e40184b"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/direct_leaf_path/wrong.rs",
+      "bytes": 164,
+      "sha256": "e0541208e05f1a1589a7cd3d00c53cc828581230f1ebdd885188a530ad1a7608"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/emitted_named/correct",
+      "bytes": 6884376,
+      "sha256": "82d14092b2ec9c0ad93b59e14e5fd4c7ea524adaf786cd329bc33df80b6c5f12"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/emitted_named/correct.rs",
+      "bytes": 151,
+      "sha256": "e933bfc5d32bc51d5197e7798be141ec588444979e1089d8fdb628be51dc7cc4"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/emitted_named/wrong",
+      "bytes": 6884352,
+      "sha256": "df2ce1944385a6303c9a923ebf987297de523cade276abed5b4d02f19c9d4a3e"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/emitted_named/wrong.rs",
+      "bytes": 151,
+      "sha256": "c7cf93297284a51f2adfc8f71bc6645e0fb7c8bc6e2c537ea6efc91f65a6aa17"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/exported_glob_other_crate/correct",
+      "bytes": 6884496,
+      "sha256": "4ec37a968d89d66f5a759e4844a12e886b8334e27d950eb78d41d18d8140e823"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/exported_glob_other_crate/correct.rs",
+      "bytes": 90,
+      "sha256": "6b07cb66e05c79009d6ef1f3b6138db73c03bf27205bb3b8725e8affbc5ac402"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/exported_glob_other_crate/wrong",
+      "bytes": 6884472,
+      "sha256": "a7633e26e1ee5c8f0528e11aaed286c62b140c7ff462daefa70af84e356be7f8"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/exported_glob_other_crate/wrong.rs",
+      "bytes": 90,
+      "sha256": "3e3a0348a88d58108c2a6e2801de06f87797e66d817e40ccfa472b2993ba9540"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/matcher_only/correct",
+      "bytes": 6884480,
+      "sha256": "9c448118fbfbe20fedac287d3cada53daa163fc7dd6e031c5606e4d616a5ddf0"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/matcher_only/correct.rs",
+      "bytes": 143,
+      "sha256": "0c0168f9f5f1310d70aa3380a82aac0568b1c6e54710f72f9cf06d2c37ad33dc"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/matcher_only/wrong",
+      "bytes": 6884472,
+      "sha256": "861e157a2b2921eb33ec0b3585f4cb3ad37afa13aaeaa89f7c9fcf364028f883"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/matcher_only/wrong.rs",
+      "bytes": 143,
+      "sha256": "61d8274da9972aa174ff5742c48112dede2850c02737078b21e21aaf6a687033"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/path_leaf/correct",
+      "bytes": 6884344,
+      "sha256": "2d21727a5f6c15a7ccdf2fd093c3a8a4d6eeb5525e1a370b1640ba8ed15f75c7"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/path_leaf/correct.rs",
+      "bytes": 165,
+      "sha256": "a01a9a6c43475af337448607cf80e7669af24620866657686b602c7e6adfce63"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/path_leaf/wrong",
+      "bytes": 6884336,
+      "sha256": "d8140b293bdb39e938d12ef4c4bc783767fa223322bf92a1c89309cf5f7d8726"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/path_leaf/wrong.rs",
+      "bytes": 165,
+      "sha256": "68870274c8dce3aa8497a5a1498f64553063ce5811a2dc33203cfedcc76cf680"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/plain/correct",
+      "bytes": 6884448,
+      "sha256": "0128a746c747eeedf14d87f588fa0edb3cb420042db8fbd369a4e81e937b5b2a"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/plain/correct.rs",
+      "bytes": 90,
+      "sha256": "6b07cb66e05c79009d6ef1f3b6138db73c03bf27205bb3b8725e8affbc5ac402"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/plain/wrong",
+      "bytes": 6884440,
+      "sha256": "9086f756dd28c70a1514ffcbcb95da9161d66b886b5546a5f32e443cdaee69ed"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/plain/wrong.rs",
+      "bytes": 90,
+      "sha256": "3e3a0348a88d58108c2a6e2801de06f87797e66d817e40ccfa472b2993ba9540"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/private_glob_other_crate/correct",
+      "bytes": 6884496,
+      "sha256": "a9f741b006fc43daea3b4239d875f0fade500df47bc476102e806ca0e81b2c74"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/private_glob_other_crate/correct.rs",
+      "bytes": 90,
+      "sha256": "6b07cb66e05c79009d6ef1f3b6138db73c03bf27205bb3b8725e8affbc5ac402"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/private_glob_other_crate/wrong",
+      "bytes": 6884472,
+      "sha256": "b76ed87b34c2ec272b14c80189b6b44a867996ef92cc43a51ba6ff1c0c2567f6"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/private_glob_other_crate/wrong.rs",
+      "bytes": 90,
+      "sha256": "3e3a0348a88d58108c2a6e2801de06f87797e66d817e40ccfa472b2993ba9540"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/private_glob_same_crate/correct",
+      "bytes": 6884480,
+      "sha256": "999e3d958dc0411fa72a1d1a343a63b5eb536327ff7d1321373b2465d0a84ab8"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/private_glob_same_crate/correct.rs",
+      "bytes": 142,
+      "sha256": "5c2ae5c1b61bbfadcf933a09b043eb7b3fd46fdd3cfae4f85f07ed59b3d79ad2"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/private_glob_same_crate/wrong",
+      "bytes": 6884472,
+      "sha256": "81ad71f49d87f4120ea23e6ed3fc3ebf32f2f3f74d38303a400a2fd67424425a"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/private_glob_same_crate/wrong.rs",
+      "bytes": 142,
+      "sha256": "94c58c33390846e97e250071b049f0ccedc61d46cd755dbe047b9345d70613fc"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/private_named_other_crate/correct",
+      "bytes": 6884496,
+      "sha256": "8d36a2cb581bb648a78a82e22d5214832790e9e03f2bfcc97b576299780bede0"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/private_named_other_crate/correct.rs",
+      "bytes": 90,
+      "sha256": "6b07cb66e05c79009d6ef1f3b6138db73c03bf27205bb3b8725e8affbc5ac402"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/private_named_other_crate/wrong",
+      "bytes": 6884472,
+      "sha256": "83f5d1c0fbad0734f20642595cc2ed96c9731fc03a29222fb1ecab6ff6822961"
+    },
+    {
+      "path": "/workspace/review8147-evidence/native/private_named_other_crate/wrong.rs",
+      "bytes": 90,
+      "sha256": "3e3a0348a88d58108c2a6e2801de06f87797e66d817e40ccfa472b2993ba9540"
+    }
+  ],
+  "limits": [
+    "No full protection/required-check inventory: connector workflow reads first-page-only",
+    "No direct-leaf false-exposed demonstrated: generated test gives no_static_path",
+    "No exact-base runtime comparison/current-main composition/Windows/release proof",
+    "No candidate source push or state transition"
+  ]
+}
