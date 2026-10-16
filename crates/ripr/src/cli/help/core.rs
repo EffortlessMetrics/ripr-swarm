@@ -142,8 +142,9 @@ Common options:
                     workspace is indexed. Modes never change what an exposure
                     class means.
   --root PATH       Workspace root. Defaults to the current directory, then
-                    walks up to the enclosing Cargo workspace (never past the
-                    git repository); `--root .` pins this directory.
+                    walks up to the enclosing workspace or package, or the git
+                    top level (never past the repository); `--root .` pins
+                    this directory.
   --quiet           Suppress progress on stderr.
 
 Exit status: 0 for a completed run, including `exposed` and `weakly_exposed`

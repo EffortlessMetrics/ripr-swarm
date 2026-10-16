@@ -272,6 +272,42 @@ fn skipped_closer_config_warning(invocation_root: &Path, analysis_root: &Path) -
     ))
 }
 
+/// Options that consume the next argument as a value. `help_request` skips
+/// those values so `--diff --all` names a file rather than the help modifier.
+const CHECK_VALUE_OPTIONS: &[&str] = &[
+    "--root",
+    "--base",
+    "--diff",
+    "--candidate-tree",
+    "--candidate-base",
+    "--mode",
+    "--format",
+    "--gap-ledger",
+    "--perl-facts",
+    "--suppression-policy",
+    "--write-artifact",
+    "--git-timeout",
+];
+
+/// `Some(all)` when `--help`/`-h` is a real flag among `args` (not an option's
+/// value). Help wins over every other argument, so it never fails on a later
+/// option value, and `--all` (anywhere) widens it to the full reference. On its
+/// own `--all` is not a flag and falls through to the unknown-argument error.
+fn help_request(args: &[String]) -> Option<bool> {
+    let (mut help, mut all) = (false, false);
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--help" | "-h" => help = true,
+            "--all" => all = true,
+            option if CHECK_VALUE_OPTIONS.contains(&option) => i += 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    help.then_some(all)
+}
+
 fn parse_git_timeout(value: &str) -> Result<Option<std::time::Duration>, String> {
     parse_git_timeout_from("--git-timeout", value)
 }
@@ -460,8 +496,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     let mut candidate_tree: Option<String> = None;
     let mut candidate_base: Option<String> = None;
     let mut quiet = false;
-    let mut help_requested = false;
-    let mut help_all = false;
+    if let Some(all) = help_request(args) {
+        help::print_check_help(all);
+        return Ok(());
+    }
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -565,27 +603,12 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             "--quiet" => {
                 quiet = true;
             }
-            "--help" | "-h" => {
-                help_requested = true;
-            }
-            // Parsed state, not a raw scan: a value consumed by an option
-            // (`--diff --all`) is never the `--all` flag.
-            "--all" => {
-                help_all = true;
-            }
-            // Once help is requested it wins over unrecognized words.
-            _ if help_requested => {}
+            // `help_request` already consumed `--all` alongside `--help`; here
+            // it has no `--help` to widen, so it is still an unknown argument.
+            "--all" => return Err(unknown_argument("check", "--all")),
             other => return Err(unknown_argument("check", other)),
         }
         i += 1;
-    }
-    if help_requested {
-        help::print_check_help(help_all);
-        return Ok(());
-    }
-    // `--all` only widens `--help`; on its own it is still unknown.
-    if help_all {
-        return Err(unknown_argument("check", "--all"));
     }
     // #6834: refusal-envelope context for every failure below. Argv usage
     // errors above return before this snapshot exists and stay prose-only.

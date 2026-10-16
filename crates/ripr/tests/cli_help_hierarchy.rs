@@ -707,6 +707,23 @@ fn check_help_all_is_a_parsed_flag_not_a_raw_scan() -> Result<(), String> {
     assert_contains(
         "`ripr check --help`",
         &normalized(&short),
-        "walks up to the enclosing Cargo workspace",
+        "walks up to the enclosing workspace or package",
     )
+}
+
+/// Help wins over later option values: a missing or invalid value after
+/// `--help` must not turn the help request into a usage error.
+#[test]
+fn check_help_wins_over_later_option_values() -> Result<(), String> {
+    let short = rendered_help(&["check", "--help"])?;
+    for args in [
+        &["check", "--help", "--format"][..],
+        &["check", "--help", "--mode", "invalid"][..],
+        &["check", "--bogus", "--help"][..],
+    ] {
+        if rendered_help(args)? != short {
+            return Err(format!("{args:?} must print the one-screen summary"));
+        }
+    }
+    Ok(())
 }
