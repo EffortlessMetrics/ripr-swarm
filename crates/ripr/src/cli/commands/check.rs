@@ -1204,11 +1204,18 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         if let Some(base) = output.base.as_deref() {
             let root = &limited_check_input.root;
             let timeout = limited_check_input.git_timeout;
+            let base_commit = analysis::resolve_base_commit(root, Some(base), timeout);
+            let head_commit = analysis::resolve_base_commit(root, Some("HEAD"), timeout);
+            // The candidate probe spawns Git subprocesses; only an equal
+            // resolution can use its answer (#7644).
+            let another_ref_available = base_commit.is_some()
+                && base_commit == head_commit
+                && analysis::another_base_candidate_exists(root, timeout);
             if let Some(hedge) = default_base_is_head_hedge(
                 base,
-                analysis::resolve_base_commit(root, Some(base), timeout).as_deref(),
-                analysis::resolve_base_commit(root, Some("HEAD"), timeout).as_deref(),
-                analysis::another_base_candidate_exists(root, timeout),
+                base_commit.as_deref(),
+                head_commit.as_deref(),
+                another_ref_available,
             ) {
                 eprintln!("{}", terminal_safe(hedge));
             }

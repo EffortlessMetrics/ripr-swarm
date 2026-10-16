@@ -203,7 +203,11 @@ does not attribute the cause of the analyzed range; stdout and JSON are
 unchanged.
 The warning is silent when either commit fails to resolve, when the commits
 differ, and whenever the scope is explicit (`--base`, `--diff`,
-`--candidate-tree`, `--worktree`).
+`--candidate-tree`, `--worktree`). It is also silent when no other branch
+could serve as the advised base (#7644): a branch whose merge base with
+`HEAD` is `HEAD` itself (an alias at `HEAD`'s commit, such as a fresh
+clone's remote-tracking counterpart) yields the same empty range, so the
+Start-here action owns the remediation instead.
 
 ### Non-claims
 

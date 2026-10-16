@@ -1119,8 +1119,11 @@ pub fn resolve_base_commit(
 
 /// Whether some branch other than the current one could serve as a
 /// `--base`: a local or remote-tracking branch (never a remote's `HEAD`
-/// pointer) that shares history with `HEAD`, so `<branch>...HEAD` has a
-/// merge base. Bounded like the default-base failure context; any Git
+/// pointer) whose merge base with `HEAD` is not `HEAD` itself, so
+/// `<branch>...HEAD` is not the empty range. An alias at `HEAD`'s own
+/// commit (a fresh clone's `origin/<branch>` next to `<branch>`, or a
+/// `git branch` copy) is not a candidate: advising it would reproduce the
+/// empty result. Bounded like the default-base failure context; any Git
 /// failure answers `false`, so callers never advise a `--base` repair that
 /// this probe could not support (#7644).
 pub fn another_base_candidate_exists(root: &Path, git_timeout: Option<Duration>) -> bool {
@@ -1153,6 +1156,9 @@ pub fn another_base_candidate_exists(root: &Path, git_timeout: Option<Duration>)
             .map(str::to_string)
     })
     .filter(|name| !current.contains(name));
+    let Some(head_commit) = resolve_base_commit(root, Some("HEAD"), git_timeout) else {
+        return false;
+    };
     const MERGE_BASE_PROBE_CAP: usize = 64;
     others.take(MERGE_BASE_PROBE_CAP).any(|name| {
         crate::git::run_git_output_with_deadline(
@@ -1160,7 +1166,11 @@ pub fn another_base_candidate_exists(root: &Path, git_timeout: Option<Duration>)
             &["merge-base", name.as_str(), "HEAD"],
             git_timeout,
         )
-        .is_ok_and(|output| output.status.success())
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| {
+            String::from_utf8_lossy(&output.stdout).trim() != head_commit.as_str()
+        })
     })
 }
 
@@ -2447,6 +2457,10 @@ mod tests {
             "a lone branch must not count as its own --base candidate"
         );
         run_git_checked(&dir, &["branch", "base-candidate"])?;
+        assert!(
+            !another_base_candidate_exists(&dir, None),
+            "an alias at HEAD's own commit must not count as a --base candidate"
+        );
         fs::write(dir.join("README"), "second")?;
         run_git_checked(&dir, &["add", "."])?;
         run_git_checked(&dir, &["commit", "-m", "second"])?;
