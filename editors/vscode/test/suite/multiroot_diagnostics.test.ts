@@ -1,5 +1,6 @@
 import * as assert from 'assert';
-import { observeCodeActionRequests } from '../multiRootRequestDiagnostics';
+import { describeCodeActionFailure, MAX_CODE_ACTION_FAILURE_FIELD_CHARS,
+  observeCodeActionProvider, observeCodeActionRequests } from '../multiRootRequestDiagnostics';
 
 suite('Multi-root request diagnostic observation', () => {
   for (const failing of [false, true]) {
@@ -80,6 +81,55 @@ suite('Multi-root request diagnostic observation', () => {
         ['client_request_result', 1, paramsA.textDocument.uri],
       ]);
     } finally { restore(); }
+  });
+
+  test('preserves original client/provider failure fields within the per-field cap', async () => {
+    const cap = MAX_CODE_ACTION_FAILURE_FIELD_CHARS;
+    const error = Object.assign(new Error('m'.repeat(cap + 20)), {
+      name: 'n'.repeat(cap + 20), stack: 'ORIGINAL-CLIENT-STACK' + 's'.repeat(cap), code: -32800
+    });
+    const events: Record<string, unknown>[] = [];
+    const client = { sendRequest: (..._args: unknown[]) => Promise.reject(error) };
+    const restore = observeCodeActionRequests(client, () => ({}), events);
+    try { await assert.rejects(observeCodeActionProvider(() =>
+      client.sendRequest('textDocument/codeAction', {}), () => ({}), events), observed => observed === error); }
+    finally { restore(); }
+    const failures = events.filter(event => ['client_request_failed', 'provider_failed'].includes(event.kind as string));
+    assert.strictEqual(failures.length, 2);
+    for (const failure of failures) {
+      for (const key of ['error', 'error_name', 'error_message', 'error_stack']) {
+        assert.strictEqual(typeof failure[key], 'string', `${key} must retain the original failure field`);
+        assert.strictEqual((failure[key] as string).length, cap);
+      }
+      assert.ok((failure.error_stack as string).startsWith('ORIGINAL-CLIENT-STACK'));
+      assert.strictEqual(failure.code, -32800);
+    }
+    assert.ok(error.stack.length > cap, 'observation must not truncate the original error itself');
+  });
+
+  test('hostile failure metadata and observation getters cannot replace client/provider errors', async () => {
+    const error = new Proxy(new Error('original'), { get: () => { throw new Error('metadata getter failure'); } });
+    const observe = () => ({ get unavailable() { throw new Error('observation getter failure'); } });
+    const events: Record<string, unknown>[] = [];
+    const client = { sendRequest: (..._args: unknown[]) => Promise.reject(error) };
+    const restore = observeCodeActionRequests(client, observe, events);
+    try {
+      // Node assert.rejects itself reads rejection metadata; use a direct
+      // catch so this hostile-getter control reaches our observation boundary.
+      let observed: unknown;
+      try { await observeCodeActionProvider(() =>
+        client.sendRequest('textDocument/codeAction', {}), observe, events); }
+      catch (caught) { observed = caught; }
+      assert.ok(observed === error, 'diagnostic metadata replaced the original failure');
+    } finally { restore(); }
+    const failures = events.filter(event => ['client_request_failed', 'provider_failed'].includes(event.kind as string));
+    assert.strictEqual(failures.length, 2);
+    assert.ok(failures.every(event => event.error === '[failure description unavailable]'
+      && event.error_stack === undefined && event.observation_unavailable === true));
+    assert.deepStrictEqual(describeCodeActionFailure(error), {
+      error: '[failure description unavailable]', error_name: undefined, error_message: undefined,
+      error_stack: undefined, code: undefined
+    });
   });
 
   test('unrelated requests retain their original promise without observation', () => {

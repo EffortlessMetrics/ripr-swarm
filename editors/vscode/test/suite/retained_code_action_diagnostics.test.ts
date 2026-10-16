@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
 import * as vm from 'vm';
-import { observeCodeActionRequests } from '../multiRootRequestDiagnostics';
+import { observeCodeActionProvider, observeCodeActionRequests } from '../multiRootRequestDiagnostics';
 
 interface Provider {
   provideCodeActions(document: unknown, range: unknown, context: unknown, token: unknown): Promise<unknown>;
@@ -117,6 +117,7 @@ suite('Retained CodeActionFeature diagnostic boundary', () => {
   test('distinguishes conversion failure after a successful client request from a rejected request', async () => {
     const f = fixture();
     const error = new Error('late conversion cancellation');
+    error.stack = 'ORIGINAL-PROVIDER-CONVERSION-STACK';
     let conversionEntered!: () => void;
     let rejectConversion!: (error: unknown) => void;
     const entered = new Promise<void>(resolve => { conversionEntered = resolve; });
@@ -125,14 +126,19 @@ suite('Retained CodeActionFeature diagnostic boundary', () => {
       assert.strictEqual(values, f.values); assert.strictEqual(token, f.token); conversionEntered(); return conversion;
     });
     try {
-      const pending = f.run();
+      const pending = observeCodeActionProvider(() => f.run(), () => ({ phase: 'select root A' }), f.events);
       await entered;
       f.cancel(); rejectConversion(error);
       await assert.rejects(pending, observed => observed === error);
       assert.strictEqual(f.calls(), 1);
       assert.deepStrictEqual(f.events.map(event => event.kind),
-        ['client_request_start', 'client_request_result', 'client_token_canceled']);
-      assert.strictEqual(f.events[1].count, 1);
+        ['provider_start', 'client_request_start', 'client_request_result', 'client_token_canceled',
+          'provider_failed', 'provider_end']);
+      assert.strictEqual(f.events[2].count, 1);
+      assert.strictEqual(f.events[4].error_stack, 'ORIGINAL-PROVIDER-CONVERSION-STACK');
+      assert.strictEqual(f.events[4].error_name, 'Error');
+      assert.strictEqual(f.events[4].error_message, 'late conversion cancellation');
+      assert.strictEqual(f.events[4].phase, 'select root A');
     } finally { f.close(); }
   });
 

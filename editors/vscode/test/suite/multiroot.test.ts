@@ -5,7 +5,7 @@ import * as path from 'path';
 import type { ChildProcess, SpawnOptions } from 'child_process';
 import * as vscode from 'vscode';
 import type { LanguageClient } from 'vscode-languageclient/node';
-import { observeCodeActionRequests } from '../multiRootRequestDiagnostics';
+import { describeCodeActionFailure, observeCodeActionProvider, observeCodeActionRequests } from '../multiRootRequestDiagnostics';
 import { assertActionTargets, assertContextPacket, normalizeUriSpelling, RootExpectation } from '../multiRootAssertions';
 
 // Read observations from the activated controller without supplying a runtime,
@@ -187,15 +187,17 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       if (this.currentTest?.state === 'failed') {
         outcome = 'failed';
         const failure = this.currentTest.err;
-        stages.push({ phase, failure: String(failure) });
+        stages.push({ phase, failure: describeCodeActionFailure(failure) });
         // Re-tag the reported failure with the journey phase: mocha reports
         // hook and test failures identically, and the phase is the first
         // question every reader of a CI log asks. Mutating the existing
         // error keeps the assertion's actual/expected fields and original
         // stack that Mocha's reporter reads.
-        if (failure instanceof Error && !failure.message.includes(`[phase: ${phase}]`)) {
-          failure.message = `[phase: ${phase}] ${failure.message}`;
-        }
+        try {
+          if (failure instanceof Error && !failure.message.includes(`[phase: ${phase}]`)) {
+            failure.message = `[phase: ${phase}] ${failure.message}`;
+          }
+        } catch { /* Keep the original failure even if metadata is unreadable/read-only. */ }
       }
     });
 
@@ -375,22 +377,18 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         }),
       ];
       const restoreRequests = observeCodeActionRequests(client, observe, requestEvents);
-      requestEvents.push({ kind: 'provider_start', ...observe() });
       try {
-        actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
-          'vscode.executeCodeActionProvider', uri, diagnostic.range);
+        actions = await observeCodeActionProvider(() =>
+          vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
+            'vscode.executeCodeActionProvider', uri, diagnostic.range), observe, requestEvents);
       } catch (error) {
-        requestEvents.push({ kind: 'provider_failed', error: String(error), ...observe() });
         // Keep the failing request observable without retrying or replacing its result.
-        console.error('MULTIROOT_CODE_ACTION_TRACE', JSON.stringify(requestEvents));
-        // executeCodeActionProvider throws a bare illegal-argument when the
-        // URI has no open text model; disclose the open-document set so the
-        // failing point is diagnosable from the CI log alone.
-        throw new Error(`code actions for ${uri} failed: ${String(error)}`
-          + ` open=${vscode.workspace.textDocuments.map(d => d.uri.toString()).join(', ')}`
-          + ` phase=${phase}`, { cause: error });
+        try { console.error('MULTIROOT_CODE_ACTION_TRACE', JSON.stringify(requestEvents)); }
+        catch { /* Trace serialization must not replace the provider failure. */ }
+        // Keep the original error identity/stack; phase and document context
+        // remain in the trace and the existing teardown phase retag.
+        throw error;
       } finally {
-        requestEvents.push({ kind: 'provider_end', ...observe() });
         stages.push({ phase, code_action_request: requestEvents });
         restoreRequests();
         subscriptions.forEach(subscription => subscription.dispose());
