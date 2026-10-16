@@ -172,6 +172,7 @@ fn a_test_pinning_the_changed_element_exposes_its_field() -> Result<(), String> 
     for body in [
         ANY,
         "        let rows = rows(30, 3);\n        assert_eq!(rows[1].total, 33);",
+        "        let rows = rows(30, 3);\n        let r = &rows[1];\n        assert_eq!(r.total, 33);",
     ] {
         assert_eq!(field_class("0", body)?, ExposureClass::Exposed, "{body}");
     }
@@ -187,6 +188,11 @@ fn a_membership_or_read_another_element_may_satisfy_keeps_the_gap() -> Result<()
             "0",
             "        let rows = rows(30, 3);\n        assert_eq!(rows[0].total, 0);",
             "index of the unchanged element",
+        ),
+        (
+            "0",
+            "        let rows = rows(30, 3);\n        let r = &rows[0];\n        assert_eq!(r.total, 0);",
+            "alias of the unchanged element",
         ),
         (
             "0",
