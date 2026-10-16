@@ -1,0 +1,45 @@
+{
+  "packet_commit": "7ca3a3353967dc258ffcd202ab50e498f12d5e0f",
+  "packet_url": "https://github.com/EffortlessMetrics/ripr-swarm/tree/7ca3a3353967dc258ffcd202ab50e498f12d5e0f/evidence/8120/rust-snapshot-repair",
+  "source_head": "014238d1256fa283fece5679d520e511bcd460d0",
+  "fresh_network_git_store": true,
+  "fetch_depth": 1,
+  "public_files_verified": [
+    {
+      "path": "evidence/8120/rust-snapshot-repair/README.md",
+      "sha256": "e43c6527bbc4f09d85918b43237f4f4805ee80b730c2566750e366c4532fb71b",
+      "size": 6049,
+      "blob": "bdf3d59b2acd6583e427c2e31ccb3e793534210b"
+    },
+    {
+      "path": "evidence/8120/rust-snapshot-repair/SHA256SUMS",
+      "sha256": "c01ddbdfec114b928f4f8e5c49bcfffebdad260e57160d0ea434a53cba6ef45c",
+      "size": 340,
+      "blob": "a1c1098d2490c963a28a42b5016b0a662be8c0df"
+    },
+    {
+      "path": "evidence/8120/rust-snapshot-repair/archive-manifest.json",
+      "sha256": "7f5a44b0bdf5be9228492ced7f31c362a835b13f7ea08fbcaee42ac27d76c565",
+      "size": 67181,
+      "blob": "dcf2e89c505d11e92c7fcb1cff80551a478567a7"
+    },
+    {
+      "path": "evidence/8120/rust-snapshot-repair/repair-evidence.tar.gz.b64.txt",
+      "sha256": "7619e4c0d87dff77a23886f4739b5403c21ffee4fea4c76653704867fa49c20a",
+      "size": 528825,
+      "blob": "d8953d87f61f15587b414e658a028132eef5d8f7"
+    },
+    {
+      "path": "evidence/8120/rust-snapshot-repair/summary.json",
+      "sha256": "c0b20a921750653281a73edd66bea4eea5f4c84d79691541bf64cc4015422c37",
+      "size": 23472,
+      "blob": "ce0b5759b99f8e10e5acc7796743935daa44d46f"
+    }
+  ],
+  "archive_members_verified": 315,
+  "complete_member_inventory": true,
+  "member_bytes_sizes_modes_sha256_verified": true,
+  "gzip_sha256": "9ca3914154ca9b8eb5ab85bff3a6ee0ee4063ea53ef849603952413d2158d6d9",
+  "tar_sha256": "36ac24757b531371eddf0fc9f94fad055be9e4b939ef0446ff79b7d6210c8ba5",
+  "claim_boundary": "Publication recovery verified through fresh network Git; no package/install or hosted qualification claim."
+}
