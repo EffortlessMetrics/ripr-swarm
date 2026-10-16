@@ -10,6 +10,11 @@ use ra_ap_syntax::{
     ast::{self, HasArgList, HasAttrs, HasGenericParams, HasName},
 };
 
+#[cfg(test)]
+thread_local! {
+    static COLLECTION_OWNER_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// A narrow extension of the bare collection observer: a sole, unconditional
 /// parameter push, called with an exact mutable field projection, followed by
 /// an equality on that unchanged projection and an independent literal vec.
@@ -39,6 +44,20 @@ fn observed_projection(
     {
         return None;
     }
+    let [subject, expected] = assertion_comparison_operands(&assertion.text)?;
+    let subject = compact(subject);
+    let (binding, _) = subject.split_once('.')?;
+    if !super::is_bare_ident(binding)
+        || !subject.split('.').skip(1).all(|field| {
+            super::is_bare_ident(field)
+                || (!field.is_empty() && field.chars().all(|c| c.is_ascii_digit()))
+        })
+        || !literal_vec(expected)
+    {
+        return None;
+    }
+    #[cfg(test)]
+    COLLECTION_OWNER_PARSES.with(|count| count.set(count.get() + 1));
     let owner_tree = parse_clean_source_file(&owner.body)?.tree();
     let function = owner_tree.syntax().descendants().find_map(ast::Fn::cast)?;
     if function.async_token().is_some()
@@ -76,18 +95,6 @@ fn observed_projection(
         return None;
     }
     if push.name_ref()?.text() != "push" || push.receiver()?.syntax().text() != receiver {
-        return None;
-    }
-    let [subject, expected] = assertion_comparison_operands(&assertion.text)?;
-    let subject = compact(subject);
-    let (binding, _) = subject.split_once('.')?;
-    if !super::is_bare_ident(binding)
-        || !subject.split('.').skip(1).all(|field| {
-            super::is_bare_ident(field)
-                || (!field.is_empty() && field.chars().all(|c| c.is_ascii_digit()))
-        })
-        || !literal_vec(expected)
-    {
         return None;
     }
     let tree = parse_clean_source_file(&test.body)?.tree();
@@ -302,5 +309,118 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    struct ProjectionFixtureRoot(PathBuf);
+
+    impl Drop for ProjectionFixtureRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn assert_projection_case(
+        named: bool,
+        assertion_text: &str,
+        expected: bool,
+        expected_owner_parses: usize,
+    ) -> Result<(), String> {
+        let template = if named {
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../fixtures/collection_argument_named/input/src/lib.rs"
+            ))
+        } else {
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../fixtures/collection_argument_tuple/input/src/lib.rs"
+            ))
+        };
+        let original = if named {
+            "assert_eq!(b.items, vec![11]);"
+        } else {
+            "assert_eq!(b.0, vec![11]);"
+        };
+        assert_eq!(template.matches(original).count(), 1);
+        let source = template.replace(original, assertion_text);
+        let root = ProjectionFixtureRoot(crate::analysis::facts::drop_in::temp_workspace(
+            "projection-shape",
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname = \"projection-shape\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+                ),
+                ("src/lib.rs", &source),
+            ],
+        )?);
+        let index = build_index(&root.0, &[PathBuf::from("src/lib.rs")])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|f| f.name == "add")
+            .ok_or("owner")?;
+        let test = index.tests().first().ok_or("test")?;
+        let assertion = test.assertions.first().ok_or("assertion")?;
+        assert_eq!(
+            compact(&assertion.text).trim_end_matches(';'),
+            compact(assertion_text).trim_end_matches(';')
+        );
+        let syntax = OwnerPinSyntax::default();
+        // These are the exact unchanged gates before the reordered block.
+        // A rejected admission must not manufacture a zero-parser-cost pass.
+        assert!(
+            syntax.admits(test, assertion, &index),
+            "assertion authority: {assertion_text}"
+        );
+        assert!(
+            syntax.targeted_macro_binding_is_unambiguous(test, assertion.line, "vec", &index),
+            "vec authority: {assertion_text}"
+        );
+        let before = COLLECTION_OWNER_PARSES.with(std::cell::Cell::get);
+        assert_eq!(
+            assertion_observes_collection_argument("v", owner, &index, test, assertion, &syntax),
+            expected,
+            "full observer: {assertion_text}"
+        );
+        assert_eq!(
+            COLLECTION_OWNER_PARSES.with(std::cell::Cell::get) - before,
+            expected_owner_parses,
+            "actual owner parse invocations: {assertion_text}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn projection_shape_rejects_admitted_non_candidates_before_owner_parse() -> Result<(), String> {
+        for assertion in [
+            "assert_eq!(11, 11);",
+            "assert_eq!(b.0, [11]);",
+            "assert_eq!(b.0, expected);",
+            "assert_eq!(b.0.clone(), vec![11]);",
+            "assert_eq!((b.0), vec![11]);",
+            "assert_eq!(b.0, vec![x]);",
+            "assert_eq!(b.0, vec![11u32]);",
+        ] {
+            assert_projection_case(false, assertion, false, 0)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn projection_shape_preserves_full_named_and_tuple_observers() -> Result<(), String> {
+        assert_projection_case(false, "assert_eq!(b.0, vec![11]);", true, 1)?;
+        assert_projection_case(true, "assert_eq!(b.items, vec![11]);", true, 1)?;
+        assert_projection_case(
+            false,
+            "assert_eq!(b.0, vec![11], \"literal vector\");",
+            true,
+            1,
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn projection_shape_does_not_replace_full_binding_admission() -> Result<(), String> {
+        assert_projection_case(false, "assert_eq!(other.0, vec![11]);", false, 1)
     }
 }
