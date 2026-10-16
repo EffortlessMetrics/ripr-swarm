@@ -357,6 +357,21 @@ fn drop_unreached_test_files(
                 .map(|path| workspace::normalize_path(path)),
         );
     }
+    // A `[[test]]` target cargo declares but never libtest-runs (#8016):
+    // the file is reached, so the module walk keeps it, yet `cargo test`
+    // does not execute its tests.
+    let mut skip_keys = BTreeMap::new();
+    let mut inventory = workspace::ManifestInventory::default();
+    orphans.extend(
+        loaded_files
+            .iter()
+            .filter(|(_, bytes)| holds_tests(bytes))
+            .filter(|(path, _)| {
+                declares_skip_keyed_test_target(root, path, &mut skip_keys)
+                    && target_tests_never_run(root, path, test_harnesses, &mut inventory)
+            })
+            .map(|(path, _)| workspace::normalize_path(path)),
+    );
     if orphans.is_empty() {
         return loaded_files;
     }
@@ -364,6 +379,79 @@ fn drop_unreached_test_files(
         .into_iter()
         .filter(|(path, _)| !orphans.contains(&workspace::normalize_path(path)))
         .collect()
+}
+
+/// The package directory when `path` is an integration-test target root
+/// (`tests/x.rs` or `tests/x/main.rs`).
+fn integration_test_package_dir(path: &Path) -> Option<&Path> {
+    let parent = path.parent()?;
+    let is_tests = |dir: &Path| dir.file_name().and_then(|name| name.to_str()) == Some("tests");
+    if is_tests(parent) {
+        return parent.parent();
+    }
+    let file_name = path.file_name().and_then(|name| name.to_str());
+    let grandparent = parent.parent()?;
+    (file_name == Some("main.rs") && is_tests(grandparent))
+        .then(|| grandparent.parent())
+        .flatten()
+}
+
+/// Whether the manifest beside a `tests/` target root declares a `[[test]]`
+/// entry carrying `test = false`, `harness = false` or `required-features`:
+/// the only keys that make cargo skip a reached test target. A cheap
+/// pre-filter so the `cargo metadata` probe runs only for packages that
+/// spell one (#8016).
+fn declares_skip_keyed_test_target(
+    root: &Path,
+    path: &Path,
+    cache: &mut BTreeMap<PathBuf, bool>,
+) -> bool {
+    let Some(package_dir) = integration_test_package_dir(path) else {
+        return false;
+    };
+    *cache.entry(package_dir.to_path_buf()).or_insert_with(|| {
+        committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
+            .ok()
+            .flatten()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+            .and_then(|manifest| {
+                manifest
+                    .get("test")
+                    .and_then(toml::Value::as_array)
+                    .map(|entries| {
+                        entries.iter().any(|entry| {
+                            entry.get("test").and_then(toml::Value::as_bool) == Some(false)
+                                || entry.get("harness").and_then(toml::Value::as_bool)
+                                    == Some(false)
+                                || entry.get("required-features").is_some()
+                        })
+                    })
+            })
+            .unwrap_or(false)
+    })
+}
+
+/// Whether cargo's own inventory establishes that `cargo test` never runs
+/// the `#[test]` functions of this target file (#8016): `test = false` or
+/// unmet default-feature `required-features`, or `harness = false` for a
+/// file no `ripr.toml` custom-harness registration claims (a registered
+/// target keeps its harness-driven credit). An unavailable probe or a
+/// path cargo does not list establishes nothing, so the file keeps its
+/// tests.
+fn target_tests_never_run(
+    root: &Path,
+    path: &Path,
+    test_harnesses: &[crate::config::TestHarnessRegistration],
+    inventory: &mut workspace::ManifestInventory,
+) -> bool {
+    if inventory.cargo_test_collection_skipped(root, path) {
+        return true;
+    }
+    let registered = test_harnesses.iter().any(|harness| {
+        workspace::normalize_path(&harness.target) == workspace::normalize_path(path)
+    });
+    !registered && inventory.verdict(root, path) == workspace::CargoHarnessVerdict::HarnessDisabled
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
@@ -7358,6 +7446,52 @@ fn absent_delimiter_boundary_returns_head() {
                 .any(|name| name == "discount_applies_unbuilt"),
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_test_targets_cargo_declares_but_never_runs() -> Result<(), String> {
+        // #8016: `test = false`, unmet `required-features` and an
+        // unregistered `harness = false` target are reached and declared,
+        // yet `cargo test` never runs their `#[test]` functions. The
+        // control target `ran` keeps its relation, so the drop is the
+        // manifest keys and not the declaration.
+        let root = temp_root("module-graph-skipped-test-targets")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[features]\ndefault=[]\nnever=[]\n\n[workspace]\n\n\
+             [[test]]\nname='off'\ntest=false\n\n\
+             [[test]]\nname='gated'\nrequired-features=['never']\n\n\
+             [[test]]\nname='custom'\nharness=false\n\n\
+             [[test]]\nname='ran'\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        for name in ["off", "gated", "custom", "ran"] {
+            write(
+                &root.join(format!("tests/{name}.rs")),
+                &format!(
+                    "use shop::used::discount;\n\n#[test]\nfn discount_applies_{name}() {{\n    assert_eq!(discount(150), 140);\n}}\n"
+                ),
+            )?;
+        }
+
+        let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+        let related = related_test_names(&root, &result, "src/used.rs");
+        assert!(
+            related.iter().any(|name| name == "discount_applies_ran"),
+            "the target cargo runs must relate: {related:?}"
+        );
+        for name in ["off", "gated", "custom"] {
+            assert!(
+                !related
+                    .iter()
+                    .any(|related| *related == format!("discount_applies_{name}")),
+                "target `{name}` is never run by cargo test: {related:?}"
+            );
+        }
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
