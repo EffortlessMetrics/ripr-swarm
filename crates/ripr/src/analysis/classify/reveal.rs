@@ -1872,7 +1872,12 @@ fn analyze_related_assertions(
                 && is_effect_family(&probe.family)
                 && (field_write.is_some()
                     || direct_collection_mutation_receiver(&probe.expression).is_some())
-                && super::propagation_witness::assertion_expects_empty_collection(&assertion.text);
+                && (super::propagation_witness::assertion_expects_empty_collection(
+                    &assertion.text,
+                ) || super::propagation_witness::assertion_expects_seeded_collection(
+                    &assertion.text,
+                    probe,
+                ));
             let self_computed = self_computed || empty_after_skipped_push;
             // #6692: the owner pin is credited only through an assertion
             // that matched, from a test that may supply the oracle, with the
@@ -9736,6 +9741,59 @@ return Err(\"typed pin\".into());
                 OracleStrength::Strong,
                 "a non-empty expectation against {family:?}"
             );
+        }
+    }
+
+    #[test]
+    fn seeded_collection_expectations_cap_effect_families_only_after_an_early_exit() {
+        for family in [ProbeFamily::SideEffect, ProbeFamily::CallDeletion] {
+            let probe = probe(family.clone(), "items.push(5)");
+            let seeded = test_with_assertions(
+                "keeps_seeded_items",
+                vec![oracle(
+                    "assert_eq!(items, vec![9]);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            let (discriminate, strength) = reveal_evidence_with_exit(&probe, &seeded, true);
+            assert_eq!(
+                discriminate.state,
+                StageState::Weak,
+                "a seeded expectation against {family:?} must not read exposed after a skippable push"
+            );
+            assert_eq!(strength, OracleStrength::Weak, "{family:?}");
+            assert!(
+                discriminate.summary.contains("observation_unverified"),
+                "a seeded expectation against {family:?} must not confirm a skipped push: got `{}`",
+                discriminate.summary
+            );
+            // Without an earlier exit the push ran and the same seeded
+            // expectation keeps its strength.
+            let (discriminate, strength) = reveal_evidence_with_exit(&probe, &seeded, false);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "a seeded expectation against {family:?} must stay exposed when the push cannot be skipped"
+            );
+            assert_eq!(strength, OracleStrength::Strong, "{family:?}");
+            // An expectation that includes the pushed value discriminates
+            // the push even when the owner may exit early.
+            let appended = test_with_assertions(
+                "logs_seed_and_push",
+                vec![oracle(
+                    "assert_eq!(items, vec![9, 5]);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            let (discriminate, strength) = reveal_evidence_with_exit(&probe, &appended, true);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "an expectation holding the pushed value against {family:?} must stay exposed"
+            );
+            assert_eq!(strength, OracleStrength::Strong, "{family:?}");
         }
     }
 

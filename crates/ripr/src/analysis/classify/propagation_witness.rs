@@ -1439,6 +1439,77 @@ pub(in crate::analysis) fn assertion_expects_empty_collection(assertion: &str) -
         })
 }
 
+/// #8205: whether an `assert_eq!` expects a non-empty `vec![...]` literal
+/// that does not contain the value the changed push adds (comparing the
+/// probe's expression and, when present, its before/after texts). Such an
+/// expectation only restates what the collection already held before the
+/// push — for example a seeded `vec![9]` — so a test that passes with it
+/// after the owner call took a path where the push never ran, and deleting
+/// or changing the push leaves the test passing.
+pub(in crate::analysis) fn assertion_expects_seeded_collection(
+    assertion: &str,
+    probe: &Probe,
+) -> bool {
+    let text = assertion.trim().trim_end_matches(';').trim_end();
+    let Some(at) = text.find("assert_eq!") else {
+        return false;
+    };
+    let operands = super::reveal::macro_arguments(&text[at + "assert_eq!".len()..]);
+    let Some(elements) = operands
+        .iter()
+        .find_map(|operand| vec_literal_elements(operand))
+    else {
+        return false;
+    };
+    if elements.is_empty() {
+        return false;
+    }
+    let pushed: Vec<String> = std::iter::once(probe.expression.as_str())
+        .chain(probe.before.as_deref())
+        .chain(probe.after.as_deref())
+        .filter_map(pushed_argument)
+        .map(compact_text)
+        .collect();
+    !pushed.is_empty()
+        && elements
+            .iter()
+            .all(|element| !pushed.contains(&compact_text(element)))
+}
+
+/// The elements of a `vec![...]` operand, or `None` for any other shape.
+fn vec_literal_elements(operand: &str) -> Option<Vec<String>> {
+    let operand = operand.trim().trim_start_matches('&').trim();
+    let inner = operand
+        .strip_prefix("vec!")?
+        .trim()
+        .strip_prefix('[')?
+        .strip_suffix(']')?;
+    let wrapped = format!("({inner})");
+    Some(
+        super::reveal::macro_arguments(&wrapped)
+            .iter()
+            .map(|element| element.trim().to_string())
+            .collect(),
+    )
+}
+
+/// The argument of the first `.push(...)` call in `expression`.
+fn pushed_argument(expression: &str) -> Option<&str> {
+    let at = expression.find(".push(")? + ".push(".len();
+    let rest = &expression[at..];
+    let end = crate::analysis::extract::group_end(&format!("({rest}"), 0)?;
+    // `group_end` indexes the wrapped text; shift back by the added paren.
+    rest.get(..end - 1)
+        .map(str::trim)
+        .filter(|arg| !arg.is_empty())
+}
+
+/// Text with every whitespace character removed, so `Beat { n: 1 }` and
+/// `Beat{n:1}` compare equal.
+fn compact_text(text: &str) -> String {
+    text.chars().filter(|ch| !ch.is_whitespace()).collect()
+}
+
 /// An empty `Vec` or slice literal: `vec![]`, `Vec::new()`,
 /// `Vec::<T>::new()`, `[]`.
 fn is_empty_collection_literal(operand: &str) -> bool {
@@ -3436,6 +3507,55 @@ mod tests {
                 "{assertion}"
             );
         }
+    }
+
+    #[test]
+    fn seeded_collection_expectations_cannot_confirm_a_push() {
+        let push = probe(ProbeFamily::SideEffect, "self.log.push(1)");
+        for assertion in [
+            "assert_eq!(p.log, vec![9]);",
+            "assert_eq!(vec![9], p.log);",
+            "assert_eq!(&p.log, &vec![9, 8]);",
+        ] {
+            assert!(
+                assertion_expects_seeded_collection(assertion, &push),
+                "{assertion}"
+            );
+        }
+        for assertion in [
+            // The pushed value is expected: the push is discriminated.
+            "assert_eq!(p.log, vec![9, 1]);",
+            "assert_eq!(p.log, vec![1]);",
+            // No literal expectation to restate the seeded state.
+            "assert_eq!(p.log, expected);",
+            "assert_eq!(p.log.len(), 1);",
+            "assert!(p.log.contains(&9));",
+            "assert_ne!(p.log, vec![9]);",
+        ] {
+            assert!(
+                !assertion_expects_seeded_collection(assertion, &push),
+                "{assertion}"
+            );
+        }
+        // A struct-literal push compares by compacted text.
+        let beat = probe(
+            ProbeFamily::SideEffect,
+            "self.log.push(Entry::Beat { n: 1 })",
+        );
+        assert!(assertion_expects_seeded_collection(
+            "assert_eq!(p.log, vec![Entry::Beat{n:9}]);",
+            &beat
+        ));
+        assert!(!assertion_expects_seeded_collection(
+            "assert_eq!(p.log, vec![Entry::Beat { n: 9 }, Entry::Beat { n: 1 }]);",
+            &beat
+        ));
+        // A non-push probe has no pushed value to be absent.
+        let other = probe(ProbeFamily::SideEffect, "self.log.clear()");
+        assert!(!assertion_expects_seeded_collection(
+            "assert_eq!(p.log, vec![9]);",
+            &other
+        ));
     }
 
     #[test]

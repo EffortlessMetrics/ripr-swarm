@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -8,7 +8,7 @@
+         if self.locked {
+             return;
+         }
+-        self.log.push(1);
++        self.log.push(2 - 1);
+     }
+ }
+
