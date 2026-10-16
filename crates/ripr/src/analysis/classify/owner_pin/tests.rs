@@ -177,7 +177,7 @@ fn module_shadow_snapshot_keeps_raw_alias_same_line_and_owner_ambiguity() -> Res
         ),
         (
             "mod a { use foreign::Other as Widget; #[test] fn subject() {} }",
-            true,
+            false,
         ),
         (
             "mod a { struct Widget; fn read() {} fn read() {} #[test] fn subject() {} }",
@@ -195,6 +195,11 @@ fn module_shadow_snapshot_keeps_raw_alias_same_line_and_owner_ambiguity() -> Res
             );
         }
         assert!(!index.tests().is_empty());
+        if source.contains("use foreign::Other as Widget") {
+            // Import renames refuse at the outer caller's existing authority;
+            // they are not declarations handled by this module-item helper.
+            assert!(file_renames_to(source, "Widget"));
+        }
     }
     Ok(())
 }
