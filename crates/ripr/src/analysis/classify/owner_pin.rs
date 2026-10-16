@@ -874,6 +874,9 @@ impl OwnerPinSyntax {
         };
         let (_, rest) = partition_macro_scan_files(index);
         let sites = scan_macro_sites(&rest, index, &module_resolved);
+        // Resolved before the map borrow: target roots never re-enter the
+        // site scan, and the mutable borrow must not outlive its purpose.
+        let roots = self.target_roots(index);
         let mut scan = self.workspace_site_scan.borrow_mut();
         let Some(retained) = scan.as_mut() else {
             return;
@@ -881,7 +884,6 @@ impl OwnerPinSyntax {
         if retained.complete {
             return;
         }
-        let roots = self.target_roots(index);
         for (path, name, site) in sites {
             match site.crate_local.then(|| roots.root(&path, index)).flatten() {
                 Some(root) => {
