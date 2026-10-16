@@ -690,3 +690,23 @@ fn check_help_is_one_screen_and_all_is_the_full_reference() -> Result<(), String
     }
     Ok(())
 }
+
+/// A value consumed by an option is never the `--all` flag: `--diff --all
+/// --help` names a diff file called `--all` and wants the default summary,
+/// while a real trailing `--all` still selects the reference.
+#[test]
+fn check_help_all_is_a_parsed_flag_not_a_raw_scan() -> Result<(), String> {
+    let short = rendered_help(&["check", "--help"])?;
+    if rendered_help(&["check", "--diff", "--all", "--help"])? != short {
+        return Err("`--diff --all --help` must print the one-screen summary".to_string());
+    }
+    let full = rendered_help(&["check", "--help", "--all"])?;
+    if rendered_help(&["check", "--diff", "d.patch", "--help", "--all"])? != full {
+        return Err("a real `--all` after other options must select the reference".to_string());
+    }
+    assert_contains(
+        "`ripr check --help`",
+        &normalized(&short),
+        "walks up to the enclosing Cargo workspace",
+    )
+}
