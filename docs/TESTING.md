@@ -40,6 +40,11 @@ execute; by itself it does not limit which integration-test targets Cargo
 compiles. `--test cli_smoke` selects that integration target and its required
 product binary. Use `--lib` for library-only tests.
 
+Keep an isolated `CARGO_TARGET_DIR` stable for repeated runs of the same
+candidate. Record the package, target, profile, and effective features with each
+result: binary builds, test preparation, and Clippy can populate different build
+units even when they share that directory.
+
 For example, these commands prepare and exercise the Rust workspace-marker
 tests from the repository root:
 
