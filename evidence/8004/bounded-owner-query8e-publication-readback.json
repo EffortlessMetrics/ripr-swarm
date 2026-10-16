@@ -1,0 +1,51 @@
+{
+  "commit": "2c3e8ed77a516b36f7443bd04f70604b940d7f35",
+  "tree": "e7bb567505f936ed779cf2a2120716481c87eed8",
+  "parent": "f975e98e2eecc4126c1aaca9846e934975e2266c",
+  "branch": "evidence/8004/bounded-owner-query8e-20261016",
+  "url": "https://github.com/EffortlessMetrics/ripr-swarm/tree/2c3e8ed77a516b36f7443bd04f70604b940d7f35/evidence/8004/bounded-owner-query8e",
+  "evidence_only_paths": [
+    "evidence/8004/bounded-owner-query8e/MANIFEST.json",
+    "evidence/8004/bounded-owner-query8e/PROTOCOL.md",
+    "evidence/8004/bounded-owner-query8e/README.md",
+    "evidence/8004/bounded-owner-query8e/SHA256SUMS",
+    "evidence/8004/bounded-owner-query8e/raw.tar.xz",
+    "evidence/8004/bounded-owner-query8e/receipt.json"
+  ],
+  "files": [
+    {
+      "path": "MANIFEST.json",
+      "bytes": 33485,
+      "sha256": "83d17896801f6c24a8073a544cff4dc860fc674348b5b906533eec571fdddb10"
+    },
+    {
+      "path": "PROTOCOL.md",
+      "bytes": 2866,
+      "sha256": "d1fa6976813efcd5af8a40c2fa9f776c85a98a16e6f5e76f3b68130ee5e3290d"
+    },
+    {
+      "path": "README.md",
+      "bytes": 9685,
+      "sha256": "b610e8020daa3a2906175b119d06bfe09369d3824cddc266b39a441bd9232f66"
+    },
+    {
+      "path": "SHA256SUMS",
+      "bytes": 390,
+      "sha256": "134e409cf2978a1d4d2fb33b1b0cc60f41d3d849b42a4a0a212ed5a0f9d0235a"
+    },
+    {
+      "path": "raw.tar.xz",
+      "bytes": 92084,
+      "sha256": "c5f364d14b90648981515175c1788fbf5986f68d66a98a2a25a0ec2fc3d114c2"
+    },
+    {
+      "path": "receipt.json",
+      "bytes": 19670,
+      "sha256": "631c7dc19d492652516c2d0906e164c2c7a5d1d82ee036a20cd8c0d17d613f48"
+    }
+  ],
+  "restored_members": 174,
+  "all_member_bytes_sizes_modes_inventory_verified": true,
+  "candidate_ref_unchanged_during_publication": true,
+  "consumer": "fresh separate bare Git repository and separate archive restoration"
+}
