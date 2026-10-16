@@ -91,7 +91,17 @@ admitted closer. This restores the existing raw-region exclusion; an AST text
 node inside a raw HTML element is not current review evidence. Openers inside
 Markdown code, comments or quoted examples cannot create an outside raw region.
 Normal raw elements retain nested ownership; raw-text elements interpret only
-their relevant closing tokens. HTML-block container scope remains explicit. Fences, indented
+their relevant closing tokens. HTML-block container scope remains explicit.
+Each newly opened quote/list frame has an instance identity from its opening
+physical source line and nesting depth. Matching continuation lines retain that
+identity. Marker spelling/indentation describe syntax and cannot identify an
+item instance: a same-marker sibling must end the old HTML-block scope. Outer
+ancestry remains stable when only an inner sibling changes. Inline raw regions
+retain their documented separate lifetime; state is not reset at every leaf.
+`container-instance-rendering.json` retains 628 actual-consumer/diagnostic bodies,
+including all112 independent cases; the external cross-product proof covers10080
+bodies and the prior23738 inputs. Container instance identity is parser ownership
+metadata, not producer identity or a new evidence schema. Fences, indented
 code, HTML blocks, headings, list/container transitions and blank lines retain
 their boundaries even when their content is opaque. Masked lines are projected
 back in original line order with original source indentation. Parse-failure

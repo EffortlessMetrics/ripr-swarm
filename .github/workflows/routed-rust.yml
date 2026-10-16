@@ -90,9 +90,9 @@ env:
       .paragraph as $paragraph | (.text | review_list_marker($paragraph)) as $item |
       if (.text | test("^ {0,3}>")) then
         .text |= sub("^ {0,3}>[ \t]?"; "") |
-        .containers += [{kind:"quote"}] | .paragraph = false | review_container_prefixes
+        .containers += [{kind:"quote",instance:[.line,(.containers|length)]}] | .paragraph = false | review_container_prefixes
       elif $item != null then
-        .text = $item.text | .containers += [{kind:"list",indent:$item.indent,marker:$item.marker}] |
+        .text = $item.text | .containers += [{kind:"list",indent:$item.indent,marker:$item.marker,instance:[.line,(.containers|length)]}] |
         .paragraph = false | review_container_prefixes
       else . end;
     # Preserve physical source lines and their owning container/leaf through masking.
@@ -131,7 +131,7 @@ env:
              then .block = null else . end
            else
              .block = null |
-             ({text:$content,containers:.containers,paragraph:.paragraph} | review_container_prefixes) as $opened |
+             ({text:$content,containers:.containers,paragraph:.paragraph,line:(.records|length)} | review_container_prefixes) as $opened |
              if ($opened.containers|length) > (.containers|length) then .paragraph = false | .cut = true else . end |
              .containers = $opened.containers | .content = $opened.text |
              $opened.text as $line |

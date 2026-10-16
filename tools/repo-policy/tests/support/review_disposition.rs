@@ -84,6 +84,15 @@ pub fn html_region_cases() -> Result<Vec<(String, String, bool)>, String> {
     )
 }
 
+pub fn container_instance_cases() -> Result<Vec<(String, String, bool)>, String> {
+    renderer_cases(
+        include_str!(
+            "../../../../fixtures/convergence/native-late-admission/container-instance-rendering.json"
+        ),
+        628,
+    )
+}
+
 fn renderer_cases(contents: &str, count: usize) -> Result<Vec<(String, String, bool)>, String> {
     let fixture: serde_json::Value = serde_json::from_str(contents).map_err(|e| e.to_string())?;
     let cases = fixture["cases"].as_array().ok_or("block cases missing")?;
