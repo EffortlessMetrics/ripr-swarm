@@ -20,6 +20,13 @@ Given this changed behavior and these tests, what static exposure evidence
 should ripr report?
 ```
 
+Fixture-corpus commands may run cases in parallel in the parent. Each child
+`ripr check` with a pinned fixture cache receives `RAYON_NUM_THREADS=1`,
+overriding an inherited worker budget so nested Rayon pools do not multiply
+parent concurrency. The JSON, human, and `human-full` surfaces remain sequential
+within a case. This bounds Rayon workers, not all native helper or I/O threads;
+dogfood's real-repository children keep their existing environment.
+
 ## Required Evidence
 
 Each fixture should provide enough evidence to prove one analyzer behavior or
@@ -144,6 +151,7 @@ Current and planned tests:
 
 Planned modules:
 
+- `xtask::reports::fixtures` corpus runner and child environment
 - `analysis` fixture runner helpers
 - `output::json`
 - `output::human`
