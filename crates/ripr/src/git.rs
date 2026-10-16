@@ -1007,15 +1007,9 @@ impl CatFileBatchStream {
                     // Recheck after receiving: cancellation or the absolute
                     // deadline can arrive while the channel is blocked.
                 }
-                Ok(Err(read_error)) => {
-                    Self::checkpoint(deadline)?;
-                    return Err(CatFileBatchReadError::Failed(read_error));
-                }
+                Ok(Err(read_error)) => return Err(CatFileBatchReadError::Failed(read_error)),
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    Self::checkpoint(deadline)?;
-                    return Ok(false);
-                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(false),
             }
         }
     }
@@ -2647,6 +2641,90 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
         }
     }
 
+    #[test]
+    fn cat_file_batch_stream_preserves_received_failures_over_a_later_budget() -> Result<(), String>
+    {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        for read_error in [true, false] {
+            let (sender, receiver) = mpsc::channel();
+            if read_error {
+                sender
+                    .send(Err("ordinary read failure".to_string()))
+                    .map_err(|error| error.to_string())?;
+            }
+            drop(sender);
+            let mut stream = CatFileBatchStream::new(receiver);
+            let started = Instant::now();
+            let checks = AtomicUsize::new(0);
+            let token = AnalysisCancellationToken::with_budget(
+                started,
+                Duration::from_millis(1),
+                std::sync::Arc::new(move || {
+                    // The read and pre-wait gates are active. A later clock
+                    // query while classifying the received failure expires.
+                    if checks.fetch_add(1, Ordering::Relaxed) < 2 {
+                        started
+                    } else {
+                        started + Duration::from_secs(1)
+                    }
+                }),
+            );
+            let result = with_token(&token, || {
+                stream.read_exact(&mut [0_u8; 1], started + Duration::from_secs(3))
+            });
+            let expected = if read_error {
+                "ordinary read failure"
+            } else {
+                "ended in the middle of a blob"
+            };
+            match result {
+                Err(CatFileBatchReadError::Failed(message)) if message.contains(expected) => {}
+                other => return Err(format!("received failure was replaced: {other:?}")),
+            }
+            if token.observed_abort().is_some() {
+                return Err("classifying a received failure observed a later abort".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    fn assert_batch_child_reaped(child: &mut OwnedProcess) -> Result<(), String> {
+        // try_wait can reap a terminated zombie itself. On Linux observe
+        // absence first, while the production owner must already have reaped.
+        #[cfg(target_os = "linux")]
+        match std::fs::metadata(format!("/proc/{}", child.id())) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            other => {
+                return Err(format!(
+                    "batch primary still exists before reap observer: {other:?}"
+                ));
+            }
+        }
+        if child
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_none()
+        {
+            return Err("batch read returned before its child exited".to_string());
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cat_file_batch_cancellation_reap_observer_rejects_kill_without_wait() -> Result<(), String> {
+        let root = std::env::current_dir().map_err(|error| error.to_string())?;
+        let mut session = CatFileBatch::spawn(&root, Duration::from_secs(3))
+            .map_err(|error| error.to_string())?;
+        session.child.kill().map_err(|error| error.to_string())?;
+        if assert_batch_child_reaped(&mut session.child).is_ok() {
+            return Err("kill without wait satisfied the reap observer".to_string());
+        }
+        session.child.terminate_tree()?;
+        assert_batch_child_reaped(&mut session.child)
+    }
+
     /// A live batch child stays owned while a silent transport waits. The
     /// analysis budget starts active even under scheduler delays, then uses
     /// the real monotonic clock. Expiry must stop the read, rather than wait
@@ -2699,17 +2777,7 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
                 "{operation} read did not observe its analysis budget"
             ));
         }
-        if session
-            .child
-            .try_wait()
-            .map_err(|error| error.to_string())?
-            .is_none()
-        {
-            return Err(format!(
-                "{operation} read returned before reaping its batch child"
-            ));
-        }
-        Ok(())
+        assert_batch_child_reaped(&mut session.child)
     }
 
     #[test]
@@ -2743,15 +2811,7 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
                 "buffered delimiter lost typed cancellation: {error}"
             ));
         }
-        if session
-            .child
-            .try_wait()
-            .map_err(|error| error.to_string())?
-            .is_none()
-        {
-            return Err("buffered delimiter returned before reaping its child".to_string());
-        }
-        Ok(())
+        assert_batch_child_reaped(&mut session.child)
     }
 
     /// Real-repository session round trip (#5015): one process answers

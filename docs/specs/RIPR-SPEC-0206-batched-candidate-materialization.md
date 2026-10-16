@@ -83,7 +83,10 @@ hanging git. Each call also buffered up to 512 MiB in memory per blob.
   observe an analysis budget before the independent Git timeout and reap
   before returning typed cancellation. A superseded buffered delimiter
   cannot succeed. The controlled transport producer remains open so EOF
-  cannot satisfy the stall controls.
+  cannot satisfy the stall controls. On Linux, primary-process absence is
+  observed before `try_wait` can reap it; a kill-without-wait control rejects
+  that weaker cleanup. Received read failures/EOF keep their failure rather
+  than observing a later budget expiry during classification.
 - Scale fixture: a 300-file nested tree plus a >1 MiB binary blob and an
   empty file materialize byte-identically to the `git show` oracle through
   the batched path.
@@ -113,6 +116,8 @@ hanging git. Each call also buffered up to 512 MiB in memory per blob.
 - `crates/ripr/src/git.rs::tests::cat_file_batch_cancellation_interrupts_a_stalled_body`
 - `crates/ripr/src/git.rs::tests::cat_file_batch_cancellation_interrupts_a_stalled_delimiter`
 - `crates/ripr/src/git.rs::tests::cat_file_batch_cancellation_rejects_a_buffered_delimiter`
+- `crates/ripr/src/git.rs::tests::cat_file_batch_stream_preserves_received_failures_over_a_later_budget`
+- `crates/ripr/src/git.rs::tests::cat_file_batch_cancellation_reap_observer_rejects_kill_without_wait`
 - `crates/ripr/src/analysis/git_candidate_execution.rs::tests::batched_materialization_preserves_bytes_at_scale`
 - Existing `git_candidate_execution.rs` byte-parity, attribute, long-path,
   worktree-isolation, and pipeline tests (unchanged, exercising the new
