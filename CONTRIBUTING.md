@@ -59,6 +59,24 @@ traceability without reconstructing intent from chat history.
    cargo run -p ripr -- check --diff crates/ripr/examples/sample/example.diff
    ```
 
+Before fixture or golden checks, prepare the canonical locked Rust fixture:
+
+```bash
+cargo xtask goldens prepare
+cargo xtask fixtures owner_return_pin_fallible_literal
+```
+
+Preparation prints the effective absolute `CARGO_HOME`, selected `RUSTUP_HOME`
+when set, repository toolchain pin and actual Cargo/rustc versions. Keep that
+same environment for subsequent checks. `--offline` supports a seeded registry
+cache. The command fetches only the locked fixture manifest and verifies offline
+metadata; it does not build the workspace or change expected outputs. Fixture
+checks refuse missing prerequisites with the selected environment and repair
+command, rather than treating availability drift as a reason to bless goldens.
+A fetch in another Cargo home does not prepare the subprocess. Sanitized external
+sensors need their own compatible preparation boundary; this local command does
+not forward ambient homes into them or qualify advisory CI (#7920).
+
 The first `cargo xtask ...` invocation compiles the `xtask` crate itself, so
 it is slower than later runs. Once the workspace builds, `cargo xtask
 worktree doctor` checks your working tree for common local hygiene issues
