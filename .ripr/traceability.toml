@@ -378,6 +378,8 @@ id = "RIPR-SPEC-0004"
 name = "test efficiency and vacuity signals"
 spec = "docs/specs/RIPR-SPEC-0004-test-efficiency.md"
 tests = [
+  "xtask/src/tests.rs::test_efficiency_empty_selection_is_not_evidence_of_pass",
+  "xtask/src/tests.rs::test_efficiency_nonempty_selection_keeps_pass_and_warn",
   "xtask/src/main.rs::test_efficiency_ledger_records_owner_oracle_values_and_limitations",
   "xtask/src/main.rs::test_efficiency_reports_are_advisory",
   "xtask/src/main.rs::test_efficiency_signals_likely_vacuous_and_possibly_circular_tests"

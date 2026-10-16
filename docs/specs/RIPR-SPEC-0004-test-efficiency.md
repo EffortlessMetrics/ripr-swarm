@@ -97,6 +97,10 @@ groups them as duplicative without recommending deletion.
 ## Invariants
 
 - Signals are advisory.
+- An empty selected test population reports `not_run`, with an explanation that
+  test-efficiency evidence was not established and a workspace-root recovery
+  hint in both JSON and Markdown. Zero tests scanned is unknown evidence, never
+  a `pass`; nonempty strong and warning outcomes retain their existing meaning.
 - Report language should not call tests bad.
 - Static output uses only the conservative static-exposure vocabulary from the
   language policy.
@@ -107,6 +111,8 @@ groups them as duplicative without recommending deletion.
 
 Current and planned tests:
 
+- `xtask/src/tests.rs::test_efficiency_empty_selection_is_not_evidence_of_pass`
+- `xtask/src/tests.rs::test_efficiency_nonempty_selection_keeps_pass_and_warn`
 - `xtask/src/main.rs::test_efficiency_ledger_records_owner_oracle_values_and_limitations`
 - `xtask/src/main.rs::test_efficiency_reports_are_advisory`
 - `xtask/src/main.rs::test_efficiency_signals_likely_vacuous_and_possibly_circular_tests`
