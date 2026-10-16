@@ -7054,8 +7054,11 @@ mod tests {
                 .pointer("/next/repair_after_command")
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| "missing prepared continuation".to_string())?;
-            if !command.contains("--root '/selected root'")
-                || !command.contains("--attempt repair-attempt-selected")
+            // Host-aware quoting (#7729).
+            if !command.contains(&format!(
+                "--root {}",
+                crate::agent::loop_commands::shell_arg("/selected root")
+            )) || !command.contains("--attempt repair-attempt-selected")
                 || command.contains("--seam-id")
                 || !command.contains("--phase after")
                 || command.ends_with(suffix) != authorization_suffix.is_some()

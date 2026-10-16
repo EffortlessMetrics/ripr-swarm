@@ -2633,6 +2633,36 @@
         {
           "type": "expected_class",
           "class": "exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "seconds_total",
+          "file": "src/lib.rs",
+          "line": 36,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call",
+          "miss": null
+        },
+        {
+          "type": "expected_related_test",
+          "name": "bridge_fortnight",
+          "file": "src/lib.rs",
+          "line": 45,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "same_test_file",
+          "miss": "no_call_path"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "from_str_fortnight",
+          "file": "src/lib.rs",
+          "line": 50,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "same_test_file",
+          "miss": "no_call_path"
         }
       ]
     },
@@ -9082,6 +9112,35 @@
         { "type": "expected_finding_count", "count": 1 },
         { "type": "must_not_promote" },
         { "type": "expected_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "ts_caught_assertion_cannot_confirm_rejection",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_caught_assertion",
+      "vector": "catch_swallows_awaited_rejection_matcher_failure",
+      "probe_family": "error_path",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "unknown"
+        }
       ]
     },
     {

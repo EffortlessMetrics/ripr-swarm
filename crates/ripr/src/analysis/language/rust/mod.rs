@@ -1602,14 +1602,26 @@ impl<'a> GeneratedRustSources<'a> {
         config: &'a crate::config::RustLanguageConfig,
         changed_files: &[ChangedFile],
     ) -> Self {
-        let diff_vendored_dirs = changed_files
-            .iter()
-            .filter(|file| {
-                file.path
-                    .file_name()
+        Self::for_changed_paths(
+            root,
+            config,
+            changed_files.iter().map(|file| file.path.as_path()),
+        )
+    }
+
+    /// The same diff-bound generated policy for consumers retaining path facts.
+    pub(crate) fn for_changed_paths<'b>(
+        root: &'a Path,
+        config: &'a crate::config::RustLanguageConfig,
+        changed_paths: impl IntoIterator<Item = &'b Path>,
+    ) -> Self {
+        let diff_vendored_dirs = changed_paths
+            .into_iter()
+            .filter(|path| {
+                path.file_name()
                     .is_some_and(|name| name == CARGO_VENDOR_CHECKSUM_FILE)
             })
-            .filter_map(|file| file.path.parent().map(Path::to_path_buf))
+            .filter_map(|path| path.parent().map(Path::to_path_buf))
             .collect();
         Self {
             root,

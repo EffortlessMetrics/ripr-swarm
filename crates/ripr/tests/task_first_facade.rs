@@ -375,6 +375,164 @@ fn repair_single_item_matches_advanced_card() -> Result<(), String> {
     Ok(())
 }
 
+/// #7882: display narration must never feed stable text back into identity.
+/// Both percent spellings exist, so an accidental codec substitution selects
+/// a real, wrong repository instead of merely producing a missing-path error.
+#[test]
+fn repair_human_paths_preserve_percent_root_identity() -> Result<(), String> {
+    repair_human_path_identity_journey("repo 100%", "repo 100%25")
+}
+
+#[cfg(unix)]
+#[test]
+fn repair_human_paths_preserve_literal_backslash_root_identity() -> Result<(), String> {
+    repair_human_path_identity_journey(r"repo\literal", "repo/literal")
+}
+
+fn repair_human_path_identity_journey(name: &str, sibling: &str) -> Result<(), String> {
+    let parent = Fixture::dir("facade-human-path")?;
+    let root = parent.root.join(name);
+    let other = parent.root.join(sibling);
+    populate_boundary_fixture(&root)?;
+    populate_boundary_fixture(&other)?;
+    let canonical = root.canonicalize().map_err(|error| error.to_string())?;
+    let other_canonical = other.canonicalize().map_err(|error| error.to_string())?;
+    assert_ne!(canonical, other_canonical);
+    let root_arg = root.to_string_lossy().into_owned();
+    let expected_display = if cfg!(windows) {
+        root_arg.replace('\\', "/")
+    } else {
+        root_arg.clone()
+    };
+    let before = run_ripr(&parent.root, &["repair", "--root", &root_arg])?;
+    assert_exit(&before, 0, "prepare attempt under literal root");
+    let ids = attempt_ids(&root);
+    assert_eq!(ids.len(), 1);
+    assert!(
+        attempt_ids(&other).is_empty(),
+        "the sibling must stay untouched"
+    );
+    let id = &ids[0];
+    let manifest = read_manifest(&root, id)?;
+    let persisted_root = manifest["root"].as_str().ok_or("missing root")?;
+    assert_eq!(
+        Path::new(persisted_root)
+            .canonicalize()
+            .map_err(|e| e.to_string())?,
+        canonical
+    );
+    let expected_persisted = if cfg!(windows) {
+        canonical.to_string_lossy().replace('\\', "/")
+    } else {
+        canonical.to_string_lossy().into_owned()
+    };
+    assert_eq!(
+        persisted_root, expected_persisted,
+        "canonical identity spelling must stay unchanged"
+    );
+    let command = manifest["next_command"].clone();
+    let command_text = command.as_str().ok_or("missing command")?;
+    let root_token = command_text
+        .strip_prefix("ripr agent repair --root ")
+        .and_then(|tail| tail.split_once(" --attempt ").map(|(root, _)| root))
+        .ok_or_else(|| format!("missing command root: {command_text}"))?;
+    // These fixture names contain neither quotes nor expansions. Accept either
+    // host's enclosing quote without duplicating the product's shell parser.
+    let command_root = root_token
+        .strip_prefix('\'')
+        .and_then(|s| s.strip_suffix('\''))
+        .or_else(|| {
+            root_token
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+        })
+        .unwrap_or(root_token);
+    assert_eq!(
+        command_root, expected_display,
+        "command must select the lexical root, not a display-codec sibling"
+    );
+    let stderr = stderr_text(&before);
+    for file in [
+        "workflow.json",
+        "commands.md",
+        "agent-brief.json",
+        "agent-packet.json",
+    ] {
+        assert!(
+            stderr.lines().any(|line| line
+                == format!("ripr: wrote {expected_display}/target/ripr/workflow/{file}")),
+            "missing literal artifact path for {file}: {stderr}"
+        );
+    }
+    let attempt_relative = format!("target/ripr/repair-attempts/{id}/attempt.json");
+    assert!(
+        stderr.contains(&format!(
+            "ripr: attempt manifest: {expected_display}/{attempt_relative}"
+        )),
+        "{stderr}"
+    );
+    let attempt_dir = root.join("target/ripr/repair-attempts").join(id);
+    let commitment =
+        std::fs::read(attempt_dir.join("before-commitment.sha256")).map_err(|e| e.to_string())?;
+    let manifest_before = manifest_bytes(&root, id)?;
+    let missing_id = "repair-attempt-000000000000000000000000";
+    let missing = run_ripr(
+        &parent.root,
+        &["continue", "--root", &root_arg, "--attempt", missing_id],
+    )?;
+    assert_exit(&missing, 2, "unknown attempt");
+    let missing_stderr = stderr_text(&missing);
+    assert!(missing_stderr.contains(&format!("repair attempt manifest not found for {missing_id} at {expected_display}/target/ripr/repair-attempts/{missing_id}/attempt.json")), "{missing_stderr}");
+    assert_eq!(manifest_bytes(&root, id)?, manifest_before);
+    let wrong_root = run_ripr(
+        &parent.root,
+        &[
+            "continue",
+            "--root",
+            &other.to_string_lossy(),
+            "--attempt",
+            id,
+        ],
+    )?;
+    assert_exit(
+        &wrong_root,
+        2,
+        "the same attempt cannot select a sibling repository",
+    );
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{FIXTURE_WEAK_TEST}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|e| e.to_string())?;
+    let after = run_ripr(
+        &parent.root,
+        &["continue", "--root", &root_arg, "--attempt", id],
+    )?;
+    assert_exit(&after, 0, "consume the exact attempt after a focused edit");
+    let after_stderr = stderr_text(&after);
+    assert!(
+        after_stderr.contains(&format!(
+            "ripr: consuming attempt manifest {expected_display}/{attempt_relative}"
+        )),
+        "{after_stderr}"
+    );
+    let finished = read_manifest(&root, id)?;
+    assert_eq!(finished["state"], "ready_to_finish");
+    assert_eq!(finished["root"], manifest["root"]);
+    assert_eq!(finished["next_command"], command);
+    assert_eq!(finished["repair_attempt_id"], manifest["repair_attempt_id"]);
+    assert_eq!(
+        std::fs::read(attempt_dir.join("before-commitment.sha256")).map_err(|e| e.to_string())?,
+        commitment
+    );
+    assert!(
+        root.join("target/ripr/reports/agent-receipt.json")
+            .is_file()
+    );
+    assert!(attempt_ids(&other).is_empty());
+    Ok(())
+}
+
 /// Control 3: two actionable items — no attempt is created until the user
 /// selects one; never an implicit first/newest pick.
 #[test]
@@ -1624,6 +1782,14 @@ fn repair_skips_severity_off_seams_with_named_omission() -> Result<(), String> {
     assert!(
         stderr.contains("configured off"),
         "must name the policy omission:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("ripr check --root") && stderr.contains("ripr pilot --root"),
+        "an ineligible repair must keep both the check and pilot routes:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("when this branch has changed code"),
+        "the check route must stay conditional on a diff, since repair lists saved seams:\n{stderr}"
     );
     assert!(
         attempt_ids(root).is_empty(),

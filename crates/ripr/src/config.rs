@@ -528,6 +528,33 @@ pub(crate) fn config_error_summary(error: &str) -> String {
     }
 }
 
+/// Human doctor lines for a config load error. Compact is the source-free
+/// summary. Verbose adds remaining parser-reason lines (unknown field,
+/// unclosed table, allowlisted misplaced-key hint) and never the TOML
+/// source excerpt.
+pub(crate) fn config_error_display_lines(error: &str, verbose: bool) -> Vec<String> {
+    let summary = config_error_summary(error);
+    let mut lines = vec![summary.clone()];
+    if !verbose {
+        return lines;
+    }
+    for line in error.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        if is_toml_source_excerpt_line(line) {
+            continue;
+        }
+        if summary.contains(line) || lines.iter().any(|existing| existing.contains(line)) {
+            continue;
+        }
+        lines.push(line.to_string());
+    }
+    lines
+}
+
+fn is_toml_source_excerpt_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed == "|" || trimmed.starts_with('|') || line.contains(" | ")
+}
+
 #[cfg(test)]
 pub(crate) fn tests_only_parse(text: &str) -> Result<RiprConfig, String> {
     parse_config(text)
