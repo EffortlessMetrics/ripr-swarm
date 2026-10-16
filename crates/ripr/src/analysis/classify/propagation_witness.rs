@@ -999,9 +999,11 @@ fn assertion_observes_direct_collection_with_start(
 /// True when `body` proves `receiver` started empty: every assignment to
 /// it is a narrow empty construction (`Vec::new()`, `vec![]`,
 /// `Vec::with_capacity(..)`, `Vec::default()`, `VecDeque::new()`), at
-/// least one such assignment exists, and the test never seeds the
-/// receiver itself (no push/extend/insert-style call or index write on
-/// it anywhere in the body). Anything else is not proof.
+/// least one such assignment exists, the test never seeds the receiver
+/// itself (no push/extend/insert-style call or index write on it), and
+/// the receiver escapes as `&mut receiver` at most once (the owner call
+/// itself; a second mutable escape could seed it opaquely). Anything
+/// else is not proof.
 fn receiver_starts_empty_in_body(body: &str, receiver: &str) -> bool {
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
     let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
@@ -1021,9 +1023,16 @@ fn receiver_starts_empty_in_body(body: &str, receiver: &str) -> bool {
             || expr.starts_with("VecDeque::new()")
     };
     let mut saw_empty_assignment = false;
+    let mut mutable_escapes = 0usize;
     for (at, _) in masked.match_indices(receiver) {
         if !bound_at(at) || !name_ends(at + receiver.len()) {
             continue;
+        }
+        if masked[..at].trim_end().ends_with("&mut") || masked[..at].trim_end().ends_with("& mut") {
+            mutable_escapes += 1;
+            if mutable_escapes > 1 {
+                return false;
+            }
         }
         let rest = masked[at + receiver.len()..].trim_start();
         // A seeding call or index write on the receiver defeats the proof.
@@ -1040,6 +1049,7 @@ fn receiver_starts_empty_in_body(body: &str, receiver: &str) -> bool {
                     | "append"
                     | "splice"
                     | "resize"
+                    | "resize_with"
             ) {
                 return false;
             }
@@ -4152,6 +4162,7 @@ mod tests {
             "let mut items = vec![9]; record(&mut items, 20);",
             "let mut items = Vec::new(); items.push(9); record(&mut items, 20);",
             "let mut items = Vec::new(); items.extend([9]); record(&mut items, 20);",
+            "let mut items = Vec::new(); seed(&mut items); record(&mut items, 20);",
             "let mut items = other; record(&mut items, 20);",
             "record(&mut items, 20);",
         ] {
