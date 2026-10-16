@@ -1050,7 +1050,7 @@ fn binding_free_local_wrapper(
         let start = node.text_range().start();
         start >= definition_end && start < call_start
     };
-    if facts.modules.iter().any(|node| between(node)) {
+    if facts.modules.iter().any(&between) {
         return false;
     }
     // A macro expanded between the definition and the call could emit a
