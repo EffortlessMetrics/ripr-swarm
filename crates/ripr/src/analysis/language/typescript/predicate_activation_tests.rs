@@ -1085,7 +1085,8 @@ fn recursive_owner_is_unresolved_not_missed() -> Result<(), String> {
 /// keeps the test related.
 #[test]
 fn shadowed_namespace_import_call_is_not_owner_activation() -> Result<(), String> {
-    let imports = "import { applyDiscount } from '../src/pricing';\nimport * as ns from '../src/pricing';";
+    let imports =
+        "import { applyDiscount } from '../src/pricing';\nimport * as ns from '../src/pricing';";
     let genuine = one_test(
         "genuine ns",
         imports,

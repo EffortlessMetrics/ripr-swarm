@@ -761,7 +761,12 @@ fn spread_override_ignores_an_input_through_a_shadowed_namespace_import() -> Res
         ),
         removed,
     )?;
-    assert_eq!(genuine.class, ExposureClass::Exposed, "{:?}", genuine.missing);
+    assert_eq!(
+        genuine.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        genuine.missing
+    );
     let shadowed = settings_finding(
         "spread-ns-shadowed",
         &test(
