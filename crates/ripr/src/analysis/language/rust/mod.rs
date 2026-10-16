@@ -1240,6 +1240,9 @@ fn apply_probe_and_oracle_limits(
     // RIPR-SPEC-0240: a `#[should_panic]` test's panic outcome is an oracle
     // ripr does not resolve, not a missing assertion.
     classify::withhold_should_panic_gap(finding, index);
+    // #8051: a `debug_assert*` is compiled out in release test builds, so it
+    // is neither credited nor a missing assertion.
+    classify::withhold_debug_assertion_gap(finding, index);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
 }
@@ -7138,6 +7141,73 @@ fn absent_delimiter_boundary_returns_head() {
                 declared,
                 "declared={declared}: {related:?}"
             );
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_reads_a_debug_assertion_without_crediting_or_calling_it_missing()
+    -> Result<(), String> {
+        // #8051: a `debug_assert_eq!` is an assertion (the test is not
+        // "without an assertion"), but it is compiled out in release test
+        // builds, so it earns neither `exposed` nor a gap. Only the
+        // `assert_eq!` control is `exposed`; a weak debug assertion keeps the
+        // gap it always had.
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n\
+                    --- a/src/lib.rs\n\
+                    +++ b/src/lib.rs\n\
+                    @@ -1,3 +1,3 @@\n \
+                    pub fn total(a: u32, b: u32) -> u32 {\n\
+                    -    a + b\n\
+                    +    a + b + 1\n \
+                    }\n";
+        let cases = [
+            (
+                "assert_eq!(total(30, 3), 34);",
+                ExposureClass::Exposed,
+                None,
+            ),
+            (
+                "debug_assert_eq!(total(30, 3), 34);",
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::RustDebugAssertionUnresolved),
+            ),
+            (
+                "debug_assert!(total(30, 3) > 0);",
+                ExposureClass::WeaklyExposed,
+                None,
+            ),
+            (
+                "let _ = total(30, 3);",
+                ExposureClass::ReachableUnrevealed,
+                None,
+            ),
+        ];
+        for (index, (check, class, limit)) in cases.into_iter().enumerate() {
+            let root = temp_root(&format!("debug-assertion-oracle-{index}"))?;
+            write(
+                &root.join("Cargo.toml"),
+                "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n",
+            )?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn total(a: u32, b: u32) -> u32 {\n    a + b + 1\n}\n",
+            )?;
+            write(
+                &root.join("tests/total.rs"),
+                &format!("use shop::total;\n\n#[test]\nfn sums() {{\n    {check}\n}}\n"),
+            )?;
+
+            let result = module_graph_diff(&root, diff)?;
+
+            let finding = result
+                .findings
+                .iter()
+                .find(|finding| finding.probe.family == ProbeFamily::ReturnValue)
+                .ok_or_else(|| format!("{check}: no return_value finding"))?;
+            assert_eq!(finding.class, class, "{check}: {:?}", finding.evidence);
+            assert_eq!(finding.static_limit_kind, limit, "{check}");
             fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         }
         Ok(())

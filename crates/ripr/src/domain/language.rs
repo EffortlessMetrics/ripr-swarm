@@ -418,6 +418,13 @@ pub enum StaticLimitKind {
     /// `reachable_unrevealed` gap is withheld and the class is
     /// `static_unknown`. See RIPR-SPEC-0240.
     RustAssertionContextUnresolved,
+    /// A related test reaches the owner directly and its only strong assertion
+    /// naming the changed code is a `debug_assert*` macro. It runs under
+    /// `cargo test`'s default debug profile and is compiled out under
+    /// `--release` or `debug-assertions = false`, which ripr does not read.
+    /// ripr neither credits it as `exposed` nor claims a gap; the class is
+    /// `static_unknown`. See #8051.
+    RustDebugAssertionUnresolved,
     /// A changed `log::` record is checked by a related test that installs a
     /// capturing logger before calling the owner and asserts on the captured
     /// store, but ripr does not resolve the logger or the format template
@@ -469,6 +476,7 @@ impl StaticLimitKind {
                 "python_transitive_reach_unresolved"
             }
             StaticLimitKind::RustAssertionContextUnresolved => "rust_assertion_context_unresolved",
+            StaticLimitKind::RustDebugAssertionUnresolved => "rust_debug_assertion_unresolved",
             StaticLimitKind::RustLogCaptureUnresolved => "rust_log_capture_unresolved",
             StaticLimitKind::RustPanicOutcomeUnresolved => "rust_panic_outcome_unresolved",
         }
@@ -573,6 +581,14 @@ impl StaticLimitKind {
                  file did not parse, the test carries a feature `cfg`, or a glob import may \
                  rebind the macro). ripr does not claim a gap; this is a named limitation, not \
                  a coverage claim."
+            }
+            StaticLimitKind::RustDebugAssertionUnresolved => {
+                "A related Rust test reaches this code and its only strong assertion naming the \
+                 changed behavior is a `debug_assert!` family macro. It runs under `cargo test`'s \
+                 default debug profile but is compiled out under `--release` or \
+                 `debug-assertions = false`, and ripr does not read which profile the tests run \
+                 under. ripr does not credit the assertion and does not claim a gap; this is a \
+                 named limitation, not a coverage claim."
             }
             StaticLimitKind::RustLogCaptureUnresolved => {
                 "A related Rust test installs a capturing logger, runs this code and asserts on \
@@ -891,6 +907,10 @@ mod tests {
             "rust_assertion_context_unresolved"
         );
         assert_eq!(
+            StaticLimitKind::RustDebugAssertionUnresolved.as_str(),
+            "rust_debug_assertion_unresolved"
+        );
+        assert_eq!(
             StaticLimitKind::RustLogCaptureUnresolved.as_str(),
             "rust_log_capture_unresolved"
         );
@@ -923,6 +943,7 @@ mod tests {
             StaticLimitKind::WrapperErrorBindingUnresolved,
             StaticLimitKind::PythonTransitiveReachUnresolved,
             StaticLimitKind::RustAssertionContextUnresolved,
+            StaticLimitKind::RustDebugAssertionUnresolved,
             StaticLimitKind::RustLogCaptureUnresolved,
             StaticLimitKind::RustPanicOutcomeUnresolved,
         ];

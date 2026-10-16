@@ -203,6 +203,29 @@ A panicking macro inside a nested `fn`, closure or `macro_rules!` in the
 owner still counts; that over-reads toward `static_unknown`, never toward a
 gap or credit.
 
+### Debug-only assertions
+
+`debug_assert!`, `debug_assert_eq!`, `debug_assert_ne!` and
+`debug_assert_matches!` are assertions: the parser-backed admission
+(`syntax::ra::is_assertion_macro`) reads them, so a test whose only check is
+one is not "without an assertion" (#8051). They run under `cargo test`'s
+default debug profile and are compiled out under `--release` or
+`debug-assertions = false`, which ripr does not read, so they earn no
+`exposed` credit (`owner_pin::is_plain_macro` keeps refusing them) and no gap
+either. `gap_admission::withhold_debug_assertion_gap` rewrites a
+`weakly_exposed` or `reachable_unrevealed` finding to `static_unknown` under
+`rust_debug_assertion_unresolved` when:
+
+- a related, non-ignored test with a direct owner call holds a strong
+  `debug_assert*` oracle that names the owner function (the written field, for
+  a field write); and
+- no related direct-call test holds a strong non-debug assertion, which would
+  make the gap its own.
+
+A weak debug assertion (`debug_assert!(total(..) > 0)`), one that does not
+name the changed code, an ignored test, and a name-only relation keep the gap.
+The rule only withholds; it never raises a class.
+
 ## Scope boundary
 
 - Rust check findings only. The pilot seam rule is RIPR-SPEC-0230 (#5569).
@@ -278,6 +301,14 @@ Tests in `crates/ripr/src/analysis/classify/gap_admission.rs`:
 - `withholding_twice_adds_one_stop_reason`
 - `a_panic_macro_is_read_by_its_own_name`
 - `a_should_panic_test_expects_the_owner_panic_only_when_the_message_matches`
+- `a_debug_only_exact_assertion_withholds_the_gap_under_its_own_limit`
+- `a_debug_assertion_keeps_the_gap_unless_it_alone_names_the_change`
+- `a_field_write_names_its_field_not_its_owner_for_the_debug_assertion`
+
+`crates/ripr/src/analysis/language/rust/mod.rs`:
+`diff_analysis_reads_a_debug_assertion_without_crediting_or_calling_it_missing`;
+`crates/ripr/src/analysis/syntax/ra/property_macros.rs`:
+`debug_assertion_macros_keep_assertion_authority`.
 
 Tests in `crates/ripr/src/analysis/classify/owner_pin/tests.rs`:
 

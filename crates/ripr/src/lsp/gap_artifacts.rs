@@ -2053,6 +2053,7 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::WrapperErrorBindingUnresolved,
         StaticLimitKind::PythonTransitiveReachUnresolved,
         StaticLimitKind::RustAssertionContextUnresolved,
+        StaticLimitKind::RustDebugAssertionUnresolved,
         StaticLimitKind::RustLogCaptureUnresolved,
         StaticLimitKind::RustPanicOutcomeUnresolved,
     ]

@@ -109,6 +109,122 @@ fn withhold_gap(
     finding.recommended_next_step = Some(next_step);
 }
 
+const DEBUG_LIMIT: StaticLimitKind = StaticLimitKind::RustDebugAssertionUnresolved;
+const DEBUG_FIRST_UNRESOLVED_EDGE: &str =
+    "whether the debug-only assertion runs in the profile the tests are run under";
+
+/// #8051: withhold a gap whose only strong assertion naming the changed code
+/// is a `debug_assert*` macro. It runs under `cargo test`'s default profile
+/// and is compiled out under `--release` or `debug-assertions = false`,
+/// which ripr does not read, so it is neither credited as `exposed` (see
+/// `owner_pin::is_plain_macro`) nor reported as a missing assertion.
+///
+/// Bounded: a related direct-call, non-ignored test must hold a strong
+/// `debug_assert*` oracle that names the owner function (or, for a field
+/// write, the written field), and no related test may hold a strong
+/// non-debug assertion, which would make the gap its own. Returns `true`
+/// when the finding was rewritten to `static_unknown`.
+pub(in crate::analysis) fn withhold_debug_assertion_gap(
+    finding: &mut Finding,
+    index: &RustIndex,
+) -> bool {
+    if finding.static_limit_kind.is_some()
+        || !matches!(
+            finding.class,
+            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        )
+    {
+        return false;
+    }
+    let Some(subject) = debug_assertion_subject(finding) else {
+        return false;
+    };
+    let direct_tests: Vec<(&crate::domain::RelatedTest, &TestFact)> = finding
+        .related_tests
+        .iter()
+        .filter(|related| related.relation_reason == Some(RelationReason::DirectOwnerCall))
+        .filter_map(|related| {
+            index
+                .tests()
+                .iter()
+                .find(|test| {
+                    test.name == related.name
+                        && test.file == related.file
+                        && test.start_line == related.line
+                })
+                .map(|test| (related, test))
+        })
+        .collect();
+    let strong =
+        |oracle: &&crate::analysis::facts::OracleFact| oracle.strength == OracleStrength::Strong;
+    if direct_tests.iter().any(|(_, test)| {
+        test.assertions
+            .iter()
+            .filter(strong)
+            .any(|oracle| !is_debug_assertion_text(&oracle.text))
+    }) {
+        return false;
+    }
+    let debug_tests: Vec<String> = direct_tests
+        .iter()
+        .filter(|(_, test)| {
+            !is_ignored(test)
+                && test.assertions.iter().filter(strong).any(|oracle| {
+                    is_debug_assertion_text(&oracle.text)
+                        && oracle.observed_tokens.iter().any(|token| *token == subject)
+                })
+        })
+        .map(|(related, _)| {
+            format!(
+                "`{}` ({}:{})",
+                related.name,
+                related.file.display().to_string().replace('\\', "/"),
+                related.line
+            )
+        })
+        .collect();
+    if debug_tests.is_empty() {
+        return false;
+    }
+    let next_step = format!(
+        "{} checks the changed behavior only with a `debug_assert*` macro, which is compiled out under `--release` or `debug-assertions = false`, so ripr does not report a gap. Confirm the tests run with debug assertions, or switch the check to `assert_eq!`; add a test only if neither applies.",
+        debug_tests.join(", ")
+    );
+    withhold_gap(
+        finding,
+        DEBUG_LIMIT,
+        DEBUG_FIRST_UNRESOLVED_EDGE,
+        next_step,
+        &debug_tests,
+    );
+    true
+}
+
+/// The identifier a debug assertion must name to count as checking the
+/// change: the written field of a field write, else the owner function.
+fn debug_assertion_subject(finding: &Finding) -> Option<String> {
+    if finding.probe.family == ProbeFamily::FieldConstruction
+        && let Some((target, _)) = finding.probe.expression.split_once('=')
+    {
+        let field = target.trim().rsplit('.').next()?.trim();
+        return is_ident(field).then(|| field.to_string());
+    }
+    let id = finding.probe.owner.as_ref()?;
+    let name = id.0.rsplit("::").next()?;
+    is_ident(name).then(|| name.to_string())
+}
+
+/// `debug_assert!`, `debug_assert_eq!`, `debug_assert_ne!` or
+/// `debug_assert_matches!`, bare or under a `std`/`core` root.
+fn is_debug_assertion_text(text: &str) -> bool {
+    let trimmed = text.trim_start().trim_start_matches("::");
+    let leaf = trimmed
+        .strip_prefix("std::")
+        .or_else(|| trimmed.strip_prefix("core::"))
+        .unwrap_or(trimmed);
+    leaf.starts_with("debug_assert")
+}
+
 const LOG_LIMIT: StaticLimitKind = StaticLimitKind::RustLogCaptureUnresolved;
 const LOG_FIRST_UNRESOLVED_EDGE: &str =
     "whether the captured log record carries the changed value the test asserts";
@@ -1862,5 +1978,178 @@ fn plain() { row(100); }
         assert_eq!(expects("foreign_message"), Some(false));
         assert_eq!(expects("empty_message"), Some(true));
         assert_eq!(expects("plain"), Some(false));
+    }
+
+    const DEBUG_SOURCE: &str = r#"pub fn total(a: u32, b: u32) -> u32 {
+    a + b + 1
+}
+
+#[test]
+fn debug_exact() {
+    debug_assert_eq!(total(30, 3), 34);
+}
+
+#[test]
+fn debug_qualified() {
+    std::debug_assert_eq!(total(30, 3), 34);
+}
+
+#[test]
+fn debug_unrelated_operands() {
+    let _ = total(30, 3);
+    debug_assert_eq!(1, 1);
+}
+
+#[test]
+fn debug_weak() {
+    debug_assert!(total(30, 3) > 0);
+}
+
+#[test]
+fn plain_exact() {
+    assert_eq!(total(30, 3), 34);
+}
+
+#[test]
+#[ignore]
+fn debug_ignored() {
+    debug_assert_eq!(total(30, 3), 34);
+}
+"#;
+
+    fn debug_index() -> RustIndex {
+        let facts = crate::analysis::rust_index::summarize_file(
+            PathBuf::from("src/lib.rs"),
+            DEBUG_SOURCE.to_string(),
+        );
+        let mut index = RustIndex::default();
+        index.extend_functions(facts.functions.iter().cloned());
+        index.extend_tests(facts.tests.iter().cloned());
+        index.insert_file_only(PathBuf::from("src/lib.rs"), facts);
+        index
+    }
+
+    /// A weakly exposed `total` return value with the named tests related.
+    fn debug_finding(index: &RustIndex, tests: &[&str]) -> Result<Finding, String> {
+        let mut finding = marked();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.probe.family = ProbeFamily::ReturnValue;
+        finding.probe.expression = "a + b + 1".to_string();
+        finding.probe.owner = Some(SymbolId("src/lib.rs::total".to_string()));
+        finding.evidence.clear();
+        finding.related_tests = Vec::new();
+        for name in tests {
+            let test = index
+                .tests()
+                .iter()
+                .find(|test| test.name == *name)
+                .ok_or_else(|| format!("fixture lost test {name}"))?;
+            let mut entry = related(name);
+            entry.line = test.start_line;
+            finding.related_tests.push(entry);
+        }
+        Ok(finding)
+    }
+
+    #[test]
+    fn a_debug_only_exact_assertion_withholds_the_gap_under_its_own_limit() -> Result<(), String> {
+        let index = debug_index();
+        // The fixture holds what the claim names: each debug test has a strong
+        // `debug_assert*` oracle, the plain one a strong `assert_eq!`.
+        for name in ["debug_exact", "debug_qualified"] {
+            let test = index.tests().iter().find(|test| test.name == name);
+            assert!(
+                test.is_some_and(|test| test
+                    .assertions
+                    .iter()
+                    .any(|oracle| oracle.strength == OracleStrength::Strong
+                        && is_debug_assertion_text(&oracle.text))),
+                "{name}: {:?}",
+                test.map(|test| &test.assertions)
+            );
+        }
+        for name in ["debug_exact", "debug_qualified"] {
+            for class in [
+                ExposureClass::WeaklyExposed,
+                ExposureClass::ReachableUnrevealed,
+            ] {
+                let mut finding = debug_finding(&index, &[name])?;
+                finding.class = class;
+                assert!(withhold_debug_assertion_gap(&mut finding, &index), "{name}");
+                assert_eq!(finding.class, ExposureClass::StaticUnknown, "{name}");
+                assert_eq!(
+                    finding.static_limit_kind,
+                    Some(StaticLimitKind::RustDebugAssertionUnresolved)
+                );
+                assert_eq!(
+                    finding.stop_reasons,
+                    vec![StopReason::GapEvidenceUnresolved]
+                );
+                assert!(finding.activation.missing_discriminators.is_empty());
+                assert!(
+                    finding
+                        .recommended_next_step
+                        .as_deref()
+                        .is_some_and(|step| step.contains(&format!("`{name}`"))),
+                    "{name}: {:?}",
+                    finding.recommended_next_step
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_debug_assertion_keeps_the_gap_unless_it_alone_names_the_change() -> Result<(), String> {
+        let index = debug_index();
+        // A weak debug assertion, one that never names the owner, an ignored
+        // test and an unrelated test each leave the gap in place.
+        for names in [
+            vec!["debug_weak"],
+            vec!["debug_unrelated_operands"],
+            vec!["debug_ignored"],
+            Vec::new(),
+        ] {
+            let mut finding = debug_finding(&index, &names)?;
+            assert!(
+                !withhold_debug_assertion_gap(&mut finding, &index),
+                "{names:?}"
+            );
+            assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{names:?}");
+            assert_eq!(finding.static_limit_kind, None, "{names:?}");
+        }
+        // A strong non-debug assertion on a related test makes the gap its
+        // own: the debug assertion beside it must not hide it.
+        let mut mixed = debug_finding(&index, &["debug_exact", "plain_exact"])?;
+        assert!(!withhold_debug_assertion_gap(&mut mixed, &index));
+        assert_eq!(mixed.class, ExposureClass::WeaklyExposed);
+        // Only a gap class is rewritten, and an earlier limit is kept.
+        let mut exposed = debug_finding(&index, &["debug_exact"])?;
+        exposed.class = ExposureClass::Exposed;
+        assert!(!withhold_debug_assertion_gap(&mut exposed, &index));
+        assert_eq!(exposed.class, ExposureClass::Exposed);
+        let mut named = debug_finding(&index, &["debug_exact"])?;
+        named.static_limit_kind = Some(StaticLimitKind::RustLogCaptureUnresolved);
+        assert!(!withhold_debug_assertion_gap(&mut named, &index));
+        // A name-only relation does not show the test calls the owner.
+        let mut by_name = debug_finding(&index, &["debug_exact"])?;
+        for entry in &mut by_name.related_tests {
+            entry.relation_reason = Some(RelationReason::SameTestFile);
+        }
+        assert!(!withhold_debug_assertion_gap(&mut by_name, &index));
+        Ok(())
+    }
+
+    #[test]
+    fn a_field_write_names_its_field_not_its_owner_for_the_debug_assertion() {
+        let mut finding = marked();
+        finding.probe.family = ProbeFamily::FieldConstruction;
+        finding.probe.expression = "self.count = 1 + 0".to_string();
+        finding.probe.owner = Some(SymbolId("src/lib.rs::Pulse::beat".to_string()));
+        assert_eq!(debug_assertion_subject(&finding).as_deref(), Some("count"));
+        finding.probe.family = ProbeFamily::ReturnValue;
+        assert_eq!(debug_assertion_subject(&finding).as_deref(), Some("beat"));
+        finding.probe.owner = None;
+        assert_eq!(debug_assertion_subject(&finding), None);
     }
 }
