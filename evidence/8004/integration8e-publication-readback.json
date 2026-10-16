@@ -1,0 +1,31 @@
+{
+  "at": "2026-10-16T05:28:14.485113+00:00",
+  "remote_branch": "evidence/8004-integration8e-20261016",
+  "immutable_commit": "c13aaeab0f11177f25a3db78e497c6c1319515f3",
+  "method": "Fresh bare Git fetch from remote; all five public files byte-equal; every archive member fully decompressed/hash/size/mode/inventory verified",
+  "files": {
+    "README.md": {
+      "bytes": 8724,
+      "sha256": "0f2a2f2a43bd155c563e8e3798383eefdc7b5eec3be039360fede39887313f1f"
+    },
+    "receipt.json": {
+      "bytes": 11898,
+      "sha256": "05145d4c2f103f4b7ffa94eba4d6655948662abb74a276c591162c8ebc6f9742"
+    },
+    "MANIFEST.json": {
+      "bytes": 8024,
+      "sha256": "ed98617e23018508298587891c25a8c5471db0a9f64c89d91f4eed140731c872"
+    },
+    "raw.tar.xz": {
+      "bytes": 86560,
+      "sha256": "9819db73f6c11d128296215dadde09eb33582d49b0d4b71cc8d99551b5792b2c"
+    },
+    "SHA256SUMS": {
+      "bytes": 312,
+      "sha256": "9ecaf32a757cc080d58d080f4fc34649c97e11077b7299278718b33d5ece3ea8"
+    }
+  },
+  "archive_members_verified": 46,
+  "candidate_ref_written": false,
+  "source_changes_published": false
+}
