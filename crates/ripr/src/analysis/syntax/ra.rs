@@ -2672,6 +2672,10 @@ fn uncompared_unwrap_err_statement(method_call: &ast::MethodCallExpr, text: &str
 pub(crate) fn is_assertion_macro_leaf(name: &str) -> bool {
     // `matches!` computes a bool. Only an asserting wrapper observes it;
     // admitting the computation itself credits discarded values (#5713).
+    // The `debug_` spellings run in `cargo test`'s debug profile and state
+    // the same relation (#8051), as `equality_assertion_arguments` already
+    // reads them.
+    let name = name.strip_prefix("debug_").unwrap_or(name);
     matches!(
         name,
         "assert" | "assert_eq" | "assert_ne" | "assert_matches"
@@ -2680,6 +2684,10 @@ pub(crate) fn is_assertion_macro_leaf(name: &str) -> bool {
 
 pub(crate) fn is_assertion_macro(macro_name: &str) -> bool {
     let macro_name = drop_in_assertion_leaf(macro_name).unwrap_or(macro_name);
+    // `debug_assert*!` observes the changed behavior in the debug profile
+    // `cargo test` runs by default (#8051). A snapshot-named macro keeps its
+    // own rules below.
+    let macro_name = macro_name.strip_prefix("debug_").unwrap_or(macro_name);
     matches!(
         macro_name,
         "assert" | "assert_eq" | "assert_ne" | "assert_matches"

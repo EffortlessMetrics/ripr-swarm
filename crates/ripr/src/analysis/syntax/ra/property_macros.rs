@@ -134,6 +134,32 @@ mod tests {
     }
 
     #[test]
+    fn debug_assertion_spellings_keep_assertion_authority() {
+        for name in [
+            "debug_assert",
+            "debug_assert_eq",
+            "debug_assert_ne",
+            "debug_assert_matches",
+            "std::debug_assert_eq",
+            "pretty_assertions::debug_assert_eq",
+        ] {
+            assert!(is_assertion_macro(name), "{name}");
+        }
+        for name in ["debug_assert", "debug_assert_eq", "debug_assert_ne"] {
+            assert!(is_assertion_macro_leaf(name), "{name}");
+        }
+        for name in [
+            "other::debug_assert_eq",
+            "debug_prop_assert_eq",
+            "debug_",
+            "debug_debug_assert_eq",
+            "my_debug_assert_eq",
+        ] {
+            assert!(!is_assertion_macro(name), "{name}");
+        }
+    }
+
+    #[test]
     fn drop_in_assertion_crate_paths_keep_assertion_authority() {
         for name in [
             "pretty_assertions::assert_eq",

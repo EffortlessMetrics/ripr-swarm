@@ -690,11 +690,16 @@ fn assertion_macro_open(text: &str) -> Option<(&'static str, usize)> {
         .into_iter()
         .find_map(|macro_name| {
             text.match_indices(macro_name).find_map(|(index, _)| {
-                let prefix_ok = index == 0
-                    || !text[..index]
-                        .chars()
-                        .next_back()
-                        .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+                // A `debug_` spelling states the same relation in the debug
+                // profile `cargo test` runs (#8051); the identifier boundary
+                // is then the one before `debug_`.
+                let before = text[..index]
+                    .strip_suffix("debug_")
+                    .unwrap_or(&text[..index]);
+                let prefix_ok = before
+                    .chars()
+                    .next_back()
+                    .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'));
                 let suffix_start = index + macro_name.len();
                 let open_offset = text[suffix_start..]
                     .char_indices()

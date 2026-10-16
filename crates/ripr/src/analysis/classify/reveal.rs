@@ -672,10 +672,7 @@ fn owner_call_passes_key(
         .sum();
     // The read line must open with the assertion: `s.set("K", 5); assert_eq!(..)`
     // writes the entry on the read's own line, outside the checked window.
-    if !masked
-        .get(read_at..)
-        .is_some_and(|line| line.trim_start().starts_with("assert"))
-    {
+    if !masked.get(read_at..).is_some_and(opens_with_assertion) {
         return false;
     }
     owner_calls_before_read(body, start_line, call.binding, call.method, read_line)
@@ -966,10 +963,7 @@ pub(in crate::analysis) fn binding_untouched_after_owner_call(
         .take(lines_before)
         .map(str::len)
         .sum();
-    if !masked
-        .get(read_at..)
-        .is_some_and(|line| line.trim_start().starts_with("assert"))
-    {
+    if !masked.get(read_at..).is_some_and(opens_with_assertion) {
         return false;
     }
     let call = format!("{binding}.{method}(");
@@ -2141,6 +2135,16 @@ fn excludes_only_sibling_variant(
         None
     };
     excluded.is_some_and(|excluded| names_only_sibling_variants(excluded, qualifier, variant))
+}
+
+/// Whether a source line opens with an assertion macro. `debug_assert*!`
+/// runs in the debug profile `cargo test` uses by default and reads like
+/// `assert*!` (#8051).
+fn opens_with_assertion(line: &str) -> bool {
+    let line = line.trim_start();
+    line.strip_prefix("debug_")
+        .unwrap_or(line)
+        .starts_with("assert")
 }
 
 /// The trimmed top-level comma-separated arguments of a macro call whose

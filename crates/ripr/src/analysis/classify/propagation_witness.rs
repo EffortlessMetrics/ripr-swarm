@@ -1656,6 +1656,9 @@ fn assertion_primary_subject(text: &str) -> Option<String> {
 
 fn macro_payload<'a>(text: &'a str, name: &str) -> Option<&'a str> {
     let trimmed = text.trim_start();
+    // The `debug_` spelling states the same relation in the debug profile
+    // `cargo test` runs (#8051).
+    let trimmed = trimmed.strip_prefix("debug_").unwrap_or(trimmed);
     let needle = format!("{name}!");
     if !trimmed.starts_with(&needle) {
         return None;

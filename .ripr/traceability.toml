@@ -14576,6 +14576,10 @@ tests = [
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::empty_collection_expectations_cannot_confirm_a_push",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::owner_may_exit_before_line_reads_everything_before_the_changed_expression",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::empty_collection_expectations_cap_effect_families_only_after_an_early_exit",
+  "crates/ripr/tests/debug_assert_oracle_credit.rs::debug_assert_eq_pins_the_changed_field_like_assert_eq",
+  "crates/ripr/tests/debug_assert_oracle_credit.rs::debug_assert_without_an_observing_assertion_keeps_the_gap",
+  "crates/ripr/tests/debug_assert_oracle_credit.rs::lookalike_macro_names_are_not_assertions",
+  "crates/ripr/src/analysis/syntax/ra/property_macros.rs::tests::debug_assertion_spellings_keep_assertion_authority",
 ]
 fixtures = []
 code = [

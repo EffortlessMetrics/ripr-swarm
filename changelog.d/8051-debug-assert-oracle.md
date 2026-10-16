@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust test whose only check of a changed field write is `debug_assert_eq!`, `debug_assert_ne!` or `debug_assert!` is now read as an oracle, as `assert_eq!` is: `cargo test` runs the debug profile, so the assertion observes the change, and the finding no longer reads `reachable_unrevealed` or `weakly_exposed`. The owner-return pin still refuses `debug_assert_eq!` (RIPR-SPEC-0197), and lookalike names such as `my_debug_assert_eq!` stay unrecognized (#8051).

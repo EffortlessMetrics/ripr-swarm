@@ -481,7 +481,7 @@ changes `self.count += 2` to `self.count += 1`.
   not a compared side (`let items = &c.items;` then an assertion on
   `items`, `assert!(!c.items.is_empty())`, `c.items.iter().any(..)`), an
   owner called as `Basket::add(&mut c, 4)` or through a helper, and
-  `prop_assert_eq!`/`debug_assert_eq!`. A whole-value comparison of the
+  `prop_assert_eq!`. A whole-value comparison of the
   receiver keeps the effect-observer path (RIPR-SPEC-0094 Part D).
 - A field of a struct or enum literal pushed onto a field collection is
   credited (#7131): `pushed_literal_collection_path` and
@@ -556,10 +556,9 @@ changes `self.count += 2` to `self.count += 1`.
   failing closed until those reads are established. Writes through `*p`, a
   local binding or a non-`self` receiver are not probed.
 - Known limits shared with other probe families (#8051, #7638): a test
-  whose only oracle is a manual `if .. { panic!(..) }`, a
-  `debug_assert_eq!` or an unrecognized assertion macro (`assert_that!`,
-  `check!`, `prop_assert_eq!`), or whose owner asserts on the field itself,
-  reads `reachable_unrevealed`; an assertion that only runs in a dead
+  whose only oracle is a manual `if .. { panic!(..) }`, an unrecognized
+  assertion macro (`assert_that!`, `check!`, `prop_assert_eq!`), or whose
+  owner asserts on the field itself, reads `reachable_unrevealed`; an assertion that only runs in a dead
   branch, an empty loop or a `#[should_panic]` test still credits; and a
   non-default pre-call value equal to the asserted one
   (`self.count = self.count.max(1)` with `count` already 5) still credits.
@@ -570,3 +569,16 @@ changes `self.count += 2` to `self.count += 1`.
   `static_unknown` without a named limit; must be zero.
 - `rust_field_write_direct_read_credit`: field writes confirmed by a same-test
   exact read of the field.
+- A `debug_assert!`, `debug_assert_eq!` or `debug_assert_ne!` is an assertion
+  (#8051 item 1): `cargo test` builds the debug profile, so it observes the
+  changed field exactly as the plain macro does. The syntax adapter
+  (`is_assertion_macro`, `is_assertion_macro_leaf`), the field-read oracle
+  source (`assertion_macro_open`), the payload readers of
+  `propagation_witness.rs` and the read-line opening check of `reveal.rs`
+  accept the bare `debug_` spelling; a lookalike (`my_debug_assert_eq!`,
+  `debug_prop_assert_eq!`) stays unrecognized. The owner-return pin keeps its
+  own rule (RIPR-SPEC-0197): it never admits `debug_assert_eq!`, so a returned
+  value pinned only that way reads `weakly_exposed`, not `exposed`. Known
+  limit: a `--release` test run compiles `debug_assert*!` out; the static
+  reading follows the default `cargo test` profile, as `equality_assertion_arguments`
+  already does.
