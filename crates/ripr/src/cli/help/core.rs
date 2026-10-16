@@ -144,9 +144,9 @@ Common options:
   --root PATH       Workspace root. Defaults to the current directory.
   --quiet           Suppress progress on stderr.
 
-Exit status: 0 for a completed run, whatever it finds; 2 for unsupported input
-or a usage error. Read the typed outcome, not the exit code alone, to tell
-partial analysis from complete analysis.
+Exit status: 0 for a completed run, including `exposed` and `weakly_exposed`
+findings. `unsupported_input` reports exit 2, as do usage errors. Do not build
+a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
 
 Examples:
   ripr check
