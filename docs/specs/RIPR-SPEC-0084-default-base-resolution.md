@@ -207,7 +207,8 @@ its changed-file count aligned with retained gitlinks in the packet diff.
 When no scope is given and the result is empty, `ripr check` resolves the
 default base and `HEAD` again after analysis. If each resolves to the same
 commit (typically a clone of a feature branch, where `origin/HEAD` tracks the
-checked-out branch), it writes one line to stderr stating that observation,
+checked-out branch) and another branch could serve as a usable `--base`
+(the exception below), it writes one line to stderr stating that observation,
 that the empty result alone is not a clean pass, and naming `--base`. The two
 resolutions are later observations, not the analyzed snapshot, so the line
 does not attribute the cause of the analyzed range; stdout and JSON are
@@ -216,7 +217,8 @@ The warning is silent when either commit fails to resolve, when the commits
 differ, and whenever the scope is explicit (`--base`, `--diff`,
 `--candidate-tree`, `--worktree`). It is also silent when no other branch
 could serve as the advised base (#7644): only a branch whose
-`<branch>...HEAD` range contains changed files counts, so an alias at
+`<branch>...HEAD` range contains changed files within the analyzed
+root counts, so an alias at
 `HEAD`'s commit (such as a fresh clone's remote-tracking counterpart) or
 a range that restores the same tree yields the same empty result, and the
 Start-here action owns the remediation instead.

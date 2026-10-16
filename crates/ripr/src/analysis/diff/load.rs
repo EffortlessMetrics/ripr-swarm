@@ -1174,10 +1174,19 @@ pub fn another_base_candidate_exists(root: &Path, git_timeout: Option<Duration>)
         });
         // A distinct historical range can still restore the merge-base
         // tree; only a non-empty three-dot diff makes the advice useful.
+        // `--relative` scopes that diff to `root` like the analysis
+        // loader, so a branch differing only outside the analyzed root
+        // does not count.
         merge_base_differs
             && crate::git::run_git_output_with_deadline(
                 root,
-                &["diff", "--quiet", &format!("{name}...HEAD"), "--"],
+                &[
+                    "diff",
+                    "--relative",
+                    "--quiet",
+                    &format!("{name}...HEAD"),
+                    "--",
+                ],
                 git_timeout,
             )
             .is_ok_and(|output| output.status.code() == Some(1))
@@ -2521,6 +2530,41 @@ mod tests {
         assert!(
             !another_base_candidate_exists(&dir, None),
             "a range restoring the merge-base tree must not count as a --base candidate"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_ignores_changes_outside_the_analysis_root() -> std::io::Result<()> {
+        // The analysis loader scopes its diff to `root` (`--relative`);
+        // the probe must agree, or a branch differing only in a sibling
+        // package advises a `--base` that reproduces the empty result
+        // for a subdirectory root (#7644).
+        let dir = unique_fixture_root("another-base-candidate-subdir")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        let sub = dir.join("sub");
+        fs::create_dir_all(&sub)?;
+        fs::write(sub.join("lib.txt"), "init")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "seed sub"])?;
+        run_git_checked(&dir, &["branch", "base-candidate"])?;
+        // The ancestor branch now differs from HEAD only outside `sub`.
+        fs::write(dir.join("README"), "outside")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "outside sub"])?;
+        assert!(
+            !another_base_candidate_exists(&sub, None),
+            "a branch differing only outside the analysis root must not count"
+        );
+        // A later change inside `sub` makes the same branch a candidate.
+        fs::write(sub.join("lib.txt"), "inside")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "inside sub"])?;
+        assert!(
+            another_base_candidate_exists(&sub, None),
+            "a branch differing inside the analysis root must count"
         );
         ignore_remove_dir_all(&dir);
         Ok(())
