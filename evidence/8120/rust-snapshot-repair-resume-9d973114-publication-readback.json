@@ -1,0 +1,9 @@
+{
+  "published_commit": "f6eb54c35a6c4174c5b369b2189199aa52563f2c",
+  "remote_readback_commit": "f6eb54c35a6c4174c5b369b2189199aa52563f2c",
+  "public_files_verified": 5,
+  "archive_members_verified": 84,
+  "all_inventory_bytes_size_mode_hashes_equal": true,
+  "packet_url": "https://github.com/EffortlessMetrics/ripr-swarm/tree/f6eb54c35a6c4174c5b369b2189199aa52563f2c/evidence/8120/rust-snapshot-repair-resume-9d973114",
+  "boundary": "Independent Git source/task packet, not the denied nextest artifact ZIP; no alternate artifact retrieval."
+}
