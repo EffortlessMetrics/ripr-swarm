@@ -287,6 +287,7 @@ const CHECK_VALUE_OPTIONS: &[&str] = &[
     "--gap-ledger",
     "--perl-facts",
     "--suppression-policy",
+    "--output-dir",
     "--write-artifact",
     "--git-timeout",
 ];
