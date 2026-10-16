@@ -400,7 +400,12 @@ fn manifest_gates_test_targets(root: &Path, package_dir: &Path) -> bool {
         .flatten()
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
-        .and_then(|manifest| manifest.get("test").and_then(toml::Value::as_array).cloned())
+        .and_then(|manifest| {
+            manifest
+                .get("test")
+                .and_then(toml::Value::as_array)
+                .cloned()
+        })
         .is_some_and(|entries| {
             entries.iter().any(|entry| {
                 entry.get("test").and_then(toml::Value::as_bool) == Some(false)
