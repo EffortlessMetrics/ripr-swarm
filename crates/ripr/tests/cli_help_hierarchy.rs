@@ -161,7 +161,8 @@ mod discovery_rows {
                 match self.bump()? {
                     b'"' => return Ok(()),
                     b'\\' => {
-                        if self.bump()? == b'u' {
+                        let escaped = self.bump()?;
+                        if escaped == b'u' {
                             for _ in 0..4 {
                                 let digit = self.bump()?;
                                 if !digit.is_ascii_hexdigit() {
