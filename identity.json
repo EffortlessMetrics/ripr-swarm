@@ -1,0 +1,29 @@
+{
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "pr": 8229,
+  "reviewed_head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+  "tree": "87daa9ea61cb717b743733e0734346702573e001",
+  "candidate_basis": "d08c77d144c016078364fcc1fcf2fa593d21cefc",
+  "observed_pr_base": "e660a99480dc13a4ed93b131042d11506fd484b6",
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "shell": "bash",
+  "default_PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+  "toolchain": "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu",
+  "cargo_home": "/workspace/.cargo",
+  "rustup_home": "/workspace/.rustup",
+  "cargo_target_dir": "/workspace/review-8229-target",
+  "review_workspace": "/workspace/review-8229",
+  "original_checkout_head": "d08c77d144c016078364fcc1fcf2fa593d21cefc",
+  "review_tree_status": "",
+  "timestamp": "2026-10-16T06:44:52.608324+00:00",
+  "build_argv": [
+    "cargo",
+    "build",
+    "--locked",
+    "-p",
+    "ripr",
+    "--bin",
+    "ripr"
+  ],
+  "build_exit": 0
+}

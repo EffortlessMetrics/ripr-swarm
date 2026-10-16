@@ -1,0 +1,2755 @@
+# Engineering Rules
+
+This document records the engineering bar for `ripr` implementation PRs.
+
+## Product-First Scope
+
+Every implementation PR should be traceable to the product contract:
+
+```text
+For the behavior changed in this diff, do the current tests appear to contain
+a discriminator that would notice if that behavior were wrong?
+```
+
+Avoid broad infrastructure unless it makes that answer more precise, faster, or
+more actionable.
+
+## Scoped Evidence-Heavy PRs
+
+Optimize PRs for narrow production risk, not low line count.
+
+A good `ripr` PR changes one production behavior, public contract, or
+architectural seam and carries the full evidence package needed to review that
+change. Evidence can include specs, fixtures, tests, golden outputs, docs,
+metrics, ADRs, learnings, and traceability.
+
+This means a fixture-heavy or docs-heavy PR can be scoped even when it has many
+changed lines. It also means a small code diff can be unscoped if it changes
+multiple contracts or unrelated behaviors.
+
+Every behavior PR should identify:
+
+- production delta
+- evidence delta
+- one acceptance criterion
+- explicit non-goals
+
+## Architecture
+
+Keep one published package:
+
+```text
+Package: ripr
+Binary: ripr
+Library: ripr
+Automation: xtask, unpublished
+```
+
+Use internal seams:
+
+- `domain`: exposure concepts, probes, RIPR evidence, oracle strength, classes
+- `app`: use-case orchestration and public library API
+- `analysis`: diff, indexing, facts, probes, classification
+- `output`: human, JSON, GitHub, future SARIF
+- `cli`: command adapter
+- `lsp`: editor protocol adapter
+- `agent`: bounded repair-loop command production and provenance
+- `config`: `ripr.toml` loading, typed model, language detection
+- `mcp`: bounded read-only Model Context Protocol adapter (`ripr mcp --stdio`;
+  ADR 0022). Shared workspace-status projection; no edit or execution authority
+- `provider_contract`: public exact-snapshot DTOs for external proof
+  orchestrators; not an analysis or rendering layer
+
+Do not split crates until an external contract makes the boundary real.
+
+## SRP and Modularity
+
+Prefer small modules whose names describe the problem concept they own.
+
+Good ownership examples:
+
+- diff parsing owns hunks and changed ranges
+- syntax adapter owns parser integration
+- fact extraction owns syntax-to-fact conversion
+- probe generation owns changed-fact-to-probe conversion
+- classifier owns fact/probe-to-finding decisions
+- output adapters own rendering only
+
+Avoid modules that mix parsing, analysis, classification, and rendering.
+
+## Error Handling
+
+Target rule:
+
+```text
+No panic, unwrap, expect, todo, or unimplemented in production or tests.
+```
+
+This target allows ordinary test assertions such as `assert!` and `assert_eq!`.
+It forbids accidental panic paths, unwrap-style setup shortcuts, and
+panic-driven control flow.
+
+Use typed errors or `Result<_, String>` where the existing codebase has not yet
+introduced a richer error type. Tests should return `Result` and use explicit
+assertions instead of unwrap-style failure.
+
+Exceptions require a narrow comment explaining why failure is impossible and why
+the exception is better than propagating an error. The preferred long-term count
+is zero exceptions.
+
+Fixture projects may intentionally contain `unwrap`, `expect`, `panic!`, or
+`#[should_panic]` only when the fixture spec says that behavior is being
+analyzed as a smoke, panic, or weak-oracle shape.
+
+## Modern Rust
+
+Use Rust 2024 and the workspace minimum Rust version. Prefer standard library
+types and clear ownership before adding dependencies. Keep `unsafe_code =
+"forbid"`.
+
+When adding types, encode domain states directly instead of passing loosely
+typed strings through the analyzer. Keep fallible boundaries explicit with
+`Result`, and keep rendering concerns out of domain and analysis types.
+
+## Rust-First Implementation
+
+Rust is the default implementation language for repo automation, production
+logic, test harnesses, fixture runners, release checks, and policy checks.
+
+Non-Rust programming files are allowlisted exceptions. They are allowed only for
+approved surfaces such as the VS Code extension, GitHub Actions declarations,
+fixtures, generated outputs, documentation examples, or assets.
+
+If a contributor adds a non-Rust programming file, the PR must explain:
+
+- why Rust or `xtask` is not the right place
+- which approved surface owns the file
+- whether the file is production, test, fixture, generated, config, or docs
+- what CI check covers it
+
+See [File policy](FILE_POLICY.md).
+
+## PR Shaping Automation
+
+Repo automation has three responsibilities:
+
+- shape: safely normalize files where no judgment is required
+- check: enforce non-negotiable rules
+- guide: report exact repair steps when judgment is required
+
+The operating model is documented in [PR automation](PR_AUTOMATION.md). The
+short version is:
+
+```text
+deterministic cleanup -> automated shaping
+non-negotiable rules -> check failures
+judgment-required exceptions -> repair briefs
+```
+
+`cargo xtask shape` is allowed to mutate only safe local artifacts:
+
+- run `cargo fmt`
+- sort `.ripr/*.txt` and `policy/*.txt` allowlist entries
+- ensure `target/ripr/reports`
+- write `target/ripr/reports/shape.md`
+
+It must not bless goldens, add policy exceptions, change schema versions, add
+dependencies, or accept public output drift.
+
+`cargo xtask pr-summary` writes `target/ripr/reports/pr-summary.md` by
+classifying changed paths from git diff and status.
+
+`cargo xtask fix-pr` currently runs safe shaping, refreshes `pr-summary`, and
+writes a local fix-pr report.
+
+Long-running Codex Goals work should use the multi-PR campaign model in
+[Codex Goals](CODEX_GOALS.md), the queue in
+[Implementation campaigns](IMPLEMENTATION_CAMPAIGNS.md), and the one-work-item
+evidence bar in [Scoped PR contract](SCOPED_PR_CONTRACT.md).
+
+## Testing Style
+
+Use BDD-shaped test names and fixtures:
+
+```text
+given_changed_boundary_when_only_smoke_oracle_exists_then_reports_weak_exposure
+```
+
+Each behavior should have:
+
+- a spec entry
+- one or more tests that cite the spec ID or fixture name
+- implementation code in the matching module
+- golden output when user-visible output changes
+- a capability or quality metric when capability status changes
+
+## Documentation
+
+Use Diataxis deliberately:
+
+- tutorials: teach first successful use
+- how-to guides: solve concrete tasks
+- reference: define commands, schemas, config, and enums
+- explanation: record model, architecture, ADRs, and tradeoffs
+
+The README should stay problem-first and should surface the most important
+metrics, current capability state, and next-step docs.
+
+## Dogfooding
+
+When `ripr` can analyze a behavior shape that exists in its own codebase, add a
+fixture or smoke command that uses this repository as an example. Dogfooding
+should produce focused evidence and tests, not broad self-analysis dashboards.
+
+## Output Language
+
+Static output may use:
+
+- `exposed`
+- `weakly_exposed`
+- `reachable_unrevealed`
+- `no_static_path`
+- `infection_unknown`
+- `propagation_unknown`
+- `static_unknown`
+
+Static output must not claim:
+
+- `killed`
+- `survived`
+- `untested`
+- `proven`
+- `adequate`
+
+Real mutation data can be reported only in explicit calibration output.
+# Architecture
+
+`ripr` is one published package with strong internal module seams.
+
+Repository automation uses unpublished `xtask` and the bounded `repo-policy`
+package introduced by #7158 and extended by #7324. The latter owns only
+workflow-policy, agent-skill and Git-index executable-file checks, with no
+normal/build dependency on `ripr` or its parser stack. Both its
+lightweight front door and the retained xtask commands share that implementation.
+This tooling boundary does not split the published product or add a product API.
+
+```text
+CLI / LSP / MCP / CI
+  -> app
+     -> analysis engine
+     -> domain
+  -> output adapters
+```
+
+## Core modules
+
+- `domain`: probe, RIPR evidence, oracle strength, exposure classification.
+- `app`: use-case orchestration and public library API.
+- `analysis`: diff loading, syntax indexing, probe generation, classification,
+  and an additive shared-witness projection over existing findings and seams.
+- `output`: human, JSON, and GitHub annotation rendering.
+- `cli`: command-line entrypoint.
+- `lsp`: experimental `tower-lsp-server` sidecar entrypoint.
+- `agent`: bounded repair-loop command production and provenance.
+- `config`: `ripr.toml` loading, typed model, language detection.
+- `mcp`: bounded read-only Model Context Protocol adapter (`ripr mcp --stdio`;
+  [ADR 0022](adr/0022-mcp-is-a-bounded-projection.md)). Shared workspace-status
+  projection; no edit or execution authority.
+- `provider_contract`: public exact-snapshot DTOs for external proof
+  orchestrators; not an analysis or rendering layer.
+
+## Analysis scope
+
+The analysis engine selects Rust files according to mode before building its
+syntax-first index:
+
+- `instant`: changed Rust files only.
+- `draft` / `fast`: packages touched by the diff.
+- `deep` / `ready`: all Rust files in the workspace.
+
+This keeps live feedback narrow while preserving an explicit path to wider
+manual or CI scans.
+
+## Design rules
+
+- Static objects are `Probe`s, not mutants.
+- Static output never says `killed` or `survived`.
+- Unknowns are first-class outcomes.
+- Findings must carry evidence and a recommended next step.
+- The first release stays syntax-first. Semantic enrichment comes later.
+- Behavior changes should preserve a spec-test-code trail so future humans and
+  agents can recover intent from repository artifacts.
+- Implementation modules should keep a single product responsibility: parsing,
+  fact extraction, probe generation, classification, orchestration, or
+  rendering.
+
+## Mechanical Guards
+
+Run:
+
+```bash
+cargo xtask check-workspace-shape
+cargo xtask check-architecture
+cargo xtask check-public-api
+```
+
+These checks use policy metadata in `policy/workspace_shape.txt`,
+`policy/architecture.txt`, and `policy/public_api.txt` to preserve the
+one-package public surface and internal module boundaries.
+
+See also:
+
+- [Charter](CHARTER.md)
+- [Static exposure model](STATIC_EXPOSURE_MODEL.md)
+- [Output schema](OUTPUT_SCHEMA.md)
+- [Engineering rules](ENGINEERING.md)
+- [Spec-test-code traceability](SPEC_TEST_CODE.md)
+
+## Repository convergence control plane
+
+Continuous source-to-swarm convergence is repository automation, not product
+analysis behavior and not a new published crate. Its accepted hexagonal
+boundary, capability split, source-of-truth direction, and mechanical guards
+are defined by
+[RIPR-SPEC-0167](specs/RIPR-SPEC-0167-convergence-architecture.md).
+# Scoped PR Contract
+
+A work item usually produces one scoped PR.
+
+A scoped PR is the mergeable review unit for `ripr`: one narrow production
+delta, one acceptance criterion, and the evidence package needed to review it.
+
+This contract belongs to work items and PRs. It is not the definition of Codex
+`/goal`; a Codex goal is a multi-PR implementation campaign.
+
+## Required Fields
+
+Each work item or PR should define:
+
+- work item ID
+- scope
+- production delta
+- evidence/support delta
+- single acceptance criterion
+- required commands
+- claim boundary or support-tier impact
+- next recommended PR or explicit no-successor state
+- non-goals
+
+The task should not say "make the analyzer better." It should name one
+capability, public contract, or architecture seam.
+
+## Task Template
+
+```text
+Work item:
+<campaign work item ID>
+
+Goal:
+<one capability or seam>
+
+Scope:
+One scoped production behavior, public contract, or architecture seam.
+Large fixture, docs, and golden support is fine when it supports this one slice.
+
+Production delta:
+<exact module, command, or contract being changed>
+
+Evidence/support delta:
+<specs, fixtures, tests, goldens, metrics, docs, ADRs, or learnings expected>
+
+Acceptance:
+<single reviewable claim>
+
+Claim boundary/support-tier impact:
+<what users may believe after this PR, or "none">
+
+Next recommended PR:
+<the next smallest slice, or "none selected">
+
+Required commands:
+cargo xtask shape
+cargo xtask fix-pr
+cargo xtask check-pr
+cargo xtask pr-summary
+git diff --check
+
+If analyzer output changes:
+cargo xtask fixtures
+cargo xtask goldens check
+
+If extension files change:
+cd editors/vscode
+npm ci
+npm run compile
+npm run package
+
+Non-goals:
+<explicit exclusions>
+
+Do not:
+- add panic-family shortcuts
+- use mutation-runtime outcome language in static output
+- add non-Rust implementation files outside allowlisted surfaces
+- add shell scripts instead of xtask commands
+- add new crates without an approved workspace-shape decision
+```
+
+## Done Criteria
+
+A scoped PR is done when:
+
+- the acceptance criterion passes
+- the production delta remains scoped
+- expected evidence artifacts are present
+- required commands pass or the remaining blocker is documented
+- the PR summary explains reviewer focus
+- claim-boundary and support-tier impact are explicit
+- the next recommended PR is named, or the PR states that no successor is
+  selected
+- non-goals remain out of scope
+
+If the work item cannot be completed cleanly, stop by writing a blocked report
+or updating the relevant doc, spec, or learning note. Do not silently broaden the
+PR.
+
+## Evidence Package
+
+Evidence should scale with risk and public surface. Depending on the work item,
+the package may include:
+
+- spec update
+- unit test
+- fixture BDD case
+- golden human output
+- golden JSON output
+- context packet expectation
+- LSP diagnostic or hover expectation
+- output contract registry update
+- capability metric update
+- traceability manifest update
+- changelog entry
+- ADR or learning note
+
+Large evidence diffs are welcome when they make one narrow production delta
+reviewable.
+
+## PR Completion Boundary
+
+Scoped PRs should be reviewed, repaired, validated, merged, and verified before
+starting a dependent non-stackable work item. Codex Goals may continue to
+another work item only when the next item is independent, explicitly stackable,
+or the prerequisite PR has landed.
+
+For non-stackable work, the safe boundary is:
+
+```text
+open PR -> generate reports -> repair review findings -> validate -> merge -> verify main
+```
+# CI Strategy
+
+CI should protect correctness without making ordinary contribution slow or
+noisy. Default CI is advisory for static exposure findings until calibration and
+configuration are mature enough to support opt-in failure policies.
+
+## Python wheel applicability (#4987)
+
+The Python wheel workflow retains its broad PR paths and ordinary manual
+qualification. Its lightweight `applicability` job independently runs the
+product-free `cargo policy check-workflows` before selecting expensive work.
+Only a diff confined to `policy/workflow_allowlist.txt`, with a unique unchanged
+wheel-owned record and unambiguous parsed records at both endpoints, can skip
+`build-wheel` and its two pip/uv consumers. Record comparison uses
+`merge-base(event base, event head)` to event head, matching three-dot selection.
+The validator keeps its existing duplicate-record policy; applicability retains
+all records and treats duplicate normalized keys as uncertainty.
+
+Wheel record additions, deletions, renames or changes, mixed diffs, other ledgers,
+product/package/xtask changes, workflow/selector edits and unavailable or malformed
+history retain qualification. Failed/skipped applicability or missing outputs
+also retain qualification, while cancellation still stops expensive work.
+Consumers explicitly require a successful wheel build and a non-cancelled run,
+including after an applicability failure; that failure remains visible.
+A source-identical pre-#7411 policy dispatcher is recognized by its Git blob
+identity and conservatively qualifies with a diagnostic. Other dispatcher
+versions execute the selector normally; source inspection, candidate identity,
+command or malformed-output failures stay failures. Selector output is validated
+before publishing the decision. The separate `mcp_evidence_pair` manual dispatch
+has no applicability dependency and remains independently reachable. Distribution
+source checks remain inside qualifying wheel work; Windows and the broader
+#4633/#4493 programme retain their existing contracts.
+
+The expected avoidance for an eligible unrelated-ledger event is one release
+wheel build and two consumers, offset by the lightweight policy/selection job.
+No measured runner-time savings are claimed. Local controls execute the actual
+workflow shell with the production policy binary and real Git histories, and
+exercise the checked-in job predicates and dependency wiring; they do not claim
+hosted Actions or wheel qualification.
+
+## Verification Economics Policy
+
+CI is a product surface. A contributor should be able to tell what ran, why it
+ran, what it cost, what it produced, and which explicit label or follow-up
+artifact changes that behavior.
+
+`ripr` uses **Local Evidence Minutes** (LEM) as the planning unit for CI cost.
+One LEM is approximately one minute of hosted CI time on one normal GitHub
+runner, including setup, toolchain/cache work, command runtime, report writing,
+and artifact upload for that lane. LEM is intentionally approximate until
+`target/ci/ci-actuals.json` exists; PRs should still estimate the order of
+magnitude so reviewers can notice when a small docs change starts paying for a
+release-style proof.
+
+Budget bands:
+
+| Band | Estimated cost | Expected posture |
+| --- | ---: | --- |
+| `small` | 0-5 LEM | docs, policy metadata, or focused code checks |
+| `medium` | 6-20 LEM | ordinary product PR with Rust and policy gates |
+| `large` | 21-60 LEM | multi-surface PR, extension checks, or broad evidence artifacts |
+| `release` | 61+ LEM | explicit `release-check` or `full-ci` proof |
+
+CI lanes are grouped by posture, not by how convenient they are to place in one
+workflow file.
+
+| Posture | Purpose | Examples | Default behavior |
+| --- | --- | --- | --- |
+| Required | Cheap merge-safety and policy invariants. | `fmt`, `cargo check`, clippy, focused tests, static-language, file/workflow/process/dependency policy, output-contract checks for schema/output changes. | Blocking on ordinary PRs that touch the relevant surface. |
+| Advisory | Evidence that helps review but should not block routine work until calibrated. | coverage, Test Analytics, `ripr` self-dogfood, SARIF upload, agent-loop artifacts, Droid review, future Clippy lints, broad security posture scans. | Upload artifacts or comments; do not fail the PR by default. |
+| On-demand / release | Expensive, slow, or release-bearing proof. | `cargo package`, `cargo publish --dry-run`, VSIX packaging, server archive checks, release readiness, full workspace proof. | Run only from each lane's wired `main`, manual dispatch, `release-check`, or `full-ci` trigger; avoid default PR blocking. |
+
+The current `ci.yml` still carries some release-like proof in the primary Rust
+job. Treat that as legacy posture while the CI split is rolled out. New CI work
+should move toward small required gates at the front door, advisory evidence by
+default, and label-gated release proof.
+
+This section defines the target policy. It does not mean the current workflows
+already implement PR planning, label-gated lane selection, CI actuals, or
+budget enforcement. Until those later PRs land, the "Current Workflows" section
+below remains the source of truth for what GitHub Actions runs today.
+
+## Codex CI-Efficiency Compatibility Invariants (Hard Guardrails)
+
+When asking Codex or other automation agents to "make CI cheaper," treat this
+section as strict compatibility policy for CI-efficiency PRs. It constrains
+future workflow and planner changes, but it does not override the current
+workflow behavior documented in [Current Workflows](#current-workflows).
+
+### 1) Concurrency semantics for heavy/core PR workflows
+
+- Do **not** change heavy/core workflow concurrency as a generic efficiency
+  edit. The PR must name the current behavior and the intended behavior.
+- Treat both models as product decisions:
+  - no-cancel preserves a running expensive job and allows only one pending
+    replacement;
+  - synchronize-cancel favors the latest commit and may abandon near-complete
+    work;
+  - Ready-cancel (current `routed-rust.yml`, #4986) runs the PR qualification
+    only on Draft -> Ready and cancels only when a second Ready transition
+    replaces it.
+- Any switch to or from `cancel-in-progress` must document the affected
+  workflows, rollback path, cost tradeoff, and review impact.
+- Cheap metadata-only workflows may use `cancel-in-progress: true`, but only as
+  an explicit documented exception.
+
+### 2) Change classification before lane selection
+
+- Do **not** build a future planner that routes all changed files through Rust
+  CI.
+- Treat metadata/control-plane surfaces as candidates for light paths unless
+  mixed with real Rust/build/test changes, including:
+  - `docs/**`, markdown-only edits, `README*`, `CHANGELOG*`, `SECURITY*`,
+    `CONTRIBUTING*`;
+  - `policy/**`, `plans/**`, `badges/**`, `AGENTS.md`;
+  - `.github/CODEOWNERS`, `.github/dependabot.yml`,
+    `.github/pull_request_template.md`, `.github/PULL_REQUEST_TEMPLATE/**`;
+  - `docs/tracking/**`, `ci/hardware/**` receipt files, `.rails/**`,
+    `.uselesskey/**`.
+- Treat `.github/workflows/**` as a special workflow-change surface:
+  - not docs-light;
+  - route to minimal hosted workflow safety/validation unless policy requires
+    more.
+- Until a classifier is implemented and validated, the active workflows remain
+  the source of truth. Do not claim a docs-only PR skipped Rust proof unless the
+  check run evidence shows that it did.
+
+### 3) Target PR planner policy
+
+The target planner should classify first, then choose the cheapest truthful
+lane:
+
+- docs/control-plane-only -> no Rust compile;
+- workflow-only -> hosted YAML/workflow validation, no full Rust by default;
+- Rust source/build/test touched -> routed Rust-small;
+- hardware/GPU/receipt-only -> syntax/receipt validation only;
+- mixed or unknown -> Rust-small, not full CI.
+
+Full CI is opt-in by policy trigger (label/manual dispatch/main push/release/
+schedule/merge queue), not the default PR path.
+
+### 4) Hosted fallback boundary
+
+- Do **not** remove, narrow, or relabel the current protected GitHub-hosted
+  Rust-small fallback without updating the routed-runner docs, active-goal
+  state, and branch-protection contract in the same PR.
+- The current routed Rust-small workflow may select GitHub-hosted when a PR is
+  untrusted, runner state cannot be read, or no idle image-ready CX53/CX43
+  runner is available. That result remains a valid protected-path success while
+  the CX53/CX43 proof closeout is blocked.
+- Do **not** replace a targeted Rust-small fallback with broader hosted full CI
+  unless the PR names the cost, proof obligation, and explicit trigger such as
+  `full-ci`, `release-check`, or `ci-budget-ack`.
+
+### 5) Artifact policy
+
+- Avoid default-path artifact uploads with `if: always()` unless merge policy
+  requires them and they are tiny.
+- Prefer upload-on-failure with short retention (3-7 days) for diagnostics.
+- Keep receipt uploads minimal, especially for docs/control-plane-only paths.
+
+### 6) Required validation for CI-only efficiency PRs
+
+Every CI-efficiency PR should show evidence appropriate to the edited surface:
+
+- `git diff --check`;
+- docs/policy-only changes: the relevant docs, policy, and static-language
+  checks, plus an explicit claim boundary;
+- workflow changes: YAML/workflow validation and a note confirming the current
+  and intended concurrency semantics;
+- classification logic changes: dry-run or unit checks covering:
+  - docs-only;
+  - `.rails/**`;
+  - `.uselesskey/**`;
+  - workflow file change;
+  - Rust file change;
+  - mixed docs + Rust.
+
+### PR Planning
+
+A future CI forecast must establish qualification decision value before it
+earns automatic execution. The planned `target/ci/ci-plan.json` artifact should record:
+
+- changed files;
+- detected risk packs;
+- expected required, advisory, and on-demand lanes;
+- estimated LEM;
+- labels that changed lane selection;
+- artifact families expected from each lane.
+
+Example step summary:
+
+```text
+PR Plan
+- Scope: Rust product + docs
+- Required lanes: rust, policy, output-contracts
+- Advisory lanes: coverage, ripr-self-dogfood
+- Skipped by default: vscode, release package, future-clippy
+- Estimated cost: 14 LEM
+- To run all: add full-ci
+```
+
+The automatic PR Plan placeholder is retired under #4987. It had no decision
+output or downstream qualification consumer. Its changed-file and ledger-presence
+diagnostic remains an optional [local recipe](ci/pr-plan.md#local-advisory-diagnostic).
+Candidate shaping uses the existing `pr-ready`, `check-fast`, `precommit`, and
+`check-pr` owners; no planner or new Ready advisory lane is installed.
+`cargo xtask ci plan` and the numeric forecast remain planned. Authors should
+still fill the PR template's CI economics section for CI-affecting changes.
+
+### Risk Packs
+
+Risk packs are the planned machine-readable replacement for broad path guesses.
+They map changed paths to lanes and artifacts. The first implementation should
+live in policy files such as `policy/ci-risk-packs.toml` and should start
+structural: validate that packs, lane names, and schema versions exist before
+trying to infer perfect cost.
+
+Initial pack shape:
+
+```toml
+[risk_pack.rust_product]
+paths = ["crates/ripr/src/**"]
+required = ["rust", "policy", "output-contracts"]
+advisory = ["coverage", "ripr-self-dogfood"]
+
+[risk_pack.vscode]
+paths = ["editors/vscode/**"]
+required = ["vscode-compile", "vscode-e2e"]
+advisory = []
+
+[risk_pack.docs_only]
+paths = ["docs/**", "README.md", "CHANGELOG.md"]
+required = ["docs", "static-language"]
+advisory = []
+```
+
+Risk packs must stay explainable. If a lane runs because a pack matched, the PR
+plan should name the pack and paths that triggered it.
+
+The seed policy ledgers are machine-readable but non-enforcing:
+
+- `policy/ci-budget.toml` records LEM bands, label effects, and default budget
+  posture;
+- `policy/ci-lane-whitelist.toml` records allowed target lane IDs and artifact
+  families;
+- `policy/ci-risk-packs.toml` maps changed path families to required,
+  advisory, and on-demand lane IDs;
+- `policy/ci-whitelist-exceptions.toml` records current workflow behavior that
+  intentionally differs from the target policy while the split rolls out.
+
+`cargo xtask check-ci-lane-whitelist` validates these files structurally:
+schema version, lane IDs, label IDs, artifact family IDs, owners, and reasons.
+It does not fail a PR because a risk pack matched or an estimate changed.
+
+### Artifact Families
+
+Generated artifacts should have predictable paths and one index. Planned CI
+artifacts are grouped by family:
+
+| Family | Expected paths |
+| --- | --- |
+| `ci-plan` | `target/ci/ci-plan.json`, `target/ci/ci-actuals.json` (planned) |
+| `ripr-evidence` | `target/ripr/reports/index.md`, `target/ripr/reports/repo-exposure.json`, `target/ripr/reports/repo-sarif.json` |
+| `editor-agent-loop` | `target/ripr/reports/operator-cockpit.{json,md}`, `target/ripr/reports/agent-receipt.json`, `target/ripr/workflow/agent-seam-packets.json`, `target/ripr/workflow/workflow.json`, `target/ripr/workflow/commands.md`, `target/ripr/workflow/agent-status.{json,md}`, `target/ripr/workflow/agent-review-summary.{json,md}`, `target/ripr/workflow/agent-packet.json`, `target/ripr/workflow/agent-brief.json`, `target/ripr/workflow/agent-verify.json`, plus compatibility copies under `target/ripr/agent/` |
+| `release-readiness` | package lists, publish dry-run transcript, VSIX package proof, server archive proof |
+| `vscode-test-host-diagnostics` | `target/ripr/vscode-test-host-diagnostics/` (failure-only VS Code test-host logs; 5 MiB collector cap, 5-day artifact retention) |
+
+The report index should be the front door for artifact discovery. CI should not
+require reviewers to inspect raw job logs to find the packet that justifies a
+decision.
+
+For repo-local operator work, run:
+
+```bash
+cargo xtask cockpit
+cargo xtask pr-ready
+cargo xtask check-pr
+```
+
+`cockpit` is the repo-level advisory front panel for board state,
+source-of-truth checks, generated-evidence rails, badge ownership, and command
+catalog coverage. `pr-ready` is the active-branch pre-review packet. Neither
+command changes badge endpoint JSON, branch protection, baseline state,
+suppressions, generated tests, or policy authority.
+Use [Merge freshness and watcher policy](MERGE_WATCH_POLICY.md) when watching a
+specific PR through hosted checks, branch freshness, Droid/advisory status, and
+merge execution.
+
+PR Plan has no hosted artifact producer after retirement; the optional local
+diagnostic is not a qualification artifact. The `editor-agent-loop`
+paths reflect the current split between the local bulk packet envelope
+(`agent-seam-packets.json`) and generated CI's focused agent artifacts under
+`target/ripr/agent/`.
+
+### Label Policy
+
+Labels are policy inputs, not folklore. Each supported label must have one
+documented effect:
+
+These label effects are the target policy. Active workflow switches are called
+out below; remaining label effects stay documented until follow-up PRs
+implement and validate the lane-selection logic.
+
+| Label | Effect |
+| --- | --- |
+| `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, read at the next Draft -> Ready transition. |
+| `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, unlocked install resolution, and release-readiness. |
+| `vscode` | Run editor extension lanes even when no editor path changed. |
+| `coverage` | Run coverage lanes and upload coverage artifacts. |
+| `ripr-waive` | Acknowledge a soft static exposure finding for this PR. Does not skip CI and does not apply when `full-ci` is present. |
+| `ci-budget-ack` | Acknowledge that this PR intentionally exceeds the expected LEM band. |
+| `clippy-future` | Run future or candidate Clippy lint lanes in advisory mode. |
+| `windows-ci` | Run the advisory Windows lane on a pull request without opting into every `full-ci` lane. |
+
+New labels that affect CI must update this table, the PR template, and the
+budget/risk-pack policy files in the same PR.
+
+These labels are the documented target vocabulary. Today, `release-check` and
+`full-ci` activate the Rust workflow's package list, publish dry-run, unlocked
+install resolution, and release-readiness steps on pull requests. Other label effects remain target vocabulary until a later PR
+wires them into a PR plan or workflow condition. The GitHub Settings App
+contract in `.github/settings.yml` codifies these label names, descriptions,
+and colors so the reviewable vocabulary does not drift in the GitHub UI.
+
+### Advisory Windows Lane
+
+This repository is developed on Windows and Linux but was only continuously
+validated on Linux. Platform-specific test-harness bugs therefore shipped and
+stayed green on `main`: four separate classes were found only once someone ran
+the suite on Windows by hand — #2390 (path interpolated into JSON), #2391 (host
+separator compared against server output), #2409 (fixture swallowed a git
+failure), #2429 (host separator in a portable output contract).
+
+The drift runs in both directions. #2337 is the inverse case — goldens blessed
+on Windows that fail on Linux. Each platform was blind to the other's breakage,
+and single-platform CI was the root cause enabling both.
+
+`.github/workflows/windows-advisory.yml` (#2442) closes the gap:
+
+- **Scope.** `cargo test --workspace`, twice. No test or golden `cargo xtask`
+  gates and no blessing — a Windows lane that blessed or checked goldens would
+  institutionalize the #2337 drift it exists to catch. There is one required
+  `cargo xtask` step, `windows-advisory-summary`, which validates the two run
+  logs and their captured exit statuses; it is evidence validation, not a test
+  gate, and it fails the job when the evidence is missing or unusable.
+- **Two samples per run.** The suite runs twice on purpose: one sample cannot
+  separate a reproducible failure from a load-dependent flake. The summarizer
+  tracks three states per test (failed, observed pass, not observed) and reports
+  `masked_unknown` rather than guessing about a test it never saw. Two failures
+  are reported as `repeated_failure`, not "deterministic" — a shared race can
+  reproduce twice.
+- **Advisory outcomes, non-advisory evidence.** A failing test does not fail the
+  job. A missing log, a missing captured exit status, or a summarizer crash
+  does. A lane that reports success while proving nothing is exactly the
+  false-confidence condition it exists to prevent.
+- **Selection.** A daily schedule for standing signal, `workflow_dispatch`, and
+  pull requests labeled `windows-ci` or `full-ci`.
+- **Always-on subset (#4938).** Every subscribed `pull_request` action
+  (`opened`, `synchronize`, `reopened`, `labeled`; `unlabeled` stays omitted
+  per #4380) also runs `windows-advisory-subset`, a fast advisory Windows job
+  (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke, and
+  `cargo clippy -p ripr --all-targets`) under the same advisory contract as
+  the lane. It does not gate merges; #4337, #4918, and #4921 were each caught
+  only by a native-Windows audit, so native-Windows verification of new
+  product behavior remains an author and audit responsibility.
+
+- **Subject identity (#5043).** Observations and failure reasons are keyed by
+  Cargo target kind, source path, exact executable basename (including its
+  Cargo hash), and test name. Both samples execute the same compiled workspace;
+  a changed hash cannot borrow a pass or manufacture a repeated failure. Cargo
+  text does not expose integration-target package IDs, so the report does not
+  invent them. Artifact directories, validated Windows separators and the
+  `.exe` suffix are presentation; raw Cargo headers remain visible beside the
+  normalized target identity. Doctests use their explicit `Doc-tests` name as
+  a distinct target kind, without inferred package ownership.
+- **Owning-target evidence.** Each release-seam control declares its Cargo
+  target kind, source and executable stem as well as its exact test name. The
+  selector must identify one exact artifact across both logs. Zero or multiple
+  candidate artifacts, including hash drift across samples, cannot satisfy a
+  required control. A control failure stays advisory; an absent or ambiguous
+  owner is refused. Name-only legacy logs, malformed target headers, duplicate
+  target transitions (including doctests), duplicate observations and orphan
+  test rows are `incomplete_evidence` with actionable provenance reasons.
+  Recollect both complete logs from one build rather than mixing histories.
+  The summary still counts observed subjects rather than failure-section echoes.
+- **Completion evidence (#5107).** Every owning harness needs an announcement
+  and a well-formed completion. The completion's verdict and passed, failed,
+  ignored and measured counts must agree with the observed rows and announced
+  subjects. Filtered-out counts do not represent executed subjects. Malformed,
+  contradictory or orphan completions are `incomplete_evidence`; a captured
+  zero exit status cannot override observed test failures. Measured benchmark
+  rows are outside this lane's supported Cargo-test text and remain incomplete
+  evidence. Valid empty harnesses, ignored rows, filtered runs and multiple
+  doctest batches retain their existing semantics.
+- **Unavailable samples.** Cross-run verdicts require two usable runs. A
+  missing log/status or incomplete evidence is never translated into ordinary
+  test absence to produce `masked_unknown`. Observed counts, target provenance
+  and bounded failure reasons remain available even when no verdict can be
+  derived. Genuine subject absence in a usable run still produces
+  `masked_unknown`, and the existing compile/harness-failure distinction and
+  advisory failing-test policy remain unchanged.
+- **Diagnostic presentation.** Provenance errors, reached targets and raw
+  headers each show at most 20 entries per run. Each verdict category shows at
+  most 20 subjects; the failure-reason section shows at most 20 distinct
+  subjects, each with its reasons from up to two runs. Omitted entries and
+  complete totals are stated exactly. Every displayed log-derived identity,
+  provenance error, header and reason retains at most 240 Unicode scalar
+  values, followed by an explicit `… [truncated]` marker when shortened. These
+  are section-entry and scalar limits, not a whole-report byte budget. Parsing
+  retains all identities, errors and raw headers; display excerpts never become
+  identity keys or merge subjects. These limits do not change evidence refusal,
+  observed totals or verdicts. Full original text remains in the logs.
+
+- **Console provenance limit.** This is a bounded parser for the lane's Cargo
+  text, not universal authentication of test origin. Target completion expires
+  ownership; a later headerless harness cannot inherit it. Announced counts
+  must agree with observed rows. The retained native log's well-formed empty
+  child harness supplies no subjects and does not end its parent. Nonempty
+  nested harnesses have unproven attribution and are refused. Ordinary captured
+  failure stdout remains reason text; complete header/result-shaped content in
+  an unterminated captured block is ambiguous and refused. Doctests may have
+  multiple announced batches beneath their explicit header. Reliable origin
+  for arbitrary interleaved or deliberately forged console output would need
+  structured producer evidence, which this change neither adds nor claims.
+
+The production-command corpus in `xtask/tests/windows_advisory_identity.rs`
+checks completion/exit consistency, unavailable samples, colliding names,
+cross-target pass/failure substitution, independent
+failure reasons, same-source executables, hash/path boundaries, owning-control
+absence/ambiguity, ANSI logs and doctest transitions. These synthetic text
+controls qualify the parser; they do not claim native Windows test execution.
+
+Promotion to required is gated on #2430 and on stability across repeated runs on
+hardware that reproduces the failures — the hosted runner does not reproduce the
+parallel-load class in #2419 at all, so green runs there prove nothing about it.
+Promoting a lane that is already red converts a useful signal into background
+noise reviewers learn to skip, which is the false-confidence failure mode in
+reverse.
+
+Measured on `7b7d1322`: 3781 library tests and 150 CLI smoke tests pass on
+Windows. The original count of 14 known failures was reduced by #2417, #2416,
+and #2431. One failure remains — #2430,
+`lsp_lifecycle::compat_journey_collect_workspace_status_over_real_wire`, where
+`ripr.refresh` exceeds the harness's 15s response budget. Unlike the #2419
+class, it reproduces on the hosted runner: two independent `windows-latest` runs
+produced the identical `timed out waiting for response id 3`, and it reproduces
+5 of 5 on a Windows developer host. That is the lane doing its job — a platform
+question that could not be settled from one machine, settled by CI.
+
+### Advisory Printed-Command Paste Lane
+
+`.github/workflows/printed-command-paste.yml` runs the
+`printed_command_paste` integration test on Linux, macOS and Windows. ripr
+prints commands for people and agents to paste (`ripr explain`, `ripr agent
+repair --phase after`, regeneration and recovery lines, the commands inside
+JSON and the artifacts it writes), and each surface was once fixed by hand
+after a hostile path broke it (#5188, #5232, #5247, #5269).
+
+- **What runs.** The main flows run against one fixture whose root and source
+  file names hold spaces, apostrophes, typographic quotes, backticks, `$`,
+  `;` payloads and non-ASCII text. Every printed command is lifted out of the
+  output and pasted into bash, sh, zsh, PowerShell 7 and Windows PowerShell,
+  as the platform provides them, from a foreign working directory and from a
+  relative `--root`. A line labelled `(PowerShell)` is the PowerShell form of
+  the command before it; a command with none is pasted unchanged, which is the
+  contract `COMMAND_SHELL_DISCLOSURE` prints. JSON-carried commands are Bash
+  records and run at the repository root.
+- **Oracle.** `ripr` and `git` resolve to argv recorders. A command fails when
+  it does not reach the program exactly once, passes different argv in
+  different shells, passes an argument holding a fragment of a hostile name
+  that is not the whole path or finding id, names a `--root` that is not the
+  fixture (or none, from a foreign directory), or leaves a canary or any file
+  beside the shell.
+- **Known gaps.** `KNOWN_GAPS` in the test lists commands that do not paste
+  correctly yet, each with its surface and reason. The ledger is strict both
+  ways: a listed gap is reported, not failed, and a row whose gap stops
+  reproducing fails the lane until the row is deleted.
+- **Shells.** A shell named in `RIPR_PASTE_REQUIRE` that is missing fails the
+  run; the workflow sets it per OS. Anywhere else a missing shell is skipped
+  with a notice, which is how the test behaves in the required Rust lane. `RIPR_PASTE_REPORT=<file>`
+  writes every collected command as JSON lines, and `RIPR_PASTE_KEEP=1` keeps
+  the fixture.
+- **Selection.** A nightly schedule, `workflow_dispatch`, and pull requests
+  that touch `crates/ripr/src/**`, the harness files, `Cargo.lock` or the
+  workflow. The workflow is advisory, but the same test also runs as an
+  ordinary test in the required Rust lane (with whatever shells that runner
+  has), so a new unlisted gap fails that lane too until it is fixed or listed.
+
+### Advisory Specification Maintenance Digest
+
+The Source of Truth workflow owns the advisory spec maintenance digest
+(#3467). `cargo xtask specs digest` runs the same inventory pipeline as
+`specs maintenance` (one scan, one DTO) and writes the full
+`spec-maintenance.{json,md}` reports plus a short bounded
+`spec-maintenance-digest.md` for the step summary; the full report is
+retained as the `ripr-spec-maintenance` artifact.
+
+- **Triggers.** A weekly schedule (no more frequent than weekly), explicit
+  `workflow_dispatch`, and pull requests that touch spec governance paths
+  (`docs/specs/**`, `docs/templates/**`, `.ripr/traceability.toml`,
+  `.allow/spec-system/**`, `docs/status/SUPPORT_TIERS.md`, or the workflow
+  itself). Source-only PRs do not start it.
+- **Three states.** Candidates found (`maintenance_status:
+  attention_required`) and no candidates (`clean`) are both successful
+  observations; neither count changes the exit status. A structurally blind
+  scan (the spec index absent and nothing scanned) is `attention_required`,
+  not `clean`. An instrument failure (unreadable spec, serialization error)
+  exits nonzero with no digest written, the step fails visibly, and the
+  `if: always()` summary annotates `maintenance_status: instrument_failure`
+  — a failed advisory observation, not a failed required gate.
+- **Non-blocking by construction.** The digest job is `continue-on-error`
+  and is not in `.github/settings.yml` required contexts; a scheduled run
+  queues behind an active one (`cancel-in-progress: false`) so a nearly
+  complete inventory is not discarded. The lane creates no issues,
+  comments, labels, or branch-protection mutation.
+
+### Cheaper Signal First
+
+When adding CI coverage for a failure mode, prefer the cheapest stable signal
+that catches the issue:
+
+1. static policy check;
+2. focused unit test;
+3. fixture or golden output;
+4. integration smoke;
+5. advisory report;
+6. release-style proof.
+
+Do not add a broad required workflow when a local `xtask` checker or focused
+test can catch the same failure earlier with clearer repair instructions.
+
+### CI Actuals
+
+Forecasts should become measurable. Planned lane actuals should emit
+`target/ci/ci-actuals.json` with one record per lane:
+
+```json
+{
+  "schema_version": "0.1",
+  "workflow": "ci",
+  "job": "rust",
+  "status": "success",
+  "duration_seconds": 212,
+  "runner": "ubuntu-latest",
+  "estimated_lem": 8,
+  "actual_lem": 9,
+  "cache_hit": true
+}
+```
+
+Budget guards should remain advisory until the repo has enough actuals to
+separate normal variance from waste.
+
+### Rollback
+
+Every CI-affecting PR should describe how to back out the change without
+weakening branch safety. Examples:
+
+- remove a new advisory workflow without changing required gates;
+- revert a risk pack while keeping the old required lane;
+- disable an artifact upload while keeping the underlying local report command;
+- move a release proof back to manual dispatch if it proves too costly.
+
+If rollback requires branch-protection changes, the PR must say so explicitly
+and should usually be split.
+
+## Current Workflows
+
+### Swarm Routed Rust
+
+`ripr-swarm` adds `.github/workflows/routed-rust.yml` as the development-trunk
+Rust gate. It exposes one branch-protection-facing check:
+
+```text
+Ripr Rust Small Result
+```
+
+The implementation jobs are conditional and should not be required directly:
+
+```text
+Route Ripr Rust Small
+Ripr Rust Small on CX53
+Ripr Rust Small on CX43
+Ripr Rust Small on GitHub Hosted
+```
+
+Routing policy:
+
+```text
+trusted same-repo PR or push:
+  CX43 if idle
+  CPX42 if idle
+  CX53 if idle
+  GitHub-hosted otherwise
+
+fork or otherwise untrusted PR:
+  GitHub-hosted only
+```
+
+Label events are not an implicit full-gate refresh, and Draft iteration does not
+allocate the heavy required gate (#4986):
+
+```text
+opened / reopened / synchronize while Draft:
+  no Routed Rust Small run; existing early advisory events remain separate
+
+ready_for_review (Draft -> Ready):
+  the sole pull-request qualification request; validates the exact Ready head
+
+labeled / unlabeled (any label):
+  no Routed Rust Small run; labels never create or refresh the required context
+
+push to main / workflow_dispatch:
+  launch under their own authorities, unchanged
+```
+
+`windows-ci` continues to opt into `.github/workflows/windows-advisory.yml` only.
+`cancel-in-progress` is `github.event_name == 'pull_request'` and the concurrency
+group is qualified by `github.event_name`, so a second Ready transition replaces
+the prior admission attempt while independent main and manual work cannot replace
+each other. No run posts a pseudo-result, so a Draft PR with no required check
+blocks rather than inheriting stale proof. The result job keeps its static
+`Ripr Rust Small Result` name on every run. One gap is not enforced: a
+`workflow_dispatch` of `routed-rust.yml` on a PR branch also posts that context
+on the branch head, without the `pull_request`-scoped PR-evidence steps.
+Do not dispatch on PR branches; #5394 tracks enforcing this.
+
+What this means for authors and agents:
+
+UB retains early review on `opened`, `synchronize`, and `reopened`, including
+Drafts. It does not subscribe to `ready_for_review` (#4987), so Ready neither
+cancels active UB review nor repeats completed advisory work. Its existing
+same-repository guard and concurrency remain unchanged. Automatic Droid PR
+review is retired under #5086; manual `@droid` commands and scheduled security
+scans retain their separate triggers and safeguards. UB explicitly lists all
+three early passes in
+`.ub-review.toml`'s `gate.post_review_on`: action pin
+`55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8` otherwise permits publication only on
+opened and Ready. Removing Ready admission alone would leave repaired-head
+reviews unable to publish. This does not suppress repeated Draft synchronize
+review or complete the broader #4987 acceptance.
+
+Retain advisory run IDs, candidate head, observed base and synthetic merge SHA,
+action/config identity, and review receipts. The same PR head with a changed
+base or merge tree is a different review identity; this event change supplies
+no cache hit or integration re-review. Before merge, inspect material integration
+changes and obtain applicable fresh review through the existing review route.
+Material findings return the candidate to Draft for repair. An unavailable,
+failed, or skipped provider remains missing review evidence after Ready; no
+synthetic success replaces it. Runner-minute savings remain unmeasured until a
+natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
+checks parsed event/config contracts, not hosted provider execution.
+
+- Open PRs as Draft (`gh pr create --draft`), then follow the
+  [Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff) before
+  requesting qualification. A PR opened directly as Ready never receives a
+  `ready_for_review` event and never gets the required check.
+- A push after Ready leaves the new head without the required check. Return to
+  Draft and refresh affected proof and review through the same handoff before
+  another Ready transition. Reassess exact-head merge prerequisites before
+  rearming auto-merge.
+- Labels such as `full-ci` take effect at the next Ready transition, not when
+  they are added.
+
+The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
+when available. It selects a self-hosted runner only when the runner is idle and
+has both the host label (`CX43`, `CPX42`, or `CX53`) and the `em-ci-rust-1.95`
+runner-image/toolchain readiness label. If runner state cannot be read, or a
+runner is idle but not image-ready, the workflow fails closed to GitHub-hosted
+rather than selecting a self-hosted runner by guesswork.
+
+The route job and protected result summaries include count-only runner
+diagnostics so operators can separate missing host runners, busy runners, and
+missing `em-ci-rust-1.95` readiness labels without exposing runner names,
+registration tokens, secrets, or full label inventories. The protected result
+job also receives those values as environment variables, so downloaded result
+logs are sufficient for issue proof.
+
+The copyable self-hosted proof runbook is in
+[`docs/swarm-development.md`](swarm-development.md#self-hosted-proof-runbook).
+Use it to record CX43 primary proof, CPX42/CX53 fallback proof, or the bounded
+runner availability blocker without exposing runner tokens or secrets.
+
+The routed lane runs the existing Rust/product command surface without release
+package or publish dry-run steps. Each required lane invokes the shared
+`cargo xtask precommit` gate table after the cargo build/test steps and keeps
+only the lane-only gates enumerated (`check-evidence-promotion-honesty`,
+`check-dependencies`, `check-process-policy`, `check-network-policy`,
+`goldens check`, `fixtures`); the docs-gate job runs the same precommit table
+for docs-only pull requests. It keeps advisory evidence artifacts
+non-blocking and uploads the normal `target/ripr` report packet when present.
+
+The legacy `CI` workflow (`.github/workflows/ci.yml`) no longer runs the
+workspace test suite; the routed `Ripr Rust Small` lane owns ordinary
+merge-safety, and its runner contract is in
+[PRODUCT_GATE_PLAN.md](ci/PRODUCT_GATE_PLAN.md) (#3825). The legacy workflow's
+`Perl and release proof` job runs on pushes to `main` or `master`, manual
+dispatches, and pull requests labeled `release-check` or `full-ci`, and keeps
+only the proof unique to it, the non-default `lang-perl` feature:
+
+```bash
+cargo check -p ripr --features lang-perl
+cargo test -p ripr --features lang-perl --lib analysis::language::perl
+```
+
+On pushes to `main` or `master` and on pull requests labeled `release-check`
+or `full-ci`, the same job also runs the release-surface package checks:
+
+```bash
+cargo package -p ripr --list
+cargo publish -p ripr --dry-run
+release_version="$(cargo pkgid -p ripr | sed 's/.*#//')"
+cargo xtask release-readiness --version "$release_version"
+```
+
+The unlocked install resolution step builds the packaged crate the way
+`cargo install ripr` without `--locked` does: it unpacks the `.crate`, deletes
+its `Cargo.lock`, re-resolves, and checks. It catches a dependency that only
+compiles under the committed lock (#3787):
+
+```bash
+cargo package -p ripr --no-verify
+tar xzf "target/package/ripr-$release_version.crate" -C "$RUNNER_TEMP"
+cd "$RUNNER_TEMP/ripr-$release_version" && rm Cargo.lock && cargo generate-lockfile
+cargo check --target-dir "$RUNNER_TEMP/unlocked-target"
+```
+
+The legacy workflow's `Rust-only feature lane` job (#4252) runs the Rust-only
+feature set (#2400, #3128) on Linux:
+
+```bash
+cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail-fast
+```
+
+It runs on every push to `main` or `master`, on manual dispatch, and on pull
+request `opened`, `synchronize`, and `reopened` events whose diff touches
+`crates/`, `fixtures/`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain*`, or
+`.cargo/`. Label events and other pull requests skip the compile. It is not
+a required check. The Windows advisory lane runs the same command on Windows.
+The selector compares the immutable pull-request event base and head commits,
+not the synthetic merge checkout, so unrelated main-branch Rust changes do not
+select a docs-only candidate. Tests still run on the integration checkout.
+Filename records are NUL-delimited, and both sides of renames plus deletions
+participate. Invalid or unavailable identities/history, ambiguous ancestry,
+failed comparisons, and empty diffs conservatively run the lane; the job summary
+records the routing reason. Push and manual runs remain unconditional.
+The CI workflow also has an explicit MSRV job that pins Rust `1.95.0` and runs:
+
+```bash
+cargo check --workspace --all-targets
+```
+
+The `release-proof` job pins the declared `1.95.0` toolchain; the MSRV job
+duplicates that baseline and runs only on manual dispatch or `full-ci` pull
+requests.
+
+The legacy workflow's `release-proof`, `rust-only-features`, and `msrv` jobs
+run on `ubuntu-latest`. They carry release-surface and baseline proof and must not
+depend on self-hosted runner capacity when preparing a source release. The
+routed Rust-small workflow remains the swarm development lane that selects
+self-hosted runners when available and falls back to hosted capacity.
+
+Local shaping commands are intentionally separate from CI because they mutate
+the worktree:
+
+```bash
+cargo xtask shape
+cargo xtask fix-pr
+cargo xtask commands
+cargo xtask pr-summary
+cargo xtask pr-ready
+cargo xtask pr-triage-report
+cargo xtask gh-pr-status --pr <number>
+cargo xtask suggested-fixes
+cargo xtask check-command-catalog
+cargo xtask precommit
+cargo xtask check-pr
+cargo xtask fixtures
+cargo xtask goldens check
+cargo xtask golden-drift
+cargo xtask test-oracle-report
+cargo xtask dogfood
+cargo xtask critic
+cargo xtask reports index
+cargo xtask receipts
+cargo xtask receipts check
+```
+
+They are safe to run before checks. `shape` runs `cargo fmt`, sorts allowlists,
+ensures `target/ripr/reports`, and writes a local report. `fix-pr` currently
+runs `shape`, refreshes `pr-summary`, and writes a local fix-pr report.
+`commands` writes the xtask mutability catalog under `target/ripr/reports/` so
+agents can distinguish mutating commands, non-mutating checks, report-only
+commands, external-state reads, external-state mutations, and
+argument-dependent commands.
+`check-command-catalog` verifies that the help catalog and mutability catalog
+stay aligned, that write surfaces are documented, and that external-state
+mutations remain judgment-required.
+`pr-summary` writes `target/ripr/reports/pr-summary.md` from git diff/status.
+`pr-ready` writes `target/ripr/reports/pr-ready.md` and
+`target/ripr/reports/pr-ready.json` by composing worktree doctor, command
+catalog, PR summary, critic, receipts check, suggested fixes, generated-clean,
+and badge diff policy into one advisory local operator packet.
+`pr-triage-report` writes the advisory open-board hygiene report as Markdown
+and JSON.
+`gh-pr-status --pr <number>` writes a read-only merge-readiness packet for one
+PR as Markdown and JSON, including merge state, required check status when
+GitHub exposes it, reviews, Droid status, and the next safe action.
+`suggested-fixes` writes a deterministic repair patch and companion report
+under `target/ripr/reports/`; it suggests allowlist ordering fixes and docs
+index table ordering for specs and ADRs, plus traceability behavior block
+ordering by spec ID and capability block ordering by spec ID and capability ID.
+It never writes badge values, baselines, suppressions, goldens, dependency
+exceptions, or schema changes.
+`precommit` is the cheap non-mutating local guardrail. `check-pr` is the
+review-ready local gate and intentionally does not run package or publish
+dry-run checks. `check-badge-diff-policy` fails ordinary PRs that carry
+generated badge endpoint diffs, while `check-generated-clean` fails generated
+target/sample build residue and shares the same badge endpoint boundary.
+`fixtures` and
+`goldens check` validate the current fixture and
+expected-output scaffolding without accepting output drift. `golden-drift`
+writes advisory Markdown and JSON summaries of semantic expected-output drift
+for reviewers. `test-oracle-report` writes an advisory baseline for the strength
+of `ripr`'s own Rust test oracles. If no tests are selected, both report formats
+use status `not_run` and explain that oracle evidence was not established; this
+is distinct from a nonempty all-strong `pass` and remains advisory. `dogfood` writes a
+`ripr`-on-`ripr` report from stable fixture diffs; its findings stay advisory,
+but the command, and `ci-full`, fails when any scenario records errors (report
+status `warn`). `critic` writes an advisory
+adversarial review packet from the current diff, reports, and receipts.
+`reports index` writes a reviewer front door for generated reports and includes
+the repo-ops packet statuses for command mutability, PR-ready, worktree doctor,
+PR triage, per-PR merge readiness, generated-clean, badge diff policy, command
+catalog coverage, critic, receipts, suggested fixes, and `check-pr`.
+`receipts` writes machine-readable gate evidence under `target/ripr/receipts`,
+and `receipts check` validates the receipt set.
+
+The fuller automation model is documented in [PR automation](PR_AUTOMATION.md).
+Deterministic shaping should happen locally; CI should verify the committed
+tree and upload reports when available.
+
+Codex Goals runs should treat CI artifacts as campaign receipts. A campaign can
+advance through multiple work items, but each scoped PR should leave the same
+shape/check/report artifacts that CI uploads for human review.
+
+Current policy checks write Markdown reports to `target/ripr/reports` when they
+run. The Rust workflow generates `target/ripr/reports/index.md` and writes it
+to the GitHub Actions job summary when present. To keep ordinary PR CI cheap,
+it uploads the report and receipt directories as the `ripr-pr-reports` artifact
+only on failure or when the PR is labeled `full-ci`.
+
+Local policy checks can also be run directly:
+
+```bash
+cargo xtask check-static-language
+cargo xtask check-no-panic-family
+cargo xtask check-allow-attributes
+cargo xtask check-local-context
+cargo xtask check-file-policy
+cargo xtask check-executable-files
+cargo xtask check-workflows
+cargo xtask check-spec-format
+cargo xtask check-spec-numbering
+cargo xtask check-fixture-contracts
+cargo xtask check-traceability
+cargo xtask check-capabilities
+cargo xtask check-workspace-shape
+cargo xtask check-architecture
+cargo xtask check-public-api
+cargo xtask check-output-contracts
+cargo xtask check-identity-registry
+cargo xtask check-doc-index
+cargo xtask check-readme-state
+cargo xtask markdown-links
+cargo xtask check-pr-shape
+cargo xtask check-generated
+cargo xtask check-command-catalog
+cargo xtask check-badge-diff-policy
+cargo xtask check-generated-clean
+cargo xtask check-dependencies
+cargo xtask check-supply-chain
+cargo xtask check-process-policy
+cargo xtask check-network-policy
+```
+
+Fixture and golden scaffolding checks can be run directly with:
+
+```bash
+cargo xtask fixtures
+cargo xtask goldens check
+cargo xtask golden-drift
+cargo xtask test-oracle-report
+cargo xtask dogfood
+cargo xtask critic
+cargo xtask reports index
+cargo xtask receipts
+cargo xtask receipts check
+```
+
+The VS Code workflow currently runs:
+
+```bash
+cd editors/vscode
+npm ci
+npm run compile
+npm run package
+xvfb-run -a npm run test:e2e
+```
+
+The `test:e2e` step launches a headless VS Code instance via `@vscode/test-electron`, activates the extension in a fixture Rust workspace, and runs the smoke test suite. `xvfb-run` provides the virtual display required on Linux CI runners. The runner pins host user-data at `target/ripr/vscode-test-user-data` (logs under `logs/`). If the host fails — including before Mocha starts — it copies a size-capped, redacted log subset into `target/ripr/vscode-test-host-diagnostics/`. The vscode job uploads that directory only on `failure()`, with 5-day retention. Diagnostic collection cannot change the original test exit status and is not a root-cause fix.
+
+The VS Code extension build and extension publish workflows use Node 24. This
+is separate from the VS Code extension-host compatibility declared in
+`editors/vscode/package.json`.
+
+The coverage workflow currently runs:
+
+```bash
+cargo llvm-cov clean --workspace
+cargo build -p ripr
+cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
+```
+
+The plain `cargo build -p ripr` comes first because tests that spawn the
+binary resolve a pre-built `target/debug/ripr` and never start a nested build,
+while `cargo llvm-cov` builds into its own target directory.
+
+It uploads `lcov.info` as the `rust-lcov` GitHub Actions artifact and uploads
+the same file to Codecov with the `rust` flag and `rust-workspace` upload name.
+
+Codecov uses the repository `CODECOV_TOKEN` secret. Codecov upload failures are
+blocking for trusted coverage runs: pushes and same-repository pull requests.
+Fork pull requests still generate `lcov.info` and upload the `rust-lcov`
+GitHub Actions artifact, but skip the Codecov upload because repository secrets
+are unavailable to those runs.
+
+Codecov project and patch status checks are not yet branch-protection gates.
+After the emitted status names and baseline are stable, a later scoped PR can
+ratchet Codecov status requirements and branch protection separately.
+
+**Coverage Baseline Calibration**
+
+As of 2026-05-04, the main branch coverage baseline is stable at **75.5%**
+(product crate: 94.8%, automation: 59%). The project target of 75% in
+`codecov.yml` is appropriate for this baseline.
+
+Codecov now tracks product and automation coverage separately to prevent
+automation code from obscuring product quality:
+
+- **Product crate** (crates/ripr/src/): target 94% (project), 94% (patch), threshold 1%/3%
+- **Automation** (xtask/src/): target 59% (project), 75% (patch), threshold 1%/10%
+  The automation project target aligns with the current 59% baseline, allowing ratchet
+  growth as xtask debt is paid down. The patch threshold of 10% provides initial ratchet
+  tolerance for the large, unevenly-tested xtask main.rs.
+
+The component split uses Codecov's path-based named statuses. Future coverage
+ratchets should follow the [calibration strategy](IMPLEMENTATION_CAMPAIGNS.md).
+
+The Test Analytics workflow currently runs:
+
+```bash
+cargo nextest run --workspace --all-features --profile ci
+cargo test --workspace --doc
+```
+
+It uploads the JUnit XML as the `rust-junit` GitHub Actions artifact and uploads
+the same file to Codecov Test Analytics only when `CODECOV_TOKEN` is available
+on trusted runs. Fork pull requests still run tests and upload the artifact, but
+skip the Codecov test-results upload because repository secrets are unavailable.
+
+### PR Staleness Watchdog
+
+GitHub sometimes silently drops the `pull_request` event delivery that creates
+the `routed-rust.yml` run for a pushed PR head SHA, leaving a PR blocked with
+no required check to retry (#4937; incidents #4528/#4537 ~9 hours dark,
+#4923 ~35 minutes).
+`.github/workflows/pr-staleness-watchdog.yml` runs every 30 minutes, finds open
+same-repo, non-draft PR heads with no `Ripr Rust Small Result` check run on the
+head SHA, and reports them (step-summary row plus a workflow warning). It is
+alert-only (#4986; issue #4937 option ii): it never dispatches
+`routed-rust.yml` and holds no `actions: write` permission. With Ready-only
+admission, a Ready head without the required check is a dropped
+Ready-triggered delivery, a push made after Ready, or a conflicting head with
+no merge ref (#7079). A conflicting (`dirty`) PR silently gets zero
+`pull_request` runs because `routed-rust.yml` evaluates from the merge ref,
+which does not exist while the PR conflicts. The watchdog cannot tell a
+dropped delivery from a post-Ready push, but its summary row carries each PR's
+`mergeable_state`, so the conflicted dark mode is distinguishable from both at
+a glance. A head mutated after Ready has revoked its own admission
+and must not be qualified by a lighter branch-head dispatch (which skips the
+`pull_request`-scoped PR-evidence steps). Before re-toggling, check merge
+conflicts first: query the PR's `mergeable_state`; `dirty` means repair the
+conflict while Draft, then apply the shared
+[Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff) before requesting
+qualification for the composed head. That handoff also governs recovery from a
+dropped delivery. The required check, not run existence, is the
+discriminator: any `Ripr Rust Small Result` check run on the head SHA is a
+real qualification attempt on that exact head. That check run is created only
+when the `result` job starts, after every implementation job (up to 120
+minutes), so before calling a head dark the watchdog also lists
+`routed-rust.yml` runs with `event=pull_request` on that SHA. A queued or
+in-progress run is reported as in flight. Re-toggling Draft -> Ready on such a
+head would cancel the real run, so the watchdog never recommends it. This uses
+`actions: read` only. Drafts and fork heads are
+skipped. No PR comments are posted; each sweep's summary table is the audit
+trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
+shape (no dispatch command, no `actions: write`), the in-flight check, and
+the `mergeable_state` column.
+
+### Self-Hosted Runner Placement
+
+The everyday required Rust gate routes through `routed-rust.yml`
+(`CX43 -> CPX42 -> CX53 -> GitHub-hosted` fallback, shared `/mnt/ci-cache`, disk guards,
+and scratch cleanup) and exposes the single branch-protection check
+`Ripr Rust Small Result`. That lane is the migrated reference and is not changed
+by routine runner-placement edits.
+
+The remaining (non-required) self-hosted lanes route to the smallest safe EM
+shared self-hosted tier by actual workload, each with explicit
+`group` + `labels` and a per-job `timeout-minutes` hang guard. Queueing on
+these groups is acceptable backpressure and these lanes are advisory or
+label/push gated, so they do not block merge. The VS Code e2e lane is the
+exception: it runs on GitHub-hosted Ubuntu because it installs `xvfb` for
+headless extension tests and must not depend on privileged package installs on
+EM self-hosted runners.
+
+| Workflow / job | Group | Tier label |
+| --- | --- | --- |
+| `ci.yml` `rust` | `em-ci-small` | `rust-medium` |
+| `ci.yml` `msrv` | `em-ci-small` | `rust-small` |
+| `ci.yml` `vscode` | GitHub-hosted | `ubuntu-latest` |
+| `coverage.yml` | `em-ci-small` | `rust-heavy-medium` |
+| `test-analytics.yml` | `em-ci-small` | `rust-medium` |
+| `future-clippy.yml` | `em-ci-small` | `rust-medium` |
+| `security.yml` `cargo-deny` | `em-ci-tiny` | `rust-tiny` |
+| `source-of-truth.yml`, `badge-endpoints.yml` | `em-ci-tiny` | `rust-tiny` |
+| `security.yml` `dependency-review` | `em-ci-nano` | `policy-nano` |
+| `droid`, `droid-security-scan` | `em-ci-review` | `droid-review` |
+
+All self-hosted lanes carry the `trusted-pr` label and keep their existing
+fork/untrusted-PR `if:` guards, so fork code cannot reach trusted self-hosted
+runners. `rust-large` is intentionally not used here; it is reserved org-wide
+for the single heaviest lane. Build-heavy lanes still use `Swatinem/rust-cache`;
+moving them onto the shared `sccache`/`/mnt/ci-cache` path used by
+`routed-rust.yml` is a tracked follow-up rather than part of this placement
+change.
+
+Publication workflow `publish-extension.yml`, the read-only server-binary
+rehearsal `release-server-binaries.yml`, and branch protection
+(`.github/settings.yml`) are intentionally out of scope for this placement
+change. Public release publication belongs to `EffortlessMetrics/ripr`.
+
+## SARIF and Policy Contract
+
+Campaign 5B SARIF work is governed by
+[RIPR-SPEC-0008](specs/RIPR-SPEC-0008-sarif-ci-policy.md). The contract is
+advisory by default: generating SARIF must not make ordinary pull requests
+block unless an explicit baseline policy mode is requested.
+
+The defaults-first adoption contract in
+[RIPR-SPEC-0009](specs/RIPR-SPEC-0009-defaults-first-adoption.md) keeps that
+stance for first-run CI recipes: copyable or generated GitHub Actions should
+upload review guidance by default, not fail CI unless the repository opts into
+a baseline policy.
+
+SARIF artifact commands:
+
+```bash
+cargo run -p ripr -- check --format sarif > target/ripr/reports/ripr-findings.sarif.json
+cargo run -p ripr -- check --format repo-sarif > target/ripr/reports/ripr-seams.sarif.json
+```
+
+SARIF consumes configured severity from `ripr.toml`:
+
+| Config severity | SARIF behavior |
+| --- | --- |
+| `warning` | `level: "warning"` |
+| `info` | `level: "note"` |
+| `note` | `level: "note"` |
+| `off` | omitted |
+
+The opt-in baseline policy compares current SARIF against a checked-in baseline
+using `ruleId` plus `partialFingerprints.riprFingerprintV1`.
+
+The local policy command writes `target/ripr/reports/sarif-policy.{json,md}`:
+
+```bash
+cargo xtask sarif-policy \
+  --current target/ripr/reports/ripr-seams.sarif.json \
+  --baseline .ripr/sarif-baseline.json \
+  --mode baseline-check
+```
+
+To make new warning-level results blocking, opt in explicitly:
+
+```bash
+cargo xtask sarif-policy \
+  --current target/ripr/reports/ripr-seams.sarif.json \
+  --baseline .ripr/sarif-baseline.json \
+  --mode fail-on-new-warning
+```
+
+Missing baselines remain advisory by default. Use `--missing-baseline error`
+only when the repository has deliberately adopted a required SARIF baseline.
+
+Policy modes:
+
+| Mode | Default? | Behavior |
+| --- | --- | --- |
+| `advisory` | yes | Emit reports and exit successfully. |
+| `baseline-check` | no | Report new configured-warning results relative to a baseline. |
+| `fail-on-new-warning` | no | Exit non-zero when new configured-warning results appear. |
+
+### Copyable RIPR Advisory Workflow
+
+External repositories can start with a non-blocking pull-request workflow that
+installs `ripr`, runs the defaults-first pilot loop, writes repo report and
+badge artifacts, uploads them for review, and optionally publishes SARIF to
+GitHub code scanning:
+
+```bash
+ripr init --ci github
+```
+
+Copy the generated file, not a workflow from this page. Run
+`ripr init --ci github --dry-run` to print it without writing anything. It
+uploads the pilot, report, and agent artifact directories. The official GitHub
+SARIF upload documentation uses `github/codeql-action/upload-sarif@v4`; keep
+the RIPR job, artifact upload, and optional SARIF steps advisory until the
+repository has chosen a baseline policy.
+
+A released `ripr` generates a workflow that installs the exact version
+that generated it, because its steps use that version's commands and flags;
+a later release does not change CI behavior until you regenerate. It
+downloads that release's prebuilt binary from the `EffortlessMetrics/ripr`
+GitHub Release and checks it against the release's published SHA-256, which
+takes seconds instead of the minutes `cargo install` spends compiling. A
+checksum mismatch fails the step. On a runner with no prebuilt archive
+(Windows), or when the download fails, it falls back to
+`cargo install ripr --version <that version> --locked`, which needs a Rust
+toolchain on the runner; on a runner without `cargo` the step fails and says
+to install Rust or add a toolchain step. A development build newer than the
+latest release cannot pin itself — that version has no release archive and
+no crates.io package, so both install routes would fail. Instead it pins the
+latest release and warns on stderr, naming both versions and the refresh
+command (#5208); the installed release may be older than the generating
+steps, so review the workflow and regenerate with a released `ripr` when one
+is available. The workflow also restores ripr's analysis cache
+(`RIPR_CACHE_DIR`, outside the checkout) with `actions/cache` (pinned to a commit SHA), so later pushes
+to a pull request reuse the facts of files they did not change. Entries are
+keyed on file contents, configuration, and the ripr version, so a restored
+entry that no longer matches is a miss rather than stale evidence. To upgrade, install
+the newer `ripr` and compare its `ripr init --ci github --force --dry-run`
+output with the committed file (`--force` lets the dry run plan over the
+existing file; nothing is written). With `--ci`, `--force` replaces only the
+workflow: an existing `ripr.toml` is left unchanged, so refreshing CI keeps the
+repository's settings (`ripr init --force` without `--ci` resets the config).
+`ripr doctor` flags a workflow that installs ripr unpinned or at another
+version; when the pin is the intentional latest-release fallback for the
+running unreleased `ripr`, it says so and prescribes upgrading `ripr` first,
+since refreshing immediately would rewrite the identical pin. On pull requests the workflow checks out the PR head
+commit, not GitHub's `refs/pull/N/merge` commit, so annotation and review
+comment lines match the lines in the PR diff after the base branch moves. A
+newer push cancels the older run of the same PR. Dependabot runs get a
+read-only token, so their inline-comment plan records
+`missing_write_permission` instead of attempting a post.
+
+For a CI-first user, the useful output is the artifact packet:
+
+- `target/ripr/pilot/` - first-screen pilot summary, repo exposure snapshot,
+  and agent seam packets;
+- `target/ripr/workflow/` - selected-seam workflow manifest, commands,
+  status JSON/Markdown, review summary JSON/Markdown, the before snapshot,
+  and agent packet and brief JSON when a top seam is available;
+- `target/ripr/agent/` - compatibility copies of packet and brief JSON for
+  the top seam when one is available;
+- `target/ripr/reports/` - SARIF files when enabled, repo badge JSON,
+  `gap-decision-ledger.{json,md}`,
+  `assistant-loop-health.{json,md}`, `first-useful-action.{json,md}`,
+  `pr-review-front-panel.{json,md}`, `start-here.{json,md}`,
+  `waiver-aging.{json,md}`, `suppression-health.{json,md}`,
+  `policy-readiness.{json,md}`, and `index.{json,md}`.
+- `target/ripr/review/` - PR test guidance JSON and Markdown when
+  `ripr review-comments` runs on pull requests.
+
+CI prepares the before side of the repair loop only. There is no test edit
+between two snapshots of one CI checkout, so the workflow writes no after
+snapshot, verify JSON, agent receipt, or targeted-test outcome. The
+`ripr agent repair --root . --seam-id <seam-id> --phase before` command the
+summary leads with starts the repair where the test edit happens; the
+`--attempt ... --phase after` command it prints runs verify and writes the
+receipt. The summary labels the low-level verify and receipt commands as steps
+that run after the test edit.
+
+The workflow also writes a `RIPR advisory summary` step summary with one
+command, `ripr reports ci-summary --root . >> "$GITHUB_STEP_SUMMARY"`, which
+reads the artifacts earlier steps wrote and prints a regeneration route for any
+that are missing or malformed instead of failing. When the pinned ripr did not install (even if an older one is on PATH),
+the step writes a short summary saying so and pointing at the install step's
+log instead of leaving the summary empty. The summary starts with
+the `start-here` first-run packet when `ripr first-pr` can compose one from
+explicit artifacts, then includes the PR review front panel, first useful
+action fallback, a language preview grouping section when `[languages]` enables
+TypeScript or Python, policy readiness, waiver aging, and suppression health
+when their input artifacts exist, assistant-loop health when proof artifacts
+exist, the report packet index when any indexed artifact exists, the top
+recommendation, the agent review packet when present, artifact links,
+SARIF and badge status, known limits, and PR guidance annotation counts when
+`target/ripr/review/comments.json` exists. On pull
+requests, the generated workflow writes that report before emitting
+changed-line check annotations by default without posting inline review
+comments.
+
+See [LLM operator guide](LLM_OPERATOR_GUIDE.md) for the same status, workflow
+packet, verify, receipt, and reviewer-summary loop outside CI. See
+[PR review guidance](PR_REVIEW_GUIDANCE.md) for the PR-facing annotation
+contract and review workflow. See
+[PR review front panel workflow](PR_REVIEW_FRONT_PANEL_WORKFLOW.md) for the
+first-screen summary that composes PR guidance, first useful action, assistant
+proof, assistant-loop health, ledger, baseline, gate, calibration,
+coverage/grip, and receipt artifacts.
+
+### PR Test Guidance Annotations
+
+RIPR-SPEC-0012 defines the pinned planning contract for the PR-facing
+projection of the same evidence packet. The default CI surface is a GitHub job
+summary plus check annotations. Inline PR review comments should
+remain opt-in because they create durable review-thread noise when ranking or
+placement is wrong.
+
+The generated workflow runs the pure renderer on pull requests:
+
+```bash
+ripr review-comments \
+  --root . \
+  --base "origin/$GITHUB_BASE_REF" \
+  --head HEAD \
+  --check-output target/ripr/pr/check.json \
+  --out target/ripr/review/comments.json
+```
+
+That renderer writes JSON and Markdown under `target/ripr/review/` and does
+not post to GitHub by itself. The generated workflow then:
+
+- appends the Markdown summary to `$GITHUB_STEP_SUMMARY`;
+- emits check annotations from changed-line entries;
+- uploads the JSON and Markdown as artifacts;
+- keeps inline PR review comments disabled by default.
+
+Selection and placement must stay conservative:
+
+- comment only when production Rust changed and a visible actionable seam maps
+  to the changed region or owner function;
+- skip recommendations when a nearby test changed in the pull request;
+- target only changed lines, otherwise fall back to summary-only guidance;
+- cap inline review comments to three by default;
+- include the missing discriminator, suggested assertion shape, recommended
+  test file, related test to imitate, and the repair start
+  (`ripr agent repair --root . --seam-id <seam-id> --phase before`) when the
+  seam is repair-ready. Check annotations carry only the reason and that
+  repair start, so they never name a path inside the CI runner's checkout.
+
+The LLM guidance in annotations is bounded handoff material. It should ask for
+one focused test, avoid production edits unless explicitly requested, and point
+to `ripr agent verify` after the edit. It must not ask an LLM to decide which
+diff regions matter, run mutation testing, or claim runtime confirmation.
+
+The generated workflow includes the optional inline review-comment publisher,
+but keeps it disabled by default. Set `RIPR_COMMENT_MODE=plan` to upload and
+summarize the read-only publish plan, or `RIPR_COMMENT_MODE=inline` to publish
+same-repository changed-line comments only when the plan reports safe
+operations. The publisher posts only from `comments[]`, targets changed lines
+only, caps comment count, deduplicates by `dedupe_key`, and leaves gate
+decisions as the separate pass/fail authority.
+
+See [PR inline comment publisher workflow](PR_INLINE_COMMENT_PUBLISHER_WORKFLOW.md)
+for rollout guidance, publish-plan review, fork and permission behavior,
+dedupe/upsert expectations, and rollback.
+
+The generated workflow also captures existing RIPR inline-comment metadata
+(`ripr pr-comments existing`), turns the publish plan into GitHub API requests
+(`ripr pr-comments requests`, which writes none unless the plan is safe to
+publish), and only calls GitHub for them in explicit `inline` mode. Read those
+steps in the output of `ripr init --ci github --dry-run`; this page does not
+keep a copy because a copy drifts from what the command writes.
+
+One step is kept here because a test holds it byte-equal to the template: the
+step that runs the analysis and report steps with one command. The token-holding
+comment capture and publish steps and the summary stay in YAML around it.
+`ripr reports ci-packet` runs the pilot, the pull request diff capture (which pins the diff presentation so
+ambient Git configuration cannot change the bytes RIPR analyzes, #4005), the
+PR guidance, the comment plan, SARIF and badge renders, the gate, the ledgers,
+start-here, the report index, and the changed-line annotations, each as a log
+group named after the step it replaced. `ripr help reports` lists its
+failure rules, and `--step NAME` reruns one step locally.
+
+```yaml
+      - name: Run RIPR
+        run: ripr reports ci-packet --root .
+```
+
+#### Generated workflow settings and steps
+
+The generated file keeps one-line comments and points here for the reasons
+behind each setting (#5409). Each entry below is what the file used to say
+inline.
+
+Repository variables (Settings > Secrets and variables > Actions > Variables)
+configure the workflow, so changing a mode never means editing the file:
+
+- `RIPR_GATE_MODE` is the gate authority. Empty (the default) is advisory only
+  and the job never fails. `visible-only` runs the gate and prints its result
+  without blocking the job. `acknowledgeable` runs the gate and lets the PR
+  author acknowledge a finding to merge. `baseline-check` fails when exposure
+  is worse than the baseline. `calibrated-gate` fails only on new,
+  high-confidence, policy-eligible gaps and needs baseline and calibration
+  inputs. See [calibrated gate policy](CALIBRATED_GATE_POLICY.md).
+- `RIPR_GATE_BASELINE` is an optional path to a reviewed baseline ledger file,
+  such as `.ripr/gate-baseline.json`, that `baseline-check` and
+  `calibrated-gate` compare current evidence against. Empty by default.
+- `RIPR_COMMENT_MODE` controls PR review comments. `off` (the default) posts
+  nothing and leaves findings in artifacts; `plan` computes and uploads a
+  comment plan without posting; `inline` publishes inline review comments on
+  changed lines.
+- `RIPR_UPLOAD_SARIF` is set in the file, not as a variable. `"true"` uploads
+  SARIF to the Security tab; set `"false"` if the repository does not use code
+  scanning.
+
+Permissions and job settings:
+
+- `pull-requests: write` is used only when `RIPR_COMMENT_MODE` is `inline`.
+  With `off`, nothing writes to the pull request; set it to `read` if you keep
+  comments off.
+- `security-events: write` is used only for the SARIF upload. Remove it and set
+  `RIPR_UPLOAD_SARIF` to `"false"` if the repository does not use code
+  scanning.
+- `labeled` and `unlabeled` re-run the gate when a waiver label such as
+  `ripr-waive` is added or removed, since the gate reads labels from the event.
+  Any label change re-runs the job, and the concurrency group cancels the
+  superseded run.
+- Every run step is bash (`$'\t'` in the publish loop), so `defaults.run.shell`
+  pins bash; the steps still parse if the job moves to `windows-latest`, whose
+  default shell is PowerShell.
+- One run per pull request: a newer push cancels the older run. Only the
+  newest head's placements are valid, and two overlapping runs would each
+  snapshot the existing inline comments before either publishes, then both
+  create the same cards.
+- The job is `continue-on-error` unless `RIPR_GATE_MODE` names a blocking mode,
+  so with the default empty or `visible-only` mode a failure never fails the
+  PR.
+
+Steps:
+
+- **Checkout** analyzes the PR head, not GitHub's `refs/pull/N/merge` commit.
+  Review comments and `::warning` annotations are placed on the PR head's
+  lines; when the base branch has moved lines in a changed file, merge-commit
+  line numbers point at the wrong line, and GitHub rejects the whole review when
+  a line falls outside the PR diff. `upload-sarif` detects the head checkout and
+  reports it as `refs/pull/N/head`. A manual run keeps the dispatched commit.
+  `persist-credentials: false` leaves no token in `.git/config`, where
+  PR-controlled code (build scripts, analyzed sources) could read it; no step
+  pushes or fetches after checkout.
+- **Remove checked-in RIPR artifacts** deletes `target/ripr` and `target/ci`
+  before the first RIPR step. The gate, ledger, and policy steps read several
+  files there only when present (sarif-policy, agent-verify, agent-receipt,
+  calibration, coverage), and nothing in the workflow writes some of them, so a
+  pull request could commit forged copies (`git add -f`). Steps you add later
+  that write there still work. ripr's analysis cache lives outside the
+  checkout, so the cleanup never discards it.
+- **Install ripr** pins the version whose commands the steps use; an unpinned
+  install takes the newest release, whose CLI may not match. It downloads that
+  release's prebuilt binary and checks it against the published SHA-256, falls
+  back to `cargo install` where there is no prebuilt binary, and fails with the
+  fix when the runner has no cargo. The summary step reads this step's outcome
+  by its id.
+- **actions/cache** restores ripr's analysis cache. Entries are keyed on file
+  contents, configuration, and the ripr version, so an entry that no longer
+  matches is a miss, never stale evidence. GitHub scopes a cache a pull request
+  saves to that pull request, and the cache lives outside the checkout, so a
+  pull request cannot commit one. The action is pinned to a commit SHA because
+  the job holds a token with write scopes.
+- **Capture existing RIPR inline comments** pipes the pull request's review
+  comments into `ripr pr-comments existing`, which keeps only comments the
+  workflow posted (author `github-actions[bot]`, type `Bot`) that carry a
+  `ripr:dedupe` marker. Anyone can write the marker; a marked comment from
+  another author must not suppress a RIPR card or be PATCHed by this job.
+- **Run RIPR** is the one command above. It reads no token; the comment steps
+  around it hold that.
+- **Publish RIPR inline comments** runs `ripr pr-comments requests`, which turns
+  the publish plan into an ordered list of GitHub API requests (updates first,
+  then one review for new cards), and the step sends each one with `gh api`.
+  ripr writes no request when the plan is not safe to publish, and folds CR/LF
+  in every message it prints so a repository path cannot start a line GitHub
+  reads as a workflow command.
+- **Upload RIPR diff findings** stays `continue-on-error`: upload infrastructure
+  is not analysis authority (#2009), so a code-scanning outage must not fail a
+  gate the analysis passed.
+
+For a first rollout, treat code-scanning annotations as review guidance. Do not
+make the job blocking until the repository has reviewed its initial SARIF
+baseline, tuned `ripr.toml`, and decided which configured-warning results should
+fail CI. The `cargo xtask sarif-policy` baseline modes shown above are
+repo-local automation today; a public package-level policy command is a future
+adoption surface.
+
+The generated workflow always uploads `target/ripr` and `target/ci` as a
+`ripr-reports` artifact when files exist. When `RIPR_GATE_BASELINE` is set and gate evaluation writes
+`target/ripr/reports/gate-decision.json`, the workflow also runs
+`ripr baseline diff`, then `ripr zero status`, and includes:
+
+- `target/ripr/reports/baseline-debt-delta.json`;
+- `target/ripr/reports/baseline-debt-delta.md`;
+- `target/ripr/reports/ripr-zero-status.json`;
+- `target/ripr/reports/ripr-zero-status.md`.
+
+The baseline debt delta is advisory debt-movement evidence. It is summarized in
+the job summary and feeds the RIPR Zero status summary, but `ripr gate
+evaluate` remains the only generated-workflow pass/fail authority. The RIPR
+Zero section reports visible unresolved debt, new policy-eligible debt,
+acknowledgements, suppressions, baseline metadata health, top debt area, top
+repair route, and trend availability as advisory progress evidence. Use
+[RIPR Zero reporting workflow](RIPR_ZERO_REPORTING_WORKFLOW.md) for how to read
+the status, refresh stale baseline metadata, and route repair packets. The repo
+badge files in that artifact are:
+
+- `target/ripr/reports/repo-ripr-badge.json`, the native public badge payload
+  using the actionable canonical repair basis;
+- `target/ripr/reports/repo-ripr-badge-shields.json`, the Shields projection.
+
+Seam-native inventory is not the public badge headline. Use `cargo xtask
+badge-basis --include-seam-classes` or repo-exposure reports when internal seam
+pressure is needed.
+
+The generated workflow sets `RIPR_UPLOAD_SARIF` to `"true"` so first-run
+repositories get code-scanning guidance. Set it to `"false"` in the copied
+workflow to keep the report artifact path while skipping SARIF rendering and
+upload. This is useful for repositories that do not want GitHub code scanning
+permissions or want to review the report artifacts before enabling annotations.
+
+Calibrated gates are opt-in. Leave `RIPR_GATE_MODE` unset for the default
+advisory posture. The generated workflow already reads repository variables, so
+teams should adopt gates by setting variables rather than editing the workflow
+for each mode.
+
+### Gate Adoption Examples
+
+Use these repository-variable examples with the generated workflow.
+
+Default advisory mode:
+
+```text
+# Leave both repository variables unset.
+RIPR_GATE_MODE=
+RIPR_GATE_BASELINE=
+```
+
+This preserves first-run behavior: PR guidance, SARIF when enabled, badges,
+agent packets, review packets, and artifacts remain advisory.
+
+Visible decision report:
+
+```text
+RIPR_GATE_MODE=visible-only
+RIPR_GATE_BASELINE=
+```
+
+`visible-only` writes `target/ripr/reports/gate-decision.{json,md}` and appends
+an at-a-glance gate section plus the Markdown decision report to the job summary
+without making a RIPR finding block the PR. If `RIPR_GATE_BASELINE` is also
+set and the gate decision exists, the workflow writes
+`target/ripr/reports/baseline-debt-delta.{json,md}` as a non-blocking debt
+movement report. The first-screen summary names the mode, status, decision
+counts, active and acknowledgement labels, applied waiver label, baseline
+input, calibration inputs/effects, blocking reason, baseline debt movement, and
+gate and delta artifact paths.
+
+On pull requests where `ripr review-comments` writes
+`target/ripr/review/comments.json`, generated CI also writes and uploads
+`target/ripr/reports/pr-evidence-ledger.json` and
+`target/ripr/reports/pr-evidence-ledger.md`. The ledger joins PR guidance,
+optional gate decision, baseline debt delta, RIPR Zero status, recommendation
+calibration, agent receipt, optional coverage summary, labels, and optional
+history into one advisory PR movement card. The job summary shows new
+policy-eligible gaps, baseline debt still present, baseline debt resolved,
+acknowledged and suppressed counts, blocking candidates, visible unresolved
+gaps, the top repair route, verify command, agent command, coverage/grip
+frontier status, and history trend when available. The ledger is evidence only;
+`ripr gate evaluate` remains the pass/fail authority for configured gate modes.
+See [PR evidence ledger workflow](PR_EVIDENCE_LEDGER_WORKFLOW.md) for how to
+read the ledger as waiver aging, baseline burn-down, repair receipts, and
+coverage/grip frontier evidence.
+
+When the PR evidence ledger exists, generated CI also writes and uploads
+`target/ripr/reports/waiver-aging.json` and
+`target/ripr/reports/waiver-aging.md`. The report is advisory only: repeated
+waiver remains a visible signal for focused-test or suppression review, not a
+failure and not an automatic durable exception.
+
+Generated CI also writes and uploads
+`target/ripr/reports/suppression-health.{json,md}` and
+`target/ripr/reports/policy-readiness.{json,md}` as advisory readiness
+projection artifacts. The job summary names suppression-health metadata gaps
+directly, and policy readiness composes existing gate, baseline, calibration,
+waiver-aging, and suppression-health reports when present, then summarizes the
+safest current policy mode. It does not run a gate, change baseline state, post
+comments, create required checks, or add pass/fail authority beyond an
+explicitly configured `ripr gate evaluate`.
+
+When policy readiness exists, generated CI also writes and uploads
+`policy-operations.{json,md}`, `policy-history.{json,md}`,
+`policy-promotion-*.{json,md}`, and configured preview-language
+`preview-promotion-*.{json,md}` packets. These reports are advisory operator
+packets: they summarize the current policy ceiling, history trend, manual
+promotion readiness, and preview-promotion evidence gaps. They do not mutate
+`ripr.toml`, baselines, suppressions, workflows, branch protection, CI defaults,
+history ledgers, or preview-language eligibility.
+
+See [Test-oracle assistant proof report](TEST_ORACLE_ASSISTANT_PROOF_REPORT.md)
+for how to read the proof report, warnings, static movement, optional CI
+projection, and advisory limits.
+
+When the full assistant-loop artifact chain is present, generated CI also
+writes and uploads `target/ripr/reports/test-oracle-assistant-proof.json` and
+`target/ripr/reports/test-oracle-assistant-proof.md`. This step is advisory and
+runs only after PR guidance, the editor/agent brief, before/after static
+evidence, the agent receipt, and the PR evidence ledger already exist. The job
+summary appends the proof report and an at-a-glance card with the selected seam,
+missing discriminator, placement state, static movement, receipt path, optional
+gate input, optional coverage/grip frontier input, and warning count. If the
+required inputs are absent, generated CI skips the proof projection instead of
+printing a placeholder or changing pass/fail behavior.
+
+When the proof report exists, generated CI also writes and uploads
+`target/ripr/reports/assistant-loop-health.json` and
+`target/ripr/reports/assistant-loop-health.md`. This step reads the existing
+proof artifact only. It summarizes proof completeness, missing required and
+optional inputs, static movement, warning groups, and repair queue counts as
+advisory operating health over assistant-loop proof packets. It does not rerun
+analysis, grade an agent, or change pass/fail authority.
+
+See [Assistant loop health workflow](ASSISTANT_LOOP_HEALTH_WORKFLOW.md) for how
+maintainers and coding agents read completeness, missing inputs, unchanged
+movement, repair queue entries, and advisory limits.
+
+For the artifact composition commands `ripr pr-summary`, `ripr first-action`,
+`ripr pr-review front-panel`, and `ripr reports index`, `--root <path>` names
+the selected repository; its default is the current working directory.
+`pr-summary` reads its fixed artifact locations and a relative `--baseline`
+under that root, and writes its three summary outputs there. The other three
+commands retain their explicit artifact and output path conventions: relative
+paths resolve from the process working directory. From a foreign directory,
+pass absolute artifact/output paths to those commands alongside `--root`.
+These commands compose existing artifacts rather than establishing new
+analysis or release qualification.
+
+On Windows, `pr-summary` accepts ordinary relative paths and fully qualified
+absolute paths for `--root` and `--baseline`, including UNC and verbatim paths.
+It rejects partially qualified paths such as `C:repo` or `\repo`, whose Windows
+join semantics can replace the selected root. This restriction applies only
+on Windows; colon-containing relative filenames remain valid on other systems.
+
+Generated CI also projects the first useful action when at least one explicit
+input artifact is already present. It runs `ripr first-action --root .` with
+existing PR guidance, assistant proof, PR evidence ledger, baseline delta,
+agent receipt, gate decision, coverage/grip frontier, and editor context
+inputs when those files exist, then writes and uploads
+`target/ripr/reports/first-useful-action.json` and
+`target/ripr/reports/first-useful-action.md` with the normal report packet. The
+job summary appends a first-run status card near the top of the advisory
+summary, then the recommended next test at a glance plus the Markdown report.
+The first-run card names the selected gap or no-action fallback, repair target,
+agent packet command, verify command, receipt command, artifact paths, and the
+advisory gate boundary. If no inputs exist, the step logs that no
+first-useful-action inputs were available, the summary shows the regeneration
+command, and CI pass/fail behavior is unchanged.
+
+See [First useful action workflow](FIRST_USEFUL_ACTION_WORKFLOW.md) for how
+developers, reviewers, and coding agents should read that summary, act on the
+selected action, verify static movement, and emit receipts.
+
+Generated CI also renders the first-run start-here packet. It first renders
+`target/ripr/reports/gap-decision-ledger.{json,md}` from
+`repo-exposure.json` when that snapshot exists, then runs `ripr first-pr --root
+.` with the gap ledger, first useful action, PR repair cards, agent packet, and
+gate decision paths. The command writes and uploads
+`target/ripr/reports/start-here.json` and
+`target/ripr/reports/start-here.md`. The job summary opens with this packet,
+showing status, top gap or no-action/blocked state, canonical gap identity,
+language/status, repair route, repair target, related test, static limit,
+verify command, receipt command, receipt state, next regeneration command,
+artifacts, and the gate authority boundary. If the packet is missing, the
+summary shows the exact `ripr first-pr` regeneration command and leaves CI
+pass/fail behavior unchanged.
+
+Generated CI also projects the PR review front panel when at least one explicit
+front-panel input artifact is already present. It runs
+`ripr pr-review front-panel --root .` with existing PR guidance, first useful
+action, assistant proof, assistant-loop health, PR evidence ledger, baseline
+delta, RIPR Zero status, gate decision, recommendation calibration, imported
+mutation calibration, coverage/grip frontier, and receipt inputs when those
+files exist, then writes and uploads
+`target/ripr/reports/pr-review-front-panel.json` and
+`target/ripr/reports/pr-review-front-panel.md` with the normal report packet.
+The job summary appends the PR review at-a-glance fields plus the Markdown
+report. If no inputs exist, the step logs that no PR review front-panel inputs
+were available and leaves CI pass/fail behavior unchanged.
+
+See [PR review front panel workflow](PR_REVIEW_FRONT_PANEL_WORKFLOW.md) for how
+reviewers, maintainers, developers, and coding agents should read the
+first-screen PR story, follow repair routes, inspect receipts, and preserve
+the advisory gate boundary.
+
+Generated CI also projects the report packet index when at least one indexed
+artifact is already present. It runs `ripr reports index --root .` with the
+explicit report, review, receipt, workflow, agent, pilot, and CI artifact
+directories, then writes and uploads `target/ripr/reports/index.json` and
+`target/ripr/reports/index.md` with the normal report packet. The job summary
+renders index status, available and missing expected counts, start-here path,
+gate authority path, missing surfaces, warning kinds, and the Markdown index.
+If no indexed artifacts exist, the step logs that no report-packet index
+inputs were available and leaves CI pass/fail behavior unchanged.
+See [Report packet index workflow](REPORT_PACKET_INDEX_WORKFLOW.md) for how to
+read the grouped packet map, regenerate missing surfaces, and preserve gate
+authority.
+
+For every configured gate mode, the generated workflow behavior is:
+
+1. capture active PR labels into `target/ci/labels.json`;
+2. render `target/ripr/review/comments.json` before gate evaluation;
+3. run `ripr gate evaluate` only when `RIPR_GATE_MODE` is set;
+4. run `ripr baseline diff` only when `RIPR_GATE_BASELINE` is set and
+   `gate-decision.json` exists;
+5. run `ripr zero status` only when `baseline-debt-delta.json` exists;
+6. render the at-a-glance gate section from `gate-decision.json`;
+7. render the baseline debt movement section from
+   `baseline-debt-delta.json` when present;
+8. render the RIPR Zero at-a-glance section from `ripr-zero-status.json` and
+   append `ripr-zero-status.md` when present;
+9. run `ripr pr-ledger record` on pull requests when `comments.json` exists;
+10. render the PR movement section from `pr-evidence-ledger.json` and append
+   `pr-evidence-ledger.md` when present;
+11. run `ripr assistant-loop proof` only when the required assistant-loop
+   artifacts exist;
+12. render the assistant proof section from `test-oracle-assistant-proof.json`
+   and append `test-oracle-assistant-proof.md` when present;
+13. run `ripr assistant-loop health` when `test-oracle-assistant-proof.json`
+   exists;
+14. render the assistant-loop-health section from `assistant-loop-health.json`
+   and append `assistant-loop-health.md` when present;
+15. run `ripr reports gap-ledger` from `repo-exposure.json` when present;
+16. run `ripr first-action` when explicit first-action inputs exist;
+17. render the First Useful Action section from `first-useful-action.json` and
+   append `first-useful-action.md` when present;
+18. run `ripr pr-review front-panel` when explicit front-panel inputs exist;
+19. run `ripr first-pr` to compose `start-here.{json,md}` from explicit
+   artifacts;
+20. render the start-here packet first in the job summary when present;
+21. render the PR review front-panel section from
+   `pr-review-front-panel.json` and append `pr-review-front-panel.md` when
+   present;
+22. run `ripr reports index` when explicit indexed artifacts exist;
+23. render the report-packet index section from `index.json` and append
+   `index.md` when present;
+24. append the detailed `gate-decision.md`, `baseline-debt-delta.md`, and
+   `ripr-zero-status.md` reports when present;
+25. upload gate, baseline delta, RIPR Zero, PR evidence ledger,
+   test-oracle assistant proof, assistant-loop health, first useful action, and
+   PR review front-panel plus start-here and report-packet index artifacts with
+   the normal `ripr-reports` artifact packet;
+26. fail only when the explicit gate mode returns `blocked` or `config_error`.
+
+The generated workflow reads the configured baseline for gate, delta, and RIPR
+Zero reports only. It must not run `ripr baseline update`, pass
+`--remove-resolved`, accept or synthesize `--adopt-new`, or write the configured
+baseline path. Baseline changes are repository changes that require a reviewed
+PR.
+
+Acknowledgeable policy:
+
+```text
+RIPR_GATE_MODE=acknowledgeable
+RIPR_GATE_BASELINE=
+```
+
+`acknowledgeable` requires a visible acknowledgement such as the `ripr-waive`
+label for policy-eligible findings. The finding stays in the gate decision; the
+label records an acknowledged outcome rather than hiding the recommendation.
+
+Baseline-aware policy:
+
+```text
+RIPR_GATE_MODE=baseline-check
+RIPR_GATE_BASELINE=.ripr/gate-baseline.json
+```
+
+`baseline-check` is for repos with an explicit checked-in baseline. Use it only
+after reviewing the baseline file; missing baseline input is reported as a
+configuration problem instead of being treated as clean evidence. When the
+baseline is readable and the gate decision is produced, generated CI also
+uploads `baseline-debt-delta.json` and `baseline-debt-delta.md` and summarizes
+still-present, resolved, new policy-eligible, acknowledged, suppressed, stale,
+invalid, and missing-input counts in the job summary. The delta report remains
+advisory movement evidence; `ripr gate evaluate` is still the pass/fail owner.
+When the baseline delta exists, generated CI also writes and uploads
+`ripr-zero-status.json` and `ripr-zero-status.md`, then summarizes RIPR 0 state,
+visible unresolved debt, metadata health, top debt area, and top repair route
+as advisory adoption progress.
+
+Calibrated gate:
+
+```text
+RIPR_GATE_MODE=calibrated-gate
+RIPR_GATE_BASELINE=.ripr/gate-baseline.json
+```
+
+`calibrated-gate` is the narrowest stricter mode. Use it only when the repo has
+reviewed baseline behavior and the available recommendation or imported
+mutation-calibration inputs support the same candidate class. Missing or
+ambiguous calibration stays visible as unknown confidence; it must not be
+treated as high confidence.
+
+The SARIF baseline policy implementation still lives in `cargo xtask`. The
+generated workflow above does not block pull requests by default; gate blocking
+requires an explicit `RIPR_GATE_MODE` configuration.
+
+See [Calibrated gate policy](CALIBRATED_GATE_POLICY.md) for the operating model
+covering modes, waivers, baseline inputs, calibration evidence, generated CI
+behavior, and static/runtime vocabulary boundaries.
+
+### Waiver And Label Workflows
+
+Use waiver labels when a team wants a visible PR-time acknowledgement, not when
+it wants to hide a finding. The default waiver label is `ripr-waive`, and the
+generated workflow already captures pull-request labels into
+`target/ci/labels.json` before running `ripr gate evaluate`.
+
+Label setup:
+
+```text
+Label: ripr-waive
+Meaning: acknowledge a soft RIPR static exposure finding for this PR
+Effect: changes an eligible blocking candidate into an acknowledged decision
+Scope: this PR only
+```
+
+In this repository, `.github/settings.yml` manages the label name, color, and
+description. In another repository using the generated workflow, create the
+same label before enabling `acknowledgeable` mode so reviewers do not have to
+guess which label the gate evaluator expects.
+
+Recommended acknowledgement workflow:
+
+1. Start with `RIPR_GATE_MODE=visible-only` until reviewers are familiar with
+   `gate-decision.md`.
+2. Move to `RIPR_GATE_MODE=acknowledgeable` when the team wants policy-eligible
+   gaps to require either a focused test or an explicit PR label.
+3. When the gate reports a policy-eligible gap, review the job summary,
+   `target/ripr/reports/gate-decision.md`, and the PR guidance packet.
+4. If the finding is acceptable for this PR, add `ripr-waive`.
+5. The generated workflow triggers on `labeled` and `unlabeled` pull-request
+   events, so adding the label reruns it. The next gate decision should say
+   `Decision: acknowledged`, list `ripr-waive`, and keep the candidate visible.
+6. If a focused test is added instead, remove `ripr-waive`; the `unlabeled`
+   event reruns the gate so the receipt records the current evidence without an
+   acknowledgement label. Any label change reruns the job, and the workflow's
+   concurrency group cancels the superseded run.
+
+The expected acknowledged summary looks like:
+
+```text
+Decision: acknowledged
+Mode: acknowledgeable
+Blocking: 0
+Acknowledged: 1
+
+Acknowledged:
+- src/pricing.rs:88 weakly_gripped - policy-eligible gap acknowledged by ripr-waive
+```
+
+The machine-readable report keeps the same fact trail:
+
+```json
+{
+  "status": "acknowledged",
+  "mode": "acknowledgeable",
+  "inputs": {
+    "labels": ["ripr-waive"],
+    "labels_json": "target/ci/labels.json"
+  },
+  "summary": {
+    "acknowledged": 1,
+    "blocking": 0
+  }
+}
+```
+
+Reviewers should be able to audit an acknowledgement from artifacts alone:
+
+- `target/ci/labels.json` records the PR labels observed by the workflow.
+- `target/ripr/reports/gate-decision.json` records the matching label and
+  candidate decision.
+- `target/ripr/reports/gate-decision.md` keeps the acknowledged finding in the
+  job summary.
+- `target/ripr/review/comments.json` keeps the underlying recommendation
+  packet when PR guidance was produced.
+
+Waivers and suppressions are separate controls:
+
+| Control | Where it lives | Use for | Visibility |
+| --- | --- | --- | --- |
+| `ripr-waive` | PR label | Accept this visible PR-time finding for this review. | The finding remains in gate decision JSON/Markdown as `acknowledged`. |
+| `.ripr/suppressions.toml` | Repository policy file | Record accepted debt or a durable exception before PR-time policy. | Suppressed/configured-off candidates cannot block and should be counted as suppressed or not applicable when present in inputs. |
+| Baseline | Checked-in gate baseline | Avoid punishing historical debt while identifying new gaps. | Baseline state remains policy evidence; it does not hide new policy-eligible findings. |
+
+Do not use `ripr-waive` as a substitute for adding a focused test when the
+recommendation is correct and the PR is still changing the relevant behavior.
+Do not add a suppression just to make one PR pass; suppressions are durable
+repository policy and should carry owner, reason, and review intent.
+
+### Gate Baseline Workflow
+
+Use a gate baseline when a repository wants to adopt RIPR policy without
+punishing historical behavioral test debt on every pull request. A baseline is
+a checkpoint of visible existing findings. It is not a suppression file, not a
+waiver label, and not evidence that the finding is acceptable forever.
+
+The full command-by-command adoption workflow lives in
+[Baseline ledger workflow](BASELINE_LEDGER_WORKFLOW.md). This section keeps the
+generated-CI summary and repository-variable shape close to the workflow
+reference.
+
+The adoption model is:
+
+```text
+show the full RIPR picture
+-> checkpoint existing policy-eligible gaps as baseline debt
+-> block or acknowledge only new policy-eligible gaps
+-> add focused tests
+-> remove resolved identities from the baseline
+-> move toward RIPR 0 under the configured scope
+```
+
+`RIPR 0` means there are no visible unresolved behavioral test-grip gaps under
+the configured scope and policy. It does not mean the test suite is perfect or
+that RIPR has runtime mutation confirmation.
+
+Recommended baseline creation workflow:
+
+1. Run the generated workflow with `RIPR_GATE_MODE=visible-only`.
+2. Download or inspect `target/ripr/reports/gate-decision.json` and
+   `target/ripr/reports/gate-decision.md`.
+3. Review the visible recommendations. Do not baseline malformed inputs,
+   suppressed findings, configured-off findings, or items the team plans to fix
+   in the same adoption PR.
+4. Create `.ripr/gate-baseline.json` from reviewed current findings.
+5. Commit the baseline in its own PR with the generated CI mode still
+   `visible-only` or `baseline-check`.
+6. Switch to `RIPR_GATE_MODE=baseline-check` only after the baseline PR is
+   reviewed and merged.
+
+Baseline ledger shape:
+
+```json
+{
+  "schema_version": "0.1",
+  "kind": "gate_baseline",
+  "reviewed": false,
+  "summary": {
+    "entries": 1
+  },
+  "entries": [
+    {
+      "identity": {
+        "seam_id": "8f7fa8644fd12280",
+        "source_id": "ripr-review-8f7fa8644fd12280"
+      },
+      "decision": "advisory",
+      "review": {
+        "reviewed": false,
+        "reason": "initial adoption baseline"
+      }
+    }
+  ]
+}
+```
+
+Use the stable identities already present in `gate-decision.json`. `ripr
+baseline create` checkpoints current advisory, acknowledged, and blocking
+decisions into a candidate file for review and refuses to overwrite an existing
+baseline unless `--force` is passed:
+
+```bash
+ripr baseline create \
+  --from target/ripr/reports/gate-decision.json \
+  --out target/ripr/reports/gate-baseline.candidate.json
+```
+
+Review that candidate before copying it into `.ripr/gate-baseline.json`.
+Baselining everything blindly makes the file less useful as a debt ledger.
+
+After the baseline is reviewed, compare it with current gate evidence to see
+debt movement before changing policy:
+
+```bash
+ripr baseline diff \
+  --baseline .ripr/gate-baseline.json \
+  --current target/ripr/reports/gate-decision.json \
+  --out target/ripr/reports/baseline-debt-delta.json \
+  --out-md target/ripr/reports/baseline-debt-delta.md
+```
+
+The delta report is advisory. It shows still-present baseline debt, resolved
+entries, new policy-eligible findings, acknowledged findings, suppressed
+findings, stale baseline entries, invalid baseline entries, and missing current
+inputs. Generated CI writes the same
+`target/ripr/reports/baseline-debt-delta.{json,md}` artifacts automatically
+when `RIPR_GATE_BASELINE` is set and a gate decision exists. `ripr gate
+evaluate` remains the pass/fail authority.
+
+Generated CI never adopts new baseline entries. It does not invoke
+`ripr baseline update`, it does not pass `--remove-resolved`, and it does not
+write `.ripr/gate-baseline.json`. New policy-eligible debt must stay visible as
+new debt until a maintainer repairs it, acknowledges it for the PR, or creates a
+separate reviewed baseline change.
+
+`ripr gate evaluate` indexes identities from the new `entries[].identity`
+ledger shape. For compatibility with existing fixtures and reviewed hand-built
+baselines, it also accepts identities from `decisions`, `comments`,
+`summary_only`, and `suppressed` arrays when those fields are present in the
+baseline file. For each entry, it indexes `seam_id`, `id`, and `dedupe_key`
+when present. A baseline file with none of those arrays, a JSON array, or a
+`kind` other than `gate_baseline` (or a `gate_baseline` without `entries`) is
+rejected as a `config_error` instead of acting as an empty baseline. Keep the
+baseline small and reviewable; do not check in an uninspected copy of every PR
+guidance artifact.
+
+Baseline review checklist:
+
+- Every entry came from current `gate-decision.json` or PR guidance evidence.
+- The entry represents existing debt, not a finding introduced by the adoption
+  PR.
+- The finding remains visible in summaries or artifacts after being baselined.
+- The baseline PR explains the configured scope and why blocking is not enabled
+  yet, if the repo is still in `visible-only`.
+- The baseline PR explains the adoption date, reviewed artifact source, and
+  owner for future refreshes.
+- The baseline file is checked in at the same path configured by
+  `RIPR_GATE_BASELINE`.
+
+After the baseline PR is reviewed, set repository variables:
+
+```text
+RIPR_GATE_MODE=baseline-check
+RIPR_GATE_BASELINE=.ripr/gate-baseline.json
+```
+
+Expected behavior:
+
+```text
+Existing baseline identity: visible and non-blocking
+New policy-eligible identity: blocking in baseline-check
+Missing or invalid baseline: config_error
+```
+
+Refresh the baseline after focused tests move static evidence. The safe refresh
+rule is remove identities that no longer appear in current gate output; do not
+add new identities during a shrink refresh. New identities should go through the
+normal review path as new policy-eligible debt.
+
+Refresh workflow:
+
+1. Add one or more focused tests.
+2. Rerun PR guidance and gate evaluation.
+3. Confirm the agent receipt or targeted-test outcome shows the expected static
+   movement when those artifacts are available.
+4. Compare the old `.ripr/gate-baseline.json` to the new
+   `gate-decision.json`.
+5. Remove baseline entries that no longer appear.
+6. Keep the gate summary visible so reviewers can see which debt was removed.
+
+Policy modes with a baseline:
+
+| Mode | Baseline role |
+| --- | --- |
+| `visible-only` | Baseline is optional context; findings stay advisory. |
+| `baseline-check` | Existing baseline identities stay visible and non-blocking; new policy-eligible identities can block. |
+| `calibrated-gate` | Baseline identity must be new, policy-eligible, and supported by calibration before it can block. |
+
+Baseline, waiver, and suppression controls have different jobs:
+
+| Control | Good use | Bad use |
+| --- | --- | --- |
+| Baseline | Mark reviewed historical debt so stricter modes can focus on new gaps. | Add every new blocking finding to avoid fixing or acknowledging it. |
+| `ripr-waive` | Acknowledge a visible finding for one PR. | Make a recurring gap disappear across future PRs. |
+| `.ripr/suppressions.toml` | Record durable accepted debt or configured-off policy with owner and reason. | Replace baseline review or PR acknowledgement for convenience. |
+
+Do not use a baseline to hide new findings. Do not move an uncomfortable
+recommendation from a PR into the baseline without review. If the team accepts
+one PR-time exception, use `ripr-waive`; if the team accepts durable debt, use
+the baseline or a reasoned suppression depending on whether the finding should
+remain part of the burn-down ledger.
+
+When moving from `baseline-check` to `calibrated-gate`, keep the same baseline
+discipline. Calibration can raise confidence for new, matching candidates; it
+does not make stale baseline entries stronger or turn missing calibration into a
+blocking signal.
+
+### Blocking Readiness
+
+Use [RIPR blocking readiness](BLOCKING_READINESS.md) before promoting a gate
+mode. The guide explains when to stay advisory, when to require `ripr-waive`,
+when a reviewed baseline is enough for `baseline-check`, and when
+`calibrated-gate` has enough local evidence to block. Its
+[Gate Adoption Checklist](BLOCKING_READINESS.md#gate-adoption-checklist) should
+be complete before a repository moves from visible evidence to optional
+blocking. Default generated CI still stays non-blocking unless
+`RIPR_GATE_MODE` is explicitly configured.
+
+The security workflow currently runs:
+
+```bash
+cargo-deny check advisories licenses bans sources
+```
+
+The coverage and Test Analytics workflows run on `ubuntu-latest`. Both lanes
+remain advisory, but release candidates need an observable green boundary; these
+lanes must not depend on self-hosted runner availability just to prove that the
+current workspace can produce coverage and JUnit artifacts. The jobs still run
+only on pull requests, pushes to `main`/`master`, and manual dispatches, and
+Codecov upload remains non-blocking.
+
+Future Clippy also runs on `ubuntu-latest` with installation and invocation
+pinned to Rust `1.95.0`. Selected lint findings remain advisory warnings. A
+missing component, compilation failure, failed log capture, or absent Cargo
+artifact/completion evidence fails that job instead of appearing as a completed
+scan. Its always-run summary and artifact retain the source SHA, run ID and
+attempt, requested toolchain, native Cargo and log-capture exits, and successful
+scan completion. The summary rejects evidence from another SHA, run, or attempt.
+This advisory lane has no new branch-protection requirement. Completion shows
+that the scan ran; planned lints still have the support/configuration limits
+recorded in [Clippy policy](CLIPPY_POLICY.md).
+
+It installs `cargo-deny` as a normal command-line binary before running the
+check, so self-hosted runners do not need Docker just to execute the security
+workflow. The job also installs the Rust toolchain because `cargo-deny` shells
+out to `cargo metadata` while evaluating the workspace. It uses `deny.toml` to
+enforce RustSec advisories, license policy, banned crates, and approved
+dependency sources. Duplicate dependency findings are warnings while the
+`ra_ap_syntax` dependency graph is being baselined.
+
+Pull requests also run GitHub Dependency Review for high-severity vulnerability
+alerts and denied license families. Dependency Graph is enabled for the
+repository, so Dependency Review is a blocking security gate.
+
+## GitHub Actions Runtime Policy
+
+GitHub-hosted action majors should use Node-24-backed releases where official
+releases exist. `cargo xtask check-workflows` rejects old action refs such as
+`actions/checkout@v4`, `actions/setup-node@v4`, artifact v4 actions, and
+`codecov/codecov-action@v4`.
+
+`actions/dependency-review-action@v4` is temporarily allowlisted in
+`policy/workflow_action_runtime_allowlist.txt` because the official Dependency
+Review action still declares a Node 20 runtime and no Node-24-backed major is
+available. Keep Dependency Review enabled until a supported replacement exists.
+
+The same cargo-deny check can be run locally with:
+
+```bash
+cargo xtask check-supply-chain
+```
+
+Dependabot is configured in `.github/dependabot.yml` for Cargo dependencies,
+the VS Code extension npm package, and GitHub Actions. Routine version-update
+PRs are limited to minor and patch updates. Major updates should be deliberate,
+scoped PRs because they often change toolchain, release, or runtime behavior.
+Dependabot PRs are not auto-merged; they must pass the normal CI, coverage,
+security, and `xtask` checks before merge.
+
+GitHub-hosted security settings are tracked in
+[Repository settings](REPO_SETTINGS.md). Dependency Graph, Dependabot alerts,
+Dependabot security updates, secret scanning, push protection, and private
+vulnerability reporting are settings, not workflow files. Keep that document
+updated when repository settings change.
+
+Release workflows handle extension publishing and server binary releases.
+
+## Principles
+
+- Fast gates first: formatting, check, clippy, and tests should fail early.
+- Packaging gates matter: crates.io packaging catches missing files and metadata
+  drift.
+- Extension gates stay separate: Node setup should not slow Rust-only PRs.
+- Policy gates should be mechanical and allowlisted while existing debt is paid
+  down.
+- Rust-first file policy keeps repo automation in `xtask` instead of ad hoc
+  scripts.
+- Blocking `ripr` findings remain opt-in. Use `cargo xtask sarif-policy` with
+  an explicit baseline and failure mode only after the repository has adopted
+  that gate.
+- CI changes require documentation updates.
+
+## Future Improvements
+
+Planned CI work:
+
+- cache Cargo and npm dependencies without hiding stale-lockfile failures
+- decide whether CI should call `check-pr` directly or keep the current
+  explicit workflow steps
+- add markdown/link checks for docs-heavy PRs
+- add README capability snapshot consistency checks
+- add README state and Markdown link checks
+- ratchet Codecov project and patch status requirements after the first stable
+  coverage baseline
+- decide when duplicate dependency findings should become blocking after the
+  cargo-deny baseline is stable
+- add SARIF schema validation for generated artifacts
+- decide when to promote the opt-in SARIF baseline policy into repository
+  workflows
+
+## Merge Criteria
+
+A branch is ready to merge when:
+
+- required gates for touched areas pass on a committed tree
+- the branch is current enough for repository freshness policy, or a maintainer
+  has approved an explicit freshness exception using
+  [Merge freshness and watcher policy](MERGE_WATCH_POLICY.md)
+- docs and changelog are updated for user-visible changes
+- static output language rules are preserved
+- spec-test-code traceability is present for behavior changes
+
+Local `--allow-dirty` packaging checks are useful during review but are not a
+substitute for plain package and publish dry-run checks on the final committed
+branch.
+# Droid Review Rules
+
+Droid review output is an inter-agent repair queue and inspection record.
+
+## Review target
+
+Review changed behavior against the repository artifacts:
+
+- `AGENTS.md`
+- `docs/ENGINEERING.md`
+- `docs/ARCHITECTURE.md`
+- `docs/PR_AUTOMATION.md`
+- `docs/SCOPED_PR_CONTRACT.md`
+- `docs/CI.md`
+- `policy/workflow_allowlist.txt`
+
+## Clean review requirement
+
+Do not emit a naked `LGTM`.
+
+If no actionable findings are emitted, write an inspection record with:
+
+- inspected surfaces;
+- checks performed;
+- why no comments were emitted;
+- residual risk;
+- validation signal.
+
+Prefer this wording:
+
+```text
+No actionable findings emitted.
+
+Inspected surfaces:
+Checks performed:
+Why no comments:
+Residual risk:
+Validation signal:
+  Observed:
+  Reported:
+  Not verified:
+```
+
+Avoid vague residual-risk labels such as `minimal`, `low risk`, or `safe`
+unless they are tied to concrete observed evidence.
+
+## Finding requirement
+
+Each finding should help another coding agent fix the PR.
+
+Use:
+
+```text
+[P0|P1|P2] title
+
+Failure mode:
+Why here:
+Fix direction:
+Validation:
+Confidence:
+```
+
+## Repair-ready comments
+
+Each finding should preserve enough context for a follow-up coding agent to fix the issue without repeating the research.
+
+* Include failure mode, repo invariant, fix direction, validation, and confidence.
+* Do not optimize for short comments at the expense of repair value.
+* Preserve useful repo research in the comment or summary.
+* If Droid inspected specs, policies, or in-repo docs, name the source.
+* Name likely files, tests, policies, and generated outputs involved.
+* Include validation commands that would prove the repair.
+
+Treat every actionable comment as a standalone repair packet. A follow-up agent
+should be able to identify what can fail, why the repo cares, where to edit,
+and how to verify the fix without reconstructing Droid's research.
+
+## Suggested fix policy
+
+Use GitHub suggestion blocks only for high-confidence local edits that should
+apply cleanly.
+
+Do not use suggestion blocks for cross-file, policy, fixture, golden,
+traceability, schema, or design-dependent changes. Use an ordered repair plan
+instead:
+
+1. Name the likely files, tests, policies, and generated outputs involved.
+2. Describe the smallest safe repair steps.
+3. Include validation commands.
+
+## Evidence provenance
+
+Distinguish observed evidence from reported evidence.
+
+* `Observed:` for CI checks, files, logs, or artifacts Droid directly inspected.
+* `Reported:` for claims in PR body, commit message, or comments.
+* `Not verified:` for validation Droid did not run or observe.
+
+Do not treat PR-body claims as independently verified facts.
+
+## Notification hygiene
+
+Droid review comments are an inter-agent repair queue. They should not notify humans unless explicitly requested.
+
+* Do not @mention users, teams, bots, or organizations.
+* Do not refer to the PR author by username.
+* Avoid second-person instructions.
+* Do not write `cc @username`, `asking @username`, or `Droid finished @username's task`.
+* Avoid direct author-directed wording such as `you should`.
+* Use neutral references such as `this PR`, `this diff`, `the changed code`, `the follow-up agent`, and `the next repair pass`.
+* If the Factory wrapper adds a mention outside Droid's review body, do not repeat it.
+
+## Repo priorities
+
+Prioritize:
+
+* product contract drift;
+* static-output language drift;
+* missing evidence package;
+* output/schema/golden drift;
+* workflow/secret/policy failures;
+* Rust panic-family shortcuts;
+* architecture seam violations;
+* release or extension packaging regressions.
+
+Do not prioritize style-only or formatting-only issues.
+# Workflow run-block exceptions.
+#
+# Format:
+# path|max_non_empty_lines|reason
+#
+# Workflows should orchestrate Cargo, xtask, npm, and release actions rather
+# than embed complex shell programs. This file allows known workflow blocks
+# while keeping the budget visible.
+#
+# Local composite actions (.github/actions/*/action.yml) run inside the calling
+# workflow, so their run blocks carry the same visible budget (#3841).
+
+.github/actions/ci-scratch-lease/action.yml|86|Shared self-hosted scratch ownership authority (#3841): acquire/release a kernel flock lease per job, self-check it at reclaim and release, and reclaim only terminal trees this repository owns while holding that lease. It must run before the Rust toolchain exists and on the toolchain-free scheduled GC lane, so it cannot be an xtask command; the executed behavior harness lives in tools/repo-policy/src/ci_scratch/tests.rs.
+.github/actions/ripr-check/action.yml|7|Adoption composite action installs ripr when missing and runs one ripr check command (#2626).
+
+.github/workflows/badge-endpoints.yml|1|Badge endpoint refresh delegates generation to cargo xtask and opens a PR.
+.github/workflows/ci.yml|38|#4987: bounded event-head Rust surface detection; remaining CI blocks call direct Cargo or npm commands.
+.github/workflows/coverage.yml|1|Coverage workflow keeps each run block to one coverage command.
+.github/workflows/droid-security-scan.yml|20|Droid scheduled security scan writes local Factory BYOK settings, then uses reusable actions.
+.github/workflows/droid.yml|20|Droid tag-response workflow writes local Factory BYOK settings, then uses reusable actions.
+.github/workflows/dx-scoreboard.yml|1|Nightly developer-experience scoreboard delegates corpus measurement, ingest, and the regression gate to one cargo xtask dx-scoreboard command.
+.github/workflows/first-run-install.yml|4|First-run install lane: one-command walk and ungated record steps, then one folded cargo xtask dx-scoreboard gate command.
+.github/workflows/future-clippy.yml|17|#7307: bounded advisory scan captures native Cargo/tee statuses and requires fresh Cargo artifact/completion evidence; the repo-policy harness executes the production blocks.
+.github/workflows/npm-launcher.yml|1|Script-free npm launcher workflow delegates behavior and package-content proof to two single-command npm invocations.
+.github/workflows/pilot-ranking.yml|4|Pilot ranking answer key lane: one-command build, fetch and score steps, then one folded cargo xtask dx-scoreboard gate command.
+.github/workflows/pr-staleness-watchdog.yml|52|Scheduled watchdog finds open PR heads with no Ripr Rust Small Result check run on the head (#4937) and dispatches the workflow within a per-run cap; the sweep is pure gh api orchestration with its audit table, not product logic.
+.github/workflows/printed-command-paste.yml|1|Printed-command paste lane keeps each run block to one shell command; the harness and its verdict live in the printed_command_paste test.
+.github/workflows/public-proof.yml|9|Public proof drift lane: one cargo xtask public-proof --check command, then a failure-only step that copies its output into the job summary.
+.github/workflows/publish-extension.yml|20|Release workflow includes marketplace packaging and publishing orchestration.
+.github/workflows/python-wheel-qualification.yml|194|Read-only #4490 package rehearsal retains exact native and PEP 440 identities, wheel metadata/RECORD and two executable-integrity negative controls, plus isolated pip/uv Python preview journeys; static adapter and workflow-shape policy remains in Rust xtask and the workflow has no publication authority.
+.github/workflows/release-server-binaries.yml|1|Release workflow delegates server archive packaging, manifest generation, and release upload branching to Rust xtask commands.
+.github/workflows/routed-rust.yml|63|Routed Rust selects one trusted self-hosted runner or the hosted fallback, preserves normalized result semantics, and delegates implementation proof to the reusable Rust gate workflow.
+.github/workflows/rust-corpus.yml|4|Shared Rust corpus lane: one-command build, fetch and smoke steps, then one folded cargo xtask dx-scoreboard gate command.
+.github/workflows/rust-gates.yml|31|Reusable Rust gate implementation preserves scratch tempfail fallback, required proof, bounded PR evidence, and failure-only ordinary artifacts.
+.github/workflows/scratch-gc.yml|3|Scheduled scratch-GC lane reclaims terminal scratch through the shared ci-scratch-lease action (#3841), then trims sccache, reports disk, and keeps the hard-fail guard on a timer so disk recovery does not depend on PR traffic (#1028).
+.github/workflows/security.yml|1|Security workflow installs cargo-deny as a normal binary, then runs the standard cargo-deny command without requiring Docker.
+.github/workflows/server-archive-qualification.yml|90|Exact measured largest run block retains ruleset diagnostics plus five-target producer, explicit per-target archive-readback evidence, and receipt-v3 aggregation; credential-free qualification delegates payload and archive construction to Rust xtask commands.
+.github/workflows/source-of-truth.yml|15|Advisory source-of-truth workflow runs two xtask doc checks, publishes the bounded spec maintenance digest, and annotates an instrument failure as a failed advisory observation (#3467).
+.github/workflows/test-analytics.yml|1|Test analytics workflow keeps each run block to one cargo or echo command.
+.github/workflows/ub-review.yml|5|Pinned advisory action plus native receipt reporter tests and bounded consumer summary with native-status-preserving failure diagnostic (#7903); no proof execution or limit change.
+.github/workflows/windows-advisory.yml|437|Advisory Windows log-to-verdict orchestration plus bounded exact-head native PowerShell selector consumer (#5252/#5581): inline stdlib Win32 process ownership is confined to Actions, captures actual CLI producer/source and real printed-command replay; exclusive same-volume shared-cache producer/staging ownership with selected-alias cleanup, immutable handle and synthetic allocation controls prevent payload copies, and has no dependency-change, credential, registry or release authority; outcomes remain advisory and missing evidence fails.
+.github/workflows/windows-packaged-qualification.yml|50|On-demand exact-candidate Windows package and VSIX rehearsal must retain identity checks, isolated CLI/editor journeys, and Actions-only receipts in one workflow.
+.github/workflows/python-wheelhouse-qualification.yml|50|On-demand local-wheelhouse pip/uv qualification writes isolation facts and a fail-closed aggregate; credential-free, artifact-only, no publication.
+.github/workflows/zed-extension.yml|1|Zed extension workflow keeps each run block to one Cargo command.

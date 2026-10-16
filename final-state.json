@@ -1,0 +1,11 @@
+{
+  "reviewed_head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+  "pr_head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+  "draft": true,
+  "merged": false,
+  "base_sha": "e660a99480dc13a4ed93b131042d11506fd484b6",
+  "inline_review_threads": 0,
+  "review_tree_status": "",
+  "binary_version": "ripr 0.11.0 (67dc5af9a15590fc8476d09217232831a0009952)",
+  "binary_sha256": "8c8fd43cd63323e92f65440a2264ef0793a6fc307c617b83f1d1a49cc4ac9b9c"
+}

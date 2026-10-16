@@ -1,0 +1,55 @@
+   Compiling zerocopy v0.8.57
+   Compiling bitflags v2.13.2
+   Compiling errno v0.3.14
+   Compiling mio v1.2.3
+   Compiling signal-hook-registry v1.4.8
+   Compiling getrandom v0.3.4
+   Compiling oxc_regular_expression v0.130.0
+   Compiling tokio v1.53.2
+   Compiling oxc_syntax v0.130.0
+   Compiling rustix v1.1.5
+   Compiling oxc_ast v0.130.0
+   Compiling rand_core v0.9.5
+   Compiling linux-raw-sys v0.12.1
+   Compiling rmcp v3.5.1
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.3.1
+   Compiling rand v0.8.8
+   Compiling tokio-util v0.7.20
+   Compiling phf_generator v0.11.3
+   Compiling tokio-stream v0.1.19
+   Compiling phf_codegen v0.11.3
+   Compiling unicode_names2_generator v1.3.0
+   Compiling rustpython-parser v0.4.0
+   Compiling ls-types v0.0.6
+   Compiling fastrand v2.5.0
+   Compiling unicode_names2 v1.3.0
+   Compiling tempfile v3.27.0
+   Compiling oxc_ecmascript v0.130.0
+   Compiling oxc_parser v0.130.0
+   Compiling tower-lsp-server v0.23.0
+   Compiling wait-timeout v0.2.1
+   Compiling quick-error v1.2.3
+   Compiling fnv v1.0.7
+   Compiling bit-vec v0.8.0
+   Compiling rusty-fork v0.3.1
+   Compiling bit-set v0.8.0
+   Compiling rand_chacha v0.9.0
+   Compiling rand v0.9.5
+   Compiling ripr v0.11.0 (/workspace/review-8229/crates/ripr)
+   Compiling rand_xorshift v0.4.0
+   Compiling parking_lot v0.12.5
+   Compiling serial_test_derive v4.0.1
+   Compiling unarray v0.1.4
+   Compiling regex-syntax v0.8.11
+   Compiling serial_test v4.0.1
+   Compiling proptest v1.11.0
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 45s
+     Running tests/cli_smoke.rs (/workspace/review-8229-target/debug/deps/cli_smoke-d8dac6927274a71e)
+
+running 2 tests
+test partial_preview_disclosure::python_partial_preview_claims_follow_selected_files ... ok
+test partial_preview_disclosure::typescript_partial_preview_claims_follow_selected_files ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 532 filtered out; finished in 0.21s
+

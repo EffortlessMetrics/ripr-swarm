@@ -1,0 +1,11 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running tests/cli_smoke.rs (/workspace/review-8229-target/debug/deps/cli_smoke-d8dac6927274a71e)
+
+running 4 tests
+test unsupported_check_exit::check_json_malformed_options_remain_empty_exit_two ... ok
+test unsupported_check_exit::check_discovery_names_unsupported_and_partial_exits ... ok
+test unsupported_check_exit::unsupported_check_keeps_rendered_formats_and_repo_scope ... ok
+test unsupported_check_exit::check_json_outcome_exit_preserves_subject_and_coverage ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 530 filtered out; finished in 0.25s
+

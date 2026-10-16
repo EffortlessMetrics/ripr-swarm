@@ -1,0 +1,170 @@
+[
+  {
+    "name": "final-partial-cli",
+    "argv": [
+      "/workspace/.cargo/bin/cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--test",
+      "cli_smoke",
+      "partial_preview_disclosure"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 27.703,
+    "head": "67dc5af9a15590fc8476d09217232831a0009952"
+  },
+  {
+    "name": "final-exit-cli",
+    "argv": [
+      "/workspace/.cargo/bin/cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--test",
+      "cli_smoke",
+      "unsupported_check_exit"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.403,
+    "head": "67dc5af9a15590fc8476d09217232831a0009952"
+  },
+  {
+    "name": "final-source-admission-cli",
+    "argv": [
+      "/workspace/.cargo/bin/cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--test",
+      "cli_smoke",
+      "python_source_admission"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 4.813,
+    "head": "67dc5af9a15590fc8476d09217232831a0009952"
+  },
+  {
+    "name": "final-byte-budget-cli",
+    "argv": [
+      "/workspace/.cargo/bin/cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--test",
+      "cli_smoke",
+      "findings_byte_budget"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.368,
+    "head": "67dc5af9a15590fc8476d09217232831a0009952"
+  },
+  {
+    "name": "final-check-fast",
+    "argv": [
+      "/workspace/.cargo/bin/cargo",
+      "xtask",
+      "check-fast"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 172.083,
+    "head": "67dc5af9a15590fc8476d09217232831a0009952"
+  },
+  {
+    "name": "final-precommit",
+    "argv": [
+      "/workspace/.cargo/bin/cargo",
+      "xtask",
+      "precommit"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 245.032,
+    "head": "67dc5af9a15590fc8476d09217232831a0009952"
+  },
+  {
+    "name": "fixture-boundary_gap",
+    "argv": [
+      "/workspace/.cargo/bin/cargo",
+      "xtask",
+      "fixtures",
+      "boundary_gap"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 90.073,
+    "head": "67dc5af9a15590fc8476d09217232831a0009952"
+  },
+  {
+    "name": "fixture-python_boundary_gap",
+    "argv": [
+      "/workspace/.cargo/bin/cargo",
+      "xtask",
+      "fixtures",
+      "python_boundary_gap"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.353,
+    "head": "67dc5af9a15590fc8476d09217232831a0009952"
+  },
+  {
+    "name": "fixture-typescript_boundary_gap",
+    "argv": [
+      "/workspace/.cargo/bin/cargo",
+      "xtask",
+      "fixtures",
+      "typescript_boundary_gap"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.341,
+    "head": "67dc5af9a15590fc8476d09217232831a0009952"
+  },
+  {
+    "name": "fixture-python_disabled",
+    "argv": [
+      "/workspace/.cargo/bin/cargo",
+      "xtask",
+      "fixtures",
+      "python_disabled"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.318,
+    "head": "67dc5af9a15590fc8476d09217232831a0009952"
+  },
+  {
+    "name": "fixture-typescript_disabled",
+    "argv": [
+      "/workspace/.cargo/bin/cargo",
+      "xtask",
+      "fixtures",
+      "typescript_disabled"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.322,
+    "head": "67dc5af9a15590fc8476d09217232831a0009952"
+  },
+  {
+    "name": "fixture-typescript_parse_error_unsupported_syntax",
+    "argv": [
+      "/workspace/.cargo/bin/cargo",
+      "xtask",
+      "fixtures",
+      "typescript_parse_error_unsupported_syntax"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.338,
+    "head": "67dc5af9a15590fc8476d09217232831a0009952"
+  },
+  {
+    "name": "final-traceability",
+    "argv": [
+      "/workspace/.cargo/bin/cargo",
+      "xtask",
+      "check-traceability"
+    ],
+    "exit": 0,
+    "head": "67dc5af9a15590fc8476d09217232831a0009952"
+  }
+]

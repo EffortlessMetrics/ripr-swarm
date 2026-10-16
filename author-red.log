@@ -1,0 +1,55 @@
+   Compiling rand_chacha v0.3.1
+   Compiling errno v0.3.14
+   Compiling mio v1.2.3
+   Compiling getrandom v0.3.4
+   Compiling signal-hook-registry v1.4.8
+   Compiling rand_core v0.9.5
+   Compiling rand v0.8.8
+   Compiling tokio v1.53.2
+   Compiling tempfile v3.27.0
+   Compiling wait-timeout v0.2.1
+   Compiling rusty-fork v0.3.1
+   Compiling rand_chacha v0.9.0
+   Compiling phf_generator v0.11.3
+   Compiling rand_xorshift v0.4.0
+   Compiling rand v0.9.5
+   Compiling phf_codegen v0.11.3
+   Compiling parking_lot v0.12.5
+   Compiling unicode_names2_generator v1.3.0
+   Compiling rustpython-parser v0.4.0
+   Compiling proptest v1.11.0
+   Compiling unicode_names2 v1.3.0
+   Compiling serial_test v4.0.1
+   Compiling tokio-util v0.7.20
+   Compiling tokio-stream v0.1.19
+   Compiling rmcp v3.5.1
+   Compiling tower-lsp-server v0.23.0
+   Compiling ripr v0.11.0 (/workspace/8210-repair/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 44s
+     Running tests/cli_smoke.rs (/workspace/ripr-swarm/target/debug/deps/cli_smoke-d8dac6927274a71e)
+
+running 2 tests
+test partial_preview_disclosure::python_partial_preview_claims_follow_selected_files ... FAILED
+test partial_preview_disclosure::typescript_partial_preview_claims_follow_selected_files ... FAILED
+
+failures:
+
+---- partial_preview_disclosure::python_partial_preview_claims_follow_selected_files stdout ----
+
+thread 'partial_preview_disclosure::python_partial_preview_claims_follow_selected_files' (7078) panicked at crates/ripr/tests/cli_smoke/partial_preview_disclosure.rs:146:13:
+python/enabled=true/budget=1: omitted preview files must not be advertised as analyzed: Some([Object {"analyzed": Bool(true), "category": String("preview_language_advisory"), "enabled": Bool(true), "file_count": Number(2), "language": String("python"), "sample_paths": Array [String("src/discount.py"), String("src/extra.py")], "why": String("preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean")}])
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- partial_preview_disclosure::typescript_partial_preview_claims_follow_selected_files stdout ----
+
+thread 'partial_preview_disclosure::typescript_partial_preview_claims_follow_selected_files' (7079) panicked at crates/ripr/tests/cli_smoke/partial_preview_disclosure.rs:146:13:
+typescript/enabled=true/budget=1: omitted preview files must not be advertised as analyzed: Some([Object {"analyzed": Bool(true), "category": String("preview_language_advisory"), "enabled": Bool(true), "file_count": Number(2), "language": String("typescript"), "sample_paths": Array [String("src/discount.ts"), String("src/extra.ts")], "why": String("preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean")}])
+
+
+failures:
+    partial_preview_disclosure::python_partial_preview_claims_follow_selected_files
+    partial_preview_disclosure::typescript_partial_preview_claims_follow_selected_files
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 532 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `-p ripr --test cli_smoke`

@@ -1,0 +1,59 @@
+{
+  "head": "67dc5af9a15590fc8476d09217232831a0009952",
+  "commands": [
+    {
+      "argv": [
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "ripr",
+        "--bin",
+        "ripr"
+      ],
+      "exit": 0,
+      "log": "build.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--test",
+        "cli_smoke",
+        "partial_preview_disclosure"
+      ],
+      "exit": 0,
+      "passed": 2,
+      "filtered_out": 532,
+      "log": "partial-tests.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--test",
+        "cli_smoke",
+        "unsupported_check_exit"
+      ],
+      "exit": 0,
+      "passed": 4,
+      "filtered_out": 530,
+      "log": "unsupported-tests.log"
+    },
+    {
+      "argv": [
+        "python",
+        "native-review.py"
+      ],
+      "exit": 0,
+      "native_invocations": 24,
+      "log": "native-review.log"
+    }
+  ]
+}

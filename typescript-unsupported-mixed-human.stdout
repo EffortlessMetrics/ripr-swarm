@@ -1,0 +1,42 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: /workspace/review-8229-evidence/case-typescript
+config: /workspace/review-8229-evidence/case-typescript/ripr.toml
+
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: rust = 1, typescript = 1
+
+Analysis outcome: the input is not supported (analysis incomplete; unsupported_input)
+  The 1 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
+  Limitation: the diff could not be parsed during parsing the diff (malformed_diff at diff_parse); recovery: retry — Re-run the analysis with the complete diff stream.
+  Limitation: the diff could not be parsed during parsing the diff (malformed_diff at diff_parse); file: src/discount.ts; affected items: 1; recovery: retry — A two-way hunk has invalid ranges or its body does not match the declared old/new line counts. Obtain the complete valid unified diff and re-run; retained changed lines are advisory only.
+
+Start here:
+  State: a test gap to inspect or repair (top_gap)
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  File: ./src/lib.rs:2
+  Static exposure: weak (weakly_exposed, warning, confidence 0.92)
+  Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
+  Canonical gap: gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold
+  Changed behavior: amount >= discount_threshold
+  Missing discriminator: amount == discount_threshold
+  Related test (1 of 2 matched rows): tests/pricing.rs:4 below_threshold_has_no_discount (no test input reaches `amount == discount_threshold`)
+  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
+  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
+    - reach yes: Related tests appear to reach discounted_total: below_threshold_has_no_discount, far_above_threshold_discounts
+    - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
+    - 12 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root /workspace/review-8229-evidence/case-typescript --diff /workspace/review-8229-evidence/case-typescript/change.patch --mode fast probe:src_lib.rs:predicate:c80557eb
+  ripr context --root /workspace/review-8229-evidence/case-typescript --diff /workspace/review-8229-evidence/case-typescript/change.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+Write a test for it:
+  ripr agent stub --root /workspace/review-8229-evidence/case-typescript --at src/lib.rs:2 --kind predicate
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

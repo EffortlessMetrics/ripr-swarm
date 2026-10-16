@@ -1,0 +1,92 @@
+{
+  "file_fact_cache_schema_version": "1.41",
+  "analyzer_version": "0.11.0+67dc5af9a15590fc8476d09217232831a0009952",
+  "file_path": "src/lib.rs",
+  "content_hash": "35d4be2fef79452c",
+  "file_facts": {
+    "path": "src/lib.rs",
+    "functions": [
+      {
+        "id": "src/lib.rs::discounted_total",
+        "name": "discounted_total",
+        "file": "src/lib.rs",
+        "start_line": 1,
+        "end_line": 7,
+        "body": {
+          "start": 4,
+          "len": 160
+        },
+        "calls": [
+          {
+            "line": 1,
+            "name": "discounted_total",
+            "text": "fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {"
+          }
+        ],
+        "returns": [],
+        "literals": [
+          {
+            "line": 3,
+            "value": "10"
+          }
+        ],
+        "source_role": "production",
+        "attrs": [],
+        "impl_attrs": [],
+        "nested_fn_names": [],
+        "let_bindings": [],
+        "item": {
+          "container": {
+            "kind": "free"
+          },
+          "has_self_param": false,
+          "has_body": true
+        },
+        "impl_context": "Free"
+      }
+    ],
+    "tests": [],
+    "returns": [],
+    "literals": [
+      {
+        "line": 3,
+        "value": "10"
+      }
+    ],
+    "probe_shapes": [
+      {
+        "start_line": 2,
+        "end_line": 2,
+        "start_byte": 78,
+        "end_byte": 106,
+        "kind": "predicate",
+        "text": {
+          "start": 78,
+          "len": 28
+        }
+      }
+    ],
+    "used_lexical_fallback": false,
+    "module_declarations": [],
+    "unresolved_property_macros": [],
+    "source": "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n",
+    "item_scopes": {
+      "fns": [
+        {
+          "line": 1,
+          "name": "discounted_total",
+          "item": "TopLevel",
+          "local_use": false,
+          "deferred_code": false,
+          "cfg": false,
+          "direct_calls": [],
+          "bound_names": []
+        }
+      ]
+    },
+    "macro_candidates": {
+      "Names": []
+    }
+  },
+  "payload_digest": "sha256:0166df3881cbc5227198a3df08becb83a2b4e3b58403e44282d639beffc9fd21"
+}

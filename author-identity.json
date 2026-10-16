@@ -1,0 +1,100 @@
+{
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "basis": "d08c77d144c016078364fcc1fcf2fa593d21cefc",
+  "head": "67dc5af9a15590fc8476d09217232831a0009952",
+  "tree": "87daa9ea61cb717b743733e0734346702573e001",
+  "observed_main": "e660a99480dc13a4ed93b131042d11506fd484b6",
+  "timestamp_utc": "2026-10-16T06:26:24.571950+00:00",
+  "baseline_commands": [
+    {
+      "command": "cargo xtask worktree doctor",
+      "exit": 0
+    },
+    {
+      "command": "cargo xtask check-fast",
+      "exit": 0,
+      "selected_paths": 0,
+      "gates": 6
+    },
+    {
+      "command": "cargo check --locked -p ripr --all-targets",
+      "exit": 0
+    }
+  ],
+  "red": {
+    "cargo_exit": 101,
+    "intended_failures": 2,
+    "detail": "Both real CLI tests reached the literal omitted-preview advisory assertion before production repair."
+  },
+  "excluded_shaping_failure": {
+    "log": "green.log",
+    "exit": 101,
+    "detail": "After repair, budget2 reached a wrong test expectation for selected-file order. Corrected literal order to native Rust-first; no product behavior was changed to satisfy it. Formatting tail overlap makes this shaping attempt unsuitable for final proof."
+  },
+  "environment": {
+    "platform": "Linux x86_64",
+    "rustc": "1.95.0 (59807616e 2026-04-14)",
+    "RUSTUP_HOME": "/workspace/.rustup",
+    "CARGO_HOME": "/workspace/.cargo",
+    "CARGO_TARGET_DIR": "/workspace/ripr-swarm/target",
+    "cargo": "/workspace/.cargo/bin/cargo",
+    "features": "default"
+  },
+  "binaries": {
+    "base-ripr": {
+      "source": "d08c77d144c016078364fcc1fcf2fa593d21cefc",
+      "sha256": "73441c38399894fd6c21f9dd1893d4eb90505b54f509033233afac781d29591c",
+      "bytes": 218196904,
+      "retained_local_path": "/workspace/scratch/8210-proof/base-ripr",
+      "uploaded": false
+    },
+    "final-ripr": {
+      "source": "451d7b92a9d3c402d9d21f2e9ce37ec8bd1f11fc",
+      "sha256": "da46e82febe55b8715025206e54bbd893d5b26c4d700ef553b0c4efc52c78435",
+      "bytes": 219026256,
+      "retained_local_path": "/workspace/scratch/8210-proof/final-ripr",
+      "uploaded": false
+    },
+    "67dc-ripr": {
+      "source": "67dc5af9a15590fc8476d09217232831a0009952",
+      "sha256": "285539d6728ca3e2b50a14d348e72a8e4287db2a26d4d6028090a7467fe35398",
+      "bytes": 219025288,
+      "retained_local_path": "/workspace/scratch/8210-proof/67dc-ripr",
+      "uploaded": false
+    }
+  },
+  "final_focused_tests": {
+    "partition": 2,
+    "unsupported_check_exit": 4,
+    "python_source_admission": 11,
+    "findings_byte_budget": 2
+  },
+  "native_comparison": {
+    "invocations": 70,
+    "unaffected_byte_equal_pairs": 29,
+    "advisory_only_JSON_human_pairs": 4,
+    "javascript_controls": 4
+  },
+  "final_check_fast": {
+    "exit": 0,
+    "ran": 14,
+    "skipped": [
+      "check-fixture-contracts"
+    ],
+    "selector_paths": 7,
+    "selector_merge_base": "d08c77d144c016078364fcc1fcf2fa593d21cefc"
+  },
+  "final_precommit": {
+    "exit": 0
+  },
+  "named_fixtures": 6,
+  "limits": [
+    "No full workspace/golden suite, native Windows, nondefault-feature execution, hosted integration or fanout qualification claimed.",
+    "451d receipts are superseded historical shaping evidence. Only final validation-receipt and final native-compare-receipt qualify 67dc.",
+    "Perl supplied-packet scope is deliberately unchanged.",
+    "The original audit evidence commit 8c43a954db38536d85fd7827add8ec2f5074949e supplies the fixed native-comparison cases."
+  ],
+  "final_traceability": {
+    "exit": 0
+  }
+}

@@ -1,0 +1,273 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "/workspace/review-8229-evidence/case-python",
+  "config_path": "/workspace/review-8229-evidence/case-python/ripr.toml",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":1,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1},{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": false,
+    "outcome": {"schema_version":"0.1","kind":"partial_with_limitations","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:6865f76b1f82dc2a","base_revision":null,"input_identity":"sha256:ee28a1c1ced3be260c85ea043d77faaf30a3249c69d285c5dbbccb61e25f4db6","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":3,"changed_line_count":6,"candidate_line_count":2,"probe_count":2,"finding_count":2},"limitations":[{"kind":"diff_scope_oversized","producer_stage":"analysis_pipeline","path":null,"affected_items":2,"bounded_detail":"The run analyzed 4 changed line(s) and left at least 2 changed line(s) outside the selected partition.","recovery":{"kind":"increase_configured_limit","detail":"To widen the analyzed partition, raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 3, then re-run."}}],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:c80557eb",
+      "canonical_gap_id": "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "discounted_total",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "amount==discount_threshold"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:c80557eb",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "amount >= discount_threshold"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach discounted_total: below_threshold_has_no_discount, far_above_threshold_discounts"},
+        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary discriminator is missing"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: amount - 10"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach discounted_total: below_threshold_has_no_discount, far_above_threshold_discounts", "infection weak: Related tests contain input values, but the equality-boundary discriminator is missing", "propagation yes: Changed behavior appears to influence returned value: amount - 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator missing: `amount == discount_threshold`; related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: amount - 10 (line 3)", "related test tests/pricing.rs:4 below_threshold_has_no_discount uses strong exact value oracle: assert_eq!(discounted_total(50, 100), 50);", "related test tests/pricing.rs:9 far_above_threshold_discounts uses strong exact value oracle: assert_eq!(discounted_total(10_000, 100), 9_990);", "source assertion argument value 50 at line 5", "source function argument value amount = 50 at line 5", "source function argument value discount_threshold = 100 at line 5", "source assertion argument value 9_990 at line 10", "source function argument value amount = 10_000 at line 10", "source function argument value discount_threshold = 100 at line 10", "missing discriminator amount == discount_threshold: No related test call uses amount equal to discount_threshold; observed amount values: 10_000, 50; observed discount_threshold values: 100"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"amount - 10","line":3}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: amount - 10", "Related tests appear to reach discounted_total: below_threshold_has_no_discount, far_above_threshold_discounts", "Related tests contain input values, but the equality-boundary discriminator is missing", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["Missing discriminator value: amount == discount_threshold"],
+      "assertion_texts": {
+        "5": "assert_eq!(discounted_total(50, 100), 50);",
+        "10": "assert_eq!(discounted_total(10_000, 100), 9_990);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "50",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 5,
+            "value": "amount = 50",
+            "context": "function_argument"
+          },
+          {
+            "line": 5,
+            "value": "discount_threshold = 100",
+            "context": "function_argument"
+          },
+          {
+            "line": 10,
+            "value": "9_990",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 10,
+            "value": "amount = 10_000",
+            "context": "function_argument"
+          },
+          {
+            "line": 10,
+            "value": "discount_threshold = 100",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "amount == discount_threshold",
+            "reason": "No related test call uses amount equal to discount_threshold; observed amount values: 10_000, 50; observed discount_threshold values: 100",
+            "flow_sink": {"kind":"return_value","text":"amount - 10","line":3}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "50",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 5,
+          "value": "amount = 50",
+          "context": "function_argument"
+        },
+        {
+          "line": 5,
+          "value": "discount_threshold = 100",
+          "context": "function_argument"
+        },
+        {
+          "line": 10,
+          "value": "9_990",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 10,
+          "value": "amount = 10_000",
+          "context": "function_argument"
+        },
+        {
+          "line": 10,
+          "value": "discount_threshold = 100",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "amount == discount_threshold",
+          "reason": "No related test call uses amount equal to discount_threshold; observed amount values: 10_000, 50; observed discount_threshold values: 100",
+          "flow_sink": {"kind":"return_value","text":"amount - 10","line":3}
+        }
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "below_threshold_has_no_discount",
+          "file": "tests/pricing.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(discounted_total(50, 100), 50);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "missing_input",
+          "why": "no test input reaches `amount == discount_threshold`"
+        },
+        {
+          "name": "far_above_threshold_discounts",
+          "file": "tests/pricing.rs",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(discounted_total(10_000, 100), 9_990);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "missing_input",
+          "why": "no test input reaches `amount == discount_threshold`"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "suggested_next_action": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_discount.py:python_preview:d1182145",
+      "canonical_gap_id": "gap:python:src/discount.py:apply_discount:predicate_boundary:predicate:amount>=threshold",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/discount.py:apply_discount:predicate_boundary:predicate:amount>=threshold",
+        "language": "python",
+        "file": "src/discount.py",
+        "owner": "apply_discount",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "amount>=threshold"
+
+      },
+      "classification": "no_static_path",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:src_discount.py:python_preview:d1182145",
+        "family": "predicate",
+        "delta": "control",
+        "file": "src/discount.py",
+        "line": 2,
+        "expression": "    if amount >= threshold:",
+        "owner": "python:src/discount.py::apply_discount"
+       },
+      "ripr": {
+        "reach": {"state":"no","confidence":"low","summary":"0 related Python test(s) found for owner `apply_discount`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python predicate can alter branch selection: `if amount >= threshold:`"},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink."},
+        "observe": {"state":"no","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 0)"},
+        "discriminate": {"state":"no","confidence":"low","summary":"Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape."}
+       },
+      "evidence_path": ["reach no: 0 related Python test(s) found for owner `apply_discount`", "infection yes: Changed Python predicate can alter branch selection: `if amount >= threshold:`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation no: Strongest extracted Python oracle kind: `unknown` (rank 0)", "discriminator no: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.", "local flow reaches unknown sink: if amount >= threshold: (line 2)"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"if amount >= threshold:","line":2}
+      ],
+      "evidence": ["owner: apply_discount", "owner_kind: function"],
+      "missing": ["No Python test references `apply_discount(`; add a pytest or unittest test that calls the changed owner."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 0,
+      "related_tests": [
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "amount, threshold",
+      "oracle_alignment": "unknown",
+      "alignment_reason": "no_strong_oracle",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "analysis_scope": {
+    "scope": "diff",
+    "run_status": "limited_partial_scope",
+    "basis": "rust_partial_diff_budget",
+    "downstream_consumable": false,
+    "gate_eligibility": "ineligible",
+    "limitation": "limited_partial_scope",
+    "repair_route": "analysis/diff-scope-budget",
+    "selection_version": "partial-diff-v1",
+    "language_tier_version": "lang-tier-v1",
+    "diff_identity": "sha256:ae1728f9641bea1d4cd31da2b99ef7a0a37f95d8adb399e34789923ccf8886e7",
+    "partition_identity": "ae6d708a684dc890f15ee84a29dbc964496acbbdceacdf81855332f785c94c29",
+    "file_budget": 2,
+    "line_budget": 1000,
+    "budget_disclosures": [],
+    "selected_files": ["src/lib.rs", "src/discount.py"],
+    "selected_changed_lines": 4,
+    "uninspected_files_lower_bound": 1,
+    "uninspected_changed_lines_lower_bound": 2,
+    "stop_reason": "file_budget",
+    "continuation": "partial result: raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 3, then re-run; named partition continuation is not available"
+  },
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/discount.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/discount.py","digest":"sha256:d260af53ab841a83c48695889929cf7e04dde8a9af83b4e7d40640d63305a985"}]},
+  "canonical_next_action": {"schema_version":"canonical_next_action.v1","producer":"check_top_result","subject":{"root":"/workspace/review-8229-evidence/case-python","diff_source":{"committed":{"base":null,"head":null}},"item":"probe:src_lib.rs:predicate:c80557eb"},"currentness":{"head_expected":null,"head_observed":null,"config_expected":null,"config_observed":null},"action_class":"inspect_details","stop":{"kind":"check_triage","case":"top_gap","detail_route":"ripr explain --root /workspace/review-8229-evidence/case-python --diff /workspace/review-8229-evidence/case-python/change.patch --mode fast probe:src_lib.rs:predicate:c80557eb"},"alternatives":[{"label":"considered finding probe:src_discount.py:python_preview:d1182145","route":"ripr explain --root /workspace/review-8229-evidence/case-python --diff /workspace/review-8229-evidence/case-python/change.patch --mode fast probe:src_discount.py:python_preview:d1182145"}],"limitations":["partial diff scope: findings cover the selected partition only"],"non_claim":"Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."}
+}

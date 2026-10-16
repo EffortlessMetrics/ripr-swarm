@@ -1,0 +1,166 @@
+{
+  "total_count": 23,
+  "check_runs": [
+    {
+      "name": "build and inspect Linux x64 wheel",
+      "status": "in_progress",
+      "conclusion": null,
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861583894/job/116845053237"
+    },
+    {
+      "name": "Graphite / AI Reviews",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/runs/116844994623"
+    },
+    {
+      "name": "Perl and release proof",
+      "status": "completed",
+      "conclusion": "skipped",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861584023/job/116844851592"
+    },
+    {
+      "name": "pinned MCP evidence before and after (advisory)",
+      "status": "completed",
+      "conclusion": "skipped",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861583894/job/116844851176"
+    },
+    {
+      "name": "rust-tests-junit",
+      "status": "completed",
+      "conclusion": "skipped",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861584016/job/116844851114"
+    },
+    {
+      "name": "rust-coverage",
+      "status": "completed",
+      "conclusion": "skipped",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861584054/job/116844851044"
+    },
+    {
+      "name": "windows-advisory",
+      "status": "completed",
+      "conclusion": "skipped",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861584042/job/116844851007"
+    },
+    {
+      "name": "vscode",
+      "status": "completed",
+      "conclusion": "skipped",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861584023/job/116844850941"
+    },
+    {
+      "name": "msrv",
+      "status": "completed",
+      "conclusion": "skipped",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861584023/job/116844850847"
+    },
+    {
+      "name": "droid",
+      "status": "completed",
+      "conclusion": "skipped",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861584004/job/116844850384"
+    },
+    {
+      "name": "future-clippy",
+      "status": "completed",
+      "conclusion": "skipped",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861583906/job/116844850300"
+    },
+    {
+      "name": "windows-advisory-subset",
+      "status": "in_progress",
+      "conclusion": null,
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861584042/job/116844849513"
+    },
+    {
+      "name": "Rust-only feature lane",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861584023/job/116844849472"
+    },
+    {
+      "name": "paste-macos-latest",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861583942/job/116844849405"
+    },
+    {
+      "name": "spec-maintenance-digest",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861583987/job/116844849237"
+    },
+    {
+      "name": "paste-windows-latest",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861583942/job/116844849222"
+    },
+    {
+      "name": "ub-review",
+      "status": "in_progress",
+      "conclusion": null,
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861583926/job/116844849081"
+    },
+    {
+      "name": "workflow policy and wheel applicability",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861583894/job/116844849016"
+    },
+    {
+      "name": "cargo-deny",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861583929/job/116844849008"
+    },
+    {
+      "name": "paste-ubuntu-latest",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861583942/job/116844848956"
+    },
+    {
+      "name": "source-of-truth",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861583987/job/116844848863"
+    },
+    {
+      "name": "dependency-review",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38861583929/job/116844848846"
+    },
+    {
+      "name": "GitGuardian Security Checks",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "67dc5af9a15590fc8476d09217232831a0009952",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/runs/116844843164"
+    }
+  ]
+}
