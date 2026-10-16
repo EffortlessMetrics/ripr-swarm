@@ -508,8 +508,11 @@ fn help_index_routes_agent_repair_to_repair_help() -> Result<(), String> {
 /// the full table lives (#4378), not only list the bare names.
 #[test]
 fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), String> {
-    for command in ["check", "context"] {
-        let help = normalized(&rendered_help(&[command, "--help"])?);
+    for (command, args) in [
+        ("check", &["check", "--help", "--all"][..]),
+        ("context", &["context", "--help"][..]),
+    ] {
+        let help = normalized(&rendered_help(args)?);
         for needle in [
             "instant (changed files only, cheapest)",
             "deep and ready (whole workspace, slowest)",
@@ -526,7 +529,7 @@ fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), Stri
 /// base through the same authority (#3952), so its help states the same order.
 #[test]
 fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
-    let check = normalized(&rendered_help(&["check", "--help"])?);
+    let check = normalized(&rendered_help(&["check", "--help", "--all"])?);
     for needle in [
         "the local origin/HEAD ref, then origin/main, origin/master, main, and master in order",
         "when none of those resolves, the analysis does not run",
@@ -556,7 +559,7 @@ fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
 /// the group list. Each task below must keep exactly its recommended path.
 #[test]
 fn check_help_chooses_one_format_per_task() -> Result<(), String> {
-    let check = normalized(&rendered_help(&["check", "--help"])?);
+    let check = normalized(&rendered_help(&["check", "--help", "--all"])?);
     for needle in [
         "Choose by task:",
         "eye review -> human",
@@ -631,6 +634,35 @@ fn doc_flag_guard_rejects_removed_flags_and_accepts_prose() -> Result<(), String
     let drift = undocumented_doc_flags(&[("good.md", good)], &mut cache, &run_ripr)?;
     if !drift.is_empty() {
         return Err(format!("guard rejected valid prose: {drift:?}"));
+    }
+    Ok(())
+}
+
+/// Default `check --help` is the short screen; `--help --all` is the full
+/// reference; `--all` on a real run is still an unknown argument.
+#[test]
+fn check_help_is_progressive() -> Result<(), String> {
+    let brief = rendered_help(&["check", "--help"])?;
+    let full = rendered_help(&["check", "--help", "--all"])?;
+    let via_help = rendered_help(&["help", "check", "--all"])?;
+    if brief.lines().count() > 50 {
+        return Err(format!(
+            "brief check help is {} lines",
+            brief.lines().count()
+        ));
+    }
+    assert_contains("brief check help", &brief, "ripr check --help --all")?;
+    assert_contains("brief check help", &brief, "regardless of findings")?;
+    if brief.contains("RIPR_MAX_DIFF_CHANGED_RUST_LINES") {
+        return Err("brief check help leaked the environment reference".to_string());
+    }
+    assert_contains("full check help", &full, "RIPR_MAX_DIFF_CHANGED_RUST_LINES")?;
+    if full != via_help {
+        return Err("`help check --all` must equal `check --help --all`".to_string());
+    }
+    let stray = run_ripr(&["check", "--all"])?;
+    if stray.status.code() != Some(2) {
+        return Err(format!("`check --all` should be a usage error: {stray:?}"));
     }
     Ok(())
 }

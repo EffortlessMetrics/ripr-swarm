@@ -122,6 +122,49 @@ including the `repo-exposure.json` that `ripr pilot` writes, carries no head;
 ripr then says so and cannot verify the pair came from the same repository or
 adjacent commits. Matching heads still do not mean matching working trees.
 "#;
+/// Default `ripr check --help` screen: the options a first run needs, the exit
+/// contract, and the route to the exhaustive reference ([`CHECK_HELP`], printed
+/// by `ripr check --help --all`). Flag-suggestion lookups and parity gates stay
+/// on the full text; this screen only chooses what a reader sees first.
+pub(super) const CHECK_HELP_BRIEF: &str = r#"Check whether tests would notice the behavior your diff changed.
+
+Usage: ripr check [OPTIONS]
+
+Common options:
+  --base REV        Compare against REV. When omitted, ripr uses the local
+                    origin/HEAD ref, then origin/main, origin/master, main, and
+                    master in order; when none of those resolves, the analysis
+                    does not run. Uncommitted tracked edits are included.
+  --diff PATH       Read a unified diff file instead of running git diff
+                    (`--diff -` reads stdin).
+  --format FORMAT   human (default), human-full, json, github, sarif.
+                    Choose by task: eye review -> human; every finding with
+                    drill-in commands -> human-full; machine consumer (jq, CI
+                    scripts) -> json. Badge and repo-scope formats: --help --all.
+  --mode MODE       instant, draft (default), fast, deep, ready. Whole-workspace
+                    modes (deep, ready) can be much slower on large workspaces.
+  --root PATH       Workspace root. Defaults to the current directory's workspace.
+  --quiet           Suppress progress on stderr; stdout and exit codes are unchanged.
+
+Exit status:
+  Complete and partial_with_limitations reports exit 0, regardless of findings.
+  `unsupported_input` reports exit 2 after the original report is written;
+  limitations and recovery routes remain available in that report. Usage and
+  operational errors also exit 2. Empty input is complete no_scope (exit 0).
+  Read the typed outcome to distinguish partial analysis from complete analysis;
+  a successful exit alone does not establish complete scope or a clean gate.
+
+Examples:
+  ripr check
+  ripr check --base HEAD~1
+  ripr check --base origin/main --json
+
+Every option (candidate trees, worktree/committed scope, suppression policy,
+check artifacts, badge and repo formats), progress details, and environment
+variables:
+  ripr check --help --all
+"#;
+
 pub(super) const CHECK_HELP: &str = r#"Analyze a diff or workspace and emit findings in human, JSON, SARIF, or badge form.
 
 Usage: ripr check [OPTIONS]

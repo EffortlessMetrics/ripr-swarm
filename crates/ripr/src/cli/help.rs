@@ -217,8 +217,10 @@ pub(super) fn print_workflow(name: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn print_check_help() {
-    println!("{CHECK_HELP}");
+/// `ripr check --help` prints the one-screen brief; `--help --all` prints the
+/// exhaustive reference.
+pub(super) fn print_check_help(all: bool) {
+    println!("{}", if all { CHECK_HELP } else { CHECK_HELP_BRIEF });
 }
 
 pub(super) fn print_config_help() {
@@ -405,7 +407,7 @@ mod tests {
         AGENT_BRIEF_HELP, AGENT_CARD_HELP, AGENT_HELP, AGENT_PACKET_HELP, AGENT_RECEIPT_HELP,
         AGENT_REPAIR_HELP, AGENT_REVIEW_SUMMARY_HELP, AGENT_START_HELP, AGENT_STATUS_HELP,
         AGENT_VERIFY_HELP, ANNOTATIONS_HELP, ASSISTANT_LOOP_HELP, BASELINE_HELP, CACHE_CLEAR_HELP,
-        CACHE_STATUS_HELP, CALIBRATE_HELP, CHECK_HELP, CONFIG_HELP, CONTEXT_HELP,
+        CACHE_STATUS_HELP, CALIBRATE_HELP, CHECK_HELP, CHECK_HELP_BRIEF, CONFIG_HELP, CONTEXT_HELP,
         COVERAGE_GRIP_HELP, DIFF_HELP, DOCTOR_HELP, EVIDENCE_HEALTH_HELP, EXPLAIN_HELP,
         FEEDBACK_EXPORT_HELP, FEEDBACK_RECORD_HELP, FIRST_ACTION_HELP, FIRST_PR_HELP, GATE_HELP,
         HELP, HELP_ALL, IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP, PILOT_HELP,
@@ -624,6 +626,30 @@ mod tests {
     #[test]
     fn print_help_all_writes_the_full_reference() {
         print_help_all();
+    }
+
+    /// Default `check --help` is one screen that still carries the exit
+    /// contract and the route to the exhaustive reference; it never replaces
+    /// the full text that flag suggestions and parity gates read.
+    #[test]
+    fn check_help_default_is_one_screen_with_the_exit_contract() {
+        assert!(
+            CHECK_HELP_BRIEF.lines().count() <= 50,
+            "brief check help must fit one screen"
+        );
+        for needle in [
+            "ripr check --help --all",
+            "Exit status:",
+            "regardless of findings",
+            "origin/HEAD ref, then origin/main",
+            "--base",
+            "--format",
+        ] {
+            assert!(CHECK_HELP_BRIEF.contains(needle), "{needle}");
+        }
+        assert!(!CHECK_HELP_BRIEF.contains("RIPR_MAX_DIFF"));
+        assert!(CHECK_HELP.contains("RIPR_MAX_DIFF_CHANGED_RUST_LINES"));
+        assert!(CHECK_HELP.len() > CHECK_HELP_BRIEF.len() * 3);
     }
 
     #[test]
@@ -1013,7 +1039,8 @@ mod tests {
         print_swarm_queue_help();
         print_swarm_ingest_help();
         print_diff_help();
-        print_check_help();
+        print_check_help(false);
+        print_check_help(true);
         print_explain_help();
         print_context_help();
         print_doctor_help();
