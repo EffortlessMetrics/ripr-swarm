@@ -2630,6 +2630,113 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
         }
     }
 
+    /// A live batch child stays owned while a silent transport waits. The
+    /// analysis budget starts active even under scheduler delays, then uses
+    /// the real monotonic clock. Expiry must stop the read, rather than wait
+    /// for the independent, longer Git timeout, and reap before returning.
+    fn assert_batch_read_cancellation(operation: &str) -> Result<(), String> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let root = std::env::current_dir().map_err(|error| error.to_string())?;
+        let mut session = CatFileBatch::spawn(&root, Duration::from_secs(3))
+            .map_err(|error| error.to_string())?;
+        let (sender, receiver) = mpsc::channel();
+        let _real_stdout =
+            std::mem::replace(&mut session.stdout, CatFileBatchStream::new(receiver));
+        if session
+            .child
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            return Err("batch cancellation fixture child already exited".to_string());
+        }
+        let started = Instant::now();
+        let first = AtomicBool::new(true);
+        let token = AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_millis(50),
+            std::sync::Arc::new(move || {
+                if first.swap(false, Ordering::Relaxed) {
+                    started
+                } else {
+                    Instant::now()
+                }
+            }),
+        );
+        let result = with_token(&token, || match operation {
+            "header" => session.request_blob("HEAD:Cargo.toml").map(|_| ()),
+            "body" => session.read_blob_bytes(&mut [0_u8; 1]),
+            "delimiter" => session.end_blob(),
+            _ => Err(CoreError::message("unknown test read operation")),
+        });
+        // Hold the producer through the read so disconnect cannot satisfy
+        // the control. The real child is still waiting for further stdin.
+        drop(sender);
+        let error = result.err().ok_or("cancelled batch read succeeded")?;
+        if !error.is_analysis_cancelled() || error.is_git_invocation_timeout() {
+            return Err(format!("{operation} read lost typed cancellation: {error}"));
+        }
+        if token.observed_abort() != Some(AnalysisAbortKind::DeadlineExceeded) {
+            return Err(format!(
+                "{operation} read did not observe its analysis budget"
+            ));
+        }
+        if session
+            .child
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_none()
+        {
+            return Err(format!(
+                "{operation} read returned before reaping its batch child"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cat_file_batch_cancellation_interrupts_a_stalled_header() -> Result<(), String> {
+        assert_batch_read_cancellation("header")
+    }
+
+    #[test]
+    fn cat_file_batch_cancellation_interrupts_a_stalled_body() -> Result<(), String> {
+        assert_batch_read_cancellation("body")
+    }
+
+    #[test]
+    fn cat_file_batch_cancellation_interrupts_a_stalled_delimiter() -> Result<(), String> {
+        assert_batch_read_cancellation("delimiter")
+    }
+
+    #[test]
+    fn cat_file_batch_cancellation_rejects_a_buffered_delimiter() -> Result<(), String> {
+        let root = std::env::current_dir().map_err(|error| error.to_string())?;
+        let mut session = CatFileBatch::spawn(&root, Duration::from_secs(3))
+            .map_err(|error| error.to_string())?;
+        session.stdout.current = b"\n".to_vec();
+        let token = AnalysisCancellationToken::new();
+        token.cancel(AnalysisAbortKind::Superseded);
+        let error = with_token(&token, || session.end_blob())
+            .err()
+            .ok_or("cancelled batch accepted a buffered delimiter")?;
+        if !error.is_analysis_cancelled() || error.is_git_invocation_timeout() {
+            return Err(format!(
+                "buffered delimiter lost typed cancellation: {error}"
+            ));
+        }
+        if session
+            .child
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_none()
+        {
+            return Err("buffered delimiter returned before reaping its child".to_string());
+        }
+        Ok(())
+    }
+
     /// Real-repository session round trip (#5015): one process answers
     /// many blob requests, byte-identical to `git show`, and reports a
     /// missing object as `None` instead of failing mid-stream.
