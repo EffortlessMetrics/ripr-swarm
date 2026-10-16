@@ -1630,6 +1630,10 @@ fn repair_skips_severity_off_seams_with_named_omission() -> Result<(), String> {
         "an ineligible repair must keep both the check and pilot routes:\n{stderr}"
     );
     assert!(
+        stderr.contains("when this branch has changed code"),
+        "the check route must stay conditional on a diff, since repair lists saved seams:\n{stderr}"
+    );
+    assert!(
         attempt_ids(root).is_empty(),
         "a refused start must create no attempt"
     );
