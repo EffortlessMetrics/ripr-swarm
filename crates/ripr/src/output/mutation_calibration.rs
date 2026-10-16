@@ -714,7 +714,7 @@ fn build_mutation_calibration_report(
         .count();
     if unmatched_gap_signals > 0 {
         report.precision_notes.push(format!(
-            "`runtime_signal_without_static_gap` includes {unmatched_gap_signals} unmatched gap-signal record{} also counted in `unmatched_mutants_total`; agreement buckets mix per-seam and per-record counts and do not sum to `matched_total` or `mutants_total`",
+            "`runtime_signal_without_static_gap` includes {unmatched_gap_signals} unmatched gap-signal record{} also counted in `unmatched_mutants_total`",
             if unmatched_gap_signals == 1 { "" } else { "s" }
         ));
     }
