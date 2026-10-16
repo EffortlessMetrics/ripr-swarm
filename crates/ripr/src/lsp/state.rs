@@ -1362,10 +1362,12 @@ fn document_position_byte_offset(
     let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
 
     let relative = if *encoding == PositionEncodingKind::UTF8 {
-        if target_units > line.len() || !line.is_char_boundary(target_units) {
+        // Offsets beyond the line clamp to its end per the LSP Position contract.
+        let clamped = target_units.min(line.len());
+        if !line.is_char_boundary(clamped) {
             return None;
         }
-        target_units
+        clamped
     } else if *encoding == PositionEncodingKind::UTF32 {
         encoded_units_to_byte_offset(line, target_units, |character| {
             let _ = character;
@@ -1397,7 +1399,8 @@ fn encoded_units_to_byte_offset(
             return None;
         }
     }
-    (units == target_units).then_some(line.len())
+    // `units <= target_units` here; an overlong offset clamps to the line end.
+    Some(line.len())
 }
 
 fn apply_document_content_change(
@@ -2149,6 +2152,85 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn incremental_overlong_character_offsets_clamp_to_the_line_end() -> Result<(), String> {
+        // LSP Position: a character offset past the line length means the line
+        // end (before CR/LF). Exercised with a multibyte line in every encoding.
+        for encoding in [
+            PositionEncodingKind::UTF8,
+            PositionEncodingKind::UTF16,
+            PositionEncodingKind::UTF32,
+        ] {
+            let mut text = "aéb\r\nnext\n".to_string();
+            let range = |start: u32, end: u32| tower_lsp_server::ls_types::Range {
+                start: Position {
+                    line: 0,
+                    character: start,
+                },
+                end: Position {
+                    line: 0,
+                    character: end,
+                },
+            };
+            apply_document_content_changes(
+                &mut text,
+                vec![
+                    // Replace "b" through an overlong end: clamps before the CR.
+                    TextDocumentContentChangeEvent {
+                        range: Some(range(
+                            if encoding == PositionEncodingKind::UTF8 {
+                                3
+                            } else {
+                                2
+                            },
+                            99,
+                        )),
+                        range_length: None,
+                        text: "X".to_string(),
+                    },
+                    // Pure append through an overlong empty range.
+                    TextDocumentContentChangeEvent {
+                        range: Some(range(99, 99)),
+                        range_length: None,
+                        text: "!".to_string(),
+                    },
+                ],
+                &encoding,
+            )
+            .map_err(|()| format!("overlong offset rejected for {encoding:?}"))?;
+            if text != "aéX!\r\nnext\n" {
+                return Err(format!("wrong clamp result for {encoding:?}: {text:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn overlong_start_past_an_earlier_end_remains_a_reversed_range() {
+        // A clamped start (line end) after an earlier end is reversed and refused.
+        let mut text = "abcd".to_string();
+        let result = apply_document_content_changes(
+            &mut text,
+            vec![TextDocumentContentChangeEvent {
+                range: Some(tower_lsp_server::ls_types::Range {
+                    start: Position {
+                        line: 0,
+                        character: 99,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 1,
+                    },
+                }),
+                range_length: None,
+                text: "X".to_string(),
+            }],
+            &PositionEncodingKind::UTF16,
+        );
+        assert!(result.is_err());
+        assert_eq!(text, "abcd");
     }
 
     #[test]
