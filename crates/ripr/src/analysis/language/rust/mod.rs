@@ -357,6 +357,27 @@ fn drop_unreached_test_files(
                 .map(|path| workspace::normalize_path(path)),
         );
     }
+    // #8016: a `[[test]]` target Cargo lists but `cargo test` never runs
+    // (`test = false`, `harness = false`, unmet `required-features`) holds
+    // tests that never execute. Cargo's own target inventory is the
+    // authority; only packages whose manifest spells one of those keys pay
+    // for the probe, and an unavailable probe keeps the file.
+    let mut gated_manifests = BTreeMap::new();
+    let mut inventory = workspace::ManifestInventory::default();
+    for (path, bytes) in &loaded_files {
+        if !holds_tests(bytes) {
+            continue;
+        }
+        let Some(package) = owning_manifest_dir(root, path, &mut manifests) else {
+            continue;
+        };
+        let gated = *gated_manifests
+            .entry(package.clone())
+            .or_insert_with(|| manifest_gates_test_targets(root, &package));
+        if gated && cargo_never_runs_test_target(root, path, &mut inventory) {
+            orphans.insert(workspace::normalize_path(path));
+        }
+    }
     if orphans.is_empty() {
         return loaded_files;
     }
@@ -364,6 +385,43 @@ fn drop_unreached_test_files(
         .into_iter()
         .filter(|(path, _)| !orphans.contains(&workspace::normalize_path(path)))
         .collect()
+}
+
+/// Whether the package manifest in `package_dir` declares a `[[test]]` entry
+/// that can keep `cargo test` from running its file: `test = false`,
+/// `harness = false` or any `required-features` (#8016). Unreadable or
+/// unparsable manifests are not gated.
+fn manifest_gates_test_targets(root: &Path, package_dir: &Path) -> bool {
+    committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
+        .ok()
+        .flatten()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+        .and_then(|manifest| manifest.get("test").and_then(toml::Value::as_array).cloned())
+        .is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                entry.get("test").and_then(toml::Value::as_bool) == Some(false)
+                    || entry.get("harness").and_then(toml::Value::as_bool) == Some(false)
+                    || entry.get("required-features").is_some()
+            })
+        })
+}
+
+/// Whether Cargo's target inventory establishes that `cargo test` never runs
+/// the `#[test]` items of `path` (#8016): a listed test target skipped by
+/// `test = false` or unmet default `required-features`, or one declared
+/// `harness = false`. A path Cargo does not list, or an unavailable
+/// inventory, establishes nothing.
+fn cargo_never_runs_test_target(
+    root: &Path,
+    path: &Path,
+    inventory: &mut workspace::ManifestInventory,
+) -> bool {
+    inventory.cargo_test_collection_skipped(root, path)
+        || matches!(
+            inventory.verdict(root, path),
+            workspace::CargoHarnessVerdict::HarnessDisabled
+        )
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
@@ -7358,6 +7416,51 @@ fn absent_delimiter_boundary_returns_head() {
                 .any(|name| name == "discount_applies_unbuilt"),
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_test_targets_cargo_lists_but_never_runs() -> Result<(), String> {
+        // #8016: `test = false`, `harness = false` and unmet
+        // `required-features` keep a `[[test]]` target out of `cargo test`,
+        // so its `#[test]` items never run. `tests/live.rs` is the positive
+        // control that proves the fixture reaches the owner.
+        let root = temp_root("cargo-skipped-test-targets")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n\
+             [workspace]\n\n\
+             [features]\nnever=[]\n\n\
+             [[test]]\nname='off'\ntest=false\n\n\
+             [[test]]\nname='custom'\nharness=false\n\n\
+             [[test]]\nname='gated'\nrequired-features=['never']\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        for name in ["live", "off", "custom", "gated"] {
+            write(
+                &root.join(format!("tests/{name}.rs")),
+                &format!(
+                    "use shop::used::discount;\n\n#[test]\nfn discount_applies_{name}() {{\n    assert_eq!(discount(150), 140);\n}}\n"
+                ),
+            )?;
+        }
+
+        let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+        let related = related_test_names(&root, &result, "src/used.rs");
+        assert!(
+            related.iter().any(|name| name == "discount_applies_live"),
+            "the test cargo runs must relate: {related:?}"
+        );
+        for skipped in ["off", "custom", "gated"] {
+            let name = format!("discount_applies_{skipped}");
+            assert!(
+                !related.iter().any(|related| related == &name),
+                "{name} is never run by cargo test and must not relate: {related:?}"
+            );
+        }
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }

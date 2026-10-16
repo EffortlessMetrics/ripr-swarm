@@ -122,7 +122,13 @@ unchanged file the walk proves unreached. Target roots honor `autotests`,
 `autobenches` and `autoexamples = false`: only declared targets are roots,
 and a name-only declaration keeps its default paths. An incomplete walk
 keeps the file, and so does the production-like opt-in for a changed
-file, since it still seeds probes. The production-like opt-in still wins. Evidence-role files remain fully indexed:
+file, since it still seeds probes. The production-like opt-in still wins.
+A `[[test]]` target that Cargo lists but `cargo test` never runs holds tests
+that never execute (#8016): the same drop applies when Cargo's target
+inventory establishes `test = false`, unmet default `required-features`, or
+`harness = false`. Only packages whose manifest spells one of those keys
+consult the inventory, and an unavailable inventory keeps the file.
+Evidence-role files remain fully indexed:
 functions stay available for owner relations, activation input,
 sink/oracle evidence, and selectors. `TestFact` semantics are untouched
 — source role never registers a helper as an executable test selector.
@@ -318,6 +324,9 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
   or added by the diff) and a `tests/` file that `autotests = false`
   leaves undeclared relate to nothing, while the declared file and the
   name-only `[[test]]` target keep their relation.
+- Cargo-skipped test targets (#8016): a `[[test]]` target with
+  `test = false`, `harness = false` or unmet `required-features` relates to
+  nothing, while a sibling `tests/` target Cargo runs keeps its relation.
 - Comment/string module mentions (#6979): an unchanged orphan named only
   inside a block comment, nested block comment, doc comment, plain string or
   raw string supplies no related test; real `cfg(test)` and renamed
