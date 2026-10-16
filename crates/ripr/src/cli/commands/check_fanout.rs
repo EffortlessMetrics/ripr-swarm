@@ -772,7 +772,7 @@ mod tests {
             let manifest: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(manifest).map_err(|e| e.to_string())?)
                     .map_err(|e| e.to_string())?;
-            assert_eq!(manifest["binding"], "refused_incomplete");
+            assert_eq!(manifest["identity"]["binding"], "refused_incomplete");
             assert_eq!(manifest["complete_set"], false);
             assert_eq!(manifest["command_success"], false);
         }
