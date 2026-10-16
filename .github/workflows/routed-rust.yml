@@ -36,11 +36,74 @@ env:
     # line break, never a blank line or an interrupting heading/fence/block.
     def review_inline_end:
       "[ \t]*(?:\n|\\z)| {0,3}(?:#{1,6}(?:[ \t]|$)|" + review_fence_open + "$|(?:=+|-+)[ \t]*$|(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$|>|[-+*][ \t]+\\S|1[.)][ \t]+\\S|<" + review_html_interrupt + ")";
+    # Complete tags require valid names, separated attributes and a value after
+    # '='. Quoted values may contain angle brackets; unquoted values may not.
+    # Closing tags have no attributes or self-closing slash.
+    def review_html_open($name; $space; $single; $double):
+      ("(?:[^\\s\"'=<>`]+|'" + $single + "*'|\"" + $double + "*\")") as $value |
+      "<" + $name + "(?:" + $space + "+[A-Za-z_:][A-Za-z0-9_.:-]*(?:" + $space + "*=" + $space + "*" + $value + ")?)*" + $space + "*/?>";
+    def review_html_tag($space; $single; $double):
+      "[A-Za-z][A-Za-z0-9-]*" as $name |
+      "(?:" + review_html_open($name; $space; $single; $double) + "|</" + $name + $space + "*>)";
+    def review_html_standalone:
+      review_html_tag("[ \t\u000b\u000c]"; "[^'\n]"; "[^\"\n]");
+    def review_html_inline:
+      ("(?:[ \t\u000b\u000c]|\n(?!" + review_inline_end + "))") as $space |
+      review_html_tag($space; "(?:[^'\n]|\n(?!" + review_inline_end + "))"; "(?:[^\"\n]|\n(?!" + review_inline_end + "))");
+    def review_html_context($line; $standalone):
+      if ($line | test("^ {0,3}<(?i:pre|script|style)(?=[\\s>]|$)")) then {kind:"html",end:"(?i:</(?:pre|script|style)>)"}
+      elif ($line | test("^ {0,3}<!--")) then {kind:"html",end:"-->"}
+      elif ($line | test("^ {0,3}<\\?")) then {kind:"html",end:"\\?>"}
+      elif ($line | test("^ {0,3}<![A-Z]")) then {kind:"html",end:">"}
+      elif ($line | test("^ {0,3}<!\\[CDATA\\[")) then {kind:"html",end:"\\]\\]>"}
+      elif ($line | test("^ {0,3}</?" + review_html_blocks + "(?=[\\s>]|/>|$)")) then {kind:"blank"}
+      elif $standalone and ($line | test("^ {0,3}" + review_html_standalone + "[ \t]*$")) and
+        ($line | test("^ {0,3}<(?i:code|textarea|xmp|noembed|noframes)(?=[\\s>]|/>)")) then
+        ($line | capture("^ {0,3}<(?<name>code|textarea|xmp|noembed|noframes)"; "i")) as $tag |
+        {kind:"html",end:("(?i:</" + $tag.name + "[ \t]*>)")}
+      else null end;
+    # Kind-7 blocks require both a complete tag and a block-start context.
+    # Track enclosing opaque blocks so their literal markup cannot open another
+    # block, and preserve paragraph continuations before applying inline masks.
+    def hide_standalone_html_blocks:
+      reduce (split("\n")[]) as $line
+        ({paragraph:false,state:null,lines:[]};
+         .emit = $line |
+         (if .state.kind == "indent" and ($line | test("^(?: {4}|\t)|^[ \t]*$") | not)
+          then .state = null else . end) |
+         if .state.kind == "tag" then
+           if ($line | test("^[ \t]*$")) then .state = null
+           else .emit = ($line | gsub("."; "\u0003")) end
+         elif .state.kind == "fence" then
+           .state as $fence |
+           if ($line | test("^ {0,3}" + $fence.char + "{" + ($fence.size|tostring) + ",}[ \t]*$")) then .state = null else . end
+         elif .state.kind == "html" then
+           .state.end as $end | if ($line | test($end)) then .state = null else . end
+         elif .state.kind == "blank" or .state.kind == "quote" then
+           if ($line | test("^[ \t]*$")) then .state = null else . end
+         elif .state.kind == "indent" then .
+         else
+           review_html_context($line; (.paragraph|not)) as $html |
+           if ($line | test("^[ \t]*$")) then .paragraph = false
+           elif ($line | test("^ {0,3}" + review_fence_open + "$")) then
+             ($line | capture("^ {0,3}(?<fence>`{3,}|~{3,})")) as $fence |
+             .state = {kind:"fence",char:$fence.fence[0:1],size:($fence.fence|length)} | .paragraph = false
+           elif $html != null then
+             .state = $html | .paragraph = false |
+             if $html.kind == "html" and ($line | test($html.end)) then .state = null else . end
+           elif ($line | test("^ {0,3}>")) then .state = {kind:"quote"} | .paragraph = false
+           elif ($line | test("^ {0,3}#{1,6}(?:[ \t]|$)|^ {0,3}(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$")) then .paragraph = false
+           elif .paragraph and ($line | test("^ {0,3}(?:=+|-+)[ \t]*$")) then .paragraph = false
+           elif (.paragraph|not) and ($line | test("^(?: {4}|\t)")) then .state = {kind:"indent"}
+           elif (.paragraph|not) and ($line | test("^ {0,3}" + review_html_standalone + "[ \t]*$")) then
+             .state = {kind:"tag"} | .emit = ($line | gsub("."; "\u0003"))
+           else .paragraph = true end
+         end | .lines += [.emit]) | .lines | join("\n");
     # Match opaque regions together, in source order: syntax inside an earlier
     # code/HTML region cannot open a different region outside it. Keep newlines
     # and a nonblank sentinel so masking never invents a first-line declaration.
     def hide_review_examples:
-      gsub("(?ms)(?<hidden>" +
+      hide_standalone_html_blocks | gsub("(?ms)(?<hidden>" +
         "^ {0,3}(?<bt>`{3,})(?!`)[^`\n]*\n.*?(?:(?<bt_end>^ {0,3}\\k<bt>`*[ \t]*)(?=\n|\\z)|\\z)" +
         "|^ {0,3}(?<tilde>~{3,})(?!~)[^\n]*\n.*?(?:(?<tilde_end>^ {0,3}\\k<tilde>~*[ \t]*)(?=\n|\\z)|\\z)" +
         "|^(?: {4}|\t)[^\n]*(?:\n(?:(?: {4}|\t)[^\n]*|[ \t]*(?=\n)))*" +
@@ -50,9 +113,9 @@ env:
         "|(?<!\\\\)(?:\\\\\\\\)*(?:<!--.*?(?:-->|\\z)|<!\\[CDATA\\[.*?(?:\\]\\]>|\\z)|<\\?.*?(?:\\?>|\\z))" +
         "|(?<!\\\\)(?:\\\\\\\\)*<![A-Z].*?(?:>|\\z)" +
         "|(?<!\\\\)(?:\\\\\\\\)*<(?i:pre|script|style)(?=[\\s>]|$).*?(?:(?i:</(?:pre|script|style)>)|\\z)" +
-        "|(?<!\\\\)(?:\\\\\\\\)*(?i:<(?<tag>code|textarea|xmp|iframe|noembed|noframes)(?=[\\s>])[^>]*>.*?(?:</\\k<tag>[ \t]*>|\\z))" +
+        "|(?<!\\\\)(?:\\\\\\\\)*" + review_html_open("(?i:(?<tag>code|textarea|xmp|iframe|noembed|noframes))"; "[ \t\u000b\u000c]"; "[^'\n]"; "[^\"\n]") + ".*?(?:(?i:</\\k<tag>[ \t]*>)|\\z)" +
         "|^ {0,3}</?(?:" + review_html_blocks + ")(?=[\\s>]|/>|$).*?(?=\n[ \t]*\n|\\z)" +
-        "|^ {0,3}</?[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[^<>\n]*)?/?>[ \t]*(?:\n.*?(?=\n[ \t]*\n|\\z)|\\z)" +
+        "|(?<!\\\\)(?:\\\\\\\\)*" + review_html_inline +
         ")";
         if (.bt != null and .bt_end == null) or (.tilde != null and .tilde_end == null)
         then "\u0002" else (.hidden | gsub("[^\n]"; "\u0001")) end);

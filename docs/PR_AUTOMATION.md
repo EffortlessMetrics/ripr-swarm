@@ -93,6 +93,15 @@ target on 12 lowercase/mixed-CDATA cases; those disagreements remain explicit,
 not silently relabeled as passes. This is not native GitHub rendering proof or
 a claim of full CommonMark conformance. Earlier fixture references to the newer
 CommonMark specification do not identify the renderer that actually ran.
+Complete standalone tags use the HTML name and attribute grammar: boolean
+attributes are allowed, `=` requires a quoted or valid unquoted value, quoted
+values may contain angle brackets, attributes must be separated, and closing
+tags cannot have attributes or a self-closing slash. Trailing content prevents
+a type-7 block. A complete tag inside an already-open paragraph remains inline.
+Enclosing fences, HTML regions, quotes and indented blocks retain their own
+boundaries; valid inline attributes cannot cross a paragraph/heading/fence break.
+`standalone-tag-rendering.json` retains 130 conflict and positive controls whose
+field sets agree in both local renderers, including malformed-tag sibling forms.
 A source-ready declaration may separately report overall `REVIEW_INCOMPLETE`
 while qualification remains outstanding. Both admission and the final refresh,
 including diagnostics, use the same parser.
