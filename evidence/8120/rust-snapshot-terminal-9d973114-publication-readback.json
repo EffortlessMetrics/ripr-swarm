@@ -1,0 +1,67 @@
+{
+  "packet_commit": "f3507dacb02e019e6eddc61987ecb685715547b5",
+  "public_files_verified": 11,
+  "fresh_network_git_store": true,
+  "all_bytes_sizes_hashes_verified": true,
+  "files": {
+    "evidence/8120/rust-snapshot-terminal-9d973114/README.md": {
+      "sha256": "e82da4c264924cf5cb7a6fd61c5314945cc330ef1605256b66ee949e0ae6bc5b",
+      "bytes": 2237,
+      "mode": "100644"
+    },
+    "evidence/8120/rust-snapshot-terminal-9d973114/SHA256SUMS": {
+      "sha256": "4c32bb434d01789a1f10d37a677004d3be798370a4e8d058798bf588a2c7a660",
+      "bytes": 922,
+      "mode": "100644"
+    },
+    "evidence/8120/rust-snapshot-terminal-9d973114/hosted-identity.json": {
+      "sha256": "751366a81bc456ad9d209f8734a1159463cfc1a68b409090db979ac3afa1b03a",
+      "bytes": 455,
+      "mode": "100644"
+    },
+    "evidence/8120/rust-snapshot-terminal-9d973114/independent-review.md": {
+      "sha256": "37c1c7b668f2865e77996e7b2949394998b1937050af7829404429f8cbe6bfb5",
+      "bytes": 18137,
+      "mode": "100644"
+    },
+    "evidence/8120/rust-snapshot-terminal-9d973114/named-controls.json": {
+      "sha256": "c353b77cd284a2a907cda9c5791f341f46669657faa923610793a63df8688da8",
+      "bytes": 3841,
+      "mode": "100644"
+    },
+    "evidence/8120/rust-snapshot-terminal-9d973114/packet-policy-inspection.json": {
+      "sha256": "5e7bc07e9dc0096e55dcff486b4c67f43826cf8e021fbd16733a2c6ab104839d",
+      "bytes": 2580,
+      "mode": "100644"
+    },
+    "evidence/8120/rust-snapshot-terminal-9d973114/required-step-policy-inspection.json": {
+      "sha256": "823d9f9c423052fdc181876b6c26f1863475d5a66940123a4df14d46633d38c4",
+      "bytes": 7610,
+      "mode": "100644"
+    },
+    "evidence/8120/rust-snapshot-terminal-9d973114/summary.json": {
+      "sha256": "289b3e8bf6bdc81da29e39f06035936b7805539dc31c4425600d206a0cc60913",
+      "bytes": 2145,
+      "mode": "100644"
+    },
+    "evidence/8120/rust-snapshot-terminal-9d973114/terminal-9d-hosted-review.json": {
+      "sha256": "c35603f7a8e3f9739e45501e91d2411381a2faebc1509cbcf3203cb90902f7a6",
+      "bytes": 3893,
+      "mode": "100644"
+    },
+    "evidence/8120/rust-snapshot-terminal-9d973114/terminal-9d-packet-verification.json": {
+      "sha256": "3c9d28d7cf79c128358bd24036eedea61664797bc2826b7a63daff3ce7493c1c",
+      "bytes": 6221,
+      "mode": "100644"
+    },
+    "evidence/8120/rust-snapshot-terminal-9d973114/terminal-9d-published-head-readback.json": {
+      "sha256": "6b05d90fabbd9dbe997e688fe49da2b5dcc00dde68bb701d6e96164b522a62d5",
+      "bytes": 17158,
+      "mode": "100644"
+    }
+  },
+  "source_head": "9d9731148780613ec27b70b0d77fe612fdd282e5",
+  "run_id": 38890260714,
+  "policy_hold": "Prior protection-denial record and authorized policy evidence pending; no policy endpoint retried and no merge attempted.",
+  "artifact_boundary": "Independent Git source/task evidence, not denied hosted artifact12035929570. No alternate artifact route."
+}
