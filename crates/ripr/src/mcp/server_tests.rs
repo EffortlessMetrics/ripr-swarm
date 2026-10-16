@@ -135,11 +135,13 @@ fn outer_envelope_budget_reserves_the_escaped_request_id() -> Result<(), String>
 }
 
 /// #7768: a long legal request id narrows the shared bound end to end.
-/// An envelope exactly at the id-aware budget ships structured; the next
-/// reachable size past it returns the typed `result_too_large` refusal,
-/// and the refusal detail names the narrowed budget so a host can see the
-/// request id, not an instrument error, caused it. (The double-carry
-/// envelope moves in 2-byte steps, so the exact one-byte flip is pinned in
+/// An envelope exactly at the id-aware budget ships structured; one step
+/// past it — including the window where the compact text would still fit —
+/// returns the typed `result_too_large` refusal with structured failure
+/// content, and the refusal detail names the narrowed budget so a host can
+/// see the request id, not an instrument error, caused it. (The
+/// double-carry envelope moves in 2-byte steps, so the exact one-byte flip
+/// is pinned in
 /// `protocol.rs::tests::tool_result_fits_and_refuses_at_the_id_aware_envelope_budget`.)
 #[tokio::test(flavor = "current_thread")]
 async fn long_request_id_refuses_typed_at_the_id_aware_boundary() -> Result<(), String> {
@@ -198,6 +200,51 @@ async fn long_request_id_refuses_typed_at_the_id_aware_boundary() -> Result<(), 
             "an envelope exactly at the id-aware budget must ship structured: {shipped}"
         ));
     }
+    // The window fixture sits one step past the budget: the structured
+    // envelope overflows while the compact text still fits — the exact
+    // interval where the removed text-only fallback shipped a success
+    // without `structuredContent` (#7768). It must refuse typed with
+    // structured failure content, asserted on the serialized wire shape.
+    let window = at + 32;
+    if envelope_of(window)? <= budget {
+        return Err("window fixture must overflow the structured envelope".into());
+    }
+    let text_only = serde_json::json!({
+        "content": [{ "type": "text", "text": serde_json::to_string(&document(window)).map_err(|error| error.to_string())? }],
+        "isError": false,
+    });
+    let text_only_bytes = serde_json::to_vec(&text_only)
+        .map_err(|error| error.to_string())?
+        .len();
+    if text_only_bytes > budget {
+        return Err(format!(
+            "window fixture must fit as compact text: {text_only_bytes} against {budget}"
+        ));
+    }
+    let windowed = server
+        .bounded_tool_result(
+            document(window),
+            workspace::SESSION_SCHEMA_VERSION,
+            "serialize boundary fixture",
+            workspace::RECOVERY_STATUS_TOO_LARGE,
+            budget,
+        )
+        .map_err(|error| error.to_string())?;
+    let rmcp::model::CallToolResponse::Complete(window_result) = windowed else {
+        return Err("window fixture did not complete".into());
+    };
+    let window_wire = serde_json::to_value(&window_result).map_err(|error| error.to_string())?;
+    if window_wire.pointer("/structuredContent/failure/code")
+        != Some(&serde_json::json!("result_too_large"))
+        || window_wire.get("isError") != Some(&serde_json::json!(true))
+    {
+        return Err(format!(
+            "a window document must refuse typed with structured failure content, not drop structuredContent silently: {window_wire}"
+        ));
+    }
+    // The refusal fixture sits far past the budget in both shapes: its
+    // compact-text copy alone renders more than the budget, so the
+    // envelope builder fails closed there too.
     let refused = server
         .bounded_tool_result(
             document(budget),
@@ -332,6 +379,114 @@ async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), S
         .ok_or_else(|| "the gap resource failure carries typed data".to_string())?;
     if data["recovery"].as_str() != Some(workspace::RECOVERY_GAP_ITEM_TOO_LARGE) {
         return Err(format!("gap resource recovery drifted: {data}"));
+    }
+    Ok(())
+}
+
+/// #7768: the original silent drop at the real `ripr_get_gap` dispatch.
+/// One canonical item whose serialized document the document guard approves
+/// (under the raw response bound) but whose complete double-carry envelope
+/// cannot fit the bound used to ship as a success envelope missing
+/// `structuredContent` — no error, no explanation — although the tool
+/// advertises an `outputSchema`. It must refuse typed with structured
+/// failure content, asserted on the serialized wire shape, and its
+/// recovery must send the caller to the committed CLI read rather than
+/// back through `ripr_get_gap`.
+#[tokio::test(flavor = "current_thread")]
+async fn window_sized_gap_item_refuses_typed_instead_of_dropping_structured_content()
+-> Result<(), String> {
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+    let outcome = crate::analysis_outcome::AnalysisOutcome::new(
+        crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings,
+        Default::default(),
+        crate::analysis_outcome::AnalysisOutcomeCounts {
+            changed_file_count: 1,
+            changed_line_count: 2,
+            candidate_line_count: 2,
+            probe_count: 2,
+            finding_count: 1,
+        },
+        Vec::new(),
+    )
+    .map_err(|error| format!("fixture outcome refused: {error}"))?;
+    let mut finding = gaps::test_finding()?;
+    finding.evidence = vec!["x".repeat(70_000)];
+    let output = crate::app::CheckOutput {
+        schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
+        harness_projections: Vec::new(),
+        tool: "ripr".to_string(),
+        mode: crate::app::Mode::Draft,
+        root: PathBuf::from("."),
+        base: None,
+        analysis_outcome: Some(outcome),
+        summary: crate::domain::Summary::default(),
+        findings: vec![finding],
+        preview_language_advisories: Vec::new(),
+        language_runs: Vec::new(),
+        no_scope_provided: false,
+        unanalyzed_working_tree: false,
+        untracked_working_tree_source_paths: Vec::new(),
+        unlinked_python_tests: None,
+        suppression: None,
+        partial_scope: None,
+        analyzed_revisions: None,
+    };
+    let snapshot = workspace::Snapshot::from_output(&output, Some("root:sha256:test"))
+        .map_err(|failure| failure.detail)?;
+    *server.session.lock().await = workspace::WorkspaceSession {
+        in_flight: false,
+        last_good: Some(Arc::new(snapshot)),
+        ..Default::default()
+    };
+
+    // Fixture guard: the window document passes the raw-cap document guard
+    // while its complete double-carry envelope overflows the bound.
+    let document = server
+        .session
+        .lock()
+        .await
+        .get_gap("gap:test:1", None)
+        .map_err(|failure| failure.detail)?;
+    let document_bytes = serde_json::to_vec(&document)
+        .map_err(|error| error.to_string())?
+        .len();
+    let envelope_bytes = crate::mcp::protocol::structured_envelope_bytes(&document)
+        .map_err(|error| error.to_string())?;
+    if document_bytes >= super::super::MAX_RESPONSE_BYTES
+        || envelope_bytes <= super::super::MAX_RESPONSE_BYTES
+    {
+        return Err(format!(
+            "window fixture missed its interval: document={document_bytes}, envelope={envelope_bytes}, bound={}",
+            super::super::MAX_RESPONSE_BYTES
+        ));
+    }
+
+    // The real `ripr_get_gap` dispatch.
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("canonical_id".to_string(), Value::from("gap:test:1"));
+    let response = server
+        .get_gap_tool(Some(arguments), super::super::MAX_RESPONSE_BYTES)
+        .await
+        .map_err(|error| format!("a window item must fail typed, not error: {error}"))?;
+    let rmcp::model::CallToolResponse::Complete(result) = response else {
+        return Err("window gap item did not complete".into());
+    };
+    let wire = serde_json::to_value(&result).map_err(|error| error.to_string())?;
+    if wire.get("isError") != Some(&serde_json::json!(true))
+        || wire.pointer("/structuredContent/failure/code")
+            != Some(&serde_json::json!("result_too_large"))
+    {
+        return Err(format!(
+            "a window gap item must refuse typed with structured failure content, not ship a success without structuredContent: {wire}"
+        ));
+    }
+    let recovery = wire
+        .pointer("/structuredContent/failure/recovery")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "window gap refusal omitted recovery".to_string())?;
+    if recovery != workspace::RECOVERY_GAP_ITEM_TOO_LARGE {
+        return Err(format!("window gap refusal recovery drifted: {recovery}"));
     }
     Ok(())
 }
