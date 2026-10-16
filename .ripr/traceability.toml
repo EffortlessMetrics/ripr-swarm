@@ -378,6 +378,8 @@ id = "RIPR-SPEC-0004"
 name = "test efficiency and vacuity signals"
 spec = "docs/specs/RIPR-SPEC-0004-test-efficiency.md"
 tests = [
+  "xtask/src/tests.rs::test_efficiency_empty_selection_is_not_evidence_of_pass",
+  "xtask/src/tests.rs::test_efficiency_nonempty_selection_keeps_pass_and_warn",
   "xtask/src/main.rs::test_efficiency_ledger_records_owner_oracle_values_and_limitations",
   "xtask/src/main.rs::test_efficiency_reports_are_advisory",
   "xtask/src/main.rs::test_efficiency_signals_likely_vacuous_and_possibly_circular_tests"
@@ -6673,6 +6675,8 @@ id = "RIPR-SPEC-0082"
 name = "preview-language disclosure"
 spec = "docs/specs/RIPR-SPEC-0082-preview-language-disclosure.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/partial_preview_disclosure.rs::python_partial_preview_claims_follow_selected_files",
+  "crates/ripr/tests/cli_smoke/partial_preview_disclosure.rs::typescript_partial_preview_claims_follow_selected_files",
   "crates/ripr/tests/cli_smoke/python_source_admission.rs::missing_changed_python_source_is_incomplete_and_restorable",
   "crates/ripr/tests/cli_smoke/python_source_admission.rs::changed_python_symlink_source_is_incomplete_across_root_routes",
   "crates/ripr/src/analysis/workspace/discover.rs::tests::source_admission_refuses_links_below_root_and_preserves_root_alias",
@@ -12142,6 +12146,10 @@ spec = "docs/specs/RIPR-SPEC-0190-help-json-machine-discovery.md"
 tests = [
   "crates/ripr/tests/cli_smoke/closed_stderr.rs::malformed_config_json_keeps_exit_two_with_closed_stderr",
   "crates/ripr/tests/cli_smoke/closed_stderr.rs::execution_failure_and_typed_refusal_keep_distinct_exits_with_closed_stderr",
+  "crates/ripr/tests/cli_smoke/closed_stderr.rs::unknown_card_json_refusal_keeps_exit_three_with_closed_stderr",
+  "crates/ripr/tests/cli_smoke/closed_stderr.rs::unknown_stub_json_refusal_keeps_exit_three_with_closed_stderr",
+  "crates/ripr/tests/cli_smoke/closed_stderr.rs::resolved_stub_json_refusal_keeps_exit_three_with_closed_stderr",
+  "crates/ripr/tests/cli_smoke/closed_stderr.rs::ready_stub_json_keeps_exit_zero_with_closed_stderr",
   "crates/ripr/src/main.rs::tests::panic_boundary_reports_and_exits_with_code_two",
   "crates/ripr/tests/cli_smoke/unsupported_check_exit.rs::check_discovery_names_unsupported_and_partial_exits",
   "crates/ripr/src/cli/help_json.rs::tests::help_command_reports_json_support_in_the_machine_catalog",
@@ -12177,6 +12185,9 @@ fixtures = []
 code = [
   "crates/ripr/src/main.rs",
   "crates/ripr/src/cli/help_json.rs",
+  "crates/ripr/src/cli/commands_context.rs",
+  "crates/ripr/src/cli/commands/agent_card.rs",
+  "crates/ripr/src/cli/commands/agent_stub.rs",
   "crates/ripr/src/cli/command.rs",
   "crates/ripr/src/cli/execute.rs",
   "crates/ripr/src/cli/mod.rs",
@@ -13304,6 +13315,12 @@ tests = [
   "crates/ripr/src/git.rs::tests::cat_file_batch_stream_rejects_ready_bytes_past_the_deadline",
   "crates/ripr/src/git.rs::tests::cat_file_batch_session_round_trips_blobs_and_reports_missing",
   "crates/ripr/src/git.rs::tests::cat_file_batch_session_enforces_the_overall_budget",
+  "crates/ripr/src/git.rs::tests::cat_file_batch_cancellation_interrupts_a_stalled_header",
+  "crates/ripr/src/git.rs::tests::cat_file_batch_cancellation_interrupts_a_stalled_body",
+  "crates/ripr/src/git.rs::tests::cat_file_batch_cancellation_interrupts_a_stalled_delimiter",
+  "crates/ripr/src/git.rs::tests::cat_file_batch_cancellation_rejects_a_buffered_delimiter",
+  "crates/ripr/src/git.rs::tests::cat_file_batch_stream_preserves_received_failures_over_a_later_budget",
+  "crates/ripr/src/git.rs::tests::cat_file_batch_cancellation_reap_observer_rejects_kill_without_wait",
   "crates/ripr/src/analysis/git_candidate_execution.rs::tests::batched_materialization_preserves_bytes_at_scale",
 ]
 fixtures = []

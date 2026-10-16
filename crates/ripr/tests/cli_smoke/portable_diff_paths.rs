@@ -48,12 +48,15 @@ impl Repo {
             repo.0.join("ripr.toml"),
             "[languages]\nenabled=[\"rust\",\"python\"]\n",
         )?;
+        fs::write(repo.0.join("diff-order.txt"), "*space*\n*\n")?;
         fixture_git_ok(&repo.0, &["init", "-q"])?;
+        // Hostile local diff settings challenge the command-level stimulus pins.
         for (key, value) in [
             ("core.autocrlf", "false"),
             ("core.quotePath", "true"),
             ("diff.noPrefix", "true"),
             ("diff.mnemonicPrefix", "true"),
+            ("diff.orderFile", "diff-order.txt"),
             ("commit.gpgsign", "false"),
             ("user.name", "Plain Paths"),
             ("user.email", "paths@example.invalid"),
@@ -84,11 +87,24 @@ impl Repo {
     }
 
     fn patches(&self) -> Result<(String, String), String> {
-        let inventory = fixture_git_output(&self.0, &["diff", "--name-only", "-z", "HEAD", "--"])?;
+        let inventory = fixture_git_output(
+            &self.0,
+            &[
+                "-c",
+                "diff.orderFile=/dev/null",
+                "diff",
+                "--name-only",
+                "-z",
+                "HEAD",
+                "--",
+            ],
+        )?;
         assert_eq!(inventory, format!("{}\0", PATHS.join("\0")));
         let git_patch = fixture_git_output(
             &self.0,
             &[
+                "-c",
+                "diff.orderFile=/dev/null",
                 "diff",
                 "--no-ext-diff",
                 "--no-textconv",
@@ -100,6 +116,7 @@ impl Repo {
                 "--",
             ],
         )?;
+        assert!(git_patch.starts_with("diff --git a/src/a.py b/src/a.py\n"));
         // Keep Git's exact path markers and CRLF bodies. Plain unified input
         // has no extended Git section/index records to rescue the boundary.
         let plain = git_patch
