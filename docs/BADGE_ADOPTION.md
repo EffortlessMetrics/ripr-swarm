@@ -136,6 +136,15 @@ The current badge parser expects this top-level shape:
 Recognized `class` values and reason strings are defined in
 [BADGE_POLICY.md](BADGE_POLICY.md#test-efficiency-vocabulary-locked).
 
+The parser accepts additional top-level fields under report schema `0.1`,
+including optional `explanation` and advisory `status: "not_run"`. It derives
+badge counts from the test ledger and metrics; it does not propagate the report
+status into the badge status. An accepted empty ledger therefore establishes
+input compatibility, not test-efficiency evidence or a badge availability claim.
+Changing the report version requires a coordinated reader change: the current
+parser rejects versions other than `0.1`. JSON object key order is immaterial
+to this parser.
+
 ## Recommended downstream command sequence
 
 ### Plain `ripr` badge
