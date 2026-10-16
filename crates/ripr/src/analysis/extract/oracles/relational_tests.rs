@@ -1228,8 +1228,8 @@ fn a_shared_constructor_does_not_hide_a_test_compared_with_a_non_literal() -> Re
     ] {
         require_classification(text, &weak)?;
     }
-    // A wrapper around a literal compares like the literal does, and
-    // constructors that differ, or carry more than one value, are not peeled.
+    // A wrapper around a literal compares like the literal does, and a
+    // wrapped plain value still pins.
     require_classification("assert_eq!(Some(r == Err(E::Bad)), Some(true));", &variant)?;
     let plain = classify_assertion("assert_eq!(total(2), expected);");
     require_classification(
