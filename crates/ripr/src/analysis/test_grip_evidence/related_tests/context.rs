@@ -2107,6 +2107,10 @@ pub(in crate::analysis::test_grip_evidence) fn call_text_contains_crate_qualifie
     owner_names_by_module_path: &OwnerNamesByModulePath,
 ) -> bool {
     let cleaned = strip_comments_and_strings(text);
+    // Every accepted spelling below contains this literal after cleaning.
+    if !cleaned.contains("crate::") {
+        return false;
+    }
     owner_names_by_module_path
         .iter()
         .any(|(module_path, owner_names)| {
@@ -3742,6 +3746,44 @@ mod tests {
     use super::*;
     use crate::analysis::facts::{FileFacts, FunctionFact, FunctionSourceRole, RustIndex};
     use crate::domain::SymbolId;
+
+    #[test]
+    fn crate_qualified_candidate_filter_matches_predecessor_boundaries() {
+        let modules = BTreeMap::from([
+            ("alpha".to_string(), BTreeSet::from(["target".to_string()])),
+            ("beta".to_string(), BTreeSet::from(["other".to_string()])),
+        ]);
+        for (text, name, expected) in [
+            ("crate::alpha::target()", "target", true),
+            ("wrap(crate::alpha::target())", "target", true),
+            ("crate::beta::other()", "other", true),
+            ("crate::alpha::target()", "other", false),
+            ("crate::wrong::target()", "target", false),
+            ("notcrate::alpha::target()", "target", false),
+            ("::crate::alpha::target()", "target", false),
+            ("self::crate::alpha::target()", "target", false),
+            ("crate::alpha::target_extra()", "target", false),
+            ("crate::alpha::target ()", "target", false),
+            ("target()", "target", false),
+            ("receiver.target()", "target", false),
+            ("alias::target()", "target", false),
+            ("super::alpha::target()", "target", false),
+            ("target(\"crate::alpha::target()\")", "target", false),
+            ("target() // crate::alpha::target()", "target", false),
+            ("'x'; crate::alpha::target()", "target", true),
+            // Cleaning precedes filtering: preserve the existing lexical join.
+            ("cr\"ignored\"ate::alpha::target()", "target", true),
+        ] {
+            let cleaned = strip_comments_and_strings(text);
+            let previous = modules.iter().any(|(module, names)| {
+                names.contains(name)
+                    && code_contains_crate_qualified_helper_call(&cleaned, module, name)
+            });
+            let actual = call_text_contains_crate_qualified_owner_call(text, name, &modules);
+            assert_eq!(actual, previous, "predecessor parity: {text}");
+            assert_eq!(actual, expected, "nonempty boundary oracle: {text}");
+        }
+    }
 
     #[test]
     fn cfg_all_test_role_blocks_same_file_shadow_credit() {
