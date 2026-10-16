@@ -1,0 +1,1677 @@
+{
+  "timestamp_utc": "2026-10-16T05:02:22.717192+00:00",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "pr": 8004,
+  "subjects": {
+    "reviewed_source": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+    "tree": "da4222d49d37aa82662003e0b6ef4ca8715dbac3",
+    "source_basis": "f2ba9522267e88dfb03e3006e83129dfd2a8bb72",
+    "predecessor": "77474e347bbdd8ef2101b7f9865e65f094df44c1",
+    "packet": "31c295d2f05eb3cb89e4b5cd8191d33f86267df8/evidence/8004/shadow-syntax-repair",
+    "prior_review": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004#pullrequestreview-5542269964"
+  },
+  "dispositions": {
+    "correctness": "NO_NEW_BLOCKING_FINDING_IN_BOUNDED_INDEPENDENT_REPLAY",
+    "performance": "TARGETED_REPAIR_SUPPORTED_MATERIAL_RECOVERY_RESIDUAL_SUBSTANTIAL",
+    "integration": "UNQUALIFIED",
+    "overall": "REVIEW_INCOMPLETE_KEEP_DRAFT"
+  },
+  "recovery": {
+    "verified": true,
+    "members": 8985,
+    "bytes": 235628395,
+    "checksums": true,
+    "full_bytes_sizes_modes": true
+  },
+  "fixtures": {
+    "predecessor_and_candidate_tree": "9cef3bf61fb43d24b0ac728bb4ca3cff53bb724d",
+    "complete_subtree_equal": true,
+    "claim": "all descendant fixture/golden/corpus bytes preserved;not a fresh full golden/honesty suite execution"
+  },
+  "binaries": {
+    "candidate": {
+      "source": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+      "version": "ripr 0.11.0 (8e0444b1a62ead18584d40b18278c6e8716dc56c)",
+      "tree": "da4222d49d37aa82662003e0b6ef4ca8715dbac3",
+      "artifact": {
+        "reason": "compiler-artifact",
+        "package_id": "path+file:///workspace/review8004/source/crates/ripr#0.11.0",
+        "manifest_path": "/workspace/review8004/source/crates/ripr/Cargo.toml",
+        "target": {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "ripr",
+          "src_path": "/workspace/review8004/source/crates/ripr/src/main.rs",
+          "edition": "2024",
+          "doc": true,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": false
+        },
+        "features": [
+          "default",
+          "lang-python",
+          "lang-rust",
+          "lang-typescript"
+        ],
+        "filenames": [
+          "/workspace/review8004/target-release/release/ripr"
+        ],
+        "executable": "/workspace/review8004/target-release/release/ripr",
+        "fresh": false
+      },
+      "bytes": 33047248,
+      "sha256": "9a4674f89a81c5ff153e1422946e1425cf1491cc578f5e478aa43a420b3c3d84",
+      "retained_digest": "9a4674f89a81c5ff153e1422946e1425cf1491cc578f5e478aa43a420b3c3d84",
+      "matches_retained_digest": true,
+      "compiler_stamp": [
+        {
+          "RIPR_BUILD_COMMIT": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+          "RIPR_BUILD_COMMIT_DIRTY": "false",
+          "RIPR_BUILD_SOURCE_DIGEST": ""
+        }
+      ]
+    },
+    "predecessor": {
+      "source": "77474e347bbdd8ef2101b7f9865e65f094df44c1",
+      "version": "ripr 0.11.0 (77474e347bbdd8ef2101b7f9865e65f094df44c1)",
+      "tree": "6aafd27b5ee2971dcfa052bfc911bae74b69a4d8",
+      "artifact": {
+        "reason": "compiler-artifact",
+        "package_id": "path+file:///workspace/review8004/base/crates/ripr#0.11.0",
+        "manifest_path": "/workspace/review8004/base/crates/ripr/Cargo.toml",
+        "target": {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "ripr",
+          "src_path": "/workspace/review8004/base/crates/ripr/src/main.rs",
+          "edition": "2024",
+          "doc": true,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": false
+        },
+        "features": [
+          "default",
+          "lang-python",
+          "lang-rust",
+          "lang-typescript"
+        ],
+        "filenames": [
+          "/workspace/review8004/target-release/release/ripr"
+        ],
+        "executable": "/workspace/review8004/target-release/release/ripr",
+        "fresh": false
+      },
+      "bytes": 33026608,
+      "sha256": "14f33ad70bc5faa922663d8136eeda8ac386db6106bf09cce1b85ab266091e78",
+      "retained_digest": "14f33ad70bc5faa922663d8136eeda8ac386db6106bf09cce1b85ab266091e78",
+      "matches_retained_digest": true,
+      "compiler_stamp": [
+        {
+          "RIPR_BUILD_COMMIT": "77474e347bbdd8ef2101b7f9865e65f094df44c1",
+          "RIPR_BUILD_COMMIT_DIRTY": "false",
+          "RIPR_BUILD_SOURCE_DIGEST": ""
+        }
+      ]
+    },
+    "candidate_units": {
+      "sha256": "9cff045e94e108b1e5f91b7e1a7d3fdad2fa1e1189dc4c1ee823f6c75230df66",
+      "clean_stamp": true,
+      "source": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+    },
+    "removal_units": {
+      "source": "3d47035dd65c7b5c319a5dcc897f17ed6560746d",
+      "tree": "a06b1b1957ea5c72acce34d40dd6c7ed3fbeb5f1",
+      "sha256": "6544d347a17cdeed043bd994d394c431ddab4010d4d329f6ca287b6579564aa3",
+      "parent": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+      "clean_stamp": true
+    }
+  },
+  "independent_checks": {
+    "distinct_affected_units": 888,
+    "public_path_integrations": 14,
+    "native_originals": 63,
+    "native_mutants_failed": 28,
+    "native_mutants_survived": 35,
+    "native_workload_tests": 176,
+    "fresh_release_CLI_reports": 189,
+    "complete_retained_report_comparisons": 189,
+    "replacement_reports": 12,
+    "additional_lexical_twin_reports": 2,
+    "additional_lexical_twin_native_runs": 4,
+    "removal_passes": 6,
+    "removal_intended_runtime_failures": [
+      "test analysis::syntax::source_snapshot::tests::fragment_parses_share_only_exact_bytes_and_clones_start_empty ... FAILED",
+      "test analysis::classify::owner_pin::tests::module_shadow_snapshot_shares_facts_and_complete_answers ... FAILED"
+    ]
+  },
+  "retained_evidence_audit": {
+    "timed_processes": 120,
+    "groups": 40,
+    "paired_groups": 20,
+    "native_truth_labels_unchanged": true,
+    "baseline_candidate_complete_CLI_comparisons": 189,
+    "profile_reports_and_tsv_aggregates": 10,
+    "provenance": "author-built/executed original data independently decoded and recomputed;fresh runtime checks listed separately"
+  },
+  "performance": {
+    "attempts": 78,
+    "successful_processes": 76,
+    "timeouts": 2,
+    "dependent_warm_not_run": 2,
+    "complete_report_retained_comparisons": 76,
+    "normalization": "top-level artifact removal and exact workload-root rebasing for retained comparisons;artifact removal only within fresh benchmark",
+    "output_control_failures_on_successful_reports": 0,
+    "all_successful_cpu_rss_observed": true,
+    "groups": [
+      {
+        "workload": "fixture-mix-16",
+        "mode": "full",
+        "variant": "base",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          3.130202123,
+          2.659306272
+        ],
+        "median_s": 2.8947541975,
+        "range_s": [
+          2.659306272,
+          3.130202123
+        ],
+        "MAD_s": 0.23544792550000015,
+        "CPU_median_s": 11.005,
+        "RSS_median_bytes": 40071168.0
+      },
+      {
+        "workload": "fixture-mix-16",
+        "mode": "full",
+        "variant": "base",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.116401384,
+          0.065476685
+        ],
+        "median_s": 0.0909390345,
+        "range_s": [
+          0.065476685,
+          0.116401384
+        ],
+        "MAD_s": 0.025462349499999995,
+        "CPU_median_s": 0.04,
+        "RSS_median_bytes": 14635008.0
+      },
+      {
+        "workload": "fixture-mix-16",
+        "mode": "full",
+        "variant": "candidate",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.219708719,
+          0.327543225
+        ],
+        "median_s": 0.273625972,
+        "range_s": [
+          0.219708719,
+          0.327543225
+        ],
+        "MAD_s": 0.053917253,
+        "CPU_median_s": 0.315,
+        "RSS_median_bytes": 19994624.0
+      },
+      {
+        "workload": "fixture-mix-16",
+        "mode": "full",
+        "variant": "candidate",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.06509734,
+          0.11616796
+        ],
+        "median_s": 0.09063265000000001,
+        "range_s": [
+          0.06509734,
+          0.11616796
+        ],
+        "MAD_s": 0.02553531,
+        "CPU_median_s": 0.035,
+        "RSS_median_bytes": 14417920.0
+      },
+      {
+        "workload": "fixture-mix-16",
+        "mode": "compact",
+        "variant": "base",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          5.834938084,
+          5.582188256
+        ],
+        "median_s": 5.70856317,
+        "range_s": [
+          5.582188256,
+          5.834938084
+        ],
+        "MAD_s": 0.1263749139999999,
+        "CPU_median_s": 5.995,
+        "RSS_median_bytes": 25303040.0
+      },
+      {
+        "workload": "fixture-mix-16",
+        "mode": "compact",
+        "variant": "base",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.007665885,
+          0.007737678
+        ],
+        "median_s": 0.007701781499999999,
+        "range_s": [
+          0.007665885,
+          0.007737678
+        ],
+        "MAD_s": 3.589649999999984e-05,
+        "CPU_median_s": 0.0,
+        "RSS_median_bytes": 12331008.0
+      },
+      {
+        "workload": "fixture-mix-16",
+        "mode": "compact",
+        "variant": "candidate",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.114144763,
+          0.119785095
+        ],
+        "median_s": 0.116964929,
+        "range_s": [
+          0.114144763,
+          0.119785095
+        ],
+        "MAD_s": 0.002820165999999999,
+        "CPU_median_s": 0.09,
+        "RSS_median_bytes": 19236864.0
+      },
+      {
+        "workload": "fixture-mix-16",
+        "mode": "compact",
+        "variant": "candidate",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.007702884,
+          0.00780005
+        ],
+        "median_s": 0.007751467,
+        "range_s": [
+          0.007702884,
+          0.00780005
+        ],
+        "MAD_s": 4.8583000000000046e-05,
+        "CPU_median_s": 0.0,
+        "RSS_median_bytes": 12507136.0
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "full",
+        "variant": "base",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.869637905,
+          0.919416668
+        ],
+        "median_s": 0.8945272865,
+        "range_s": [
+          0.869637905,
+          0.919416668
+        ],
+        "MAD_s": 0.024889381499999974,
+        "CPU_median_s": 3.205,
+        "RSS_median_bytes": 43100160.0
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "full",
+        "variant": "base",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.064171784,
+          0.064246517
+        ],
+        "median_s": 0.0642091505,
+        "range_s": [
+          0.064171784,
+          0.064246517
+        ],
+        "MAD_s": 3.736650000000369e-05,
+        "CPU_median_s": 0.025,
+        "RSS_median_bytes": 14014464.0
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "full",
+        "variant": "candidate",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.167323218,
+          0.164673107
+        ],
+        "median_s": 0.1659981625,
+        "range_s": [
+          0.164673107,
+          0.167323218
+        ],
+        "MAD_s": 0.0013250554999999914,
+        "CPU_median_s": 0.345,
+        "RSS_median_bytes": 21506048.0
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "full",
+        "variant": "candidate",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.064274511,
+          0.064382748
+        ],
+        "median_s": 0.06432862950000001,
+        "range_s": [
+          0.064274511,
+          0.064382748
+        ],
+        "MAD_s": 5.411849999999857e-05,
+        "CPU_median_s": 0.02,
+        "RSS_median_bytes": 13858816.0
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "compact",
+        "variant": "base",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          1.970272266,
+          1.974215625
+        ],
+        "median_s": 1.9722439455,
+        "range_s": [
+          1.970272266,
+          1.974215625
+        ],
+        "MAD_s": 0.00197167949999999,
+        "CPU_median_s": 2.0599999999999996,
+        "RSS_median_bytes": 26253312.0
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "compact",
+        "variant": "base",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.015857409,
+          0.008052622
+        ],
+        "median_s": 0.011955015499999999,
+        "range_s": [
+          0.008052622,
+          0.015857409
+        ],
+        "MAD_s": 0.0039023934999999994,
+        "CPU_median_s": 0.0,
+        "RSS_median_bytes": 11874304.0
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "compact",
+        "variant": "candidate",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.214484935,
+          0.214723656
+        ],
+        "median_s": 0.2146042955,
+        "range_s": [
+          0.214484935,
+          0.214723656
+        ],
+        "MAD_s": 0.00011936050000001253,
+        "CPU_median_s": 0.19,
+        "RSS_median_bytes": 19771392.0
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "compact",
+        "variant": "candidate",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.007774007,
+          0.007843583
+        ],
+        "median_s": 0.007808795,
+        "range_s": [
+          0.007774007,
+          0.007843583
+        ],
+        "MAD_s": 3.478799999999957e-05,
+        "CPU_median_s": 0.0,
+        "RSS_median_bytes": 12298240.0
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "full",
+        "variant": "base",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.164239012,
+          0.165547758
+        ],
+        "median_s": 0.164893385,
+        "range_s": [
+          0.164239012,
+          0.165547758
+        ],
+        "MAD_s": 0.0006543729999999998,
+        "CPU_median_s": 0.315,
+        "RSS_median_bytes": 35207168.0
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "full",
+        "variant": "base",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.064074998,
+          0.032060096
+        ],
+        "median_s": 0.048067547,
+        "range_s": [
+          0.032060096,
+          0.064074998
+        ],
+        "MAD_s": 0.016007450999999995,
+        "CPU_median_s": 0.01,
+        "RSS_median_bytes": 13721600.0
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "full",
+        "variant": "candidate",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.114644758,
+          0.114428933
+        ],
+        "median_s": 0.1145368455,
+        "range_s": [
+          0.114428933,
+          0.114644758
+        ],
+        "MAD_s": 0.00010791250000000141,
+        "CPU_median_s": 0.135,
+        "RSS_median_bytes": 22630400.0
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "full",
+        "variant": "candidate",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.064228201,
+          0.064569703
+        ],
+        "median_s": 0.06439895200000001,
+        "range_s": [
+          0.064228201,
+          0.064569703
+        ],
+        "MAD_s": 0.0001707510000000037,
+        "CPU_median_s": 0.01,
+        "RSS_median_bytes": 13830144.0
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "compact",
+        "variant": "base",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.264389716,
+          0.266474283
+        ],
+        "median_s": 0.26543199949999996,
+        "range_s": [
+          0.264389716,
+          0.266474283
+        ],
+        "MAD_s": 0.0010422834999999908,
+        "CPU_median_s": 0.245,
+        "RSS_median_bytes": 26335232.0
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "compact",
+        "variant": "base",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.007851853,
+          0.007165566
+        ],
+        "median_s": 0.0075087095,
+        "range_s": [
+          0.007165566,
+          0.007851853
+        ],
+        "MAD_s": 0.00034314350000000035,
+        "CPU_median_s": 0.0,
+        "RSS_median_bytes": 12062720.0
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "compact",
+        "variant": "candidate",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.164179064,
+          0.164184181
+        ],
+        "median_s": 0.1641816225,
+        "range_s": [
+          0.164179064,
+          0.164184181
+        ],
+        "MAD_s": 2.558499999999464e-06,
+        "CPU_median_s": 0.13,
+        "RSS_median_bytes": 20852736.0
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "compact",
+        "variant": "candidate",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.015869031,
+          0.008158013
+        ],
+        "median_s": 0.012013521999999999,
+        "range_s": [
+          0.008158013,
+          0.015869031
+        ],
+        "MAD_s": 0.003855508999999999,
+        "CPU_median_s": 0.005,
+        "RSS_median_bytes": 12097536.0
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "full",
+        "variant": "base",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          46.851200846,
+          48.085599695
+        ],
+        "median_s": 47.4684002705,
+        "range_s": [
+          46.851200846,
+          48.085599695
+        ],
+        "MAD_s": 0.6171994245000008,
+        "CPU_median_s": 187.885,
+        "RSS_median_bytes": 65826816.0
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "full",
+        "variant": "base",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.165943471,
+          0.114319357
+        ],
+        "median_s": 0.140131414,
+        "range_s": [
+          0.114319357,
+          0.165943471
+        ],
+        "MAD_s": 0.025812057000000006,
+        "CPU_median_s": 0.105,
+        "RSS_median_bytes": 18647040.0
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "full",
+        "variant": "candidate",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          5.341606453,
+          6.54432632
+        ],
+        "median_s": 5.9429663865,
+        "range_s": [
+          5.341606453,
+          6.54432632
+        ],
+        "MAD_s": 0.6013599334999999,
+        "CPU_median_s": 21.295,
+        "RSS_median_bytes": 38187008.0
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "full",
+        "variant": "candidate",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.164793755,
+          0.164666976
+        ],
+        "median_s": 0.16473036549999998,
+        "range_s": [
+          0.164666976,
+          0.164793755
+        ],
+        "MAD_s": 6.338949999999677e-05,
+        "CPU_median_s": 0.1,
+        "RSS_median_bytes": 18595840.0
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "compact",
+        "variant": "base",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 0,
+        "timeouts": 2,
+        "not_run": 0,
+        "samples_s": [],
+        "median_s": null,
+        "range_s": null,
+        "MAD_s": null,
+        "CPU_median_s": null,
+        "RSS_median_bytes": null
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "compact",
+        "variant": "base",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 0,
+        "timeouts": 0,
+        "not_run": 2,
+        "samples_s": [],
+        "median_s": null,
+        "range_s": null,
+        "MAD_s": null,
+        "CPU_median_s": null,
+        "RSS_median_bytes": null
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "compact",
+        "variant": "candidate",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          15.316248422,
+          15.133100931
+        ],
+        "median_s": 15.2246746765,
+        "range_s": [
+          15.133100931,
+          15.316248422
+        ],
+        "MAD_s": 0.09157374549999986,
+        "CPU_median_s": 15.26,
+        "RSS_median_bytes": 30849024.0
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "compact",
+        "variant": "candidate",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.033081382,
+          0.017875731
+        ],
+        "median_s": 0.0254785565,
+        "range_s": [
+          0.017875731,
+          0.033081382
+        ],
+        "MAD_s": 0.0076028255,
+        "CPU_median_s": 0.01,
+        "RSS_median_bytes": 12201984.0
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "full",
+        "variant": "base",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          2.965693038,
+          3.101552801
+        ],
+        "median_s": 3.0336229195,
+        "range_s": [
+          2.965693038,
+          3.101552801
+        ],
+        "MAD_s": 0.06792988150000001,
+        "CPU_median_s": 11.09,
+        "RSS_median_bytes": 43890688.0
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "full",
+        "variant": "base",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.165029745,
+          0.167236321
+        ],
+        "median_s": 0.16613303299999999,
+        "range_s": [
+          0.165029745,
+          0.167236321
+        ],
+        "MAD_s": 0.001103287999999994,
+        "CPU_median_s": 0.12,
+        "RSS_median_bytes": 17489920.0
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "full",
+        "variant": "candidate",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          1.631083038,
+          1.584533766
+        ],
+        "median_s": 1.607808402,
+        "range_s": [
+          1.584533766,
+          1.631083038
+        ],
+        "MAD_s": 0.023274636000000015,
+        "CPU_median_s": 5.35,
+        "RSS_median_bytes": 40726528.0
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "full",
+        "variant": "candidate",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.169181194,
+          0.165267282
+        ],
+        "median_s": 0.167224238,
+        "range_s": [
+          0.165267282,
+          0.169181194
+        ],
+        "MAD_s": 0.0019569560000000097,
+        "CPU_median_s": 0.115,
+        "RSS_median_bytes": 17618944.0
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "compact",
+        "variant": "base",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          5.819509335,
+          5.140384183
+        ],
+        "median_s": 5.479946759000001,
+        "range_s": [
+          5.140384183,
+          5.819509335
+        ],
+        "MAD_s": 0.33956257600000006,
+        "CPU_median_s": 5.8,
+        "RSS_median_bytes": 32387072.0
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "compact",
+        "variant": "base",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.065723388,
+          0.016223772
+        ],
+        "median_s": 0.040973579999999996,
+        "range_s": [
+          0.016223772,
+          0.065723388
+        ],
+        "MAD_s": 0.024749807999999998,
+        "CPU_median_s": 0.01,
+        "RSS_median_bytes": 12232704.0
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "compact",
+        "variant": "candidate",
+        "phase": "cold",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          3.692863385,
+          4.418624264
+        ],
+        "median_s": 4.0557438245,
+        "range_s": [
+          3.692863385,
+          4.418624264
+        ],
+        "MAD_s": 0.36288043950000004,
+        "CPU_median_s": 4.055,
+        "RSS_median_bytes": 31528960.0
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "compact",
+        "variant": "candidate",
+        "phase": "warm",
+        "planned": 2,
+        "successful": 2,
+        "timeouts": 0,
+        "not_run": 0,
+        "samples_s": [
+          0.016419537,
+          0.016680387
+        ],
+        "median_s": 0.016549962,
+        "range_s": [
+          0.016419537,
+          0.016680387
+        ],
+        "MAD_s": 0.00013042499999999999,
+        "CPU_median_s": 0.005,
+        "RSS_median_bytes": 12242944.0
+      }
+    ],
+    "cold_summary": [
+      {
+        "workload": "fixture-mix-16",
+        "mode": "full",
+        "n_planned": 2,
+        "base_samples": [
+          3.130202123,
+          2.659306272
+        ],
+        "candidate_samples": [
+          0.219708719,
+          0.327543225
+        ],
+        "base_timeouts": 0,
+        "base_median": 2.8947541975,
+        "candidate_median": 0.273625972,
+        "median_paired_ratio": 0.09667930973345412,
+        "censoring": null
+      },
+      {
+        "workload": "fixture-mix-16",
+        "mode": "compact",
+        "n_planned": 2,
+        "base_samples": [
+          5.834938084,
+          5.582188256
+        ],
+        "candidate_samples": [
+          0.114144763,
+          0.119785095
+        ],
+        "base_timeouts": 0,
+        "base_median": 5.70856317,
+        "candidate_median": 0.116964929,
+        "median_paired_ratio": 0.020510369907205478,
+        "censoring": null
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "full",
+        "n_planned": 2,
+        "base_samples": [
+          0.869637905,
+          0.919416668
+        ],
+        "candidate_samples": [
+          0.167323218,
+          0.164673107
+        ],
+        "base_timeouts": 0,
+        "base_median": 0.8945272865,
+        "candidate_median": 0.1659981625,
+        "median_paired_ratio": 0.18575584417561206,
+        "censoring": null
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "compact",
+        "n_planned": 2,
+        "base_samples": [
+          1.970272266,
+          1.974215625
+        ],
+        "candidate_samples": [
+          0.214484935,
+          0.214723656
+        ],
+        "base_timeouts": 0,
+        "base_median": 1.9722439455,
+        "candidate_median": 0.2146042955,
+        "median_paired_ratio": 0.10881229532730302,
+        "censoring": null
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "full",
+        "n_planned": 2,
+        "base_samples": [
+          0.164239012,
+          0.165547758
+        ],
+        "candidate_samples": [
+          0.114644758,
+          0.114428933
+        ],
+        "base_timeouts": 0,
+        "base_median": 0.164893385,
+        "candidate_median": 0.1145368455,
+        "median_paired_ratio": 0.6946250608315098,
+        "censoring": null
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "compact",
+        "n_planned": 2,
+        "base_samples": [
+          0.264389716,
+          0.266474283
+        ],
+        "candidate_samples": [
+          0.164179064,
+          0.164184181
+        ],
+        "base_timeouts": 0,
+        "base_median": 0.26543199949999996,
+        "candidate_median": 0.1641816225,
+        "median_paired_ratio": 0.6185544484849135,
+        "censoring": null
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "full",
+        "n_planned": 2,
+        "base_samples": [
+          46.851200846,
+          48.085599695
+        ],
+        "candidate_samples": [
+          5.341606453,
+          6.54432632
+        ],
+        "base_timeouts": 0,
+        "base_median": 47.4684002705,
+        "candidate_median": 5.9429663865,
+        "median_paired_ratio": 0.12505479108403278,
+        "censoring": null
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "compact",
+        "n_planned": 2,
+        "base_samples": [],
+        "candidate_samples": [
+          15.316248422,
+          15.133100931
+        ],
+        "base_timeouts": 2,
+        "base_median": null,
+        "candidate_median": 15.2246746765,
+        "median_paired_ratio": null,
+        "censoring": "predecessor compact samples censored at120;no uncensored median/paired ratio claimed"
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "full",
+        "n_planned": 2,
+        "base_samples": [
+          2.965693038,
+          3.101552801
+        ],
+        "candidate_samples": [
+          1.631083038,
+          1.584533766
+        ],
+        "base_timeouts": 0,
+        "base_median": 3.0336229195,
+        "candidate_median": 1.607808402,
+        "median_paired_ratio": 0.5304338954988661,
+        "censoring": null
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "compact",
+        "n_planned": 2,
+        "base_samples": [
+          5.819509335,
+          5.140384183
+        ],
+        "candidate_samples": [
+          3.692863385,
+          4.418624264
+        ],
+        "base_timeouts": 0,
+        "base_median": 5.479946759000001,
+        "candidate_median": 4.0557438245,
+        "median_paired_ratio": 0.7470781921649923,
+        "censoring": null
+      }
+    ],
+    "limits": [
+      "n=2 descriptive repeats;not OS-cold",
+      "Predecessor sync64compact both cold runs censored at120s;no complete reports/terminal resource receipts for these samples;dependent warms not run",
+      "First timeout terminal elapsed/native exit not captured by original driver;deadline/traceback/raw partial outputs retained",
+      "No general no-regression or full runtime/performance qualification;no new a5/base98 ratio"
+    ]
+  },
+  "environment": {
+    "observed_PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+    "resolved_rustc": "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+    "resolved_cargo": "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+    "configured_CARGO_HOME": "/workspace/.cargo",
+    "configured_RUSTUP_HOME": "/workspace/.rustup",
+    "RAYON_NUM_THREADS": 4,
+    "CARGO_BUILD_JOBS": 2,
+    "RUSTFLAGS": null,
+    "CARGO_ENCODED_RUSTFLAGS": null,
+    "RUSTC_WRAPPER": null,
+    "RUSTC_WORKSPACE_WRAPPER": null,
+    "cpu_max": "400000 100000",
+    "memory_max": "17179869184",
+    "host": "Linux 3b194eb21cd5 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.95.0\nLLVM version: 22.1.2",
+    "initial_setup_failure": "rustup shim used default /home/agent/.rustup (read-only); no compiler ran until explicit installed workspace homes were configured",
+    "native_link_probe": "cc /tmp/review8004-link.c -o /tmp/review8004-link; executable exit0"
+  },
+  "integration": {
+    "initial_main": "97cc171257fd76a1b3b9e79cc41ad949e0ecc861",
+    "initial_local_tree": "aa1da91442e93efce823769a1951d4e63ccf63c9",
+    "latest_main": "fbc8f7e58f11f25a8196495dfb88e7b393a5f4c4",
+    "latest_local_tree": "4b98340bac3a8ce9dbe0317566f36426fe9d86c1",
+    "local_compositions_executed": false,
+    "observed_PR_merge_ref": "086e9012f13d6ed1bcdfdb26b89796c38404e5f9",
+    "observed_PR_merge_parents": [
+      "97cc171257fd76a1b3b9e79cc41ad949e0ecc861",
+      "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+    ],
+    "observed_PR_merge_tree": "aa1da91442e93efce823769a1951d4e63ccf63c9",
+    "hosted_security_job_checkout": {
+      "job_id": 116804248064,
+      "commit": "086e9012f13d6ed1bcdfdb26b89796c38404e5f9",
+      "outcome": "cargo-deny failed:zip8.6.0 yanked;not product runtime qualification"
+    },
+    "PR8147": {
+      "head": "425317d867f4639ad5ec878c3ba44c82730d7af7",
+      "overlap": "disjoint macro-binding variants/messages/tests;no new cache-key overlap",
+      "initial_main_source_8147_tree": "3a9747b994f5e0d7b3e2e18a404fe9f81ea553d6",
+      "executed": false
+    },
+    "dependency_owners": {
+      "PR8180": "4b80f51a8616a94a5924fb28292253f054a92db4",
+      "PR8171": "6419e23b9434350998b4363008b333a28eda3612",
+      "both_verified_requirement_and_lock": "zip9/9.0.3",
+      "frozen_source_and_observed_main": "zip8/8.6.0",
+      "old_8180_mismatch": "superseded at current head;no duplicate migration performed"
+    },
+    "remote": {
+      "observed_at": "2026-10-16 05:00:50 UTC",
+      "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+      "draft": true,
+      "main": "fbc8f7e58f11f25a8196495dfb88e7b393a5f4c4",
+      "merge_ref": "086e9012f13d6ed1bcdfdb26b89796c38404e5f9",
+      "main_delta": {
+        "repository_full_name": "EffortlessMetrics/ripr-swarm",
+        "base": "97cc171257fd76a1b3b9e79cc41ad949e0ecc861",
+        "head": "fbc8f7e58f11f25a8196495dfb88e7b393a5f4c4",
+        "status": "ahead",
+        "ahead_by": 2,
+        "behind_by": 0,
+        "total_commits": 2,
+        "too_large": null,
+        "base_commit": {
+          "sha": "97cc171257fd76a1b3b9e79cc41ad949e0ecc861",
+          "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/commits/97cc171257fd76a1b3b9e79cc41ad949e0ecc861",
+          "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/commit/97cc171257fd76a1b3b9e79cc41ad949e0ecc861"
+        },
+        "merge_base_commit": {
+          "sha": "97cc171257fd76a1b3b9e79cc41ad949e0ecc861",
+          "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/commits/97cc171257fd76a1b3b9e79cc41ad949e0ecc861",
+          "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/commit/97cc171257fd76a1b3b9e79cc41ad949e0ecc861"
+        },
+        "files": [
+          {
+            "filename": ".ripr/traceability.toml",
+            "status": "modified",
+            "additions": 7,
+            "deletions": 0,
+            "changes": 7,
+            "previous_filename": null
+          },
+          {
+            "filename": "changelog.d/7747-bare-group-help.md",
+            "status": "added",
+            "additions": 4,
+            "deletions": 0,
+            "changes": 4,
+            "previous_filename": null
+          },
+          {
+            "filename": "crates/ripr/src/cli/commands.rs",
+            "status": "modified",
+            "additions": 32,
+            "deletions": 51,
+            "changes": 83,
+            "previous_filename": null
+          },
+          {
+            "filename": "crates/ripr/src/cli/commands/baseline.rs",
+            "status": "modified",
+            "additions": 3,
+            "deletions": 5,
+            "changes": 8,
+            "previous_filename": null
+          },
+          {
+            "filename": "crates/ripr/src/cli/commands/cache.rs",
+            "status": "modified",
+            "additions": 3,
+            "deletions": 7,
+            "changes": 10,
+            "previous_filename": null
+          },
+          {
+            "filename": "crates/ripr/src/cli/commands/config.rs",
+            "status": "modified",
+            "additions": 2,
+            "deletions": 1,
+            "changes": 3,
+            "previous_filename": null
+          },
+          {
+            "filename": "crates/ripr/src/cli/commands/gate.rs",
+            "status": "modified",
+            "additions": 8,
+            "deletions": 20,
+            "changes": 28,
+            "previous_filename": null
+          },
+          {
+            "filename": "crates/ripr/src/cli/commands/pilot.rs",
+            "status": "modified",
+            "additions": 97,
+            "deletions": 63,
+            "changes": 160,
+            "previous_filename": null
+          },
+          {
+            "filename": "crates/ripr/src/cli/execute.rs",
+            "status": "modified",
+            "additions": 1,
+            "deletions": 6,
+            "changes": 7,
+            "previous_filename": null
+          },
+          {
+            "filename": "crates/ripr/tests/cli_help_hierarchy.rs",
+            "status": "modified",
+            "additions": 162,
+            "deletions": 2,
+            "changes": 164,
+            "previous_filename": null
+          },
+          {
+            "filename": "docs/COMMAND_HIERARCHY.md",
+            "status": "modified",
+            "additions": 8,
+            "deletions": 0,
+            "changes": 8,
+            "previous_filename": null
+          },
+          {
+            "filename": "docs/specs/RIPR-SPEC-0184-public-command-catalog.md",
+            "status": "modified",
+            "additions": 12,
+            "deletions": 0,
+            "changes": 12,
+            "previous_filename": null
+          },
+          {
+            "filename": "xtask/tests/ripr_public_guide_contract.rs",
+            "status": "modified",
+            "additions": 5,
+            "deletions": 3,
+            "changes": 8,
+            "previous_filename": null
+          }
+        ]
+      },
+      "related_prs": [
+        {
+          "number": 8147,
+          "state": "open",
+          "head": "425317d867f4639ad5ec878c3ba44c82730d7af7",
+          "merged": false
+        },
+        {
+          "number": 8171,
+          "state": "open",
+          "head": "6419e23b9434350998b4363008b333a28eda3612",
+          "merged": false
+        },
+        {
+          "number": 8180,
+          "state": "open",
+          "head": "4b80f51a8616a94a5924fb28292253f054a92db4",
+          "merged": false
+        }
+      ],
+      "threads": {
+        "total": 13,
+        "resolved": 1,
+        "changed_since_initial": false
+      },
+      "checks": {
+        "total": 25,
+        "returned": 25,
+        "records": [
+          {
+            "name": "clean uv install and useful Python journey",
+            "status": "completed",
+            "conclusion": "success",
+            "id": 116808981115,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487502/job/116808981115",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "clean pip install and useful Python journey",
+            "status": "completed",
+            "conclusion": "success",
+            "id": 116808981095,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487502/job/116808981095",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "droid",
+            "status": "completed",
+            "conclusion": "skipped",
+            "id": 116805810024,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848997189/job/116805810024",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "build and inspect Linux x64 wheel",
+            "status": "completed",
+            "conclusion": "success",
+            "id": 116804412462,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487502/job/116804412462",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "Graphite / AI Reviews",
+            "status": "completed",
+            "conclusion": "skipped",
+            "id": 116804406230,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/runs/116804406230",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "rust-coverage",
+            "status": "completed",
+            "conclusion": "skipped",
+            "id": 116804285110,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848488227/job/116804285110",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "rust-tests-junit",
+            "status": "completed",
+            "conclusion": "skipped",
+            "id": 116804250117,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487554/job/116804250117",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "windows-advisory",
+            "status": "completed",
+            "conclusion": "skipped",
+            "id": 116804250080,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487526/job/116804250080",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "pinned MCP evidence before and after (advisory)",
+            "status": "completed",
+            "conclusion": "skipped",
+            "id": 116804249771,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487502/job/116804249771",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "Perl and release proof",
+            "status": "completed",
+            "conclusion": "skipped",
+            "id": 116804249446,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487422/job/116804249446",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "future-clippy",
+            "status": "completed",
+            "conclusion": "skipped",
+            "id": 116804249142,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487476/job/116804249142",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "msrv",
+            "status": "completed",
+            "conclusion": "skipped",
+            "id": 116804249053,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487422/job/116804249053",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "vscode",
+            "status": "completed",
+            "conclusion": "skipped",
+            "id": 116804248914,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487422/job/116804248914",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "windows-advisory-subset",
+            "status": "completed",
+            "conclusion": "success",
+            "id": 116804248636,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487526/job/116804248636",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "paste-ubuntu-latest",
+            "status": "completed",
+            "conclusion": "success",
+            "id": 116804248443,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487444/job/116804248443",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "workflow policy and wheel applicability",
+            "status": "completed",
+            "conclusion": "success",
+            "id": 116804248428,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487502/job/116804248428",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "paste-windows-latest",
+            "status": "completed",
+            "conclusion": "success",
+            "id": 116804248425,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487444/job/116804248425",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "spec-maintenance-digest",
+            "status": "completed",
+            "conclusion": "success",
+            "id": 116804248299,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487465/job/116804248299",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "ub-review",
+            "status": "completed",
+            "conclusion": "success",
+            "id": 116804248239,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487447/job/116804248239",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "dependency-review",
+            "status": "completed",
+            "conclusion": "success",
+            "id": 116804248196,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487488/job/116804248196",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "paste-macos-latest",
+            "status": "completed",
+            "conclusion": "success",
+            "id": 116804248174,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487444/job/116804248174",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "cargo-deny",
+            "status": "completed",
+            "conclusion": "failure",
+            "id": 116804248064,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487488/job/116804248064",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "source-of-truth",
+            "status": "completed",
+            "conclusion": "success",
+            "id": 116804247931,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487465/job/116804247931",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "Rust-only feature lane",
+            "status": "completed",
+            "conclusion": "success",
+            "id": 116804247909,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38848487422/job/116804247909",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          },
+          {
+            "name": "GitGuardian Security Checks",
+            "status": "completed",
+            "conclusion": "success",
+            "id": 116804239373,
+            "url": "https://github.com/EffortlessMetrics/ripr-swarm/runs/116804239373",
+            "head": "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+          }
+        ]
+      }
+    }
+  },
+  "remaining_limits": [
+    "n=2 descriptive fresh repeats;two predecessor compact cold samples censored;no uncensored predecessor compact median/paired point ratio",
+    "Selected source workloads only;no general no-regression,full workspace runtime or memo-memory bound",
+    "Latest-main local compositions unexecuted;hosted security checkout only established for named failed job;required Ready qualification is separate",
+    "Native Windows,installed/released bundle and release qualification not established",
+    "Retained original failures,timestamp rounding,censoring and accuracy costs remain in immutable packet;not erased",
+    "First fresh timeout terminal elapsed/native exit not captured;nominal120s cap/traceback/partial bytes retained",
+    "Profile inclusive spans overlap,fingerprints are not semantic identity,selected zero UnitStructFacts counter not global clearance;no fresh instrumented build/run"
+  ],
+  "next_necessary_action": "Delivery owner consumes exact-head review,carries residual latency/censoring and unresolved qualification dimensions,reconciles canonical dependency repair and intended actual checkout/affected composition proof before separately authorized promotion. No further source optimization is demanded by this bounded review.",
+  "prohibitions_respected": [
+    "no submitted source push",
+    "no Ready or merge",
+    "no thread resolution",
+    "no release/deploy/spending/credential/security changes",
+    "no destructive cleanup",
+    "no bot contact",
+    "no issue8005 read/retry",
+    "no8169 lane alteration"
+  ]
+}
