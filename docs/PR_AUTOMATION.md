@@ -65,6 +65,23 @@ failed-to-review, skipped sensors, silence and naked LGTM cannot replace the
 substantive review-of-record. The trusted request owner verifies its adequacy.
 No new GitHub approval count is required.
 
+The COMMENT parser recognizes a direct positive declaration at the start of the
+first nonblank line (`SOURCE_REVIEW_READY` or `REVIEW_READY`, optionally followed
+by an explanation), or a standalone `disposition: SOURCE_REVIEW_READY` /
+`disposition: REVIEW_READY` field at column zero. Quoted, indented-code and fenced
+examples are not declarations. An explicit conflicting disposition field refuses.
+A source-ready declaration may separately report overall `REVIEW_INCOMPLETE`
+while qualification remains outstanding. Both admission and the final refresh,
+including diagnostics, use the same parser.
+
+This is a partial #8157 interpretation mitigation. It does not authenticate a
+publisher or validate proof references. The latest-comment reducer and native
+approval route remain unchanged: an ordinary later COMMENT can erase marker
+evidence, and an existing native approval can bypass a later negative COMMENT.
+The versioned current-disposition, publisher, withdrawal and proof-custody repair
+remains open under #8157/#4985/#4834. This parser does not classify arbitrary
+narrative contradictions or establish readiness by itself.
+
 Admission reads live open/non-Draft/label state, H/B/T, mergeability, current
 reviews and paginated unresolved threads without executing candidate code. The
 result refreshes the same readiness after selected proof; failed/missing/stale

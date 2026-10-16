@@ -1,6 +1,8 @@
 //! Replay the exact final-readiness shell; diagnostics must not change admission.
 #![cfg(target_os = "linux")]
 use serde_json::{Value, json};
+#[path = "support/review_disposition.rs"]
+mod review_disposition;
 use std::{
     fs,
     process::Output,
@@ -140,6 +142,10 @@ fn run(script: &str, case: &Case) -> Result<(Output, String), String> {
         .env_clear()
         .env("PATH", std::env::var("PATH").map_err(|e| e.to_string())?)
         .env("REPOSITORY", "EffortlessMetrics/ripr-swarm")
+        .env(
+            "REVIEW_DISPOSITION_JQ",
+            review_disposition::program(WORKFLOW),
+        )
         .env("PR_NUMBER", "8008")
         .env("LABEL", case.label)
         .env("HEAD_SHA", "a".repeat(40))
@@ -208,7 +214,7 @@ fn paired(case: &Case, expected: i32, phase: Option<&str>) -> Result<Value, Stri
 }
 
 #[test]
-fn original_decision_lines_and_native_statuses_are_preserved() -> Result<(), String> {
+fn only_comment_interpretation_changes_in_original_decision_lines() -> Result<(), String> {
     let current = body()?;
     let (prefix, inserted) = current
         .split_once("readiness_refused() { # Advisory diagnostics preserve the original status.\n")
@@ -222,14 +228,58 @@ fn original_decision_lines_and_native_statuses_are_preserved() -> Result<(), Str
             .filter(|line| !line.trim_start().starts_with("readiness_phase="))
             .map(|line| format!("{line}\n"))
             .collect::<String>();
+    let interpreted = ORIGINAL
+        .replace(
+            "--arg author \"$author\" '",
+            "--arg author \"$author\" \"$REVIEW_DISPOSITION_JQ\"'",
+        )
+        .replace(
+            "(.body | test(\"(^|[^A-Z_])(SOURCE_REVIEW_READY|REVIEW_READY)([^A-Z_]|$)\"))",
+            "(.body | current_comment_ready)",
+        );
+    assert_ne!(
+        interpreted, ORIGINAL,
+        "bounded parser replacement must engage"
+    );
     assert_eq!(
-        stripped, ORIGINAL,
-        "every original decision must be unchanged"
+        stripped, interpreted,
+        "all other decisions must be unchanged"
     );
     paired(&positive(), 0, None)?;
     let mut nonrequest = positive();
     nonrequest.label = "ordinary";
     paired(&nonrequest, 0, None)?;
+    Ok(())
+}
+
+#[test]
+fn corrected_false_positives_report_the_same_parser_decision() -> Result<(), String> {
+    for text in [
+        "REVIEW_INCOMPLETE. This candidate is not SOURCE_REVIEW_READY; behavioral proof is missing.",
+        "REVIEW_INCOMPLETE. Example:\n```\nREVIEW_READY\n```",
+        "Previous result was REVIEW_READY; current disposition: REPAIR_REQUIRED.",
+        "No longer SOURCE_REVIEW_READY. REPAIR_REQUIRED.",
+    ] {
+        let mut case = positive();
+        let mut reviews: Value = serde_json::from_str(&case.reviews).map_err(|e| e.to_string())?;
+        reviews[0]["body"] = json!(text);
+        case.reviews = reviews.to_string();
+        let (old, _) = run(ORIGINAL, &case)?;
+        assert!(
+            old.status.success(),
+            "retained old matcher must expose defect"
+        );
+        let (new, _) = run(&body()?, &case)?;
+        assert_eq!(new.status.code(), Some(1));
+        let stderr = String::from_utf8(new.stderr).map_err(|e| e.to_string())?;
+        let detail = stderr
+            .lines()
+            .find_map(|line| line.strip_prefix("readiness_detail="))
+            .ok_or("diagnostic missing")?;
+        let detail: Value = serde_json::from_str(detail).map_err(|e| e.to_string())?;
+        assert_eq!(detail["checks"]["current_head_marker"], false);
+        assert!(!stderr.contains(text), "review text must not be logged");
+    }
     Ok(())
 }
 

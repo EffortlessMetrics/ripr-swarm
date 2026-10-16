@@ -1,6 +1,8 @@
 //! Execute retained native readiness/result shell against independent API vectors.
 #![cfg(target_os = "linux")]
 use serde_json::{Value, json};
+#[path = "support/review_disposition.rs"]
+mod review_disposition;
 use std::{
     fs,
     sync::atomic::{AtomicU64, Ordering},
@@ -78,6 +80,7 @@ fn execute_review_stream(
         .env_clear()
         .env("PATH", std::env::var("PATH").map_err(|e| e.to_string())?)
         .env("REPOSITORY", "EffortlessMetrics/ripr-swarm")
+        .env("REVIEW_DISPOSITION_JQ", review_disposition::program(WORKFLOW))
         .env("PR_NUMBER", "8008")
         .env("LABEL", "merge-ready")
         .env("ACTION", "labeled")
@@ -137,11 +140,156 @@ fn execute_review_stream(
     }
     let output = command.output().map_err(|e| e.to_string())?;
     let result = output.status.success();
+    if !result && script.contains("execute=true") {
+        let allocation = fs::read_to_string(temp.join("out")).unwrap_or_default();
+        assert!(
+            !allocation.lines().any(|line| line == "execute=true"),
+            "refused admission must never authorize product allocation"
+        );
+    }
     if matches!(output.status.code(), Some(124 | 137)) {
         return Err("bounded workflow replay timed out; scratch retained".into());
     }
     fs::remove_dir_all(&temp).map_err(|e| e.to_string())?;
     Ok(result)
+}
+
+#[test]
+fn current_attestation_rejects_narrative_readiness_without_changing_native_reviews()
+-> Result<(), String> {
+    let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
+    let pr = &vectors["live_drift_cases"][0]["live_pull_request"];
+    let comment = |body: &str, state: &str, head: char, second: u8| {
+        json!({"id":second,"user":{"login":"author"},"state":state,
+            "commit_id":head.to_string().repeat(40),
+            "submitted_at":format!("2026-10-15T01:00:0{second}Z"),"body":body})
+    };
+    for script in review_boundary_bodies()? {
+        for (body, expected) in [
+            ("SOURCE_REVIEW_READY", true),
+            ("REVIEW_READY", true),
+            ("REVIEW_INCOMPLETE", false),
+            (
+                "REVIEW_INCOMPLETE. This candidate is not SOURCE_REVIEW_READY; behavioral proof is missing.",
+                false,
+            ),
+            ("REVIEW_INCOMPLETE. Example:\n```\nREVIEW_READY\n```", false),
+            (
+                "Previous result was REVIEW_READY; current disposition: REPAIR_REQUIRED.",
+                false,
+            ),
+            ("No longer SOURCE_REVIEW_READY. REPAIR_REQUIRED.", false),
+            (
+                "SOURCE_REVIEW_READY — source complete; overall REVIEW_INCOMPLETE pending hosted qualification.",
+                true,
+            ),
+            ("SOURCE_REVIEW_READY remains current", true),
+            ("\r\n  SOURCE_REVIEW_READY\r\n", true),
+            (
+                "reviewed_head_sha: a\ndisposition: SOURCE_REVIEW_READY\n",
+                true,
+            ),
+            ("disposition: REVIEW_READY", true),
+            (
+                "disposition: REVIEW_READY\ndisposition: REPAIR_REQUIRED",
+                false,
+            ),
+            ("SOURCE_REVIEW_READY\ndisposition: REVIEW_INCOMPLETE", false),
+            ("disposition: UNKNOWN", false),
+            ("`SOURCE_REVIEW_READY`", false),
+            ("> SOURCE_REVIEW_READY", false),
+            ("- SOURCE_REVIEW_READY", false),
+            ("    SOURCE_REVIEW_READY", false),
+            ("\tSOURCE_REVIEW_READY", false),
+            ("SOURCE_REVIEW_READY_suffix", false),
+            ("SOURCE_REVIEW_READYish", false),
+            ("```\ndisposition: REVIEW_READY\n```", false),
+            ("~~~text\ndisposition: REVIEW_READY\n~~~", false),
+            ("````text\n```\ndisposition: REVIEW_READY\n````", false),
+            ("> historical example\ndisposition: REVIEW_READY", false),
+            (
+                "historical example:\n```json\n{\"disposition\":\"REVIEW_READY\"}\n```",
+                false,
+            ),
+            (
+                "review surfaces\n```text\ndisposition: REPAIR_REQUIRED\n```\ndisposition: SOURCE_REVIEW_READY",
+                true,
+            ),
+            ("SOURCE_REVIEW_READY\n```\nunterminated", false),
+        ] {
+            assert_eq!(
+                execute(
+                    &script,
+                    pr,
+                    &json!([comment(body, "COMMENTED", 'a', 1)]),
+                    &json!({})
+                )?,
+                expected,
+                "{body}"
+            );
+        }
+        let ready = comment("SOURCE_REVIEW_READY", "COMMENTED", 'a', 1);
+        for (later, expected) in [
+            (
+                comment(
+                    "No longer SOURCE_REVIEW_READY. REPAIR_REQUIRED.",
+                    "COMMENTED",
+                    'a',
+                    2,
+                ),
+                false,
+            ),
+            (
+                comment("repair required", "CHANGES_REQUESTED", 'a', 2),
+                false,
+            ),
+        ] {
+            assert_eq!(
+                execute(&script, pr, &json!([ready.clone(), later]), &json!({}))?,
+                expected
+            );
+        }
+        assert!(!execute(
+            &script,
+            pr,
+            &json!([comment("SOURCE_REVIEW_READY", "COMMENTED", 'e', 1)]),
+            &json!({})
+        )?);
+        assert!(execute(
+            &script,
+            pr,
+            &json!([comment("", "APPROVED", 'a', 1)]),
+            &json!({})
+        )?);
+    }
+    Ok(())
+}
+
+#[test]
+fn observed_producer_review_bodies_reach_both_actual_consumers() -> Result<(), String> {
+    let reviews: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/convergence/native-late-admission/observed-review-bodies.json"
+    ))
+    .map_err(|e| e.to_string())?;
+    let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
+    let pr = &vectors["live_drift_cases"][0]["live_pull_request"];
+    let reviews = reviews.as_array().ok_or("observed reviews missing")?;
+    assert_eq!(reviews.len(), 5, "nonempty retained producer sample");
+    for observed in reviews {
+        let review = json!({"id":observed["id"],"user":{"login":"author"},
+            "state":"COMMENTED","commit_id":"a".repeat(40),
+            "submitted_at":"2026-10-15T01:00:00Z","body":observed["body"]});
+        // Real, unchanged published body; synthetic API subject isolates format
+        // compatibility. Historical bodies are not fresh clearance for this PR.
+        for script in review_boundary_bodies()? {
+            assert!(
+                execute(&script, pr, &json!([review.clone()]), &json!({}))?,
+                "{}",
+                observed["url"]
+            );
+        }
+    }
+    Ok(())
 }
 #[test]
 fn final_readiness_replays_all_independent_live_drift_vectors() -> Result<(), String> {
@@ -272,7 +420,7 @@ fn ordinary_comments_cannot_erase_native_review_dispositions() -> Result<(), Str
     let reducer = |text: &str| -> Result<String, String> {
         // The diagnostic jq also inspects review pages. Compare the actual
         // authoritative -s -e command, never its advisory lookalike.
-        let command = "jq -s -e --arg head \"$HEAD_SHA\" --arg author \"$author\" '";
+        let command = "jq -s -e --arg head \"$HEAD_SHA\" --arg author \"$author\" \"$REVIEW_DISPOSITION_JQ\"'";
         assert_eq!(text.matches(command).count(), 1, "unique decision command");
         let decision = text.split_once(command).ok_or("review decision missing")?.1;
         Ok(decision
