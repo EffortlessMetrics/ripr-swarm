@@ -503,6 +503,7 @@ const PORTABLE_TESTS: &[&str] = &[
     "mode_help_names_index_scope_and_points_at_the_mode_table",
     "check_and_diff_help_state_the_real_base_default",
     "check_help_chooses_one_format_per_task",
+    "check_help_is_one_screen_and_all_prints_the_reference",
     "doc_flag_guard_rejects_removed_flags_and_accepts_prose",
 ];
 
@@ -530,7 +531,7 @@ fn packaged_help_target_compiles_and_runs_every_portable_case() -> Result<(), St
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    if actual != expected || actual.len() != 18 {
+    if actual != expected || actual.len() != 19 {
         return Err(format!(
             "portable test inventory drifted: expected {expected:?}, got {actual:?}"
         ));
@@ -539,10 +540,10 @@ fn packaged_help_target_compiles_and_runs_every_portable_case() -> Result<(), St
     execute.arg("--test-threads=1").current_dir(&scratch.0);
     let result = require_success(run(execute)?, "extracted help execution")?;
     let text = String::from_utf8(result.stdout).map_err(|error| error.to_string())?;
-    if !text.contains("test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
+    if !text.contains("test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
     {
         return Err(format!(
-            "extracted target did not run all 18 portable cases:\n{text}"
+            "extracted target did not run all 19 portable cases:\n{text}"
         ));
     }
     Ok(())

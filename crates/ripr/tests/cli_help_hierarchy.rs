@@ -509,7 +509,14 @@ fn help_index_routes_agent_repair_to_repair_help() -> Result<(), String> {
 #[test]
 fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), String> {
     for command in ["check", "context"] {
-        let help = normalized(&rendered_help(&[command, "--help"])?);
+        // `check` keeps the mode table in its `--all` reference; its default
+        // screen only names the speed tiers.
+        let help_args: &[&str] = if command == "check" {
+            &[command, "--help", "--all"]
+        } else {
+            &[command, "--help"]
+        };
+        let help = normalized(&rendered_help(help_args)?);
         for needle in [
             "instant (changed files only, cheapest)",
             "deep and ready (whole workspace, slowest)",
@@ -526,7 +533,7 @@ fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), Stri
 /// base through the same authority (#3952), so its help states the same order.
 #[test]
 fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
-    let check = normalized(&rendered_help(&["check", "--help"])?);
+    let check = normalized(&rendered_help(&["check", "--help", "--all"])?);
     for needle in [
         "the local origin/HEAD ref, then origin/main, origin/master, main, and master in order",
         "when none of those resolves, the analysis does not run",
@@ -556,7 +563,7 @@ fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
 /// the group list. Each task below must keep exactly its recommended path.
 #[test]
 fn check_help_chooses_one_format_per_task() -> Result<(), String> {
-    let check = normalized(&rendered_help(&["check", "--help"])?);
+    let check = normalized(&rendered_help(&["check", "--help", "--all"])?);
     for needle in [
         "Choose by task:",
         "eye review -> human",
@@ -631,6 +638,61 @@ fn doc_flag_guard_rejects_removed_flags_and_accepts_prose() -> Result<(), String
     let drift = undocumented_doc_flags(&[("good.md", good)], &mut cache, &run_ripr)?;
     if !drift.is_empty() {
         return Err(format!("guard rejected valid prose: {drift:?}"));
+    }
+    Ok(())
+}
+
+/// #8158: `check --help` is one screen that answers the first-run tasks
+/// (pick a base or diff, pick an output, read the exit, find the rest), and
+/// the exhaustive reference stays one flag away on both help spellings.
+#[test]
+fn check_help_is_one_screen_and_all_prints_the_reference() -> Result<(), String> {
+    let summary = rendered_help(&["check", "--help"])?;
+    let lines = summary.lines().count();
+    if lines > 40 {
+        return Err(format!(
+            "check --help should fit one screen, got {lines} lines"
+        ));
+    }
+    let flat = normalized(&summary);
+    for needle in [
+        "--base REV",
+        "--diff PATH",
+        "--format FORMAT",
+        "human-full",
+        "--json",
+        "Findings never fail check",
+        "ripr gate evaluate",
+        "ripr check --help --all",
+    ] {
+        assert_contains("check summary help", &flat, needle)?;
+    }
+    // Negative control: reference-only material must not leak back in.
+    for absent in [
+        "RIPR_PARTIAL_DIFF_FILE_BUDGET",
+        "repo-badge-plus-shields",
+        "--perl-facts",
+    ] {
+        if flat.contains(absent) {
+            return Err(format!(
+                "check summary help leaked reference detail `{absent}`"
+            ));
+        }
+    }
+    // `ripr help check` is the same screen; both `--all` spellings reach the reference.
+    if rendered_help(&["help", "check"])? != summary {
+        return Err("`ripr help check` must match `ripr check --help`".to_string());
+    }
+    let reference = rendered_help(&["check", "--help", "--all"])?;
+    if reference != rendered_help(&["help", "check", "--all"])? {
+        return Err("`ripr help check --all` must match `ripr check --help --all`".to_string());
+    }
+    for needle in [
+        "RIPR_PARTIAL_DIFF_FILE_BUDGET",
+        "--perl-facts",
+        "repo-badge-plus-shields",
+    ] {
+        assert_contains("check reference help", &reference, needle)?;
     }
     Ok(())
 }

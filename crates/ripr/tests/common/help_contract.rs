@@ -131,10 +131,23 @@ fn command_help(
             let mut args: Vec<&str> = path.iter().map(String::as_str).collect();
             args.push("--help");
             let output = run_ripr(&args)?;
-            let help = output
+            let mut help = output
                 .status
                 .success()
                 .then(|| String::from_utf8_lossy(&output.stdout).into_owned());
+            // A progressive help screen points at `--help --all` for the
+            // exhaustive reference; the flag audit reads that reference so a
+            // flag the short screen omits is still documented.
+            if help
+                .as_deref()
+                .is_some_and(|text| text.contains("--help --all"))
+            {
+                args.push("--all");
+                let full = run_ripr(&args)?;
+                if full.status.success() {
+                    help = Some(String::from_utf8_lossy(&full.stdout).into_owned());
+                }
+            }
             cache.insert(path.clone(), help);
         }
         if let Some(Some(help)) = cache.get(&path) {

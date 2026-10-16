@@ -122,6 +122,46 @@ including the `repo-exposure.json` that `ripr pilot` writes, carries no head;
 ripr then says so and cannot verify the pair came from the same repository or
 adjacent commits. Matching heads still do not mean matching working trees.
 "#;
+/// The one-screen `ripr check --help` (#8158). `CHECK_HELP` below stays the
+/// exhaustive reference: `ripr check --help --all` prints it, and flag
+/// suggestion plus the parser/help parity gates keep reading it, so a flag
+/// that only the reference documents is still suggestible and covered.
+pub(super) const CHECK_HELP_SUMMARY: &str = r#"Analyze the current diff and name where the tests may not notice a changed behavior.
+
+Usage: ripr check [OPTIONS]
+
+Common options:
+  --base REV        Compare against this revision. Omitted, ripr tries
+                    origin/HEAD, origin/main, origin/master, main, then master.
+  --diff PATH       Read a unified diff file instead of running git diff
+                    (`-` reads stdin).
+  --worktree        Include staged and unstaged edits (default when present).
+  --committed       Diff committed history only (base...HEAD).
+  --root PATH       Workspace root. Defaults to the current directory.
+  --mode MODE       Speed tier: instant, draft (default), deep. A tier never
+                    changes what an exposure class means.
+  --format FORMAT   human (default), human-full (every finding with drill-in
+                    commands), json, github, sarif. `--json` is a shortcut.
+  --quiet           Suppress progress on stderr.
+
+Exit status:
+  0  The analysis completed, including when it reports `exposed` or
+     `weakly_exposed` findings. Findings never fail check.
+  2  The analysis did not complete (usage error, unsupported input, or an
+     operational failure). The reason is on stderr.
+  Blocking belongs to `ripr gate evaluate`; do not gate CI on this exit code.
+
+Examples:
+  ripr check
+  ripr check --base HEAD~1
+  ripr check --base origin/main --committed
+  ripr check --json
+
+More:
+  ripr check --help --all    Every option, format, and environment variable.
+  ripr explain <finding-id>  Why one finding was reported.
+  ripr repair [<item>]       Repair one named gap.
+"#;
 pub(super) const CHECK_HELP: &str = r#"Analyze a diff or workspace and emit findings in human, JSON, SARIF, or badge form.
 
 Usage: ripr check [OPTIONS]
@@ -252,6 +292,8 @@ Options:
                            error names git_invocation_timeout. 0 disables
                            the deadline. Default: 300 (5 minutes). Also
                            settable via RIPR_GIT_TIMEOUT env var.
+  --all                    With --help, print this full reference instead of the
+                           one-screen summary.
   --quiet                  Suppress analysis progress and heartbeats on
                            stderr. Does not change machine stdout, exit
                            codes, or error reporting.

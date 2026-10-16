@@ -564,7 +564,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 quiet = true;
             }
             "--help" | "-h" => {
-                help::print_check_help();
+                help::print_check_help(args[i + 1..].iter().any(|arg| arg == "--all"));
                 return Ok(());
             }
             other => return Err(unknown_argument("check", other)),

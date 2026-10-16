@@ -271,7 +271,11 @@ fn check_discovery_names_unsupported_and_partial_exits() -> TestResult {
     assert_eq!(check["exit"]["unsupported_input"], 2);
     assert_eq!(check["exit"]["partial_with_limitations"], 0);
     assert_eq!(check["exit"]["findings_including_exposed"], 0);
-    let help = run_command(env!("CARGO_BIN_EXE_ripr"), None, &["check", "--help"])?;
+    let help = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        None,
+        &["check", "--help", "--all"],
+    )?;
     assert_eq!(help.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&help.stdout).contains("`unsupported_input` reports exit 2"));
     Ok(())
