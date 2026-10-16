@@ -294,6 +294,25 @@ mod tests {
         assert_eq!(human_path_text(&verbatim, false), verbatim);
     }
 
+    // #7882: human path text is not the stable-path percent codec. These
+    // host-explicit controls also run on Linux, without claiming native
+    // Windows filesystem or command execution.
+    #[test]
+    fn repair_path_display_preserves_literal_percent_on_both_hosts() {
+        let drive = "F:";
+        let verbatim = format!(r"\\?\{drive}\repo 100%\target/ripr\attempt.json");
+        assert_eq!(
+            human_path_text(&verbatim, true),
+            format!("{drive}/repo 100%/target/ripr/attempt.json")
+        );
+        assert_eq!(human_path_text(&verbatim, false), verbatim);
+        let unix = r"/tmp/repo 100%\literal/attempt.json";
+        assert_eq!(human_path_text(unix, false), unix);
+        for namespace in [r"\\?\UNC\server\share 100%", r"\\?\Volume{1}\100%"] {
+            assert_eq!(human_path_text(namespace, true), namespace);
+        }
+    }
+
     #[test]
     fn display_path_normalizes_backslashes() {
         assert_eq!(display_path(Path::new("a\\b\\c")), "a/b/c");

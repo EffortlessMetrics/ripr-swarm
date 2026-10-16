@@ -22,6 +22,7 @@ result means.
 
 ## Product and engineering reference
 
+- [Product lifecycle](PRODUCT_LIFECYCLE.md) — product learning, swarm development, source release, evidence reuse, and workflow improvement.
 - [Command hierarchy](COMMAND_HIERARCHY.md) — which public command owns each task.
 - [Architecture](ARCHITECTURE.md) — system boundaries and major components.
 - [Behavioral specifications](specs/README.md) — normative product contracts.

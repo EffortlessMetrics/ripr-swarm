@@ -2047,7 +2047,8 @@ mod tests {
     /// #5021: when a top gap is selected and the omitted set mixes
     /// lower-ranked candidates with base-side evidence, the count line names
     /// the mix with its own counts instead of promoting the base-side
-    /// findings to lower-priority candidates.
+    /// findings to lower-priority candidates. #7643: the bullets append each
+    /// finding's currentness category so the two clauses connect to rows.
     #[test]
     fn hidden_block_selected_mixed_omitted_names_base_side_count() {
         // Ranking ties break on file path (see `triage_rank`), so the
@@ -2072,11 +2073,11 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base.rs:1 (weakly_exposed)\n"),
+            rendered.contains("    - src/base.rs:1 (weakly_exposed, base-side)\n"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/lower.rs:1 (weakly_exposed)\n"),
+            rendered.contains("    - src/lower.rs:1 (weakly_exposed, lower-priority candidate)\n"),
             "{rendered}"
         );
     }

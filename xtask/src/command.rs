@@ -453,6 +453,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "check-pr",
         "fixtures [name]",
         "fixtures new <name>",
+        "goldens prepare [--offline]",
         "goldens check",
         "goldens bless <name> --reason <reason>",
         "golden-drift",
@@ -839,6 +840,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             true,
             "Runs fixture checks and writes local evidence.",
+        ),
+        command_entry(
+            "goldens prepare [--offline]",
+            "mutating",
+            "effective Cargo registry cache",
+            false,
+            false,
+            "Fetches the canonical fixture locked dependencies into the effective Cargo home; no build or blessing.",
         ),
         command_entry(
             "goldens check",

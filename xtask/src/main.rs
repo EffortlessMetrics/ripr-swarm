@@ -1633,7 +1633,10 @@ fn read_vsix_inventory(vsix_path: &Path) -> Result<Vec<VsixEntry>, String> {
             )
         })?;
         entries.push(VsixEntry {
-            name: member.name().to_string(),
+            name: member
+                .name()
+                .map_err(|err| format!("failed to read archive member name: {err}"))?
+                .into_owned(),
             size: member.size(),
             compressed_size: member.compressed_size(),
         });
@@ -1980,10 +1983,13 @@ fn stage_vscode_test_server_archive(
     let mut member = zip
         .by_index(0)
         .map_err(|err| format!("failed to read archive member: {err}"))?;
-    if Path::new(member.name()).file_name() != Some(executable_name) {
+    let member_name = member
+        .name()
+        .map_err(|err| format!("failed to read archive member name: {err}"))?
+        .into_owned();
+    if Path::new(&member_name).file_name() != Some(executable_name) {
         return Err(format!(
-            "VS Code server proof archive member `{}` did not match the built executable",
-            member.name()
+            "VS Code server proof archive member `{member_name}` did not match the built executable"
         ));
     }
     let executable = extracted.join(executable_name);
@@ -8267,6 +8273,9 @@ fn test_efficiency_metrics(
 }
 
 fn test_efficiency_report_status(entries: &[TestEfficiencyEntry]) -> &'static str {
+    if entries.is_empty() {
+        return "not_run";
+    }
     if entries
         .iter()
         .any(|entry| entry.class != "strong_discriminator")
@@ -8275,6 +8284,12 @@ fn test_efficiency_report_status(entries: &[TestEfficiencyEntry]) -> &'static st
     } else {
         "pass"
     }
+}
+
+fn test_efficiency_report_explanation(entries: &[TestEfficiencyEntry]) -> Option<&'static str> {
+    entries.is_empty().then_some(
+        "No tests were selected; test-efficiency evidence was not established for this report. Run the report from the workspace root containing the Rust test sources.",
+    )
 }
 
 fn test_efficiency_report_markdown(
@@ -8298,6 +8313,10 @@ fn test_efficiency_report_markdown(
         duplicate_groups.len(),
         entries.len(),
     );
+
+    if let Some(explanation) = test_efficiency_report_explanation(entries) {
+        body.push_str(&format!("Explanation: {explanation}\n\n"));
+    }
 
     body.push_str("## Metrics\n\n| Metric | Value |\n| --- | ---: |\n");
     body.push_str(&format!("| Tests scanned | {} |\n", metrics.tests_scanned));
@@ -8498,6 +8517,12 @@ fn test_efficiency_report_json(
         counts.get("opaque").copied().unwrap_or(0)
     );
 
+    if let Some(explanation) = test_efficiency_report_explanation(entries) {
+        body.push_str(&format!(
+            "  \"explanation\": \"{}\",\n",
+            json_escape(explanation)
+        ));
+    }
     body.push_str("  \"reason_counts\": {\n");
     for (index, (reason, count)) in reason_counts.iter().enumerate() {
         if index > 0 {

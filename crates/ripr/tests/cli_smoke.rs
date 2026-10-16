@@ -56,6 +56,12 @@ mod javascript_awaited_roots;
 mod next_action;
 #[path = "cli_smoke/output_leaf_identity.rs"]
 mod output_leaf_identity;
+#[cfg(all(
+    feature = "lang-rust",
+    any(feature = "lang-python", feature = "lang-typescript")
+))]
+#[path = "cli_smoke/partial_preview_disclosure.rs"]
+mod partial_preview_disclosure;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
@@ -90,6 +96,9 @@ mod source_unicode;
 mod structural_workspace_markers;
 #[path = "cli_smoke/suppression_notice.rs"]
 mod suppression_notice;
+#[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/typescript_caught_assertions.rs"]
+mod typescript_caught_assertions;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/typescript_effect_aliases.rs"]
 mod typescript_effect_aliases;
@@ -15852,8 +15861,24 @@ fn pilot_format_json_prints_the_packet_summary_and_suppresses_the_human_block() 
     let parsed: serde_json::Value =
         serde_json::from_str(&stdout).map_err(|e| format!("stdout JSON: {e}\n{stdout}"))?;
     assert_eq!(parsed["schema_version"], "0.3", "{parsed}");
-    assert!(parsed.get("status").is_some(), "{parsed}");
-    assert!(parsed.get("actionable_seams_total").is_some(), "{parsed}");
+    // Both surfaces share a renderer: equality alone also accepts a timeout
+    // summary after completed analysis. Pin the fixture's completed result.
+    assert_eq!(parsed["status"], "complete", "{parsed}");
+    assert!(parsed["actionable_seams_total"].is_u64(), "{parsed}");
+    #[cfg(feature = "lang-rust")]
+    {
+        // The fixture has one price predicate whose equality case is absent.
+        assert_eq!(parsed["actionable_seams_total"], 1, "{parsed}");
+        let seams = parsed["top_actionable_seams"]
+            .as_array()
+            .ok_or("completed Rust summary must contain ranked seams")?;
+        assert_eq!(seams.len(), 1, "{parsed}");
+        let seam = seams.first().ok_or("fixture predicate was not ranked")?;
+        assert_eq!(seam["file"], "src/lib.rs", "{parsed}");
+        assert_eq!(seam["line"], 2, "{parsed}");
+        assert_eq!(seam["kind"], "predicate_boundary", "{parsed}");
+        assert_eq!(seam["owner"], "src/lib.rs::price", "{parsed}");
+    }
     assert!(
         !stdout.contains("focused test:"),
         "human terminal must not mix into JSON stdout:\n{stdout}"

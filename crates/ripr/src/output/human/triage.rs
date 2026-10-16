@@ -371,12 +371,31 @@ pub(crate) fn render_human_triage(
             out.push_str(&selected_hidden_line(&triage.omitted));
         }
         let listed = triage.omitted.len().min(HIDDEN_FINDINGS_LISTED);
+        // #7643: when the omitted set mixes currentness categories, the
+        // count line's clauses cannot be connected to individual bullets;
+        // append each finding's category so the reader can tell an
+        // outranked candidate from base-side evidence without a rerun.
+        // Single-category sets keep the legacy bullet: the count line
+        // already names the one category that applies.
+        let label_currentness = {
+            let mut categories = std::collections::BTreeSet::new();
+            for finding in &triage.omitted {
+                categories.insert(hidden_bullet_currentness(finding));
+            }
+            categories.len() > 1
+        };
         for finding in triage.omitted.iter().take(listed) {
+            let currentness = if label_currentness {
+                format!(", {}", hidden_bullet_currentness(finding))
+            } else {
+                String::new()
+            };
             out.push_str(&format!(
-                "    - {}:{} ({})\n",
+                "    - {}:{} ({}{})\n",
                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
-                finding.class.as_str()
+                finding.class.as_str(),
+                currentness
             ));
         }
         let remaining = triage.omitted.len() - listed;
@@ -609,6 +628,19 @@ fn no_selection_mix(omitted: &[&Finding]) -> NoSelectionMix {
             base_side: b,
             unresolved: u,
         },
+    }
+}
+
+/// #7643: the per-bullet currentness label, mirroring the categories the
+/// count line names: base-deleted or moved evidence is base-side, an
+/// unresolved subject is not established as either category, and the
+/// remainder is a lower-priority candidate.
+fn hidden_bullet_currentness(finding: &Finding) -> &'static str {
+    match finding.source_currentness {
+        crate::domain::SourceCurrentness::BaseDeleted
+        | crate::domain::SourceCurrentness::MovedOrRenamed => "base-side",
+        crate::domain::SourceCurrentness::UnresolvedSubject => "unresolved currentness",
+        _ => "lower-priority candidate",
     }
 }
 
@@ -1558,5 +1590,71 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn hidden_bullets_label_currentness_when_categories_mix() {
+        // #7643: the count line names the mix; each bullet must connect to
+        // its clause so a base-side row is not mistaken for an outranked
+        // candidate.
+        let top = super::super::tests::sample_finding();
+        let mut candidate = super::super::tests::sample_finding();
+        candidate.id = "finding:candidate".to_string();
+        candidate.probe.id = ProbeId("finding:candidate".to_string());
+        candidate.probe.location = SourceLocation::new("src/lib.rs", 21, 1);
+        let mut base_side = super::super::tests::sample_finding();
+        base_side.id = "finding:base".to_string();
+        base_side.probe.id = ProbeId("finding:base".to_string());
+        base_side.probe.location = SourceLocation::new("src/lib.rs", 26, 1);
+        base_side.source_currentness = SourceCurrentness::BaseDeleted;
+        let mut unresolved = super::super::tests::sample_finding();
+        unresolved.id = "finding:unresolved".to_string();
+        unresolved.probe.id = ProbeId("finding:unresolved".to_string());
+        unresolved.probe.location = SourceLocation::new("src/lib.rs", 31, 1);
+        unresolved.source_currentness = SourceCurrentness::UnresolvedSubject;
+        let output = super::super::tests::bounded_output_with_findings(vec![
+            top, candidate, base_side, unresolved,
+        ]);
+        let rendered = super::super::render(&output);
+        assert!(
+            rendered.contains("    - src/sample.rs:7 (weakly_exposed, lower-priority candidate)\n"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("    - src/lib.rs:26 (weakly_exposed, base-side)\n"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("    - src/lib.rs:31 (weakly_exposed, unresolved currentness)\n"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn hidden_bullets_stay_unlabeled_when_the_set_is_single_category() {
+        // A single-category omitted set keeps the legacy bullet: the count
+        // line already names the one category that applies.
+        let top = super::super::tests::sample_finding();
+        let mut omitted = super::super::tests::sample_finding();
+        omitted.id = "finding:omitted".to_string();
+        omitted.probe.id = ProbeId("finding:omitted".to_string());
+        omitted.probe.location = SourceLocation::new("src/lib.rs", 21, 1);
+        let output = super::super::tests::bounded_output_with_findings(vec![top, omitted]);
+        let rendered = super::super::render(&output);
+        // Exactly one omitted bullet, and no per-bullet currentness label:
+        // the count line already named the single category.
+        assert_eq!(rendered.matches("\n    - src/").count(), 1, "{rendered}");
+        assert!(
+            !rendered.contains("(weakly_exposed, lower-priority candidate)"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("(weakly_exposed, base-side)"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("(weakly_exposed, unresolved currentness)"),
+            "{rendered}"
+        );
     }
 }
