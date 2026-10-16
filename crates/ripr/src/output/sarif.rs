@@ -2249,11 +2249,10 @@ weakly_gripped = "note"
     /// helpUri (#7371) but remains the SARIF contract for those invariants.
     #[test]
     fn cited_swarm_docs_cover_class_meaning_and_sarif_uri_invariants() -> Result<(), String> {
-        let exposure = include_str!("../../../../../docs/STATIC_EXPOSURE_MODEL.md");
+        let exposure = include_str!("../../../../docs/STATIC_EXPOSURE_MODEL.md");
         let seam_spec =
-            include_str!("../../../../../docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md");
-        let sarif_spec =
-            include_str!("../../../../../docs/specs/RIPR-SPEC-0008-sarif-ci-policy.md");
+            include_str!("../../../../docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md");
+        let sarif_spec = include_str!("../../../../docs/specs/RIPR-SPEC-0008-sarif-ci-policy.md");
         if !exposure.contains("## Exposure Classes") {
             return Err(
                 "cited STATIC_EXPOSURE_MODEL.md is missing ## Exposure Classes".to_string(),
