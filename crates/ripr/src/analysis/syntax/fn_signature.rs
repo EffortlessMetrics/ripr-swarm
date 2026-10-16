@@ -468,15 +468,23 @@ pub(crate) fn owner_fn_line_span(source: &str, line: usize) -> Option<(usize, us
 
 impl OwnerSignature {
     /// Observed call shape as written, e.g. `greet(name: &str) -> String`;
-    /// methods include the receiver slot (`push(self, value: i32)`), and
-    /// `()`-returning functions omit the arrow. This is observed source data
-    /// for drill-in surfaces, not a synthesized call: a typed `self` receiver
-    /// or unbound type/const generics make the shape not honestly nameable,
-    /// so those decline with `None` (#7796).
+    /// methods are qualified by their self type and keep the receiver slot
+    /// (`Bag::push(&mut self, value: i32) -> bool`), and `()`-returning
+    /// functions omit the arrow. This is observed source data for drill-in
+    /// surfaces, not a synthesized call: a typed `self` receiver, unbound
+    /// type/const generics, or an owner that cannot be named and called
+    /// from a test (`OwnerContainer::Unsupported` / `GenericImpl`) decline
+    /// with `None` (#7796).
     pub(crate) fn call_shape(&self) -> Option<String> {
         if self.receiver == Some(OwnerReceiver::Typed) || self.has_type_generics {
             return None;
         }
+        let name = match &self.container {
+            OwnerContainer::Free => self.name.clone(),
+            OwnerContainer::Inherent { self_type } => format!("{self_type}::{}", self.name),
+            OwnerContainer::TraitImpl { self_type, .. } => format!("{self_type}::{}", self.name),
+            OwnerContainer::GenericImpl(_) | OwnerContainer::Unsupported(_) => return None,
+        };
         let mut params: Vec<String> = Vec::new();
         if let Some(receiver) = &self.receiver {
             params.push(
@@ -494,20 +502,50 @@ impl OwnerSignature {
             None => param.ty.clone(),
         }));
         match &self.return_type {
-            Some(return_type) => Some(format!(
-                "{}({}) -> {return_type}",
-                self.name,
-                params.join(", ")
-            )),
-            None => Some(format!("{}({})", self.name, params.join(", "))),
+            Some(return_type) => Some(format!("{name}({}) -> {return_type}", params.join(", "))),
+            None => Some(format!("{name}({})", params.join(", "))),
         }
     }
 }
 
 /// Signature of the innermost `fn` containing 1-based `line`, when the file
-/// parses and a function covers that line.
+/// parses and a function covers that line. `None` when sibling functions
+/// share the line (`fn a() {} fn b() {}` on one line): a line-only lookup
+/// cannot tell which one owns the changed expression, and naming the wrong
+/// owner is worse than declining (#7796 review).
 pub(crate) fn owner_signature_at_line(source: &str, line: usize) -> Option<OwnerSignature> {
-    let (start_line, _end_line) = owner_fn_line_span(source, line)?;
+    let parse = parse_clean_source_file(source)?;
+    let line_of = |at: TextSize| {
+        source
+            .get(..usize::from(at))
+            .map_or(1, |prefix| prefix.matches('\n').count() + 1)
+    };
+    let covering: Vec<ast::Fn> = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            let range = function.syntax().text_range();
+            line_of(range.start()) <= line && line <= line_of(range.end())
+        })
+        .collect();
+    // Sibling ambiguity: two covering functions whose ranges do not nest
+    // cannot be told apart by line. Nested coverage (a function-local `fn`)
+    // is fine — the innermost start wins, as `owner_signature_at` decides.
+    let disjoint_siblings = covering.iter().any(|a| {
+        covering.iter().any(|b| {
+            a.syntax().text_range().end() <= b.syntax().text_range().start()
+                || b.syntax().text_range().end() <= a.syntax().text_range().start()
+        })
+    });
+    if disjoint_siblings {
+        return None;
+    }
+    let innermost = covering
+        .iter()
+        .max_by_key(|function| function.syntax().text_range().start())?;
+    let start_line = line_of(innermost.syntax().text_range().start());
     let start_offset = if start_line <= 1 {
         0
     } else {
@@ -908,7 +946,7 @@ mod tests {
         let signature = owner_signature_at(source, offset).ok_or("signature parses")?;
         assert_eq!(
             signature.call_shape().as_deref(),
-            Some("push(&mut self, value: i32) -> bool")
+            Some("Bag::push(&mut self, value: i32) -> bool")
         );
         Ok(())
     }
@@ -936,10 +974,9 @@ mod tests {
         let source = "pub fn outer() -> u8 {\n    fn inner(flag: bool) -> u8 {\n        if flag { 1 } else { 2 }\n    }\n    inner(true)\n}\n";
         let signature = owner_signature_at_line(source, 3).ok_or("line 3 sits inside `inner`")?;
         assert_eq!(signature.name, "inner");
-        assert_eq!(
-            signature.call_shape().as_deref(),
-            Some("inner(flag: bool) -> u8")
-        );
+        // A nested `fn` cannot be named and called from a test surface, so
+        // the call shape declines even though the signature resolves.
+        assert_eq!(signature.call_shape(), None);
         let outer = owner_signature_at_line(source, 5).ok_or("line 5 sits inside `outer`")?;
         assert_eq!(outer.name, "outer");
         assert_eq!(outer.call_shape().as_deref(), Some("outer() -> u8"));
@@ -949,6 +986,14 @@ mod tests {
     #[test]
     fn owner_signature_at_line_declines_outside_any_function() {
         let source = "const ANSWER: u8 = 42;\n";
+        assert_eq!(owner_signature_at_line(source, 1), None);
+    }
+
+    #[test]
+    fn owner_signature_at_line_declines_sibling_functions_sharing_a_line() {
+        // A line-only lookup cannot tell which sibling owns the changed
+        // expression, so the shape declines instead of naming the wrong one.
+        let source = "fn first() -> u8 { 1 } fn second() -> u8 { 2 }\n";
         assert_eq!(owner_signature_at_line(source, 1), None);
     }
 

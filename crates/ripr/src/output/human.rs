@@ -967,14 +967,22 @@ pub(crate) fn render_finding_with_context_command(
     let mut out =
         render_finding_with_config(finding, config, root, JsonPointerWording::ExplainNamesCheck);
     // #7796: project the owner's observed call shape (the same producer
-    // `ripr agent stub` reads) into the verdict-change recipe. A missing or
-    // unparsed source declines silently and the recipe keeps the name-only
-    // form; the render itself never reads source files.
-    let owner_signature = crate::analysis::owner_call_shape_at_line(
-        root,
-        &finding.probe.location.file,
-        finding.probe.location.line,
-    );
+    // `ripr agent stub` reads) into the verdict-change recipe. Only when the
+    // finding's recorded source still owns the analyzed root's checkout:
+    // for a base-deleted/moved/unresolved finding, or an analyzed candidate
+    // tree that is not the checkout, the on-disk file cannot speak for the
+    // finding and the recipe keeps the name-only form. The render itself
+    // never reads source files.
+    let owner_signature = match finding.source_currentness {
+        crate::domain::SourceCurrentness::CandidateCurrent => {
+            crate::analysis::owner_call_shape_at_line(
+                root,
+                &finding.probe.location.file,
+                finding.probe.location.line,
+            )
+        }
+        _ => None,
+    };
     out.push_str(&explain::render_verdict_explanation(
         finding,
         owner_signature.as_deref(),
