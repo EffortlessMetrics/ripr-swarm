@@ -122,7 +122,12 @@ unchanged file the walk proves unreached. Target roots honor `autotests`,
 `autobenches` and `autoexamples = false`: only declared targets are roots,
 and a name-only declaration keeps its default paths. An incomplete walk
 keeps the file, and so does the production-like opt-in for a changed
-file, since it still seeds probes. The production-like opt-in still wins. Evidence-role files remain fully indexed:
+file, since it still seeds probes. The production-like opt-in still wins.
+A file in a `[[test]]` target that `cargo test` does not run as libtest drops
+the same way (#8016): `test = false`, `required-features` unmet under cargo
+defaults, or `harness = false` (its `#[test]` items are plain functions). The
+verdicts are `ManifestInventory`'s, an unavailable `cargo metadata` keeps the
+file, and a configured harness registration keeps its own target. Evidence-role files remain fully indexed:
 functions stay available for owner relations, activation input,
 sink/oracle evidence, and selectors. `TestFact` semantics are untouched
 — source role never registers a helper as an executable test selector.
@@ -318,6 +323,10 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
   or added by the diff) and a `tests/` file that `autotests = false`
   leaves undeclared relate to nothing, while the declared file and the
   name-only `[[test]]` target keep their relation.
+- Unrun targets (#8016): a test in a `[[test]]` target with `test = false`,
+  unmet `required-features` or `harness = false` relates to nothing, while an
+  autodiscovered target beside it and a registered harness target keep their
+  relation.
 - Comment/string module mentions (#6979): an unchanged orphan named only
   inside a block comment, nested block comment, doc comment, plain string or
   raw string supplies no related test; real `cfg(test)` and renamed

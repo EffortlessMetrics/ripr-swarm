@@ -346,6 +346,13 @@ fn drop_unreached_test_files(
             })
         })
         .collect::<BTreeSet<_>>();
+    orphans.extend(unrun_target_test_files(
+        root,
+        test_harnesses,
+        &loaded_files,
+        &holds_tests,
+        &mut manifests,
+    ));
     if !suspects.is_empty() {
         let mut probe = source_role_context.clone();
         probe.module_graph_orphans.clear();
@@ -364,6 +371,80 @@ fn drop_unreached_test_files(
         .into_iter()
         .filter(|(path, _)| !orphans.contains(&workspace::normalize_path(path)))
         .collect()
+}
+
+/// Test files cargo compiles into a target that `cargo test` never runs as
+/// libtest (#8016): a `[[test]]` with `test = false` or `required-features`
+/// unmet under cargo defaults, or with `harness = false` (its `#[test]` items
+/// are plain functions; the binary's own `main` runs instead). The verdicts
+/// are `ManifestInventory`'s, the same authority that already withholds
+/// helper credit from these targets (#7265, #7266, #3634). A registered
+/// harness target keeps its file: the registration, not libtest, drives it.
+///
+/// A manifest with no such `[[test]]` entry is never probed, so the common
+/// workspace pays nothing. An unavailable `cargo metadata` establishes no
+/// skip, which keeps the file (credit as before).
+fn unrun_target_test_files(
+    root: &Path,
+    test_harnesses: &[crate::config::TestHarnessRegistration],
+    loaded_files: &[(PathBuf, Vec<u8>)],
+    holds_tests: &dyn Fn(&[u8]) -> bool,
+    manifests: &mut BTreeMap<PathBuf, bool>,
+) -> BTreeSet<String> {
+    let registered = test_harnesses
+        .iter()
+        .map(|harness| workspace::normalize_path(&harness.target))
+        .collect::<BTreeSet<_>>();
+    let mut conditional: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    let mut inventory = workspace::ManifestInventory::default();
+    let mut unrun = BTreeSet::new();
+    for (path, bytes) in loaded_files {
+        if !holds_tests(bytes) {
+            continue;
+        }
+        let Some(package_dir) = owning_manifest_dir(root, path, manifests) else {
+            continue;
+        };
+        let has_conditional_target = *conditional.entry(package_dir.clone()).or_insert_with(|| {
+            committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
+                .ok()
+                .flatten()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+                .is_some_and(|manifest| has_conditionally_run_test_target(&manifest))
+        });
+        if !has_conditional_target {
+            continue;
+        }
+        let normalized = workspace::normalize_path(path);
+        let skipped = inventory.cargo_test_collection_skipped(root, path)
+            || (!registered.contains(&normalized)
+                && inventory.verdict(root, path)
+                    == workspace::CargoHarnessVerdict::HarnessDisabled);
+        if skipped {
+            unrun.insert(normalized);
+        }
+    }
+    unrun
+}
+
+/// Whether a manifest declares a `[[test]]` that `cargo test` may skip or
+/// run without libtest: `test = false`, `harness = false`, or a non-empty
+/// `required-features`. Only a cheap gate for the metadata probe.
+fn has_conditionally_run_test_target(manifest: &toml::Value) -> bool {
+    manifest
+        .get("test")
+        .and_then(toml::Value::as_array)
+        .is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                entry.get("test").and_then(toml::Value::as_bool) == Some(false)
+                    || entry.get("harness").and_then(toml::Value::as_bool) == Some(false)
+                    || entry
+                        .get("required-features")
+                        .and_then(toml::Value::as_array)
+                        .is_some_and(|features| !features.is_empty())
+            })
+        })
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
@@ -7358,6 +7439,94 @@ fn absent_delimiter_boundary_returns_head() {
                 .any(|name| name == "discount_applies_unbuilt"),
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_tests_in_a_target_cargo_test_does_not_run_as_libtest()
+    -> Result<(), String> {
+        // #8016: `test = false`, unmet `required-features` and `harness =
+        // false` keep a `[[test]]` target out of libtest. `tests/live.rs`
+        // beside each is an ordinary autodiscovered target (control).
+        let cases = [
+            ("test-false", "test = false\n", "", "tests/skipped.rs"),
+            (
+                "required-features",
+                "required-features = ['never']\n",
+                "[features]\ndefault = []\nnever = []\n",
+                "tests/skipped.rs",
+            ),
+            ("harness-false", "harness = false\n", "", "tests/skipped.rs"),
+        ];
+        for (label, entry, features, skipped) in cases {
+            let root = temp_root(&format!("unrun-target-{label}"))?;
+            write(
+                &root.join("Cargo.toml"),
+                &format!(
+                    "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n\n{features}\n[[test]]\nname='skipped'\n{entry}"
+                ),
+            )?;
+            write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+            write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+            let body = "use shop::used::discount;\n\n#[test]\nfn discount_applies_NAME() {\n    assert_eq!(discount(150), 140);\n}\n";
+            write(&root.join(skipped), &body.replace("NAME", "skipped"))?;
+            write(&root.join("tests/live.rs"), &body.replace("NAME", "live"))?;
+
+            let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+            let related = related_test_names(&root, &result, "src/used.rs");
+            assert!(
+                related.iter().any(|name| name == "discount_applies_live"),
+                "{label}: the run target must relate: {related:?}"
+            );
+            assert!(
+                !related
+                    .iter()
+                    .any(|name| name == "discount_applies_skipped"),
+                "{label}: a target libtest never runs must not relate: {related:?}"
+            );
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_registered_custom_harness_target_keeps_its_file_when_harness_is_false()
+    -> Result<(), String> {
+        // #8016: a `harness = false` target's plain `#[test]` items never
+        // run, so the file drops. A registration names the target as
+        // harness-driven, and the registration, not libtest, runs it.
+        let root = temp_root("unrun-target-registered")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n\n[[test]]\nname='custom'\nharness = false\n",
+        )?;
+        write(&root.join("src/lib.rs"), "")?;
+        let file = PathBuf::from("tests/custom.rs");
+        let body = b"#[test]\nfn t() {}\n".to_vec();
+        write(&root.join(&file), "#[test]\nfn t() {}\n")?;
+        let loaded = vec![(file.clone(), body)];
+        let registration = crate::config::TestHarnessRegistration {
+            registration_id: "custom".to_string(),
+            target: file.clone(),
+            kind: crate::config::TestHarnessKind::CustomHarnessTarget,
+            adapter: crate::config::TestHarnessAdapter::LibtestMimicV1,
+            marker: "Trial::test".to_string(),
+        };
+        let holds_tests = |_: &[u8]| true;
+        let run = |harnesses: &[crate::config::TestHarnessRegistration]| {
+            super::unrun_target_test_files(
+                &root,
+                harnesses,
+                &loaded,
+                &holds_tests,
+                &mut std::collections::BTreeMap::new(),
+            )
+        };
+
+        assert!(run(&[]).contains("tests/custom.rs"), "unregistered drops");
+        assert!(run(&[registration]).is_empty(), "registered keeps");
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
