@@ -498,7 +498,12 @@ fn no_eligible_seam_message(
     if !reasons.is_empty() {
         message.push_str(&format!(" ({})", reasons.join("; ")));
     }
-    message.push_str(&format!(". Next: `ripr pilot --root {root}`"));
+    // `repair` only starts supported routes, so an open gap that `check`
+    // already named is not a dead end: point at the review step that can
+    // still act on it, then at the repository-wide exploration.
+    message.push_str(&format!(
+        ". Next: `ripr check --root {root}` names a changed-code gap to test by hand; `ripr pilot --root {root}` explores the whole repository"
+    ));
     message
 }
 

@@ -1626,6 +1626,10 @@ fn repair_skips_severity_off_seams_with_named_omission() -> Result<(), String> {
         "must name the policy omission:\n{stderr}"
     );
     assert!(
+        stderr.contains("ripr check --root") && stderr.contains("ripr pilot --root"),
+        "an ineligible repair must keep both the check and pilot routes:\n{stderr}"
+    );
+    assert!(
         attempt_ids(root).is_empty(),
         "a refused start must create no attempt"
     );
