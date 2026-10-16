@@ -70,6 +70,12 @@ first nonblank line (`SOURCE_REVIEW_READY` or `REVIEW_READY`, optionally followe
 by an explanation), or a standalone `disposition: SOURCE_REVIEW_READY` /
 `disposition: REVIEW_READY` field at column zero. Quoted, indented-code and fenced
 examples are not declarations. An explicit conflicting disposition field refuses.
+Multiline inline-code spans, HTML comments and preformatted/raw HTML regions
+are excluded as well. Opaque code/HTML regions are interpreted in source order,
+so example contents cannot open a competing region outside that example. Quoted
+negative fields are ignored just like quoted positives; an outside disposition
+still governs. HTML blocks that end at a blank line require that separation
+before a subsequent standalone field.
 A source-ready declaration may separately report overall `REVIEW_INCOMPLETE`
 while qualification remains outstanding. Both admission and the final refresh,
 including diagnostics, use the same parser.

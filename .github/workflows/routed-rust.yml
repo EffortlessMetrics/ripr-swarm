@@ -22,9 +22,28 @@ env:
   # Partial #8157 mitigation: interpret current attestations, not narrative tokens.
   # This does not authenticate a publisher or establish referenced proof custody.
   REVIEW_DISPOSITION_JQ: |
+    # Match opaque regions together, in source order: syntax inside an earlier
+    # code/HTML region cannot open a different region outside it. Keep newlines
+    # and a nonblank sentinel so masking never invents a first-line declaration.
+    def hide_review_examples:
+      gsub("(?ims)(?<hidden>" +
+        "^ {0,3}(?<bt>`{3,})(?!`)[^\n]*\n.*?(?:(?<bt_end>^ {0,3}\\k<bt>`*[ \t]*)(?=\n|\\z)|\\z)" +
+        "|^ {0,3}(?<tilde>~{3,})(?!~)[^\n]*\n.*?(?:(?<tilde_end>^ {0,3}\\k<tilde>~*[ \t]*)(?=\n|\\z)|\\z)" +
+        "|^(?: {4}|\t)[^\n]*(?:\n(?:(?: {4}|\t)[^\n]*|[ \t]*(?=\n)))*" +
+        "|^ {0,3}>[^\n]*(?:\n(?![ \t]*(?:\n|\\z))[^\n]+)*" +
+        "|(?<![\\\\`])(?:\\\\\\\\)*(?<ticks>`+)(?!`).*?(?<!`)\\k<ticks>(?!`)" +
+        "|(?<!\\\\)(?:\\\\\\\\)*(?:<!--.*?(?:-->|\\z)|<!\\[CDATA\\[.*?(?:\\]\\]>|\\z)|<\\?.*?(?:\\?>|\\z))" +
+        "|(?<!\\\\)(?:\\\\\\\\)*<![A-Z].*?(?:>|\\z)" +
+        "|(?<!\\\\)(?:\\\\\\\\)*<(?<tag>pre|code|script|style|textarea|xmp|iframe|noembed|noframes)(?=[\\s>])[^>]*>.*?(?:</\\k<tag>[ \t]*>|\\z)" +
+        "|^ {0,3}</?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?=[\\s/>]).*?(?=\n[ \t]*\n|\\z)" +
+        "|^ {0,3}</?[A-Z][A-Z0-9-]*(?:[ \t]+[^<>\n]*)?/?>[ \t]*(?:\n.*?(?=\n[ \t]*\n|\\z)|\\z)" +
+        ")";
+        if (.bt != null and .bt_end == null) or (.tilde != null and .tilde_end == null)
+        then "\u0002" else (.hidden | gsub("[^\n]"; "\u0001")) end);
     def current_comment_ready:
       if type != "string" then error("review body must be a string") else
-        reduce (gsub("\r\n"; "\n") | split("\n")[]) as $line
+        (gsub("\r\n"; "\n") | hide_review_examples) as $visible |
+        reduce ($visible | split("\n")[]) as $line
           ({first:true, fence:null, quoted:false, dispositions:[]};
            if .fence != null then
              .fence as $fence |
@@ -45,6 +64,7 @@ env:
                                     then "positive" else "refuse" end)]
               else . end) | .first = false
            end) |
+        ($visible | contains("\u0002") | not) and
         .fence == null and (.dispositions | length > 0 and all(. == "positive"))
       end;
 
