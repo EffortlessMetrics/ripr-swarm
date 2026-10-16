@@ -180,7 +180,7 @@ fn write_pr_evidence_with_runner(
 fn write_pr_evidence_with_preparer(
     repo: &Path,
     options: &PrEvidenceOptions,
-    prepare: impl FnOnce(&Path) -> Result<String, String>,
+    mut prepare: impl FnMut(&Path) -> Result<String, String>,
     run_check: impl FnOnce(
         &Path,
         &PrEvidenceOptions,
@@ -217,6 +217,9 @@ fn write_pr_evidence_with_preparer(
         binary.as_deref().map_err(String::as_str),
         &child_env,
     )?;
+    // Share successful preparation, but preserve the scoped stage's independent
+    // opportunity after a failed canonical preparation. Its snapshots stay unavailable.
+    let binary = binary.or_else(|_| timed_phase("scoped_binary_build_or_select", || prepare(repo)));
     let result = match timed_phase("scoped_check", || {
         run_check(
             repo,
@@ -2651,7 +2654,45 @@ mod tests {
     }
 
     #[test]
-    fn prepared_binary_failure_is_shared_and_fails_closed() -> Result<(), String> {
+    fn scoped_preparation_recovers_after_canonical_preparation_failure() -> Result<(), String> {
+        let (repo, options) = two_commit_repo("ripr-pr-prepare-recovery")?;
+        write_repo_file(&repo, PR_CHECK_JSON, "stale")?;
+        let fake = fake_ripr_binary(&repo, "recovered-ripr", MINIMAL_CHECK_JSON, "", 0, None)?
+            .display()
+            .to_string();
+        let mut preparations = 0;
+        write_pr_evidence_with_preparer(
+            &repo,
+            &options,
+            |_| {
+                preparations += 1;
+                if preparations == 1 {
+                    Err("first preparation unavailable".to_string())
+                } else {
+                    Ok(fake.clone())
+                }
+            },
+            |repo, options, binary, child_env| {
+                assert_eq!(binary, Ok(fake.as_str()));
+                run_ripr_check(repo, options, binary, child_env)
+            },
+        )?;
+        assert_eq!(preparations, 2);
+        check_pr_evidence(&repo, &options)?;
+        let canonical: Value = serde_json::from_str(
+            &fs::read_to_string(repo.join(super::super::pr_causal_delta::CANONICAL_DELTA_JSON))
+                .map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| err.to_string())?;
+        assert_eq!(canonical["base"]["available"], false);
+        assert_eq!(canonical["head"]["available"], false);
+        assert_eq!(canonical["coverage"]["complete"], false);
+        assert_eq!(canonical["coverage"]["low_coverage_disclosed"], true);
+        fs::remove_dir_all(repo).map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn independent_scoped_preparation_failure_stays_fail_closed() -> Result<(), String> {
         let (repo, options) = two_commit_repo("ripr-pr-build-failure")?;
         write_repo_file(&repo, PR_CHECK_JSON, "stale")?;
         let mut preparations = 0;
@@ -2660,14 +2701,15 @@ mod tests {
             &options,
             |_| {
                 preparations += 1;
-                Err("sentinel build failure".to_string())
+                Err(format!("sentinel build failure {preparations}"))
             },
             run_ripr_check,
         )
         .err()
         .ok_or("failed build unexpectedly passed")?;
-        assert_eq!(preparations, 1);
-        assert!(error.contains("sentinel build failure"));
+        assert_eq!(preparations, 2);
+        assert!(error.contains("sentinel build failure 2"));
+        assert!(!error.contains("sentinel build failure 1"));
         assert!(!repo.join(PR_CHECK_JSON).exists());
         let canonical: Value = serde_json::from_str(
             &fs::read_to_string(repo.join(super::super::pr_causal_delta::CANONICAL_DELTA_JSON))
