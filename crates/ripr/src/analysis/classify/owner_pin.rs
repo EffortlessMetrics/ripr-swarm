@@ -8772,13 +8772,44 @@ pub(in crate::analysis) fn expected_operand_value(
             },
             None => None,
         };
-        let Some(next) = next else {
+        // #8112: an interior-mutable value (`Cell::new(f(2))` then
+        // `.set(6)`) is not its initializer once the test has used it.
+        let Some(next) = next.filter(|value| !has_interior_mutability(value)) else {
             break;
         };
         current = next.trim().to_string();
         value = Some(current.clone());
     }
     value
+}
+
+/// #8112: whether an initializer names a type whose value can change
+/// through a shared reference (`Cell`, `RefCell`, `Mutex`, `Atomic*`, ..),
+/// so a later `.set(..)` makes the binding differ from its initializer.
+/// A cell hidden behind a helper's return type is not seen; the reveal
+/// side then keeps its weakening, as it did before this check.
+fn has_interior_mutability(initializer: &str) -> bool {
+    const CELLS: [&str; 9] = [
+        "Cell",
+        "RefCell",
+        "UnsafeCell",
+        "OnceCell",
+        "LazyCell",
+        "Mutex",
+        "RwLock",
+        "OnceLock",
+        "LazyLock",
+    ];
+    let masked = mask_comments_and_strings(initializer);
+    CELLS
+        .iter()
+        .any(|cell| contains_as_whole_word(&masked, cell))
+        || masked
+            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .any(|word| {
+                word.strip_prefix("Atomic")
+                    .is_some_and(|rest| !rest.is_empty())
+            })
 }
 
 /// The value of the test's one `let` binding `binding` (its text after the
@@ -8811,8 +8842,8 @@ fn single_constant_value(
         .get(name)?
         .iter()
         .filter(|(file, _)| in_scope(file));
-    let (_, initializer) = matches.next()?;
-    if matches.next().is_some() {
+    let (file, initializer) = matches.next()?;
+    if matches.next().is_some() || declared_static_mut(index, file, name) {
         return None;
     }
     let initializer_text = initializer.trim_start();
@@ -8821,6 +8852,34 @@ fn single_constant_value(
     } else {
         Some(initializer.clone())
     }
+}
+
+/// #8112: whether `file` declares `name` as `static mut` (also inside a
+/// macro body), so an `unsafe` assignment may change it after its
+/// initializer. The pin side keeps such a constant, where it only
+/// withholds credit; the reveal side must not read its initializer.
+fn declared_static_mut(index: &RustIndex, file: &Path, name: &str) -> bool {
+    let Some(facts) = index.files().get(file) else {
+        return false;
+    };
+    let masked = mask_comments_and_strings(&facts.source);
+    whole_word_offsets(&masked, "static").into_iter().any(|at| {
+        let mut rest = masked[at + "static".len()..].trim_start();
+        if let Some(stripped) = rest.strip_prefix("ref")
+            && stripped.starts_with(char::is_whitespace)
+        {
+            rest = stripped.trim_start();
+        }
+        rest.strip_prefix("mut")
+            .filter(|stripped| stripped.starts_with(char::is_whitespace))
+            .is_some_and(|stripped| {
+                let stripped = stripped.trim_start();
+                let stripped = stripped.strip_prefix("r#").unwrap_or(stripped);
+                stripped.strip_prefix(name).is_some_and(|after| {
+                    !after.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+                })
+            })
+    })
 }
 
 /// The text after the assignment `=` of `[: T] = value`: the first `=`

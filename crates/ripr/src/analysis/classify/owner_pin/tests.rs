@@ -2429,6 +2429,23 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
         ),
         Some("::demo::weight(4)".to_string())
     );
+    // A type merely containing `Cell` in its name is not a cell.
+    assert_eq!(
+        value(
+            "",
+            "let e = Spreadsheet::cell(weight(2));\nassert_eq!(weight(2), e);",
+            "e"
+        ),
+        Some("Spreadsheet::cell(weight(2))".to_string())
+    );
+    assert_eq!(
+        value(
+            "static EXPECTED: u32 = weight(4);",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("weight(4)".to_string())
+    );
     assert_eq!(
         value(
             "thread_local! { static EXPECTED: u32 = weight(4); }",
@@ -2474,6 +2491,33 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
             "",
             "#[cfg(any())]\nlet e = weight(2);\nassert_eq!(weight(2), e);",
             "e",
+        ),
+        // #8112: an interior-mutable `let` or a `static mut` may hold a
+        // value other than its initializer by the time of the assertion.
+        (
+            "",
+            "let e = Cell::new(weight(2));\ne.set(6);\nassert_eq!(Cell::new(weight(2)), e);",
+            "e",
+        ),
+        (
+            "",
+            "let e = std::rc::Rc::new(RefCell::new(weight(2)));\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        (
+            "",
+            "let e = AtomicU32::new(weight(2));\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        (
+            "static mut EXPECTED: u32 = weight(4);",
+            "unsafe { EXPECTED = 6; }\nassert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
+        ),
+        (
+            "thread_local! { static mut EXPECTED: u32 = weight(4); }",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
         ),
         (
             "const EXPECTED: u32 = weight(4);\nmod other { pub const EXPECTED: u32 = 12; }",
