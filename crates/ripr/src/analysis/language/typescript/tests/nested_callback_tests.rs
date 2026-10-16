@@ -448,6 +448,30 @@ fn spread_override_needs_an_input_that_lacks_the_field() -> Result<(), String> {
         let finding = settings_finding(label, &test(body), "  return { ...cfg, ok: true };")?;
         assert_eq!(finding.class, expected, "{label}");
     }
+    // A body-local `ns` that lacks the field is not an owner call. The
+    // real owner pin carries `ok`, so dropping the override stays weak.
+    let shadowed = "import * as ns from \"../src/settings\";\nimport { ready } from \"../src/settings\";\ntest(\"ready\", () => {\n  const ns = { ready: (c: { name?: string; ok?: boolean }) => ({ ...c, ok: true }) };\n  expect(ready({ ok: true })).toEqual({ ok: true });\n  expect(ns.ready({ name: \"bo\" })).toEqual({ name: \"bo\", ok: true });\n});\n";
+    let tests = extract_tests(Path::new("tests/settings.test.ts"), shadowed);
+    assert_eq!(
+        tests
+            .iter()
+            .flat_map(|test| test.assertions.iter())
+            .map(|assertion| assertion.observed_expression.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            Some("ready({ ok: true })".to_string()),
+            Some("ns.ready({ name: \"bo\" })".to_string())
+        ]
+    );
+    if !local_identifier_declared_in_test_body(&tests[0].body_text, "ns") {
+        return Err("body-local `ns` must read as a shadow".to_string());
+    }
+    let finding = settings_finding(
+        "spread-shadowed-namespace",
+        shadowed,
+        "  return { ...cfg, ok: true };",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     // A member written after the binding makes the input unreadable, so the
     // finding is not described as carrying the field.
     let finding = settings_finding(

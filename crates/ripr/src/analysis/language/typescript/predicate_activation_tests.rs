@@ -275,6 +275,37 @@ fn exact_boundary_argument_is_witnessed() -> Result<(), String> {
     Ok(())
 }
 
+/// A body-local `ns` at the boundary is not an owner call. The real owner
+/// pin is off the boundary, so the row must miss rather than witness.
+#[test]
+fn shadowed_namespace_boundary_call_does_not_witness() -> Result<(), String> {
+    let source = one_test(
+        "shadowed namespace",
+        "import * as ns from '../src/pricing';\nimport { applyDiscount } from '../src/pricing';",
+        "  const ns = { applyDiscount: (t: number) => t };\n  expect(applyDiscount(150)).toBe(135);\n  expect(ns.applyDiscount(100)).toBe(90);",
+    );
+    let tests = extract_tests(Path::new(TEST_FILE), &source);
+    assert_eq!(
+        tests
+            .iter()
+            .flat_map(|test| test.assertions.iter())
+            .map(|assertion| assertion.observed_expression.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            Some("applyDiscount(150)".to_string()),
+            Some("ns.applyDiscount(100)".to_string())
+        ]
+    );
+    if !local_identifier_declared_in_test_body(&tests[0].body_text, "ns") {
+        return Err("body-local `ns` must read as a shadow".to_string());
+    }
+    let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    assert_eq!(evaluated.row("shadowed namespace")?.1, R::DirectOwnerCall);
+    assert_eq!(evaluated.activation("shadowed namespace")?, A::MissedBoundary);
+    assert!(!evaluated.witnessed);
+    Ok(())
+}
+
 /// Control 2: an off-boundary plain integer is a definite miss.
 #[test]
 fn off_boundary_argument_misses_the_boundary() -> Result<(), String> {
