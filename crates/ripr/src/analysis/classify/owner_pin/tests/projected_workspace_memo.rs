@@ -133,10 +133,18 @@ fn workspace_collection_memo_isolates_changed_sources_and_nested_misses() {
             true
         }
     ));
+    let recomputed = std::cell::Cell::new(false);
     assert!(ProjectedCollectionWorkspaceMemo::verdict(
         &memo,
         &original,
         key,
-        || { panic!("nested different-index lookup must not replace the outer answer") }
+        || {
+            recomputed.set(true);
+            true
+        }
     ));
+    assert!(
+        !recomputed.get(),
+        "nested different-index lookup must not replace the outer answer"
+    );
 }
