@@ -123,6 +123,33 @@ mod tests {
     }
 
     #[test]
+    fn debug_assertion_macros_are_oracles_but_lookalikes_are_not() -> Result<(), String> {
+        for name in [
+            "debug_assert",
+            "debug_assert_eq",
+            "debug_assert_ne",
+            "debug_assert_matches",
+        ] {
+            assert!(is_assertion_macro(name), "{name}");
+            assert!(is_assertion_macro_leaf(name), "{name}");
+            assert!(!is_assertion_macro(&format!("other::{name}")), "{name}");
+        }
+        assert!(!is_assertion_macro("debug_assert_custom"));
+        let source = "fn owner(x: i32) -> i32 { x }\n#[test]\nfn boundary() {\n debug_assert_eq!(owner(1), 1);\n}\n";
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
+        assert_eq!(facts.tests.len(), 1);
+        assert!(
+            facts.tests[0]
+                .assertions
+                .iter()
+                .any(|oracle| oracle.text.starts_with("debug_assert_eq!(owner(1)")),
+            "{:?}",
+            facts.tests[0].assertions
+        );
+        Ok(())
+    }
+
+    #[test]
     fn property_macro_names_do_not_grant_assertion_authority() {
         for name in ["prop_assert", "prop_assert_eq", "prop_assert_ne"] {
             assert!(!is_assertion_macro(name));
