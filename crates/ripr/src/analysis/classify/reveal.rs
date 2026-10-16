@@ -4695,8 +4695,9 @@ fn pin_strength_admits(assertion: &OracleFact) -> bool {
 /// comparison it reads like `assert_eq!`; an `insta` macro, `assert_debug_eq`
 /// or any other text the classifier grades `snapshot` keeps its medium
 /// strength.
-fn is_inline_expect_snapshot(assertion: &OracleFact) -> bool {
+pub(in crate::analysis) fn is_inline_expect_snapshot(assertion: &OracleFact) -> bool {
     matches!(assertion.kind, OracleKind::Snapshot)
+        && assertion.text.contains("assert_eq")
         && super::owner_pin::inline_expect_operands(&assertion.text).is_some()
 }
 
