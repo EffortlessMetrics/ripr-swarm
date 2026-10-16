@@ -16240,12 +16240,17 @@ the observation found no absent requested files; it does not assert that every
 changed seam was classified. Intentionally deleted files are excluded by the
 shared diff parser.
 
-When no successful supplement supplied the observation, pilot applies the shared
+Both the fallback and a successful current-change supplement apply the shared
 diff-aware generated-source exclusions before checking presence, including exact
-handwritten opt-ins and changed vendor checksum markers. Source known to be
-excluded is not named as absent by that fallback. Header-only exclusions require
-available worktree bytes or an active committed-source overlay; pilot creates
-no new overlay and does not establish the header of a sparse missing file.
+handwritten opt-ins, stronger explicit patterns and changed vendor checksum
+markers. The supplement keeps all changed paths as policy context, including
+an absent changed marker, while classifying only the changed Rust subjects.
+Source known to be excluded receives no missing-source warning under either
+inventory cap. The supplement observes absence before classification and carries
+that observation only on success; classification errors retain their caveat.
+Header-only exclusions require available worktree bytes or an active
+committed-source overlay; pilot creates no new overlay and does not establish
+the header of a sparse missing file.
 
 The terminal and Markdown "Inspected" block names each absent path, the
 `changed_file_absent_from_worktree` category, and the producer's recovery

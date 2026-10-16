@@ -243,10 +243,13 @@ change names Rust source files, pilot records the shared source-admission
 observation regardless of whether the inventory cap fired or supplemental
 classification succeeded. It retains the producer's existing
 `changed_file_absent_from_worktree` limitations for absent requested files.
-The fallback observation applies the shared diff-aware generated-source policy
-before admission, including handwritten opt-ins, explicit patterns and changed
-vendor checksum markers, so source known to be excluded gains no restoration
-warning from that fallback. Header-only exclusions still depend on available
+The fallback and successful supplement apply the shared diff-aware
+generated-source policy before admission, including handwritten opt-ins,
+stronger explicit patterns and changed vendor checksum markers, so source known
+to be excluded gains no restoration warning under either inventory cap. The
+supplement retains all changed paths as policy context, including missing
+markers, while its classification scope stays Rust-only. Its absence observation
+precedes classification and is carried on success. Header-only exclusions still depend on available
 worktree bytes or an active committed-source overlay; pilot creates no new
 overlay to determine the header of a sparse missing file.
 The terminal and Markdown name each path and its recovery action under
@@ -543,6 +546,16 @@ when a user runs ripr pilot with either a warm or isolated cold cache,
 then the restored changed predicate ranks, absent_changed_files is empty, and
 the missing-file disclosure clears. The supplement does not alter ordinary
 repo-exposure results stored in the diff-independent classified cache.
+
+Given sparse changed handwritten, convention-generated, explicitly excluded and
+vendored files, with the changed vendor checksum marker also absent,
+when pilot runs with an uncapped inventory or a cap that triggers a successful
+supplement,
+then all three summaries name the same analyzable absent paths. Exact handwritten
+opt-ins admit convention-only paths; explicit exclusion and the changed vendor
+marker still win. A missing file whose generated header is unavailable remains
+named. Same-HEAD restoration clears absence and retains a nonempty changed
+ranking without admitting excluded source or polluting the ordinary inventory.
 ```
 
 ### Pilot says whether its top recommendation is part of the current change
@@ -657,6 +670,7 @@ Current tests and reports that support the contract:
 
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_sparse_missing_changed_file_and_recovers_same_head`
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_mixed_missing_changed_file_even_with_changed_recommendation`
+- `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_capped_absence_matches_uncapped_generated_policy_and_recovers`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_current_change_preserves_absent_file_coverage_through_empty_and_mixed_supplements`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_renderers_disclose_absent_changed_files_independently_of_top_recommendation`
 

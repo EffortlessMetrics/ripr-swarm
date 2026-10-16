@@ -212,6 +212,14 @@ fn read_json(path: &Path) -> Result<Value, String> {
 }
 
 fn repo_inventory(fixture: &Fixture, cache: &Path) -> Result<Value, String> {
+    repo_inventory_with_first_file(fixture, cache, "src/lib.rs")
+}
+
+fn repo_inventory_with_first_file(
+    fixture: &Fixture,
+    cache: &Path,
+    first_file: &str,
+) -> Result<Value, String> {
     let root_arg = fixture.root.display().to_string();
     let output = run_subject(
         fixture,
@@ -239,8 +247,8 @@ fn repo_inventory(fixture: &Fixture, cache: &Path) -> Result<Value, String> {
         );
         assert_eq!(seams.len(), 1, "{report:#}");
         assert_eq!(
-            seams[0]["file"], "src/lib.rs",
-            "fixture cap must cut the changed files: {report:#}"
+            seams[0]["file"], first_file,
+            "fixture cap selected an unexpected first file: {report:#}"
         );
     } else {
         assert_eq!(report["run_status"], "complete", "{report:#}");
@@ -879,7 +887,11 @@ fn pilot_capped_absence_matches_uncapped_generated_policy_and_recovers() -> Resu
     .map_err(|error| error.to_string())?;
     run_git(&fixture.root, &["sparse-checkout", "disable"])?;
     assert_eq!(committed_identity(&fixture.root)?, identity);
-    let ordinary_restored = repo_inventory(&fixture, &fixture.scratch.join("restored-ordinary"))?;
+    let ordinary_restored = repo_inventory_with_first_file(
+        &fixture,
+        &fixture.scratch.join("restored-ordinary"),
+        "src/absent.rs",
+    )?;
     let restored = pilot(&fixture, &cache, 9)?;
     assert_absent_paths(&restored, &[]);
     assert!(
@@ -887,10 +899,16 @@ fn pilot_capped_absence_matches_uncapped_generated_policy_and_recovers() -> Resu
         "{}",
         restored.stderr
     );
-    for seam in restored.summary["top_actionable_seams"]
+    assert_eq!(
+        restored.summary["current_change"]["top_recommendation_in_change"], true,
+        "{:#}",
+        restored.summary
+    );
+    let restored_top = restored.summary["top_actionable_seams"]
         .as_array()
-        .ok_or("missing restored ranking")?
-    {
+        .ok_or("missing restored ranking")?;
+    assert!(!restored_top.is_empty(), "restored ranking is empty");
+    for seam in restored_top {
         assert!(
             ![
                 "src/generated.rs",
@@ -917,7 +935,10 @@ fn pilot_capped_absence_matches_uncapped_generated_policy_and_recovers() -> Resu
         semantic_summary(&restored_cold),
         semantic_summary(&restored)
     );
-    assert_eq!(repo_inventory(&fixture, &cache)?, ordinary_restored);
+    assert_eq!(
+        repo_inventory_with_first_file(&fixture, &cache, "src/absent.rs")?,
+        ordinary_restored
+    );
     Ok(())
 }
 
