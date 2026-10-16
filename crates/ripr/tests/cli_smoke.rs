@@ -97,6 +97,9 @@ mod structural_workspace_markers;
 #[path = "cli_smoke/suppression_notice.rs"]
 mod suppression_notice;
 #[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/typescript_caught_assertions.rs"]
+mod typescript_caught_assertions;
+#[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/typescript_effect_aliases.rs"]
 mod typescript_effect_aliases;
 #[cfg(feature = "lang-rust")]

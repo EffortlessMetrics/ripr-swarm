@@ -15294,6 +15294,10 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/typescript_caught_assertions.rs::caught_rejection_assertions_cannot_confirm_the_changed_throw",
+  "crates/ripr/tests/cli_smoke/typescript_caught_assertions.rs::independently_propagating_rejection_assertions_keep_credit",
+  "crates/ripr/tests/cli_smoke/typescript_caught_assertions.rs::an_enclosing_catch_also_withholds_inner_finally_assertions",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::extract_tests_withholds_caught_assertions_but_reads_handler_and_finally",
   "crates/ripr/tests/cli_smoke/typescript_effect_aliases.rs::return_only_aliases_do_not_observe_the_changed_effect",
   "crates/ripr/tests/cli_smoke/typescript_effect_aliases.rs::an_actual_effect_observer_survives_owner_aliases",
   "crates/ripr/tests/cli_smoke/typescript_effect_aliases.rs::alias_substrings_and_comments_keep_the_conservative_effect_rule",
@@ -15339,6 +15343,7 @@ fixtures = [
   "fixtures/typescript-verdict-corpus",
   "fixtures/javascript_awaited_registration",
   "fixtures/typescript_effect_owner_alias",
+  "fixtures/typescript_caught_assertion",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/admission.rs",
