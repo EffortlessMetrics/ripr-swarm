@@ -1,0 +1,9 @@
+diff --git a/src/shop.py b/src/shop.py
+--- a/src/shop.py
++++ b/src/shop.py
+@@ -1,4 +1,4 @@
+ def fee(amount):
+     if amount < 0:
+         raise ValueError('negative')
+-    return amount * 2
++    return amount * 3

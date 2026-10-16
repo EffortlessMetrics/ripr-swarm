@@ -1,0 +1,83 @@
+{
+  "source_old": "def fee(amount):\n    if amount < 0:\n        raise ValueError('negative')\n    return amount * 2\n",
+  "source_new": "def fee(amount):\n    if amount < 0:\n        raise ValueError('negative')\n    return amount * 3\n",
+  "cases": [
+    {
+      "id": "direct_literal",
+      "test": "from src.shop import fee\n\ndef test_fee():\n    assert fee(10) == 30\n",
+      "expected_class": "exposed",
+      "old_test_passes": false,
+      "new_test_passes": true
+    },
+    {
+      "id": "local_def",
+      "test": "from src.shop import fee\n\ndef test_fee():\n    def fee(amount):\n        return 30\n    assert fee(10) == 30\n",
+      "expected_class": "weakly_exposed",
+      "old_test_passes": true,
+      "new_test_passes": true
+    },
+    {
+      "id": "local_lambda",
+      "test": "from src.shop import fee\n\ndef test_fee():\n    fee = lambda amount: 30\n    assert fee(10) == 30\n",
+      "expected_class": "weakly_exposed",
+      "old_test_passes": true,
+      "new_test_passes": true
+    },
+    {
+      "id": "mock_payload",
+      "test": "from unittest.mock import Mock\nfrom src.shop import fee\n\ndef test_fee():\n    fee = Mock(return_value=30)\n    assert fee(10) == 30\n",
+      "expected_class": "weakly_exposed",
+      "old_test_passes": true,
+      "new_test_passes": true
+    },
+    {
+      "id": "alias_mock_payload",
+      "test": "from unittest.mock import Mock\nfrom src.shop import fee as price\n\ndef test_fee():\n    price = Mock(return_value=30)\n    assert price(10) == 30\n",
+      "expected_class": "weakly_exposed",
+      "old_test_passes": true,
+      "new_test_passes": true
+    },
+    {
+      "id": "exception_only",
+      "test": "from src.shop import fee\nimport unittest\n\nclass FeeTest(unittest.TestCase):\n    def test_fee(self):\n        with self.assertRaisesRegex(ValueError, 'negative'):\n            fee(-1)\n",
+      "expected_class": "weakly_exposed",
+      "old_test_passes": true,
+      "new_test_passes": true
+    },
+    {
+      "id": "unrelated_local_def",
+      "test": "from src.shop import fee\n\ndef test_fee():\n    def helper(amount):\n        return 30\n    assert fee(10) == 30\n",
+      "expected_class": "exposed",
+      "old_test_passes": false,
+      "new_test_passes": true
+    },
+    {
+      "id": "bare_shadow_with_other_alias",
+      "test": "from src.shop import fee as price\n\ndef test_fee():\n    def fee(amount):\n        return 30\n    assert fee(10) == 30\n",
+      "expected_class": "weakly_exposed",
+      "old_test_passes": true,
+      "new_test_passes": true
+    },
+    {
+      "id": "real_alias",
+      "test": "from src.shop import fee as price\n\ndef test_fee():\n    assert price(10) == 30\n",
+      "expected_class": "exposed",
+      "old_test_passes": false,
+      "new_test_passes": true
+    },
+    {
+      "id": "local_import",
+      "test": "def test_fee():\n    from src.shop import fee\n    assert fee(10) == 30\n",
+      "expected_class": "exposed",
+      "old_test_passes": false,
+      "new_test_passes": true
+    },
+    {
+      "id": "nested_helper_local_shadow",
+      "test": "from src.shop import fee\n\ndef test_fee():\n    def helper():\n        fee = lambda amount: 30\n        return fee(10)\n    assert fee(10) == 30\n",
+      "expected_class": "exposed",
+      "old_test_passes": false,
+      "new_test_passes": true
+    }
+  ]
+}

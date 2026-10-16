@@ -1,0 +1,36 @@
+{
+  "source_sha": "e00018da7d224bd13b4c4e3466d1e626ca0b15f6",
+  "baseline_driver_session": 67198,
+  "cli_build_driver_session": 8507,
+  "replay_driver_session": 78435,
+  "native": {
+    "argv": [
+      "python3",
+      "verify_native.py",
+      "corpus.json",
+      "native-results.json"
+    ],
+    "exit": 0,
+    "executions": 22,
+    "expected_failures": "Exactly five old-value controls raise AssertionError; every changed-value test passes."
+  },
+  "cli": {
+    "argv": [
+      "python3",
+      "verify_cli.py",
+      "/workspace/python-oracle-evidence/base-ripr",
+      "observed"
+    ],
+    "exit": 1,
+    "subjects": 11,
+    "setup": "All eleven commands exit 0, complete analysis, one probe/finding each, and exact return-value owner/file/line subject.",
+    "mismatches": [
+      "local_def",
+      "local_lambda",
+      "mock_payload",
+      "alias_mock_payload",
+      "bare_shadow_with_other_alias"
+    ],
+    "meaning": "Behavioral red on five literal classes; no setup, parse or compile failure."
+  }
+}

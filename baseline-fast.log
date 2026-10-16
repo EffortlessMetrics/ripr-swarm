@@ -1,0 +1,9 @@
+    Finished `dev` profile [unoptimized] target(s) in 0.21s
+     Running `/workspace/python-oracle-target/debug/xtask check-fast`
+$ cargo fmt --check
+check-static-language: pass (target/ripr/reports/static-language.md)
+check-command-catalog: pass (target/ripr/reports/command-catalog.md)
+check-generated: pass (target/ripr/reports/generated.md)
+check-generated-clean: pass (target/ripr/reports/generated-clean.md)
+check-lint-policy: pass (target/ripr/reports/lint-policy.md)
+check-fast: ran 6 gate(s), skipped 6 (check-support-tiers (not applicable), check-no-panic-family, check-allow-attributes, check-file-policy, clippy, check-fixture-contracts), base=origin/main, 0 file(s) changed

@@ -1,0 +1,248 @@
+{
+  "binary": "/workspace/python-oracle-evidence/base-ripr",
+  "binary_sha256": "a8b026b503edbc2d0dd3a0a462095eb8ebe8f27723fadeca95b5878a3e19810a",
+  "results": [
+    {
+      "case": "direct_literal",
+      "expected": "exposed",
+      "actual": "exposed",
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "alignment": "direct",
+      "argv": [
+        "/workspace/python-oracle-evidence/base-ripr",
+        "check",
+        "--root",
+        "/workspace/python-oracle-publication/cases/direct_literal",
+        "--diff",
+        "/workspace/python-oracle-publication/cases/direct_literal/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0
+    },
+    {
+      "case": "local_def",
+      "expected": "weakly_exposed",
+      "actual": "exposed",
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "alignment": "direct",
+      "argv": [
+        "/workspace/python-oracle-evidence/base-ripr",
+        "check",
+        "--root",
+        "/workspace/python-oracle-publication/cases/local_def",
+        "--diff",
+        "/workspace/python-oracle-publication/cases/local_def/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0
+    },
+    {
+      "case": "local_lambda",
+      "expected": "weakly_exposed",
+      "actual": "exposed",
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "alignment": "direct",
+      "argv": [
+        "/workspace/python-oracle-evidence/base-ripr",
+        "check",
+        "--root",
+        "/workspace/python-oracle-publication/cases/local_lambda",
+        "--diff",
+        "/workspace/python-oracle-publication/cases/local_lambda/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0
+    },
+    {
+      "case": "mock_payload",
+      "expected": "weakly_exposed",
+      "actual": "exposed",
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "alignment": "direct",
+      "argv": [
+        "/workspace/python-oracle-evidence/base-ripr",
+        "check",
+        "--root",
+        "/workspace/python-oracle-publication/cases/mock_payload",
+        "--diff",
+        "/workspace/python-oracle-publication/cases/mock_payload/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0
+    },
+    {
+      "case": "alias_mock_payload",
+      "expected": "weakly_exposed",
+      "actual": "exposed",
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "alignment": "alias",
+      "argv": [
+        "/workspace/python-oracle-evidence/base-ripr",
+        "check",
+        "--root",
+        "/workspace/python-oracle-publication/cases/alias_mock_payload",
+        "--diff",
+        "/workspace/python-oracle-publication/cases/alias_mock_payload/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0
+    },
+    {
+      "case": "exception_only",
+      "expected": "weakly_exposed",
+      "actual": "weakly_exposed",
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "alignment": "unknown",
+      "argv": [
+        "/workspace/python-oracle-evidence/base-ripr",
+        "check",
+        "--root",
+        "/workspace/python-oracle-publication/cases/exception_only",
+        "--diff",
+        "/workspace/python-oracle-publication/cases/exception_only/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0
+    },
+    {
+      "case": "unrelated_local_def",
+      "expected": "exposed",
+      "actual": "exposed",
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "alignment": "direct",
+      "argv": [
+        "/workspace/python-oracle-evidence/base-ripr",
+        "check",
+        "--root",
+        "/workspace/python-oracle-publication/cases/unrelated_local_def",
+        "--diff",
+        "/workspace/python-oracle-publication/cases/unrelated_local_def/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0
+    },
+    {
+      "case": "bare_shadow_with_other_alias",
+      "expected": "weakly_exposed",
+      "actual": "exposed",
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "alignment": "direct",
+      "argv": [
+        "/workspace/python-oracle-evidence/base-ripr",
+        "check",
+        "--root",
+        "/workspace/python-oracle-publication/cases/bare_shadow_with_other_alias",
+        "--diff",
+        "/workspace/python-oracle-publication/cases/bare_shadow_with_other_alias/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0
+    },
+    {
+      "case": "real_alias",
+      "expected": "exposed",
+      "actual": "exposed",
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "alignment": "alias",
+      "argv": [
+        "/workspace/python-oracle-evidence/base-ripr",
+        "check",
+        "--root",
+        "/workspace/python-oracle-publication/cases/real_alias",
+        "--diff",
+        "/workspace/python-oracle-publication/cases/real_alias/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0
+    },
+    {
+      "case": "local_import",
+      "expected": "exposed",
+      "actual": "exposed",
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "alignment": "direct",
+      "argv": [
+        "/workspace/python-oracle-evidence/base-ripr",
+        "check",
+        "--root",
+        "/workspace/python-oracle-publication/cases/local_import",
+        "--diff",
+        "/workspace/python-oracle-publication/cases/local_import/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0
+    },
+    {
+      "case": "nested_helper_local_shadow",
+      "expected": "exposed",
+      "actual": "exposed",
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "alignment": "direct",
+      "argv": [
+        "/workspace/python-oracle-evidence/base-ripr",
+        "check",
+        "--root",
+        "/workspace/python-oracle-publication/cases/nested_helper_local_shadow",
+        "--diff",
+        "/workspace/python-oracle-publication/cases/nested_helper_local_shadow/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0
+    }
+  ]
+}

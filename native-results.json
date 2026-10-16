@@ -1,0 +1,134 @@
+[
+  {
+    "case": "direct_literal",
+    "version": "old",
+    "passed": false,
+    "failure": "AssertionError"
+  },
+  {
+    "case": "direct_literal",
+    "version": "new",
+    "passed": true,
+    "failure": null
+  },
+  {
+    "case": "local_def",
+    "version": "old",
+    "passed": true,
+    "failure": null
+  },
+  {
+    "case": "local_def",
+    "version": "new",
+    "passed": true,
+    "failure": null
+  },
+  {
+    "case": "local_lambda",
+    "version": "old",
+    "passed": true,
+    "failure": null
+  },
+  {
+    "case": "local_lambda",
+    "version": "new",
+    "passed": true,
+    "failure": null
+  },
+  {
+    "case": "mock_payload",
+    "version": "old",
+    "passed": true,
+    "failure": null
+  },
+  {
+    "case": "mock_payload",
+    "version": "new",
+    "passed": true,
+    "failure": null
+  },
+  {
+    "case": "alias_mock_payload",
+    "version": "old",
+    "passed": true,
+    "failure": null
+  },
+  {
+    "case": "alias_mock_payload",
+    "version": "new",
+    "passed": true,
+    "failure": null
+  },
+  {
+    "case": "exception_only",
+    "version": "old",
+    "passed": true,
+    "failure": null
+  },
+  {
+    "case": "exception_only",
+    "version": "new",
+    "passed": true,
+    "failure": null
+  },
+  {
+    "case": "unrelated_local_def",
+    "version": "old",
+    "passed": false,
+    "failure": "AssertionError"
+  },
+  {
+    "case": "unrelated_local_def",
+    "version": "new",
+    "passed": true,
+    "failure": null
+  },
+  {
+    "case": "bare_shadow_with_other_alias",
+    "version": "old",
+    "passed": true,
+    "failure": null
+  },
+  {
+    "case": "bare_shadow_with_other_alias",
+    "version": "new",
+    "passed": true,
+    "failure": null
+  },
+  {
+    "case": "real_alias",
+    "version": "old",
+    "passed": false,
+    "failure": "AssertionError"
+  },
+  {
+    "case": "real_alias",
+    "version": "new",
+    "passed": true,
+    "failure": null
+  },
+  {
+    "case": "local_import",
+    "version": "old",
+    "passed": false,
+    "failure": "AssertionError"
+  },
+  {
+    "case": "local_import",
+    "version": "new",
+    "passed": true,
+    "failure": null
+  },
+  {
+    "case": "nested_helper_local_shadow",
+    "version": "old",
+    "passed": false,
+    "failure": "AssertionError"
+  },
+  {
+    "case": "nested_helper_local_shadow",
+    "version": "new",
+    "passed": true,
+    "failure": null
+  }
+]

@@ -1,0 +1,65 @@
+{
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "source_sha": "e00018da7d224bd13b4c4e3466d1e626ca0b15f6",
+  "source_tree": "764118e2d45bb597373795ae92517b22a6899edb",
+  "source_dirty": false,
+  "branch": "codex/python-false-oracle-corpus",
+  "observed_utc": "2026-10-16T07:25:35Z",
+  "version": "ripr 0.11.0 (e00018da7d224bd13b4c4e3466d1e626ca0b15f6)",
+  "binary_sha256": "a8b026b503edbc2d0dd3a0a462095eb8ebe8f27723fadeca95b5878a3e19810a",
+  "artifact_executable": "/workspace/python-oracle-target/debug/ripr",
+  "frozen_executable": "/workspace/python-oracle-evidence/base-ripr",
+  "artifact_message": {
+    "reason": "compiler-artifact",
+    "package_id": "path+file:///workspace/ripr-swarm/crates/ripr#0.11.0",
+    "manifest_path": "/workspace/ripr-swarm/crates/ripr/Cargo.toml",
+    "target": {
+      "kind": [
+        "bin"
+      ],
+      "crate_types": [
+        "bin"
+      ],
+      "name": "ripr",
+      "src_path": "/workspace/ripr-swarm/crates/ripr/src/main.rs",
+      "edition": "2024",
+      "doc": true,
+      "doctest": false,
+      "test": true
+    },
+    "profile": {
+      "opt_level": "0",
+      "debuginfo": 0,
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": false
+    },
+    "features": [
+      "default",
+      "lang-python",
+      "lang-rust",
+      "lang-typescript"
+    ],
+    "filenames": [
+      "/workspace/python-oracle-target/debug/ripr"
+    ],
+    "executable": "/workspace/python-oracle-target/debug/ripr",
+    "fresh": false
+  },
+  "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.95.0\nLLVM version: 22.1.2\n",
+  "cargo_jobs": 1,
+  "rust_test_threads": 1,
+  "cli_processes": 1,
+  "cli_rayon_threads": 1,
+  "cli_deadline_seconds": 30,
+  "baseline": {
+    "worktree_doctor": 0,
+    "check_fast": 0,
+    "check_fast_paths": 0,
+    "cargo_check_locked_all_targets": 0,
+    "cargo_build_locked_bin_ripr": 0
+  },
+  "claim_boundary": "Observed source-built default-feature Linux CLI; no installed, package, release, full-workspace test, hosted CI, Windows or accuracy-population equivalence claim."
+}

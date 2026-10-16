@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+replay-*.json
+cases/**/replay.*
+cases/**/target/
+cases/**/.ripr/

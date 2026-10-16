@@ -1,0 +1,1775 @@
+{
+  "observed_date": "2026-10-16",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "method": "Native GitHub connector search_issues and all-state search_prs; fetch_issue and fetch_issue_comments for #6585 and #7849.",
+  "excluded_active_owner": {
+    "issue": 7849,
+    "last_candidate": "233f24a54bd01d993bb6bc626a0d2b8d738fde3a",
+    "reason": "Explicit prior lane owner, current native issue/comments confirmed. Do not duplicate None-match implementation."
+  },
+  "related_scope": {
+    "issue": 5574,
+    "reason": "Per-row tri-state refactor requires classification invariance; this corpus identifies a separate current incorrect promotion."
+  },
+  "searches": [
+    {
+      "key": "initial_0",
+      "isError": false,
+      "items": [
+        {
+          "number": 4987,
+          "title": "ci(cost): execute the applicable proof plan once at explicit pre-merge qualification",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/4987"
+        },
+        {
+          "number": 8210,
+          "title": "fix(output): partial partitions claim omitted Python/TypeScript files were analyzed",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/8210"
+        },
+        {
+          "number": 2379,
+          "title": "release(goal): converge final swarm candidate, sync source, publish 0.11, and back-sync K",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/2379"
+        },
+        {
+          "number": 8123,
+          "title": "spike(playground): prove a bounded in-browser path through the real RIPR analyzer",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/8123"
+        },
+        {
+          "number": 8186,
+          "title": "feat(playground): add an accessible code-test-diff UI with honest RIPR stage explanations",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/8186"
+        },
+        {
+          "number": 8132,
+          "title": "fix(ledger): bind Python target line to the selected repair-test identity",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/8132"
+        },
+        {
+          "number": 7752,
+          "title": "ux(copy): wrong a/an article before interpolated oracle-kind labels (\"a `exact_value` oracle\")",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7752"
+        },
+        {
+          "number": 7755,
+          "title": "ux(copy): double-colon label collisions in human render (\"by language: javascript: 1.\", \"Next step: TypeScript preview advisory: ...\")",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7755"
+        },
+        {
+          "number": 6654,
+          "title": "typescript: verdict-corpus false verdicts not covered by #6594 (27/62 false actionable, 9/39 false exposed)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6654"
+        },
+        {
+          "number": 7260,
+          "title": "fix(rust): resolve const-bound expectations before granting oracle credit",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7260"
+        },
+        {
+          "number": 1693,
+          "title": "program: converge ripr from usable to workable to release-ready without cutting a release",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/1693"
+        },
+        {
+          "number": 5559,
+          "title": "architecture(polyglot): generalize cross-language dependency and oracle edges beyond Bun profiles",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5559"
+        },
+        {
+          "number": 2766,
+          "title": "control(release): bind 0.11 work selection and merge eligibility to the live #2379 graph",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/2766"
+        },
+        {
+          "number": 8042,
+          "title": "fix(rust): recognize same-line predicate owner tails without masking split-boundary gaps",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/8042"
+        },
+        {
+          "number": 5604,
+          "title": "RepoSeam drops its source end line, so pilot's change-first ranking misses edits to later lines of multiline match seams",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5604"
+        },
+        {
+          "number": 5090,
+          "title": "ci(durations): measured matrix table — routed gates 34.6 min (nextest ~50%), ~55 min/PR-event parallel advisory legs, self-hosted legs skip 16/16",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5090"
+        },
+        {
+          "number": 8035,
+          "title": "dx-scoreboard: full trust gate fails on main for 13 corpus comparisons with no case-population baseline",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/8035"
+        },
+        {
+          "number": 7849,
+          "title": "fix(python): do not credit pytest.raises(match=None) as a message oracle",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7849"
+        },
+        {
+          "number": 7392,
+          "title": "ux(suggest): return_value findings credit an exact-value oracle even when the observed input cannot activate the change",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7392"
+        },
+        {
+          "number": 7908,
+          "title": "fix(sarif): declare Unicode code-point columns for text result runs",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7908"
+        },
+        {
+          "number": 7904,
+          "title": "rust: preserve literal workspace-member precedence over an exact exclusion in macro ownership",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7904"
+        },
+        {
+          "number": 7868,
+          "title": "fix(typescript): retain every workspace-budget refusal in bounded disclosure",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7868"
+        },
+        {
+          "number": 7791,
+          "title": "fix(init): retain selected root in successful doctor/check follow-up commands",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7791"
+        },
+        {
+          "number": 3794,
+          "title": "perf(0.11): make large-repo cache work observable and incrementally reusable",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/3794"
+        },
+        {
+          "number": 1601,
+          "title": "analysis(rust): close the governed pilot missing-discriminator route family",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/1601"
+        },
+        {
+          "number": 7842,
+          "title": "ux(triage): fix-lane plan for the 2026-10-13 audit wave",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7842"
+        },
+        {
+          "number": 7792,
+          "title": "fix(xtask): refuse unfinished stdout-file capture and clean owned descendants",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7792"
+        },
+        {
+          "number": 7795,
+          "title": "ux(diff): ASCII-to-Unicode rename loses disclosure; adjacent file masks missing scope",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7795"
+        },
+        {
+          "number": 7793,
+          "title": "fix(cli): diff unsupported_input reports must exit 2 like check",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7793"
+        },
+        {
+          "number": 7312,
+          "title": "analysis(python): recognize unittest assertListEqual whole-list oracles",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7312"
+        },
+        {
+          "number": 7616,
+          "title": "main: golden drift on owner_return_pin_fallible_literal (exposed → weakly_exposed) at 6bd4e76",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7616"
+        },
+        {
+          "number": 7384,
+          "title": "ux(lang): TypeScript named limitations stay invisible in human output, which instead advises adding an assertion the helper-gated case does not need",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7384"
+        },
+        {
+          "number": 7592,
+          "title": "fix(python): withhold unittest selectors that confuse literal path dots with module separators",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7592"
+        },
+        {
+          "number": 7315,
+          "title": "analysis(typescript): classify literal .rejects equality as an error-path oracle",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7315"
+        },
+        {
+          "number": 7545,
+          "title": "test(xtask): investigate real process-contract cleanup EEXIST without weakening controls",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7545"
+        },
+        {
+          "number": 7582,
+          "title": "docs(pypi): local wheelhouse quickstart can run another environment's ripr",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7582"
+        },
+        {
+          "number": 6603,
+          "title": "spec(0233): four Python oracles the spec keeps weakly_exposed kill their mutants (assertAlmostEqual, fluent helper, assertRaisesRegex, exc.value)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6603"
+        },
+        {
+          "number": 7526,
+          "title": "Python empty-token sink alignment can credit an unrelated strong oracle as exposed",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7526"
+        },
+        {
+          "number": 7567,
+          "title": "Python rule 12: assertAlmostEqual is read only on the `self.` receiver",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7567"
+        },
+        {
+          "number": 7472,
+          "title": "lsp: reconcile genuine Python gap-ledger admission with producer identities and limits",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7472"
+        }
+      ],
+      "error": null
+    },
+    {
+      "key": "initial_1",
+      "isError": false,
+      "items": [
+        {
+          "number": 8223,
+          "title": "fix(pilot): disclose absent changed source without an inventory cap",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8223"
+        },
+        {
+          "number": 8082,
+          "title": "ci: stage reviewed qualification leaves in exact-subject caller",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8082"
+        },
+        {
+          "number": 8176,
+          "title": "ux(cli): make `ripr check --help` one screen, with `--all` for the reference (#8158)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8176"
+        },
+        {
+          "number": 8229,
+          "title": "fix(output): bind preview analyzed claims to partial diff scope (#8210)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8229"
+        },
+        {
+          "number": 8181,
+          "title": "ux(doctor): fit default human output on one 80x24 screen",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181"
+        },
+        {
+          "number": 8172,
+          "title": "fix(ci-admission): reject narrative readiness tokens (partial #8157)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8172"
+        },
+        {
+          "number": 8004,
+          "title": "fix(analysis): require bounded inherent receiver attribution",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004"
+        },
+        {
+          "number": 8201,
+          "title": "feat(check): emit native diff output set from one analysis (#8169)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8201"
+        },
+        {
+          "number": 8147,
+          "title": "fix(rust): read binding items in macro bodies as macro-binding sites (#5991)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8147"
+        },
+        {
+          "number": 8192,
+          "title": "fix(ci-admission): refuse competing or oversized candidates before allocation (#2022)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8192"
+        },
+        {
+          "number": 8179,
+          "title": "fix(ux): make ripr check the canonical first run (#8164)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8179"
+        },
+        {
+          "number": 8023,
+          "title": "fix(cli): show help for bare command groups (#7747)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8023"
+        },
+        {
+          "number": 8162,
+          "title": "fix(sarif): point helpUri at current swarm docs (#7397)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8162"
+        },
+        {
+          "number": 8141,
+          "title": "fix(rust): an empty-collection expectation cannot confirm a push (#8051)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8141"
+        },
+        {
+          "number": 8135,
+          "title": "fix(ledger): bind Python repair target lines to selected tests",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8135"
+        },
+        {
+          "number": 8142,
+          "title": "fix(ledger): bind Python repair target lines to selected tests",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8142"
+        },
+        {
+          "number": 8096,
+          "title": "fix(ux): clear four human-copy grammar frictions",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8096"
+        },
+        {
+          "number": 8059,
+          "title": "fix(field-observation): a test pinning one element of a returned array observes that element's field (#7858)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8059"
+        },
+        {
+          "number": 8114,
+          "title": "Pin a payload-carrying early Err variant through the owner's whole-value equality",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8114"
+        },
+        {
+          "number": 8143,
+          "title": "fix(human): align Hidden locations with the selected root",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8143"
+        },
+        {
+          "number": 8150,
+          "title": "test(discovery): pin rust-only uv workspace roots through ripr.toml",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8150"
+        },
+        {
+          "number": 8145,
+          "title": "fix(typescript): skip colon __proto__ in the match-object field pin",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8145"
+        },
+        {
+          "number": 8102,
+          "title": "fix(owner-pin): a verified expect_file golden comparison pins the owner return (#6578)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8102"
+        },
+        {
+          "number": 8140,
+          "title": "fix(typescript): credit a mock payload on a test-file factory object (RIPR-SPEC-0247)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8140"
+        },
+        {
+          "number": 7408,
+          "title": "fix(vscode): bind multi-root sessions and add real-server acceptance",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7408"
+        },
+        {
+          "number": 8131,
+          "title": "fix(discovery): share structural package workspace markers",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8131"
+        },
+        {
+          "number": 8127,
+          "title": "fix(lsp): publish relatedInformation on seam and gap diagnostics",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8127"
+        },
+        {
+          "number": 8078,
+          "title": "test(cli): bound all-suppressed GitHub smoke input",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8078"
+        },
+        {
+          "number": 8043,
+          "title": "fix(mcp): keep empty gap pages structured (#7768)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8043"
+        },
+        {
+          "number": 8094,
+          "title": "fix(rust): keep literals and comments opaque in FFI attributes",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8094"
+        },
+        {
+          "number": 8085,
+          "title": "fix(repair): classify complete retry refusals and retain failed-read evidence (#8064)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8085"
+        },
+        {
+          "number": 7579,
+          "title": "feat(coverage): retain bounded ELF binary ID associations",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7579"
+        },
+        {
+          "number": 8079,
+          "title": "test(cli): bound recall tradeoff smoke fixture",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8079"
+        },
+        {
+          "number": 8074,
+          "title": "fix(portable-consumer): preserve native Windows receipt artifact bytes",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8074"
+        },
+        {
+          "number": 8083,
+          "title": "Complete the return-value witness for a whole-body short-circuit owner tail",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8083"
+        },
+        {
+          "number": 8054,
+          "title": "fix(pilot): name the supported-language check route in the headline",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8054"
+        },
+        {
+          "number": 7960,
+          "title": "fix(reveal): credit a field-map insert read back through a keyed getter (ledger-stock-insert)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7960"
+        },
+        {
+          "number": 8034,
+          "title": "chore(dx-scoreboard): refresh the five Rust corpus baseline rates (#7325)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8034"
+        },
+        {
+          "number": 8026,
+          "title": "fix(pilot): follow multiline match heads in change-first ranking (#5604)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8026"
+        },
+        {
+          "number": 8025,
+          "title": "fix(side_flip): Err/Ok oracles on both sides of a guard's edge confirm the guard (RIPR-SPEC-0227 rule 3)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8025"
+        }
+      ],
+      "error": null
+    },
+    {
+      "key": "python-shadow-issue",
+      "isError": false,
+      "items": [
+        {
+          "number": 6654,
+          "title": "typescript: verdict-corpus false verdicts not covered by #6594 (27/62 false actionable, 9/39 false exposed)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6654"
+        },
+        {
+          "number": 7260,
+          "title": "fix(rust): resolve const-bound expectations before granting oracle credit",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7260"
+        },
+        {
+          "number": 1693,
+          "title": "program: converge ripr from usable to workable to release-ready without cutting a release",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/1693"
+        },
+        {
+          "number": 5559,
+          "title": "architecture(polyglot): generalize cross-language dependency and oracle edges beyond Bun profiles",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5559"
+        },
+        {
+          "number": 5090,
+          "title": "ci(durations): measured matrix table — routed gates 34.6 min (nextest ~50%), ~55 min/PR-event parallel advisory legs, self-hosted legs skip 16/16",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5090"
+        },
+        {
+          "number": 7904,
+          "title": "rust: preserve literal workspace-member precedence over an exact exclusion in macro ownership",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7904"
+        },
+        {
+          "number": 1601,
+          "title": "analysis(rust): close the governed pilot missing-discriminator route family",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/1601"
+        },
+        {
+          "number": 7315,
+          "title": "analysis(typescript): classify literal .rejects equality as an error-path oracle",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7315"
+        },
+        {
+          "number": 7382,
+          "title": "ux(reports): rerun --gap stale-ledger guard passes for any ledger stamped with the default \".\" root, and the ledger carries no revision identity for same-repo staleness",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7382"
+        },
+        {
+          "number": 5114,
+          "title": "control(0.11): stabilize the final swarm denominator before the immutable cut",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5114"
+        },
+        {
+          "number": 5526,
+          "title": "program(multi-lang): converge adapters into one capability, evidence, and verification architecture",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5526"
+        },
+        {
+          "number": 5162,
+          "title": "program(verification): derive explainable changed-code verification plans",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5162"
+        },
+        {
+          "number": 3164,
+          "title": "metrics(rust): audit silent exposed results against judged and mutation-calibrated ground truth",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/3164"
+        },
+        {
+          "number": 5373,
+          "title": "CI: pull_request workflows silently not scheduled for some branch pushes (no github-actions suite)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5373"
+        },
+        {
+          "number": 6847,
+          "title": "ux(lsp): packet-not-ready TypeScript preview findings never publish as editor diagnostics in either profile — preview_actionability shadows the delivery_eligible producer stamp, so diagnosticProfile=full publishes nothing while finding_count=1",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6847"
+        },
+        {
+          "number": 5389,
+          "title": "fix(python): withhold oracle credit from skipped and expected-failure tests",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5389"
+        },
+        {
+          "number": 5520,
+          "title": "epic(go): deliver a trustworthy Go preview adapter end to end",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5520"
+        },
+        {
+          "number": 5506,
+          "title": "test(typescript): lock row-local miss reasons across mixed tests and projections",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5506"
+        },
+        {
+          "number": 4519,
+          "title": "test(0.11): complete the literal installed TypeScript repair journey",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/4519"
+        },
+        {
+          "number": 4518,
+          "title": "test(0.11): complete the literal installed Python repair journey",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/4518"
+        },
+        {
+          "number": 5131,
+          "title": "fix(analysis): close postmerge opaque property evidence escapes",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5131"
+        },
+        {
+          "number": 4464,
+          "title": "fix(lsp): preserve producer-owned source origins for current Rust expression diagnostics",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/4464"
+        },
+        {
+          "number": 3745,
+          "title": "refactor(analysis): decompose analysis/language/rust.rs — the #1719-successor behavior-preserving split",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/3745"
+        },
+        {
+          "number": 4410,
+          "title": "must-fix(0.11): TypeScript same-file constant threshold leaves the guided route with no repair packet",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/4410"
+        },
+        {
+          "number": 2269,
+          "title": "analysis(typescript): owner-module mock over-credits exposed — Function-owner DirectOwnerCall path lacks test_mocks_owner_module guard",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/2269"
+        }
+      ],
+      "error": null
+    },
+    {
+      "key": "python-shadow-pr",
+      "isError": false,
+      "items": [
+        {
+          "number": 8082,
+          "title": "ci: stage reviewed qualification leaves in exact-subject caller",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8082"
+        },
+        {
+          "number": 8004,
+          "title": "fix(analysis): require bounded inherent receiver attribution",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004"
+        },
+        {
+          "number": 8059,
+          "title": "fix(field-observation): a test pinning one element of a returned array observes that element's field (#7858)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8059"
+        },
+        {
+          "number": 8143,
+          "title": "fix(human): align Hidden locations with the selected root",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8143"
+        },
+        {
+          "number": 8102,
+          "title": "fix(owner-pin): a verified expect_file golden comparison pins the owner return (#6578)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8102"
+        },
+        {
+          "number": 8140,
+          "title": "fix(typescript): credit a mock payload on a test-file factory object (RIPR-SPEC-0247)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8140"
+        },
+        {
+          "number": 8127,
+          "title": "fix(lsp): publish relatedInformation on seam and gap diagnostics",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8127"
+        },
+        {
+          "number": 7579,
+          "title": "feat(coverage): retain bounded ELF binary ID associations",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7579"
+        },
+        {
+          "number": 7960,
+          "title": "fix(reveal): credit a field-map insert read back through a keyed getter (ledger-stock-insert)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7960"
+        },
+        {
+          "number": 8025,
+          "title": "fix(side_flip): Err/Ok oracles on both sides of a guard's edge confirm the guard (RIPR-SPEC-0227 rule 3)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8025"
+        },
+        {
+          "number": 8000,
+          "title": "fix(typescript): read a forEach row element bound to a literal const (RIPR-SPEC-0246 rule 2)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8000"
+        },
+        {
+          "number": 7996,
+          "title": "fix(rust): read let-bound literal inputs and const bounds in unentered guards (#7964)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7996"
+        },
+        {
+          "number": 7932,
+          "title": "fix(owner_pin): a projection that keeps a scalar owner's value pins it",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7932"
+        },
+        {
+          "number": 7914,
+          "title": "Read closure boundaries in Rust iterator adaptors (RIPR-SPEC-0265)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7914"
+        },
+        {
+          "number": 7486,
+          "title": "fix(rerun): select exact source call occurrences (#1601)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7486"
+        },
+        {
+          "number": 7839,
+          "title": "fix(typescript): read a strict same-file custom matcher as toBe (RIPR-SPEC-0262)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7839"
+        },
+        {
+          "number": 7778,
+          "title": "fix(rust): scope shared reason-string oracle credit (#7763)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7778"
+        },
+        {
+          "number": 7765,
+          "title": "Withhold exposed from a guarded side effect no test enters",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7765"
+        },
+        {
+          "number": 7885,
+          "title": "fix(field-credit): admit adjacent independent expected bindings",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7885"
+        },
+        {
+          "number": 7833,
+          "title": "fix(evidence): retain source file across colliding assertion lines",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7833"
+        },
+        {
+          "number": 7804,
+          "title": "fix(rust): canonicalize closing-only propagation subjects (source #1715)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7804"
+        },
+        {
+          "number": 7737,
+          "title": "fix(python): recognize bounded unittest list equality oracles",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7737"
+        },
+        {
+          "number": 7745,
+          "title": "fix(typescript): withhold test evidence from empty each tables",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7745"
+        },
+        {
+          "number": 7725,
+          "title": "fix(oracles): a nested or bool-compared matches! earns exact only if its pattern pins",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7725"
+        },
+        {
+          "number": 7711,
+          "title": "fix(classify): abstain on a gap whose test asserts captured log output (#7133)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7711"
+        },
+        {
+          "number": 7731,
+          "title": "eval(verdict-corpus): 37 TypeScript cases complete spec-example coverage",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7731"
+        },
+        {
+          "number": 7754,
+          "title": "fix(python): credit a mock passed to a classmethod owner (#7634, #7719)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7754"
+        },
+        {
+          "number": 7409,
+          "title": "feat(analysis): retain selected inherent helper call identities",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7409"
+        },
+        {
+          "number": 7696,
+          "title": "fix(ux): clear language-support and first-run journey frictions",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7696"
+        },
+        {
+          "number": 7712,
+          "title": "fix(rust): pin a changed early `return Err(..)` filed as an error_path probe",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7712"
+        }
+      ],
+      "error": null
+    },
+    {
+      "key": "python-mock-issue",
+      "isError": false,
+      "items": [
+        {
+          "number": 4987,
+          "title": "ci(cost): execute the applicable proof plan once at explicit pre-merge qualification",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/4987"
+        },
+        {
+          "number": 8186,
+          "title": "feat(playground): add an accessible code-test-diff UI with honest RIPR stage explanations",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/8186"
+        },
+        {
+          "number": 8133,
+          "title": "TypeScript match-object pin: a `__proto__:` entry is read as a listed field",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/8133"
+        },
+        {
+          "number": 6654,
+          "title": "typescript: verdict-corpus false verdicts not covered by #6594 (27/62 false actionable, 9/39 false exposed)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6654"
+        },
+        {
+          "number": 1693,
+          "title": "program: converge ripr from usable to workable to release-ready without cutting a release",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/1693"
+        },
+        {
+          "number": 8122,
+          "title": "test(polyglot): qualify one PyO3-to-pytest behavior witness before bridge promotion",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/8122"
+        },
+        {
+          "number": 7664,
+          "title": "ux(doctor): mixed pytest+unittest repo still reports a single Python test surface",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7664"
+        },
+        {
+          "number": 1601,
+          "title": "analysis(rust): close the governed pilot missing-discriminator route family",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/1601"
+        },
+        {
+          "number": 7719,
+          "title": "Python rule 17 gate test: make each exposed case's mock expectation match the new call",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7719"
+        },
+        {
+          "number": 7634,
+          "title": "Python rule 17: a classmethod owner's returned mock is not reached",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7634"
+        },
+        {
+          "number": 7384,
+          "title": "ux(lang): TypeScript named limitations stay invisible in human output, which instead advises adding an assertion the helper-gated case does not need",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7384"
+        },
+        {
+          "number": 7586,
+          "title": "Python example 9: a mock expectation on the owner's result scores false actionable",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7586"
+        },
+        {
+          "number": 6603,
+          "title": "spec(0233): four Python oracles the spec keeps weakly_exposed kill their mutants (assertAlmostEqual, fluent helper, assertRaisesRegex, exc.value)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6603"
+        },
+        {
+          "number": 7231,
+          "title": "integration(ripr+): admit language-specific quality facts only through shared capability rules",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7231"
+        },
+        {
+          "number": 6585,
+          "title": "python: code defects found while specifying RIPR-SPEC-0233 (oracle and reach rules)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6585"
+        },
+        {
+          "number": 5389,
+          "title": "fix(python): withhold oracle credit from skipped and expected-failure tests",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5389"
+        },
+        {
+          "number": 5532,
+          "title": "architecture(multi-lang): project every adapter into the shared behavior witness",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5532"
+        },
+        {
+          "number": 6410,
+          "title": "slice(#5532 PR C): project Python producer facts into the shared witness with parity and honesty corrections",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6410"
+        },
+        {
+          "number": 5794,
+          "title": "analysis(java): model JUnit and TestNG activation, parameterization, assertions, and interactions",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5794"
+        },
+        {
+          "number": 6561,
+          "title": "eval(#6322 PR C): observe and evaluate the initial Python conformance pack",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6561"
+        },
+        {
+          "number": 6560,
+          "title": "test(#6322 PR B): fill missing Python first-spine framework and adversarial controls",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6560"
+        },
+        {
+          "number": 6559,
+          "title": "test(#6322 PR A): map existing Python fixtures and judged evidence into the shared pack",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6559"
+        },
+        {
+          "number": 5222,
+          "title": "analysis(verification): model execution-context and external-service obligations",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5222"
+        },
+        {
+          "number": 6408,
+          "title": "slice(#5532 PR B): freeze current Python, TypeScript/JavaScript, and Perl witness-parity cases and disagreement taxonomy",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6408"
+        },
+        {
+          "number": 5816,
+          "title": "adr(spock): select Groovy syntax and Spock semantic fact substrates",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5816"
+        },
+        {
+          "number": 5560,
+          "title": "test(multi-lang): build a governed semantic conformance and real-repository corpus",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5560"
+        },
+        {
+          "number": 6322,
+          "title": "test(corpus-python): map pytest and unittest fixtures into the shared semantic spine",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6322"
+        },
+        {
+          "number": 5709,
+          "title": "eval(native PR A): add deterministic C, C++, configuration, template, callback, UB, and FFI corpus fixtures",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5709"
+        },
+        {
+          "number": 5734,
+          "title": "eval(shell): build judged POSIX, Bash, Bats, expansion, process, command, and system-effect corpora and adjudicate support",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5734"
+        },
+        {
+          "number": 5575,
+          "title": "analysis(python): attribute exact discriminator coverage to each related test",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5575"
+        }
+      ],
+      "error": null
+    },
+    {
+      "key": "python-mock-pr",
+      "isError": false,
+      "items": [
+        {
+          "number": 8082,
+          "title": "ci: stage reviewed qualification leaves in exact-subject caller",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8082"
+        },
+        {
+          "number": 8140,
+          "title": "fix(typescript): credit a mock payload on a test-file factory object (RIPR-SPEC-0247)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8140"
+        },
+        {
+          "number": 7408,
+          "title": "fix(vscode): bind multi-root sessions and add real-server acceptance",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7408"
+        },
+        {
+          "number": 7579,
+          "title": "feat(coverage): retain bounded ELF binary ID associations",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7579"
+        },
+        {
+          "number": 8079,
+          "title": "test(cli): bound recall tradeoff smoke fixture",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8079"
+        },
+        {
+          "number": 8074,
+          "title": "fix(portable-consumer): preserve native Windows receipt artifact bytes",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8074"
+        },
+        {
+          "number": 8017,
+          "title": "fix(doctor): report mixed pytest and unittest test surfaces",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8017"
+        },
+        {
+          "number": 7952,
+          "title": "Read an uncompared expect_err(..) as broad_error/weak, not a mock expectation",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7952"
+        },
+        {
+          "number": 7890,
+          "title": "fix(diff): reconcile short-name replacements by exact identity",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7890"
+        },
+        {
+          "number": 7923,
+          "title": "test(cli): isolate six sample-output smoke cases (#7825)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7923"
+        },
+        {
+          "number": 7765,
+          "title": "Withhold exposed from a guarded side effect no test enters",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7765"
+        },
+        {
+          "number": 7824,
+          "title": "test(corpus): cover RIPR-SPEC-0238 example 10 with a numpy subject (#7819)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7824"
+        },
+        {
+          "number": 7725,
+          "title": "fix(oracles): a nested or bool-compared matches! earns exact only if its pattern pins",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7725"
+        },
+        {
+          "number": 7731,
+          "title": "eval(verdict-corpus): 37 TypeScript cases complete spec-example coverage",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7731"
+        },
+        {
+          "number": 7754,
+          "title": "fix(python): credit a mock passed to a classmethod owner (#7634, #7719)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7754"
+        },
+        {
+          "number": 7696,
+          "title": "fix(ux): clear language-support and first-run journey frictions",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7696"
+        },
+        {
+          "number": 7633,
+          "title": "fix(python): credit a pinned mock passed for a called parameter (#7586)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7633"
+        },
+        {
+          "number": 7684,
+          "title": "eval(verdict-corpus): 20 TypeScript cases for uncovered spec examples",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7684"
+        },
+        {
+          "number": 7681,
+          "title": "fix(oracles): an ensure! disjunction or nested == is never exact",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7681"
+        },
+        {
+          "number": 7656,
+          "title": "fix(typescript): credit a literal mock payload for a mock passed in an object (RIPR-SPEC-0256)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7656"
+        },
+        {
+          "number": 7577,
+          "title": "ux(check): name the loaded ripr.toml in the human header and JSON",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7577"
+        },
+        {
+          "number": 7613,
+          "title": "fix(python): preserve runnable test identity for dotted paths",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7613"
+        },
+        {
+          "number": 7585,
+          "title": "fix(mcp): discover durable repair attempts through bounded inventory (#7463)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7585"
+        },
+        {
+          "number": 7523,
+          "title": "fix(typescript): RIPR-SPEC-0252 node:test t.assert reads as legacy node:assert",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7523"
+        },
+        {
+          "number": 7560,
+          "title": "fix(python): close the last five Python false verdicts (#6603, #6733)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7560"
+        },
+        {
+          "number": 7561,
+          "title": "fix(python): require a crediting assertion for empty-token owners (#7526)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7561"
+        },
+        {
+          "number": 7559,
+          "title": "eval(verdict-corpus): RIPR-SPEC-0238 example 9 cases; Python spec coverage 38/39",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7559"
+        },
+        {
+          "number": 6764,
+          "title": "fix(oracles): a related test's oracle follows what its pattern pins (RIPR-SPEC-0231 rules 2-6)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/6764"
+        },
+        {
+          "number": 6750,
+          "title": "fix(python): follow RIPR-SPEC-0233 verdict rules found by the Python corpus (#6599, #6600, #6601)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/6750"
+        },
+        {
+          "number": 7419,
+          "title": "fix(typescript): RIPR-SPEC-0248 dropped additive term needs a non-zero tested input",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7419"
+        }
+      ],
+      "error": null
+    },
+    {
+      "key": "python-exception-issue",
+      "isError": false,
+      "items": [
+        {
+          "number": 4987,
+          "title": "ci(cost): execute the applicable proof plan once at explicit pre-merge qualification",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/4987"
+        },
+        {
+          "number": 2379,
+          "title": "release(goal): converge final swarm candidate, sync source, publish 0.11, and back-sync K",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/2379"
+        },
+        {
+          "number": 4491,
+          "title": "feat(npm): ship a script-free ripr launcher with exact-version native packages",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/4491"
+        },
+        {
+          "number": 7752,
+          "title": "ux(copy): wrong a/an article before interpolated oracle-kind labels (\"a `exact_value` oracle\")",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7752"
+        },
+        {
+          "number": 2766,
+          "title": "control(release): bind 0.11 work selection and merge eligibility to the live #2379 graph",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/2766"
+        },
+        {
+          "number": 5090,
+          "title": "ci(durations): measured matrix table — routed gates 34.6 min (nextest ~50%), ~55 min/PR-event parallel advisory legs, self-hosted legs skip 16/16",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5090"
+        },
+        {
+          "number": 7849,
+          "title": "fix(python): do not credit pytest.raises(match=None) as a message oracle",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7849"
+        },
+        {
+          "number": 3921,
+          "title": "docs(0.11): converge release notes, user docs, cut checklist, and sync runbook",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/3921"
+        },
+        {
+          "number": 7592,
+          "title": "fix(python): withhold unittest selectors that confuse literal path dots with module separators",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7592"
+        },
+        {
+          "number": 6603,
+          "title": "spec(0233): four Python oracles the spec keeps weakly_exposed kill their mutants (assertAlmostEqual, fluent helper, assertRaisesRegex, exc.value)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6603"
+        },
+        {
+          "number": 7526,
+          "title": "Python empty-token sink alignment can credit an unrelated strong oracle as exposed",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7526"
+        },
+        {
+          "number": 7472,
+          "title": "lsp: reconcile genuine Python gap-ledger admission with producer identities and limits",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7472"
+        },
+        {
+          "number": 7471,
+          "title": "lsp: admit genuine bounded actionable-gaps verification provenance",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7471"
+        },
+        {
+          "number": 5162,
+          "title": "program(verification): derive explainable changed-code verification plans",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5162"
+        },
+        {
+          "number": 6832,
+          "title": "output(review-comments): base/head review-comments silently returns zero comments for Python and TypeScript changes despite doc claiming it works on all four languages",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6832"
+        },
+        {
+          "number": 5572,
+          "title": "analysis(python): select and retain the family-relevant assertion per related row",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5572"
+        },
+        {
+          "number": 6910,
+          "title": "python: follow-ups from family-relevant assertion selection (#6906)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6910"
+        },
+        {
+          "number": 6848,
+          "title": "ux(lsp): ripr/listActionableItems canonical_id is rejected by ripr.collectContext on both preview corpora (TS: unresolvable finding:<sha256>; Python: gap id not indexed by finding_id), and the ripr.refresh recovery advice cannot surface a usable id",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6848"
+        },
+        {
+          "number": 6585,
+          "title": "python: code defects found while specifying RIPR-SPEC-0233 (oracle and reach rules)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6585"
+        },
+        {
+          "number": 5389,
+          "title": "fix(python): withhold oracle credit from skipped and expected-failure tests",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5389"
+        },
+        {
+          "number": 6410,
+          "title": "slice(#5532 PR C): project Python producer facts into the shared witness with parity and honesty corrections",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6410"
+        },
+        {
+          "number": 5794,
+          "title": "analysis(java): model JUnit and TestNG activation, parameterization, assertions, and interactions",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5794"
+        },
+        {
+          "number": 6560,
+          "title": "test(#6322 PR B): fill missing Python first-spine framework and adversarial controls",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6560"
+        },
+        {
+          "number": 6559,
+          "title": "test(#6322 PR A): map existing Python fixtures and judged evidence into the shared pack",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6559"
+        },
+        {
+          "number": 5816,
+          "title": "adr(spock): select Groovy syntax and Spock semantic fact substrates",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5816"
+        },
+        {
+          "number": 5560,
+          "title": "test(multi-lang): build a governed semantic conformance and real-repository corpus",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5560"
+        },
+        {
+          "number": 6322,
+          "title": "test(corpus-python): map pytest and unittest fixtures into the shared semantic spine",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6322"
+        },
+        {
+          "number": 6320,
+          "title": "test(corpus): define the first shared semantic spine and falsification matrix",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6320"
+        },
+        {
+          "number": 5737,
+          "title": "adr(sql-postgres): select PostgreSQL parser, catalog, PL/pgSQL, and deterministic fact-substrate boundaries",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5737"
+        },
+        {
+          "number": 5575,
+          "title": "analysis(python): attribute exact discriminator coverage to each related test",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5575"
+        }
+      ],
+      "error": null
+    },
+    {
+      "key": "python-exception-pr",
+      "isError": false,
+      "items": [
+        {
+          "number": 8223,
+          "title": "fix(pilot): disclose absent changed source without an inventory cap",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8223"
+        },
+        {
+          "number": 8082,
+          "title": "ci: stage reviewed qualification leaves in exact-subject caller",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8082"
+        },
+        {
+          "number": 8181,
+          "title": "ux(doctor): fit default human output on one 80x24 screen",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181"
+        },
+        {
+          "number": 8172,
+          "title": "fix(ci-admission): reject narrative readiness tokens (partial #8157)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8172"
+        },
+        {
+          "number": 8201,
+          "title": "feat(check): emit native diff output set from one analysis (#8169)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8201"
+        },
+        {
+          "number": 8192,
+          "title": "fix(ci-admission): refuse competing or oversized candidates before allocation (#2022)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8192"
+        },
+        {
+          "number": 8162,
+          "title": "fix(sarif): point helpUri at current swarm docs (#7397)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8162"
+        },
+        {
+          "number": 8142,
+          "title": "fix(ledger): bind Python repair target lines to selected tests",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8142"
+        },
+        {
+          "number": 8059,
+          "title": "fix(field-observation): a test pinning one element of a returned array observes that element's field (#7858)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8059"
+        },
+        {
+          "number": 8143,
+          "title": "fix(human): align Hidden locations with the selected root",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8143"
+        },
+        {
+          "number": 8150,
+          "title": "test(discovery): pin rust-only uv workspace roots through ripr.toml",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8150"
+        },
+        {
+          "number": 7408,
+          "title": "fix(vscode): bind multi-root sessions and add real-server acceptance",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7408"
+        },
+        {
+          "number": 8131,
+          "title": "fix(discovery): share structural package workspace markers",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8131"
+        },
+        {
+          "number": 8127,
+          "title": "fix(lsp): publish relatedInformation on seam and gap diagnostics",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8127"
+        },
+        {
+          "number": 8043,
+          "title": "fix(mcp): keep empty gap pages structured (#7768)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8043"
+        },
+        {
+          "number": 7579,
+          "title": "feat(coverage): retain bounded ELF binary ID associations",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7579"
+        },
+        {
+          "number": 8079,
+          "title": "test(cli): bound recall tradeoff smoke fixture",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8079"
+        },
+        {
+          "number": 8054,
+          "title": "fix(pilot): name the supported-language check route in the headline",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8054"
+        },
+        {
+          "number": 8026,
+          "title": "fix(pilot): follow multiline match heads in change-first ranking (#5604)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8026"
+        },
+        {
+          "number": 8025,
+          "title": "fix(side_flip): Err/Ok oracles on both sides of a guard's edge confirm the guard (RIPR-SPEC-0227 rule 3)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8025"
+        },
+        {
+          "number": 8039,
+          "title": "fix(config): strip Windows verbatim prefix from ripr.toml load errors",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8039"
+        },
+        {
+          "number": 8017,
+          "title": "fix(doctor): report mixed pytest and unittest test surfaces",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8017"
+        },
+        {
+          "number": 8000,
+          "title": "fix(typescript): read a forEach row element bound to a literal const (RIPR-SPEC-0246 rule 2)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8000"
+        },
+        {
+          "number": 7943,
+          "title": "fix(infection): withhold boundary credit when a predicate edit adds or removes an operand",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7943"
+        },
+        {
+          "number": 7995,
+          "title": "fix(python): count pytest imports in test_*.py as framework evidence",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7995"
+        },
+        {
+          "number": 7961,
+          "title": "fix(baseline): keep build-crossing stale debt on shrink update",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7961"
+        },
+        {
+          "number": 7930,
+          "title": "test(honesty): repair malformed pinned semver corpus hunk",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7930"
+        },
+        {
+          "number": 7839,
+          "title": "fix(typescript): read a strict same-file custom matcher as toBe (RIPR-SPEC-0262)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7839"
+        },
+        {
+          "number": 7895,
+          "title": "fix(probes): pair short-name replacements instead of re-probing them as deleted",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7895"
+        },
+        {
+          "number": 7694,
+          "title": "feat(mcp): narrow ripr_list_gaps by file, class, language, repair readiness (#7464)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7694"
+        }
+      ],
+      "error": null
+    },
+    {
+      "key": "shadow-title-issues",
+      "isError": false,
+      "items": [],
+      "error": null
+    },
+    {
+      "key": "shadow-title-pr",
+      "isError": false,
+      "items": [
+        {
+          "number": 7329,
+          "title": "test(corpus): pin trait-shadow dispatch in honesty gate",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7329"
+        },
+        {
+          "number": 7651,
+          "title": "fix(ts): close owner-name shadow gaps behind false exposed (#7507)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7651"
+        },
+        {
+          "number": 6948,
+          "title": "fix(verdicts): refuse owner pins shadowed by test-module types (#6905)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/6948"
+        },
+        {
+          "number": 7036,
+          "title": "fix(reach): refuse direct reach when test module shadows receiver type (#6951)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7036"
+        },
+        {
+          "number": 7031,
+          "title": "precision: exempt the owner's own module from test-module shadow refusal (#6957)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7031"
+        },
+        {
+          "number": 7171,
+          "title": "fix(rust): a trait the test module redeclares shadows the production default method (#7123)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7171"
+        },
+        {
+          "number": 7086,
+          "title": "fix(rust): a trait the test module redeclares shadows the production trait impl (#7053)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7086"
+        },
+        {
+          "number": 4043,
+          "title": "fix(classify): count shadowed receipt bindings before crediting the fed identity",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4043"
+        },
+        {
+          "number": 4042,
+          "title": "fix(classify): count shadowed receipt bindings before crediting the fed identity",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4042"
+        },
+        {
+          "number": 7051,
+          "title": "fix(pin): refuse receiver pins and direct reach on out-of-line parent shadows (#6950)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7051"
+        },
+        {
+          "number": 7110,
+          "title": "fix(rust): a trait an out-of-line parent module declares shadows the production trait impl (#7087)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7110"
+        },
+        {
+          "number": 3728,
+          "title": "fix(ripr): positional let-shadow defeat for wrapper seam callee calls (#3714)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/3728"
+        },
+        {
+          "number": 3739,
+          "title": "analysis(rust): parser-backed shadow facts for seam-callee defeat (#3727 slice A)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/3739"
+        },
+        {
+          "number": 4117,
+          "title": "fix(analysis): guard the TS predicate boundary witness against dead-argument, nested, shadowed, and dead-expected over-credit (#4102)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4117"
+        }
+      ],
+      "error": null
+    },
+    {
+      "key": "shadowed-python-pr",
+      "isError": false,
+      "items": [
+        {
+          "number": 7833,
+          "title": "fix(evidence): retain source file across colliding assertion lines",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7833"
+        },
+        {
+          "number": 7560,
+          "title": "fix(python): close the last five Python false verdicts (#6603, #6733)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7560"
+        },
+        {
+          "number": 4461,
+          "title": "fix(python): relate tests that call an owner through its package re-export",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4461"
+        },
+        {
+          "number": 5414,
+          "title": "fix(python): gate oracle credit on test activation",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/5414"
+        },
+        {
+          "number": 5424,
+          "title": "fix(evidence): name every examined test and why it misses the change",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/5424"
+        },
+        {
+          "number": 6870,
+          "title": "feat(analysis): populate Finding.canonical_gap for Rust (#5268)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/6870"
+        },
+        {
+          "number": 4612,
+          "title": "fix(python): five test-pattern accuracy fixes from OSS mutation replay (#4559 #4560 #4562 #4565 #4567)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4612"
+        },
+        {
+          "number": 8004,
+          "title": "fix(analysis): require bounded inherent receiver attribution",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004"
+        },
+        {
+          "number": 6759,
+          "title": "fix(check): bind the drill-in --root to the resolved repository (#3948)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/6759"
+        },
+        {
+          "number": 4477,
+          "title": "fix(python): relate tests that call an owner through its package re-export",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4477"
+        }
+      ],
+      "error": null
+    },
+    {
+      "key": "claimsearch_0",
+      "isError": false,
+      "items": [
+        {
+          "number": 5574,
+          "title": "analysis(python): make changed-sink observation a per-row tri-state",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5574"
+        },
+        {
+          "number": 4567,
+          "title": "python: strong assertion on the owner return via module alias, result local or local import is under-claimed",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/4567"
+        },
+        {
+          "number": 1266,
+          "title": "analysis(py): handle relative imports and module-chain calls for free-function owners",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/1266"
+        }
+      ],
+      "error": null
+    },
+    {
+      "key": "claimsearch_1",
+      "isError": false,
+      "items": [
+        {
+          "number": 4461,
+          "title": "fix(python): relate tests that call an owner through its package re-export",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4461"
+        },
+        {
+          "number": 1271,
+          "title": "analysis(py): require import source module for free-function owner identity",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/1271"
+        },
+        {
+          "number": 4612,
+          "title": "fix(python): five test-pattern accuracy fixes from OSS mutation replay (#4559 #4560 #4562 #4565 #4567)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4612"
+        },
+        {
+          "number": 3650,
+          "title": "refactor(python): extract related-test relations into python/related_tests.rs (#1719 slice 5)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/3650"
+        }
+      ],
+      "error": null
+    },
+    {
+      "key": "selection_0",
+      "isError": false,
+      "items": [
+        {
+          "number": 6654,
+          "title": "typescript: verdict-corpus false verdicts not covered by #6594 (27/62 false actionable, 9/39 false exposed)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6654"
+        },
+        {
+          "number": 7260,
+          "title": "fix(rust): resolve const-bound expectations before granting oracle credit",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7260"
+        },
+        {
+          "number": 1693,
+          "title": "program: converge ripr from usable to workable to release-ready without cutting a release",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/1693"
+        },
+        {
+          "number": 5559,
+          "title": "architecture(polyglot): generalize cross-language dependency and oracle edges beyond Bun profiles",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5559"
+        },
+        {
+          "number": 5090,
+          "title": "ci(durations): measured matrix table — routed gates 34.6 min (nextest ~50%), ~55 min/PR-event parallel advisory legs, self-hosted legs skip 16/16",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5090"
+        },
+        {
+          "number": 7904,
+          "title": "rust: preserve literal workspace-member precedence over an exact exclusion in macro ownership",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7904"
+        },
+        {
+          "number": 1601,
+          "title": "analysis(rust): close the governed pilot missing-discriminator route family",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/1601"
+        },
+        {
+          "number": 7315,
+          "title": "analysis(typescript): classify literal .rejects equality as an error-path oracle",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7315"
+        },
+        {
+          "number": 7382,
+          "title": "ux(reports): rerun --gap stale-ledger guard passes for any ledger stamped with the default \".\" root, and the ledger carries no revision identity for same-repo staleness",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7382"
+        },
+        {
+          "number": 5114,
+          "title": "control(0.11): stabilize the final swarm denominator before the immutable cut",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5114"
+        },
+        {
+          "number": 5526,
+          "title": "program(multi-lang): converge adapters into one capability, evidence, and verification architecture",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5526"
+        },
+        {
+          "number": 3164,
+          "title": "metrics(rust): audit silent exposed results against judged and mutation-calibrated ground truth",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/3164"
+        },
+        {
+          "number": 5389,
+          "title": "fix(python): withhold oracle credit from skipped and expected-failure tests",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5389"
+        },
+        {
+          "number": 5520,
+          "title": "epic(go): deliver a trustworthy Go preview adapter end to end",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5520"
+        },
+        {
+          "number": 5506,
+          "title": "test(typescript): lock row-local miss reasons across mixed tests and projections",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5506"
+        },
+        {
+          "number": 4518,
+          "title": "test(0.11): complete the literal installed Python repair journey",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/4518"
+        },
+        {
+          "number": 5131,
+          "title": "fix(analysis): close postmerge opaque property evidence escapes",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5131"
+        },
+        {
+          "number": 4464,
+          "title": "fix(lsp): preserve producer-owned source origins for current Rust expression diagnostics",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/4464"
+        },
+        {
+          "number": 3745,
+          "title": "refactor(analysis): decompose analysis/language/rust.rs — the #1719-successor behavior-preserving split",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/3745"
+        },
+        {
+          "number": 2269,
+          "title": "analysis(typescript): owner-module mock over-credits exposed — Function-owner DirectOwnerCall path lacks test_mocks_owner_module guard",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/2269"
+        }
+      ],
+      "error": null
+    },
+    {
+      "key": "selection_1",
+      "isError": false,
+      "items": [
+        {
+          "number": 8082,
+          "title": "ci: stage reviewed qualification leaves in exact-subject caller",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8082"
+        },
+        {
+          "number": 8004,
+          "title": "fix(analysis): require bounded inherent receiver attribution",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004"
+        },
+        {
+          "number": 8059,
+          "title": "fix(field-observation): a test pinning one element of a returned array observes that element's field (#7858)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8059"
+        },
+        {
+          "number": 8143,
+          "title": "fix(human): align Hidden locations with the selected root",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8143"
+        },
+        {
+          "number": 8102,
+          "title": "fix(owner-pin): a verified expect_file golden comparison pins the owner return (#6578)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8102"
+        },
+        {
+          "number": 8140,
+          "title": "fix(typescript): credit a mock payload on a test-file factory object (RIPR-SPEC-0247)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8140"
+        },
+        {
+          "number": 8127,
+          "title": "fix(lsp): publish relatedInformation on seam and gap diagnostics",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8127"
+        },
+        {
+          "number": 7579,
+          "title": "feat(coverage): retain bounded ELF binary ID associations",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7579"
+        },
+        {
+          "number": 7960,
+          "title": "fix(reveal): credit a field-map insert read back through a keyed getter (ledger-stock-insert)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7960"
+        },
+        {
+          "number": 8025,
+          "title": "fix(side_flip): Err/Ok oracles on both sides of a guard's edge confirm the guard (RIPR-SPEC-0227 rule 3)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8025"
+        },
+        {
+          "number": 8000,
+          "title": "fix(typescript): read a forEach row element bound to a literal const (RIPR-SPEC-0246 rule 2)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8000"
+        },
+        {
+          "number": 7996,
+          "title": "fix(rust): read let-bound literal inputs and const bounds in unentered guards (#7964)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7996"
+        },
+        {
+          "number": 7932,
+          "title": "fix(owner_pin): a projection that keeps a scalar owner's value pins it",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7932"
+        },
+        {
+          "number": 7914,
+          "title": "Read closure boundaries in Rust iterator adaptors (RIPR-SPEC-0265)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7914"
+        },
+        {
+          "number": 7486,
+          "title": "fix(rerun): select exact source call occurrences (#1601)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7486"
+        },
+        {
+          "number": 7839,
+          "title": "fix(typescript): read a strict same-file custom matcher as toBe (RIPR-SPEC-0262)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7839"
+        },
+        {
+          "number": 7778,
+          "title": "fix(rust): scope shared reason-string oracle credit (#7763)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7778"
+        },
+        {
+          "number": 7765,
+          "title": "Withhold exposed from a guarded side effect no test enters",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7765"
+        },
+        {
+          "number": 7885,
+          "title": "fix(field-credit): admit adjacent independent expected bindings",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7885"
+        },
+        {
+          "number": 7833,
+          "title": "fix(evidence): retain source file across colliding assertion lines",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7833"
+        },
+        {
+          "number": 7804,
+          "title": "fix(rust): canonicalize closing-only propagation subjects (source #1715)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7804"
+        },
+        {
+          "number": 7737,
+          "title": "fix(python): recognize bounded unittest list equality oracles",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7737"
+        },
+        {
+          "number": 7745,
+          "title": "fix(typescript): withhold test evidence from empty each tables",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7745"
+        },
+        {
+          "number": 7725,
+          "title": "fix(oracles): a nested or bool-compared matches! earns exact only if its pattern pins",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7725"
+        },
+        {
+          "number": 7711,
+          "title": "fix(classify): abstain on a gap whose test asserts captured log output (#7133)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7711"
+        }
+      ],
+      "error": null
+    }
+  ]
+}

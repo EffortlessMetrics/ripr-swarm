@@ -1,0 +1,11 @@
+direct_literal exposed exposed
+local_def weakly_exposed exposed
+local_lambda weakly_exposed exposed
+mock_payload weakly_exposed exposed
+alias_mock_payload weakly_exposed exposed
+exception_only weakly_exposed weakly_exposed
+unrelated_local_def exposed exposed
+bare_shadow_with_other_alias weakly_exposed exposed
+real_alias exposed exposed
+local_import exposed exposed
+nested_helper_local_shadow exposed exposed

@@ -1,0 +1,10 @@
+   Compiling bitflags v2.13.2
+   Compiling oxc_regular_expression v0.130.0
+   Compiling oxc_syntax v0.130.0
+   Compiling oxc_ast v0.130.0
+   Compiling oxc_ecmascript v0.130.0
+   Compiling ls-types v0.0.6
+   Compiling oxc_parser v0.130.0
+   Compiling tower-lsp-server v0.23.0
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+    Finished `dev` profile [unoptimized] target(s) in 3m 37s
