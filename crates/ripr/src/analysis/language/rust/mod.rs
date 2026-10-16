@@ -469,7 +469,8 @@ fn mentioned_module_names(
 
 /// Whether `path` could be a file no target reaches: a module file whose
 /// name nothing mentions, or a target root (`tests/x.rs`) in a package whose
-/// manifest sets `autotests`, `autobenches` or `autoexamples = false`.
+/// manifest sets `autotests`, `autobenches` or `autoexamples = false`, or
+/// declares a `[[test]]` that `cargo test` skips (#8016).
 ///
 /// One cost cut that changes no verdict: `src/bin/x.rs` is never a suspect,
 /// because the walk always counts it as a production root and could only
@@ -532,6 +533,13 @@ fn may_be_unreached(
                                             .and_then(toml::Value::as_bool)
                                             == Some(false)
                                     })
+                                    // A `[[test]]` cargo skips leaves its
+                                    // root unbuilt too (#8016).
+                                    || !workspace::skipped_test_target_roots(
+                                        &manifest,
+                                        package_dir,
+                                    )
+                                    .is_empty()
                             })
                     })
             });
@@ -7359,6 +7367,75 @@ fn absent_delimiter_boundary_returns_head() {
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_declared_test_targets_cargo_test_skips() -> Result<(), String> {
+        // #8016: a `[[test]]` with `test = false`, or with `required-features`
+        // the default features leave off, is built by neither `cargo test`
+        // nor ripr's walk, so its tests relate to nothing. The live control
+        // sits in the same manifest, so a fixture that never parsed the
+        // `[[test]]` entries could not pass.
+        let features = "[features]\ndefault = [\"on\"]\non = []\nnever = []\n\n";
+        let cases = [
+            (
+                "test = false",
+                "[[test]]\nname = 'gated'\ntest = false\n",
+                false,
+            ),
+            (
+                "unmet required-features",
+                "[[test]]\nname = 'gated'\nrequired-features = ['never']\n",
+                false,
+            ),
+            (
+                "required-features met by default",
+                "[[test]]\nname = 'gated'\nrequired-features = ['on']\n",
+                true,
+            ),
+            (
+                "test = true",
+                "[[test]]\nname = 'gated'\ntest = true\n",
+                true,
+            ),
+        ];
+        for (label, entry, relates) in cases {
+            let root = temp_root("module-graph-skipped-test-target")?;
+            write(
+                &root.join("Cargo.toml"),
+                &format!(
+                    "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n{features}{entry}\n[[test]]\nname = 'live'\n"
+                ),
+            )?;
+            write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+            write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+            for (file, name) in [
+                ("gated", "discount_applies_gated"),
+                ("live", "discount_applies_live"),
+            ] {
+                write(
+                    &root.join(format!("tests/{file}.rs")),
+                    &format!(
+                        "use shop::used::discount;\n\n#[test]\nfn {name}() {{\n    assert_eq!(discount(150), 140);\n}}\n"
+                    ),
+                )?;
+            }
+
+            let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+            let related = related_test_names(&root, &result, "src/used.rs");
+            assert!(
+                related.iter().any(|name| name == "discount_applies_live"),
+                "{label}: the live control must relate: {related:?}"
+            );
+            assert_eq!(
+                related.iter().any(|name| name == "discount_applies_gated"),
+                relates,
+                "{label}: gated target relation: {related:?}"
+            );
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
         Ok(())
     }
 

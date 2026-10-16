@@ -712,6 +712,75 @@ fn local_feature_enable(item: &str) -> Option<String> {
     Some(item.to_string())
 }
 
+/// Test-target roots `cargo test` never runs, read from the manifest alone
+/// (#8016): a `[[test]]` entry with `test = false`, or whose
+/// `required-features` are not all enabled by cargo's default features. A
+/// name-only entry claims both default layouts, `tests/<name>.rs` and
+/// `tests/<name>/main.rs`. A path two entries share is skipped only when
+/// every entry claiming it is. A malformed `required-features` fails
+/// closed to skipped, as the metadata verdict does. `harness = false` is
+/// not read here: a registered custom harness runs its tests under that
+/// flag, and that registry owns the premise.
+pub(crate) fn skipped_test_target_roots(
+    manifest: &toml::Value,
+    manifest_dir: &Path,
+) -> BTreeSet<PathBuf> {
+    let Some(entries) = manifest.get("test").and_then(toml::Value::as_array) else {
+        return BTreeSet::new();
+    };
+    let mut features = BTreeMap::new();
+    if let Some(table) = manifest.get("features").and_then(toml::Value::as_table) {
+        for (name, enables) in table {
+            if let Some(items) = enables.as_array() {
+                features.insert(
+                    name.clone(),
+                    items
+                        .iter()
+                        .filter_map(toml::Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>(),
+                );
+            }
+        }
+    }
+    let enabled = expand_default_features(&features);
+    let (mut skipped, mut live) = (BTreeSet::new(), BTreeSet::new());
+    for entry in entries {
+        let roots: Vec<PathBuf> = match (
+            entry.get("path").and_then(toml::Value::as_str),
+            entry.get("name").and_then(toml::Value::as_str),
+        ) {
+            (Some(path), _) if !path.trim().is_empty() => {
+                vec![manifest_dir.join(path.trim())]
+            }
+            (_, Some(name)) if !name.trim().is_empty() => {
+                let name = name.trim();
+                vec![
+                    manifest_dir.join(format!("tests/{name}.rs")),
+                    manifest_dir.join(format!("tests/{name}/main.rs")),
+                ]
+            }
+            _ => continue,
+        };
+        let disabled = entry.get("test").and_then(toml::Value::as_bool) == Some(false);
+        let unmet = match entry.get("required-features") {
+            None => false,
+            Some(toml::Value::Array(items)) => !items
+                .iter()
+                .all(|item| item.as_str().is_some_and(|name| enabled.contains(name))),
+            Some(_) => true,
+        };
+        let bucket = if disabled || unmet {
+            &mut skipped
+        } else {
+            &mut live
+        };
+        bucket.extend(roots.iter().map(|root| lexical(&normalize(root))));
+    }
+    skipped.retain(|root| !live.contains(root));
+    skipped
+}
+
 /// Whether every `required-features` name is in the analyzed default set.
 /// A missing field is no requirement. A malformed field fails closed.
 fn required_features_satisfied(target: &serde_json::Value, enabled: &BTreeSet<String>) -> bool {
@@ -1187,6 +1256,38 @@ mod extraction {
             declared_test_targets_with_harness_from_manifest("not [ valid toml", Path::new("/ws"))
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn skipped_test_target_roots_read_test_flag_and_default_features() -> Result<(), String> {
+        let manifest = toml::from_str::<toml::Value>(
+            "[features]\ndefault = ['on']\non = ['via']\nvia = []\nnever = []\n\n\
+             [[test]]\nname = 'off'\ntest = false\n\n\
+             [[test]]\nname = 'unmet'\nrequired-features = ['never']\n\n\
+             [[test]]\nname = 'met'\nrequired-features = ['via']\n\n\
+             [[test]]\nname = 'malformed'\nrequired-features = 'via'\n\n\
+             [[test]]\nname = 'plain'\n\n\
+             [[test]]\nname = 'shared_skip'\npath = 'tests/shared.rs'\ntest = false\n\n\
+             [[test]]\nname = 'shared_live'\npath = 'tests/shared.rs'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let dir = Path::new("/pkg");
+
+        let skipped = skipped_test_target_roots(&manifest, dir);
+
+        let expected: BTreeSet<PathBuf> = [
+            "/pkg/tests/off.rs",
+            "/pkg/tests/off/main.rs",
+            "/pkg/tests/unmet.rs",
+            "/pkg/tests/unmet/main.rs",
+            "/pkg/tests/malformed.rs",
+            "/pkg/tests/malformed/main.rs",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+        assert_eq!(skipped, expected);
+        Ok(())
     }
 
     #[test]
