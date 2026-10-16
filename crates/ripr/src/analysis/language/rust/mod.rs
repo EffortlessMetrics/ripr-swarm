@@ -374,7 +374,10 @@ fn drop_unreached_test_files(
         let gated = *gated_manifests
             .entry(package.clone())
             .or_insert_with(|| manifest_gates_test_targets(root, &package));
-        if gated && cargo_never_runs_test_target(root, path, &mut inventory) {
+        let registered = test_harnesses.iter().any(|registration| {
+            workspace::normalize_path(&registration.target) == workspace::normalize_path(path)
+        });
+        if gated && cargo_never_runs_test_target(root, path, registered, &mut inventory) {
             orphans.insert(workspace::normalize_path(path));
         }
     }
@@ -410,18 +413,23 @@ fn manifest_gates_test_targets(root: &Path, package_dir: &Path) -> bool {
 /// Whether Cargo's target inventory establishes that `cargo test` never runs
 /// the `#[test]` items of `path` (#8016): a listed test target skipped by
 /// `test = false` or unmet default `required-features`, or one declared
-/// `harness = false`. A path Cargo does not list, or an unavailable
-/// inventory, establishes nothing.
+/// `harness = false`. A `harness = false` target a `custom_harness`
+/// registration names is run by its own harness and keeps its file-wide
+/// evidence role, so only `test = false` and unmet `required-features` drop
+/// it. A path Cargo does not list, or an unavailable inventory, establishes
+/// nothing.
 fn cargo_never_runs_test_target(
     root: &Path,
     path: &Path,
+    registered_harness: bool,
     inventory: &mut workspace::ManifestInventory,
 ) -> bool {
     inventory.cargo_test_collection_skipped(root, path)
-        || matches!(
-            inventory.verdict(root, path),
-            workspace::CargoHarnessVerdict::HarnessDisabled
-        )
+        || (!registered_harness
+            && matches!(
+                inventory.verdict(root, path),
+                workspace::CargoHarnessVerdict::HarnessDisabled
+            ))
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
@@ -7416,6 +7424,43 @@ fn absent_delimiter_boundary_returns_head() {
                 .any(|name| name == "discount_applies_unbuilt"),
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_registered_harness_false_target_keeps_its_file() -> Result<(), String> {
+        // #8016 review: `harness = false` is the premise a `custom_harness`
+        // registration depends on; the file must stay indexed.
+        let root = temp_root("cargo-skipped-registered-harness")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n\n\
+             [[test]]\nname='mimic'\nharness=false\n\n[[test]]\nname='plain'\nharness=false\n",
+        )?;
+        write(&root.join("src/lib.rs"), "")?;
+        let body = b"fn main() {}\n#[test]\nfn t() {}\n".to_vec();
+        let mimic = PathBuf::from("tests/mimic.rs");
+        let plain = PathBuf::from("tests/plain.rs");
+        write(&root.join(&mimic), "fn main() {}\n")?;
+        write(&root.join(&plain), "fn main() {}\n")?;
+        let loaded = vec![(mimic.clone(), body.clone()), (plain.clone(), body)];
+        let harness = crate::config::TestHarnessRegistration {
+            registration_id: "mimic".to_string(),
+            target: mimic.clone(),
+            kind: crate::config::TestHarnessKind::CustomHarnessTarget,
+            adapter: crate::config::TestHarnessAdapter::LibtestMimicV1,
+            marker: "libtest_mimic".to_string(),
+        };
+        let kept = super::drop_unreached_test_files(
+            &root,
+            &crate::analysis::workspace::SourceRoleContext::empty(),
+            &[],
+            &[harness],
+            loaded,
+        );
+        let kept = kept.into_iter().map(|(path, _)| path).collect::<Vec<_>>();
+        assert_eq!(kept, vec![mimic], "unregistered harness=false target drops");
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
