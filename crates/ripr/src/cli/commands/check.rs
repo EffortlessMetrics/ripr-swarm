@@ -291,6 +291,9 @@ const CHECK_VALUE_OPTIONS: &[&str] = &[
     "--git-timeout",
 ];
 
+/// Value-taking options whose values are enumerated names (never flag-shaped).
+const CHECK_ENUM_OPTIONS: &[&str] = &["--mode", "--format"];
+
 /// `Some(all)` when `--help`/`-h` is a real flag among `args` (not an option's
 /// value). Help wins over every other argument, so it never fails on a later
 /// option value, and `--all` (anywhere) widens it to the full reference. On its
@@ -302,6 +305,11 @@ fn help_request(args: &[String]) -> Option<bool> {
         match args[i].as_str() {
             "--help" | "-h" => help = true,
             "--all" => all = true,
+            // An enumerated value never looks like a flag, so `--mode --help`
+            // is a help request rather than the mode `--help`.
+            option
+                if CHECK_ENUM_OPTIONS.contains(&option)
+                    && args.get(i + 1).is_some_and(|next| next.starts_with('-')) => {}
             option if CHECK_VALUE_OPTIONS.contains(&option) => i += 1,
             _ => {}
         }

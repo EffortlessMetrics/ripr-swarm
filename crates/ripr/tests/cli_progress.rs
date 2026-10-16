@@ -331,8 +331,8 @@ fn check_help_does_not_spray_progress() -> Result<(), String> {
 }
 
 /// The default one-screen route stays a short command too: it writes nothing
-/// to stderr, names `--quiet`, and points at the reference that carries the
-/// unknown-totals and no-speed-claim disclosure (SPEC-0185).
+/// to stderr and still carries SPEC-0185's `--quiet`, unknown-totals and
+/// no-speed-claim disclosure.
 #[test]
 fn check_default_help_does_not_spray_progress() -> Result<(), String> {
     let output = ripr()
@@ -346,8 +346,11 @@ fn check_default_help_does_not_spray_progress() -> Result<(), String> {
         "default help is a short command with no stderr: {stderr}"
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("--quiet"));
-    assert!(stdout.contains("ripr check --help --all"));
+    let flat = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("--quiet"));
+    assert!(flat.contains("percentage or ETA"), "{flat}");
+    assert!(flat.contains("no speed claim"), "{flat}");
+    assert!(flat.contains("ripr check --help --all"));
     Ok(())
 }
 

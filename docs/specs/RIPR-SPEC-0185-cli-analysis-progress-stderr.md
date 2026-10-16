@@ -95,9 +95,8 @@ second stage vocabulary.
 - The same JSON or SARIF stdout bytes are emitted with `--quiet`; quiet
   stderr has no `ripr progress:` lines.
 - A missing diff projects `failed` and never `completed`.
-- `ripr check --help --all` documents stderr, `--quiet`, unknown totals, and
-  the no-speed-claim boundary. The default one-screen `ripr check --help`
-  names `--quiet` and points at `--all`. Neither route emits progress.
+- `ripr check --help` documents stderr, `--quiet`, unknown totals, and the
+  no-speed-claim boundary, and does not emit progress.
 - A long-running `ripr pilot` fixture emits stage and heartbeat evidence on
   stderr while `pilot-summary.json` stays byte-identical with `--quiet`;
   a pilot deadline closes the progress run as `cancelled`, never

@@ -879,6 +879,8 @@ fn check_help_is_one_screen_and_all_is_the_full_reference() -> Result<(), String
         "--mode MODE",
         "--root PATH",
         "--quiet",
+        "Unknown totals show no percentage or ETA",
+        "progress makes no speed claim",
         // The completed-run and gate-blocked exit contract, sentence by sentence.
         "Exit status: 0 for a completed run, including `exposed` and `weakly_exposed` findings.",
         "`unsupported_input` reports exit 2, as do usage errors.",
@@ -1011,10 +1013,19 @@ fn check_help_wins_over_later_option_values() -> Result<(), String> {
         &["check", "--help", "--format"][..],
         &["check", "--help", "--mode", "invalid"][..],
         &["check", "--bogus", "--help"][..],
+        // Enumerated values never look like flags, so these are help requests.
+        &["check", "--mode", "--help"][..],
+        &["check", "--format", "-h"][..],
     ] {
         if rendered_help(args)? != short {
             return Err(format!("{args:?} must print the one-screen summary"));
         }
+    }
+    // A free-form value may be flag-shaped: `--diff --help` names a file called
+    // `--help`, so it is not a help request.
+    let diff = run_ripr(&["check", "--diff", "--help"])?;
+    if diff.status.success() || String::from_utf8_lossy(&diff.stdout).contains("Common options:") {
+        return Err("`check --diff --help` must treat `--help` as a diff path".to_string());
     }
     Ok(())
 }

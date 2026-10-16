@@ -141,13 +141,13 @@ Common options:
                     drill-in commands; json (or --json) for scripts and CI;
                     github for Actions annotations; sarif for code scanning.
   --mode MODE       instant, draft (default), or deep: how much of the
-                    workspace is indexed. Modes never change what an exposure
-                    class means.
+                    workspace is indexed (never changes what a class means).
   --root PATH       Workspace root. Defaults to the current directory, then
                     walks up to the enclosing workspace or package, or the git
                     top level (never past the repository); `--root .` pins
                     this directory.
-  --quiet           Suppress progress on stderr.
+  --quiet           Suppress stderr progress. Unknown totals show no
+                    percentage or ETA, and progress makes no speed claim.
 
 Exit status: 0 for a completed run, including `exposed` and `weakly_exposed`
 findings. `unsupported_input` reports exit 2, as do usage errors. Do not build
