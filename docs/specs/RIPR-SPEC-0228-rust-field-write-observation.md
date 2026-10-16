@@ -176,6 +176,16 @@ these reads too (Decision 2): `c.history()` observes `self.log` only when
 `history` resolves to a body returning `self.log`, and a shared name alone
 never confirms a field-path collection write (examples 12 and 13).
 
+A read of only element zero of the written collection (`c.items.first()`,
+`c.items.get(0)`, `c.items[0]`, and the bare-receiver forms) does not
+confirm a `push` (#8203): `push` appends, so element zero is the pushed
+element only when the collection started empty, which this observer
+does not establish. Such a test stays `weakly_exposed`, pinned by
+`fixtures/rust_preseeded_first_element` in the RIPR-SPEC-0108 honesty
+corpus. A read of the pushed element (`last()`, a non-zero index, or
+the whole collection) still confirms, as
+`fixtures/rust_pushed_element_last` pins.
+
 ### Limits
 
 - A read through a method (`r.count()`) confirms only when the method

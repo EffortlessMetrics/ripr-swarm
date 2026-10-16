@@ -969,7 +969,25 @@ pub(in crate::analysis) fn assertion_observes_direct_collection(
     let Some(subject) = assertion_primary_subject(assertion_text) else {
         return false;
     };
-    subject_names_collection(&subject, receiver)
+    subject_names_collection(&subject, receiver) && !reads_only_first_element(&subject, receiver)
+}
+
+/// #8203: true when `subject` reads only element zero of `receiver`
+/// (`receiver.first()`, `receiver.get(0)`, `receiver[0]`). A `push`
+/// appends, so element zero is the pushed element only when the
+/// collection started empty; without proof of that, a first-element
+/// read observes whatever was already there and cannot confirm the
+/// push. Reads of the whole collection, the last element, or a
+/// non-zero index are unaffected.
+fn reads_only_first_element(subject: &str, receiver: &str) -> bool {
+    let mut bare = subject.trim();
+    bare = bare.strip_prefix('&').map_or(bare, str::trim);
+    bare = bare.strip_prefix("mut ").map_or(bare, str::trim);
+    let Some(rest) = bare.strip_prefix(receiver) else {
+        return false;
+    };
+    let compact: String = rest.chars().filter(|ch| !ch.is_whitespace()).collect();
+    matches!(compact.as_str(), ".first()" | ".get(0)" | "[0]")
 }
 
 /// The field path of a collection write on `self` (`log` for
@@ -1018,6 +1036,13 @@ pub(in crate::analysis) fn assertion_field_collection_reads(
         .filter(|(_, subject)| count_reads || !reads_only_count(subject))
         .filter_map(|(index, subject)| {
             let read = subject_field_collection_read(subject, path)?;
+            // #8203: a first-element read of the field collection does
+            // not confirm an appending push (see `reads_only_first_element`).
+            if read.getter.is_none()
+                && reads_only_first_element(subject, &format!("{}.{path}", read.binding))
+            {
+                return None;
+            }
             let other = subjects
                 .get(1 - index.min(1))
                 .filter(|_| subjects.len() == 2);
@@ -3790,7 +3815,19 @@ mod tests {
         };
         let reads = |text: &str| assertion_field_collection_reads(text, "log", false);
         assert_eq!(reads("assert_eq!(inv.log, vec![1]);"), direct("inv"));
-        assert_eq!(reads("assert_eq!(&inv.log[0], &1);"), direct("inv"));
+        assert_eq!(
+            reads("assert_eq!(inv.log.last(), Some(&1));"),
+            direct("inv")
+        );
+        assert_eq!(reads("assert_eq!(&inv.log[1], &1);"), direct("inv"));
+        // #8203: element zero may predate the push, so it reads nothing.
+        for first in [
+            "assert_eq!(inv.log.first(), Some(&9));",
+            "assert_eq!(inv.log.get(0), Some(&9));",
+            "assert_eq!(&inv.log[0], &9);",
+        ] {
+            assert!(reads(first).is_empty(), "{first}");
+        }
         assert_eq!(
             reads("assert_eq!(inv.history(), &[1]);"),
             through("inv", "history")
@@ -3918,8 +3955,20 @@ mod tests {
             "an exact len() read must still observe the collection"
         );
         assert!(
-            assertion_observes_direct_collection("assert_eq!(items[0], 5);", "items"),
-            "an index into the collection must still observe it"
+            !assertion_observes_direct_collection("assert_eq!(items[0], 5);", "items"),
+            "element zero may predate the push and must not confirm it (#8203)"
+        );
+        assert!(
+            !assertion_observes_direct_collection("assert_eq!(items.first(), Some(&5));", "items"),
+            "a first-element read may predate the push and must not confirm it (#8203)"
+        );
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(items[1], 5);", "items"),
+            "a non-zero index into the collection must still observe it"
+        );
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(items.last(), Some(&5));", "items"),
+            "the last element is the pushed element and must still observe it"
         );
         assert!(
             assertion_observes_direct_collection("assert_eq!(items[..], expected);", "items"),

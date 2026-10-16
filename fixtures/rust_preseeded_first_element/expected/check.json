@@ -1,0 +1,203 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_preseeded_first_element/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:f9ddc31af2b5fd12e35ee2f8c07f23afc743d795344a1795e5c0fdf2caac1398","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:call_deletion:c581181e",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl Ledger::record:call_deletion:call_deletion:self.log.push_x*1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl Ledger::record:call_deletion:call_deletion:self.log.push_x*1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl Ledger::record",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "self.log.push_x*1"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:call_deletion:c581181e",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 11,
+        "expression": "self.log.push(x * 1)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach record: first_element_is_the_preseeded_one"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence state write: self.log.push(x * 1)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach record: first_element_is_the_preseeded_one", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence state write: self.log.push(x * 1)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches state write: self.log.push(x * 1) (line 11)", "related test src/lib.rs:20 first_element_is_the_preseeded_one uses strong exact value oracle: assert_eq!(ledger.log.first(), Some(&9));", "source function argument value x = 7 at line 22", "source assertion argument value 9 at line 23"],
+      "flow_sinks": [
+        {"kind":"state_write","text":"self.log.push(x * 1)","line":11}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence state write: self.log.push(x * 1)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach record: first_element_is_the_preseeded_one"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "22": "ledger.record(7);",
+        "23": "assert_eq!(ledger.log.first(), Some(&9));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 22,
+            "value": "x = 7",
+            "context": "function_argument"
+          },
+          {
+            "line": 23,
+            "value": "9",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 22,
+          "value": "x = 7",
+          "context": "function_argument"
+        },
+        {
+          "line": 23,
+          "value": "9",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "first_element_is_the_preseeded_one",
+          "file": "src/lib.rs",
+          "line": 20,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(ledger.log.first(), Some(&9));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:side_effect:368e1964",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl Ledger::record:side_effect:side_effect:self.log.push_x*1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl Ledger::record:side_effect:side_effect:self.log.push_x*1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl Ledger::record",
+        "behavior_kind": "side_effect",
+        "probe_kind": "side_effect",
+        "normalized_discriminator": "self.log.push_x*1"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:side_effect:368e1964",
+        "family": "side_effect",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 11,
+        "expression": "self.log.push(x * 1)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach record: first_element_is_the_preseeded_one"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence state write: self.log.push(x * 1)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach record: first_element_is_the_preseeded_one", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence state write: self.log.push(x * 1)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches state write: self.log.push(x * 1) (line 11)", "related test src/lib.rs:20 first_element_is_the_preseeded_one uses strong exact value oracle: assert_eq!(ledger.log.first(), Some(&9));", "source function argument value x = 7 at line 22", "source assertion argument value 9 at line 23"],
+      "flow_sinks": [
+        {"kind":"state_write","text":"self.log.push(x * 1)","line":11}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence state write: self.log.push(x * 1)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach record: first_element_is_the_preseeded_one"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "22": "ledger.record(7);",
+        "23": "assert_eq!(ledger.log.first(), Some(&9));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 22,
+            "value": "x = 7",
+            "context": "function_argument"
+          },
+          {
+            "line": 23,
+            "value": "9",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 22,
+          "value": "x = 7",
+          "context": "function_argument"
+        },
+        {
+          "line": 23,
+          "value": "9",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "first_element_is_the_preseeded_one",
+          "file": "src/lib.rs",
+          "line": 20,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(ledger.log.first(), Some(&9));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect.",
+      "suggested_next_action": "Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}
