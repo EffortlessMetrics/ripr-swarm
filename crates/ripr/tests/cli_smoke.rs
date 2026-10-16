@@ -67,9 +67,6 @@ mod recall_tradeoff;
 #[cfg(unix)]
 #[path = "cli_smoke/receipt_recovery_root.rs"]
 mod receipt_recovery_root;
-#[cfg(all(unix, feature = "lang-rust"))]
-#[path = "cli_smoke/snapshot_recovery.rs"]
-mod snapshot_recovery;
 #[path = "cli_smoke/related_test_count.rs"]
 mod related_test_count;
 #[cfg(feature = "lang-rust")]
@@ -85,6 +82,9 @@ mod same_line_owner_tail;
 mod sample_output;
 #[path = "cli_smoke/shell_words.rs"]
 mod shell_words;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/snapshot_recovery.rs"]
+mod snapshot_recovery;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/source_unicode.rs"]
 mod source_unicode;
