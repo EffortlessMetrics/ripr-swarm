@@ -315,7 +315,7 @@ fn explain_and_context_fresh_runs_disclose_progress_on_stderr() -> Result<(), St
 #[test]
 fn check_help_does_not_spray_progress() -> Result<(), String> {
     let output = ripr()
-        .args(["check", "--help"])
+        .args(["check", "--help", "--all"])
         .output()
         .map_err(|error| format!("run check help: {error}"))?;
     assert!(output.status.success());

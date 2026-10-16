@@ -122,6 +122,42 @@ including the `repo-exposure.json` that `ripr pilot` writes, carries no head;
 ripr then says so and cannot verify the pair came from the same repository or
 adjacent commits. Matching heads still do not mean matching working trees.
 "#;
+pub(super) const CHECK_HELP_SHORT: &str = r#"Analyze the current diff and name where tests may not catch the changed behavior.
+
+Usage: ripr check [OPTIONS]
+
+Common options:
+  --base REV        Base revision to diff against. When omitted, ripr uses the
+                    local origin/HEAD ref, then origin/main, origin/master,
+                    main, and master in order; when none of those resolves,
+                    the analysis does not run.
+  --worktree        Include uncommitted tracked edits (already the default
+                    when the tree has them).
+  --committed       Diff committed history only, ignoring uncommitted edits.
+  --diff PATH       Read a unified diff file (`-` for stdin) instead of git.
+  --format FORMAT   human (default), human-full (every finding with drill-in
+                    commands), json (--json, for jq and CI scripts), github,
+                    sarif. Badge, repo-scope and agent formats: see --help --all.
+  --root PATH       Workspace root. Defaults to the current directory.
+  --quiet           Suppress progress on stderr.
+
+Examples:
+  ripr check
+  ripr check --base HEAD~1
+  ripr check --base origin/main --json
+  ripr check --diff d.patch --format github
+
+Exit status:
+  Complete and partial_with_limitations reports exit 0, regardless of findings.
+  `unsupported_input` reports exit 2 after the original report is written;
+  usage and operational errors also exit 2. Empty input is complete no_scope
+  (exit 0). A successful exit alone does not establish complete scope or a
+  clean gate; read the typed outcome.
+
+More:
+  ripr check --help --all   Every option, format, environment variable and
+                            the progress contract.
+"#;
 pub(super) const CHECK_HELP: &str = r#"Analyze a diff or workspace and emit findings in human, JSON, SARIF, or badge form.
 
 Usage: ripr check [OPTIONS]

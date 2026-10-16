@@ -217,8 +217,14 @@ pub(super) fn print_workflow(name: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn print_check_help() {
-    println!("{CHECK_HELP}");
+/// `ripr check --help` prints one screen; `--help --all` prints the full
+/// reference (every option, format, environment variable).
+pub(super) fn print_check_help(full: bool) {
+    if full {
+        println!("{CHECK_HELP}");
+    } else {
+        println!("{CHECK_HELP_SHORT}");
+    }
 }
 
 pub(super) fn print_config_help() {
@@ -1013,7 +1019,8 @@ mod tests {
         print_swarm_queue_help();
         print_swarm_ingest_help();
         print_diff_help();
-        print_check_help();
+        print_check_help(false);
+        print_check_help(true);
         print_explain_help();
         print_context_help();
         print_doctor_help();

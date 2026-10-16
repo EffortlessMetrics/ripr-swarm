@@ -509,7 +509,13 @@ fn help_index_routes_agent_repair_to_repair_help() -> Result<(), String> {
 #[test]
 fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), String> {
     for command in ["check", "context"] {
-        let help = normalized(&rendered_help(&[command, "--help"])?);
+        // `check --help` is one screen; its mode table lives behind `--all`.
+        let args: &[&str] = if command == "check" {
+            &[command, "--help", "--all"]
+        } else {
+            &[command, "--help"]
+        };
+        let help = normalized(&rendered_help(args)?);
         for needle in [
             "instant (changed files only, cheapest)",
             "deep and ready (whole workspace, slowest)",
@@ -556,7 +562,7 @@ fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
 /// the group list. Each task below must keep exactly its recommended path.
 #[test]
 fn check_help_chooses_one_format_per_task() -> Result<(), String> {
-    let check = normalized(&rendered_help(&["check", "--help"])?);
+    let check = normalized(&rendered_help(&["check", "--help", "--all"])?);
     for needle in [
         "Choose by task:",
         "eye review -> human",
@@ -631,6 +637,40 @@ fn doc_flag_guard_rejects_removed_flags_and_accepts_prose() -> Result<(), String
     let drift = undocumented_doc_flags(&[("good.md", good)], &mut cache, &run_ripr)?;
     if !drift.is_empty() {
         return Err(format!("guard rejected valid prose: {drift:?}"));
+    }
+    Ok(())
+}
+
+/// #8158 claim 2: `check --help` is one screen and points at the exhaustive
+/// reference; `--help --all` and `help check --all` keep every option.
+#[test]
+fn check_help_is_one_screen_with_an_all_escape_hatch() -> Result<(), String> {
+    let short = rendered_help(&["check", "--help"])?;
+    let full = rendered_help(&["check", "--help", "--all"])?;
+    let via_index = rendered_help(&["help", "check", "--all"])?;
+    if short.lines().count() > 45 {
+        return Err(format!(
+            "`ripr check --help` must fit one screen, got {} lines",
+            short.lines().count()
+        ));
+    }
+    for needle in ["ripr check --help --all", "Exit status:", "--base REV"] {
+        assert_contains("short check help", &short, needle)?;
+    }
+    // The short screen defers the long tail instead of inlining it.
+    for tail in ["RIPR_MAX_DIFF_CHANGED_RUST_LINES", "--candidate-tree"] {
+        if short.contains(tail) {
+            return Err(format!("short check help must not inline `{tail}`"));
+        }
+        assert_contains("full check help", &full, tail)?;
+    }
+    if full != via_index {
+        return Err("`ripr help check --all` must equal `ripr check --help --all`".to_string());
+    }
+    // `--all` widens help only; as a plain check argument it stays unknown.
+    let stray = run_ripr(&["check", "--all"])?;
+    if stray.status.success() {
+        return Err("`ripr check --all` without --help must be rejected".to_string());
     }
     Ok(())
 }
