@@ -326,7 +326,15 @@ fn check_help_does_not_spray_progress() -> Result<(), String> {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("--quiet"));
-    assert!(stdout.contains("percentage or ETA"));
+    // The progress/ETA detail lives in the exhaustive reference (#8158);
+    // the short screen only needs to stay spray-free and point there.
+    let all = ripr()
+        .args(["check", "--help", "--all"])
+        .output()
+        .map_err(|error| format!("run check help --all: {error}"))?;
+    assert!(all.status.success());
+    let all_stdout = String::from_utf8_lossy(&all.stdout);
+    assert!(all_stdout.contains("percentage or ETA"));
     Ok(())
 }
 

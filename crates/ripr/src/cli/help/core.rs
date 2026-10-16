@@ -146,6 +146,7 @@ Options:
                            sarif | repo-badge-shields. Choose by consumer:
                            eyes, drill-in, scripts, Actions, code scanning.
   --json                   Shortcut for `--format json`.
+  --quiet                  Suppress progress narration on stderr.
 
 Exit status: 0 means the run completed (an empty result is not proof the
 change is covered); 2 is a usage or operational error; 3 is a refusal with
