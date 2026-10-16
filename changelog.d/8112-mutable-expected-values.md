@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The reveal side no longer reads an expected name as its initializer when the name can change after its declaration: a `static mut`, or a value built from an interior-mutable type (`Cell`, `RefCell`, `Mutex`, `RwLock`, `Atomic*`, `OnceCell`/`OnceLock`/`LazyCell`/`LazyLock`, `UnsafeCell`). Such an assertion keeps its credit instead of being wrongly weakened. The pin side still treats a `static mut` as a constant, where that only withholds credit (#8112).

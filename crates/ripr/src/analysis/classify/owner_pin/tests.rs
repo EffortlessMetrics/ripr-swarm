@@ -2283,9 +2283,9 @@ fn text_declared_constants_read_macro_items_and_skip_non_declarations() {
             "pub static ref EXP: u32 = quota(2); static mut r#M: u8 = 1; const FOO: u8 = 2;"
         ),
         vec![
-            ("FOO".to_string(), ": u8 = 2".to_string()),
-            ("EXP".to_string(), ": u32 = quota(2)".to_string()),
-            ("M".to_string(), ": u8 = 1".to_string()),
+            ("FOO".to_string(), ": u8 = 2".to_string(), false),
+            ("EXP".to_string(), ": u32 = quota(2)".to_string(), false),
+            ("M".to_string(), ": u8 = 1".to_string(), true),
         ]
     );
     assert_eq!(
@@ -2294,11 +2294,16 @@ fn text_declared_constants_read_macro_items_and_skip_non_declarations() {
              static B: Box<dyn Iterator<Item = u32>> = { let a = 2; quota(a) };"
         ),
         vec![
-            ("Y".to_string(), ": u8 = 1".to_string()),
-            ("A".to_string(), ": [u32; 2] = [quota(1); 2]".to_string()),
+            ("Y".to_string(), ": u8 = 1".to_string(), false),
+            (
+                "A".to_string(),
+                ": [u32; 2] = [quota(1); 2]".to_string(),
+                false
+            ),
             (
                 "B".to_string(),
-                ": Box<dyn Iterator<Item = u32>> = { let a = 2; quota(a) }".to_string()
+                ": Box<dyn Iterator<Item = u32>> = { let a = 2; quota(a) }".to_string(),
+                false
             ),
         ]
     );
@@ -2474,6 +2479,32 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
             "",
             "#[cfg(any())]\nlet e = weight(2);\nassert_eq!(weight(2), e);",
             "e",
+        ),
+        // Interior mutability and `static mut` change after the declaration.
+        (
+            "",
+            "let e = Cell::new(weight(2));\ne.set(6);\nassert_eq!(Cell::new(weight(2)), e);",
+            "e",
+        ),
+        (
+            "",
+            "let e = std::sync::atomic::AtomicU32::new(weight(2));\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        (
+            "static mut EXPECTED: u32 = weight(4);",
+            "unsafe { EXPECTED = 6; }\nassert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
+        ),
+        (
+            "thread_local! { static mut EXPECTED: u32 = weight(4); }",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
+        ),
+        (
+            "static EXPECTED: Mutex<u32> = Mutex::new(weight(4));",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
         ),
         (
             "const EXPECTED: u32 = weight(4);\nmod other { pub const EXPECTED: u32 = 12; }",

@@ -97,7 +97,7 @@ pub(crate) struct CallIdentityMemos {
     /// RIPR-SPEC-0035: every workspace `const`/`static` by name with its
     /// file and masked initializer, built once per index on first use by
     /// the owner-return pin's self-computed expected-value check.
-    constants: std::sync::OnceLock<BTreeMap<String, Vec<(std::path::PathBuf, String)>>>,
+    constants: std::sync::OnceLock<BTreeMap<String, Vec<(std::path::PathBuf, String, bool)>>>,
 }
 
 impl Clone for CallIdentityMemos {
@@ -197,8 +197,8 @@ impl CallIdentityMemos {
     /// The memoized workspace constant table, built by `build` on first use.
     pub(crate) fn workspace_constants(
         &self,
-        build: impl FnOnce() -> BTreeMap<String, Vec<(std::path::PathBuf, String)>>,
-    ) -> &BTreeMap<String, Vec<(std::path::PathBuf, String)>> {
+        build: impl FnOnce() -> BTreeMap<String, Vec<(std::path::PathBuf, String, bool)>>,
+    ) -> &BTreeMap<String, Vec<(std::path::PathBuf, String, bool)>> {
         self.constants.get_or_init(build)
     }
 }

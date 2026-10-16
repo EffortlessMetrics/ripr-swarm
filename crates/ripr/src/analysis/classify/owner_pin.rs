@@ -8772,13 +8772,40 @@ pub(in crate::analysis) fn expected_operand_value(
             },
             None => None,
         };
-        let Some(next) = next else {
+        // An immutable binding or constant can still change through interior
+        // mutability (`Cell::new(..)` then `.set(..)`, #8112).
+        let Some(next) = next.filter(|next| !names_interior_mutable_type(next)) else {
             break;
         };
         current = next.trim().to_string();
         value = Some(current.clone());
     }
     value
+}
+
+/// Whether masked `value` names a std type whose state changes through a
+/// shared reference, so the value read at the declaration may not be the
+/// value compared later.
+fn names_interior_mutable_type(value: &str) -> bool {
+    const TYPES: [&str; 10] = [
+        "Cell",
+        "RefCell",
+        "UnsafeCell",
+        "OnceCell",
+        "OnceLock",
+        "LazyCell",
+        "LazyLock",
+        "Mutex",
+        "RwLock",
+        "SyncUnsafeCell",
+    ];
+    let masked = mask_comments_and_strings(value);
+    TYPES
+        .iter()
+        .any(|name| contains_as_whole_word(&masked, name))
+        || masked
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .any(|word| word.starts_with("Atomic") && word.len() > "Atomic".len())
 }
 
 /// The value of the test's one `let` binding `binding` (its text after the
@@ -8810,9 +8837,10 @@ fn single_constant_value(
     let mut matches = constants
         .get(name)?
         .iter()
-        .filter(|(file, _)| in_scope(file));
-    let (_, initializer) = matches.next()?;
-    if matches.next().is_some() {
+        .filter(|(file, _, _)| in_scope(file));
+    let (_, initializer, mutable) = matches.next()?;
+    // A `static mut` may be assigned after its declaration (#8112).
+    if *mutable || matches.next().is_some() {
         return None;
     }
     let initializer_text = initializer.trim_start();
@@ -8946,7 +8974,8 @@ fn expected_constant_reaches_owner(
             let Some(initializers) = constants.get(&word) else {
                 continue;
             };
-            for (file, initializer) in initializers.iter().filter(|(file, _)| in_scope(file)) {
+            for (file, initializer, _) in initializers.iter().filter(|(file, _, _)| in_scope(file))
+            {
                 if initializer_calls_owner(initializer, name, call)
                     || owner_aliases(index, file, name)
                         .iter()
@@ -9025,46 +9054,50 @@ fn initializer_calls_owner(initializer: &str, name: &str, call: &PinCall) -> boo
 /// masked initializer: one parse per file per index. Items a macro call
 /// declares (`thread_local!`, `lazy_static!`) and items of a file that does
 /// not parse cleanly are read from their text.
-fn workspace_constant_table(index: &RustIndex) -> BTreeMap<String, Vec<(PathBuf, String)>> {
-    let mut table: BTreeMap<String, Vec<(PathBuf, String)>> = BTreeMap::new();
+fn workspace_constant_table(index: &RustIndex) -> BTreeMap<String, Vec<(PathBuf, String, bool)>> {
+    let mut table: BTreeMap<String, Vec<(PathBuf, String, bool)>> = BTreeMap::new();
     for (path, facts) in index.files().iter() {
         let source = &facts.source;
         if !source.contains("const") && !source.contains("static") {
             continue;
         }
-        let mut add = |name: &str, initializer: String| {
+        let mut add = |name: &str, initializer: String, mutable: bool| {
             let name = name.strip_prefix("r#").unwrap_or(name);
             table
                 .entry(name.to_string())
                 .or_default()
-                .push((path.clone(), initializer));
+                .push((path.clone(), initializer, mutable));
         };
         let Some(parsed) = parse_clean_source_file(source) else {
-            for (name, initializer) in text_declared_constants(&mask_comments_and_strings(source)) {
-                add(&name, initializer);
+            for (name, initializer, mutable) in
+                text_declared_constants(&mask_comments_and_strings(source))
+            {
+                add(&name, initializer, mutable);
             }
             continue;
         };
         for node in parsed.tree().syntax().descendants() {
             let item = if let Some(item) = ast::Const::cast(node.clone()) {
-                item.name().zip(item.body())
+                item.name().zip(item.body()).map(|(n, b)| (n, b, false))
             } else if let Some(item) = ast::Static::cast(node.clone()) {
-                item.name().zip(item.body())
+                let mutable = item.mut_token().is_some();
+                item.name().zip(item.body()).map(|(n, b)| (n, b, mutable))
             } else {
                 if let Some(macro_call) = ast::MacroCall::cast(node)
                     && let Some(tokens) = macro_call.token_tree()
                 {
                     let text = mask_comments_and_strings(&tokens.syntax().to_string());
-                    for (name, initializer) in text_declared_constants(&text) {
-                        add(&name, initializer);
+                    for (name, initializer, mutable) in text_declared_constants(&text) {
+                        add(&name, initializer, mutable);
                     }
                 }
                 None
             };
-            if let Some((item_name, body)) = item {
+            if let Some((item_name, body, mutable)) = item {
                 add(
                     item_name.text(),
                     mask_comments_and_strings(&body.syntax().to_string()),
+                    mutable,
                 );
             }
         }
@@ -9076,15 +9109,17 @@ fn workspace_constant_table(index: &RustIndex) -> BTreeMap<String, Vec<(PathBuf,
 /// from masked text as their `: T = init` text, for macro bodies and unparsed files. The type
 /// annotation is required, so `const fn`, `*const u8` and `&'static str`
 /// are not declarations.
-fn text_declared_constants(text: &str) -> Vec<(String, String)> {
+fn text_declared_constants(text: &str) -> Vec<(String, String, bool)> {
     let mut found = Vec::new();
     for keyword in ["const", "static"] {
         for offset in whole_word_offsets(text, keyword) {
             let mut rest = text[offset + keyword.len()..].trim_start();
+            let mut mutable = false;
             for modifier in ["ref", "mut"] {
                 if let Some(stripped) = rest.strip_prefix(modifier)
                     && stripped.starts_with(char::is_whitespace)
                 {
+                    mutable |= modifier == "mut";
                     rest = stripped.trim_start();
                 }
             }
@@ -9108,7 +9143,7 @@ fn text_declared_constants(text: &str) -> Vec<(String, String)> {
             if !item.contains('=') {
                 continue;
             }
-            found.push((name.to_string(), item.to_string()));
+            found.push((name.to_string(), item.to_string(), mutable));
         }
     }
     found
