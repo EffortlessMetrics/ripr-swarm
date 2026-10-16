@@ -1767,11 +1767,15 @@ fn run_git_diff_bytes(
     // The context-line count is the one caller-selected presentation knob
     // (the appended pin wins over any same-named extra): analysis takes zero,
     // the PR-evidence packet takes three.
+    // Ambient submodule ignore settings can hide a changed gitlink before
+    // the parser's skipped-content disclosure sees it (#8209). Keep those
+    // sections visible without analyzing the child repository's contents.
     let unified_arg = format!("--unified={unified}");
     args.extend_from_slice(&[
         "--no-ext-diff",
         "--no-textconv",
         "--no-color",
+        "--ignore-submodules=none",
         "--src-prefix=a/",
         "--dst-prefix=b/",
         unified_arg.as_str(),
