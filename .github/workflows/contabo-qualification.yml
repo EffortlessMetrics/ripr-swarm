@@ -16,6 +16,8 @@ on:
 permissions:
   actions: read
   contents: read
+  # Pending explicit approval before adding checks: read and pull-requests: read.
+  # The pinned reusable workflow requires both; do not dispatch until resolved.
 
 concurrency:
   group: contabo-qualification-${{ github.sha }}
@@ -26,9 +28,12 @@ jobs:
     # Refuse a stale dispatch before reusable allocation or any Cargo bootstrap.
     # Unknown policy is refusal, not permission to use hosted recovery.
     if: github.event_name == 'workflow_dispatch' && inputs.expected_sha == github.sha && vars.EM_CI_GITHUB_HOSTED_ENABLED == 'false'
-    uses: EffortlessMetrics/em-ci-workflows/.github/workflows/rust.yml@a3125de962a74e7ec2e127d41d7532f66c69334d
+    uses: EffortlessMetrics/em-ci-workflows/.github/workflows/rust.yml@8ff77e5876b4a7808a58e053aa6248b1020e02d0
     with:
       profile: standard
       force_hosted: false
       fetch_depth: 0
       script: .ci/contabo-product.sh
+      result_script: .ci/contabo-result.sh
+      artifact_lane: ripr-product
+      upload_artifacts: true

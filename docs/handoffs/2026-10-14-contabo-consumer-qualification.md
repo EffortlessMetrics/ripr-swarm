@@ -9,13 +9,28 @@ remains #4838; service-created merge-group proof remains #4840.
 `contabo-qualification.yml` has only an explicit manual dispatch. It creates
 **Contabo Consumer Qualification**, a non-required rehearsal, and calls the public
 `EffortlessMetrics/em-ci-workflows/.github/workflows/rust.yml` at
-`a3125de962a74e7ec2e127d41d7532f66c69334d`, with `profile: standard`, full history,
+`8ff77e5876b4a7808a58e053aa6248b1020e02d0`, with `profile: standard`, full history,
 and `force_hosted: false`. The caller refuses allocation unless the effective
 `expected_sha` equals the actual dispatch SHA and
 `EM_CI_GITHUB_HOSTED_ENABLED` variable is exactly `false`; this condition runs
 before reusable-job allocation or any Cargo bootstrap. Absent observation or
 unknown policy cannot authorize recovery. No inventory polling, physical-host
 selection, inherited secrets, or caller-owned scratch cleanup occurs here.
+
+The caller now prepares `artifact_lane: ripr-product`, `upload_artifacts: true`,
+`.ci/contabo-product.sh` and `.ci/contabo-result.sh` together. Central source
+`em-ci#236` merged at `8334119f938f545df95158bd157f9da318beb017`; generated
+public `em-ci-workflows#23` merged at the immutable pin above. This is source
+preparation, not live runner admission or a qualified product result.
+
+**Execution blockers:** the caller retains `actions: read` and `contents: read`.
+The reusable workflow additionally declares `checks: read` and
+`pull-requests: read`; explicit approval of these two read-only scope additions
+is pending. They are deliberately recorded as comments, not granted by this
+candidate. The actual new-pin live runner allowance must also be observed after
+its separate pending approval. Do not dispatch until both conditions, default
+workflow registration and reviewed #7164 admission hold. No permissions, runner
+settings, secrets, protection or image activation are changed here.
 
 The immutable standard job has a **75-minute** limit. The repository cannot
 extend it. Its classifier and finalizer also use standard capacity; this source
@@ -82,11 +97,13 @@ must be included in #7164's cold/warm time and scratch-growth observations.
 This source setup is not proof that the active fleet completed it. Rehearsal is
 still blocked on complete execution admission and output custody below.
 
-## Actual RIPR product outputs and transport dependency
+## Actual RIPR product outputs and prepared transport
 
-The active `a3125de...` reusable workflow retains its central result envelope for
-seven days; it does not upload the product packet. A green envelope alone cannot
-establish inspectable Rust-test or RIPR evidence custody. This consumer needs:
+The earlier `a3125de...` source lacked product transport. The prepared public
+pin now supplies bounded no-follow packaging, sanitization, native producer and
+source/run/attempt authentication, mandatory import and blocking fourteen-day
+product custody. The separate central result envelope remains seven days.
+A green envelope alone cannot establish product custody. The real portfolio is:
 
 | Actual output | Proposition and producing owner |
 | --- | --- |
@@ -135,8 +152,8 @@ Before a consumer result importer treats this as complete, it must authenticate
 the native successful producer, all 17 rows and mandatory membership without
 rebuilding the portfolio or converting transport success into domain evidence.
 This RIPR-specific contract is distinct from both Perl's ten-file canonical packet
-and `em-ci#229`'s unsafe-review nonfatal diagnostic packet. Central implementation,
-generated publication, admission and native upload/import remain its owner's work.
+and `em-ci#229`'s unsafe-review nonfatal diagnostic packet. Central implementation and generated publication are now merged. Native
+upload/import execution, actual admission and product fit remain unproved.
 
 These current outputs must be retained together under the existing central
 upload/import authority, with exact source/run/attempt/command/result binding,
@@ -154,17 +171,31 @@ not produce that same canonical analysis. Its PR packet is explicitly
 summary or fabricated gap ledger. No synthetic RIPR+ zero, empty quality pass,
 or filename substitution is added merely to satisfy the importer.
 
-Therefore this is an **explicit central dependency**, not a compatible upload
-switch. The existing central transport owner must supply and review a contract
-for the actual RIPR product members/propositions above, with domain result
-validation that neither rebuilds the heavy portfolio nor promotes missing
-analysis. Only then can the exact compatible public pin, required read scopes,
-workflow allowance and native upload/import result be considered for controlled
-admission. `upload_artifacts=true`, `artifact_lane=ripr` and `result_script` on
-`15f2c4d...` alone do not repair that incompatibility. The active caller remains
-on `a3125de...`, its read permissions unchanged. No duplicate uploader, artifact
-package, image activation or new-pin allowance is implemented in this source;
-the new member declaration and terminal command receipt do not activate transport.
+The prepared caller selects the distinct `ripr-product` lane rather than the
+incompatible older `ripr` lane. The immutable central transport recognizes the
+unchanged member-contract blob `bf03be85b64fab0927ddb9f8d61083e39f33972d`, adapter
+blob `351b83e04c28359115eb4b60e1fce3e8614bcfb8` and source-derived corpus mapping.
+These exact code/contract bytes must remain unchanged unless the central owner
+reviews and publishes a corresponding transport update. New consumer tests live
+in `xtask/tests/contabo_result_policy.rs`, outside that pinned adapter blob.
+
+The lightweight result policy consumes only the centrally authenticated import
+at `EM_CI_ARTIFACT_DIR`. It binds the selected successful owned standard result
+and imported product verdict to the current repository, subject/tree/base,
+run/attempt and defining public pin. Central import remains the authority for
+native producer, command rows, file membership and digests; the policy does not
+reimplement authentication, compile the product or fabricate missing analysis.
+The complete reusable call, including packaging, import, policy and final result,
+must succeed; its selected proof envelope alone is insufficient.
+
+The source compatibility preflight reads genuine immutable Git objects through
+the exact decoded public transport: the existing contract resolves 19 core
+members and all 17 command blocks, and its adapter/contract/source checks pass.
+This is source compatibility, not a real product packet or runtime qualification.
+The former retained-preflight receipt publication was cancelled by the user; it
+remains excluded. Current source and sanitized new proof use only this authorized
+repository candidate. No duplicate uploader, package, live allowance, image
+activation or new authentication credential is supplied here.
 
 The legacy `routed-rust.yml` / `rust-gates.yml` required producer remains available
 as bounded compatibility pending coherent activation. Its Ready/main routing and
@@ -229,7 +260,7 @@ workflow-dispatch registration. This source PR stays Draft pending its own revie
 parent coordinates the source landing and subsequent bounded execution. Do not
 replace this with a Ready transition, speculative dispatch or settings activation.
 Do not execute the current envelope-only path as complete #7164 qualification:
-the compatible central product-output custody dependency must be resolved first.
+the actual new-pin allowance, read-scope approval, workflow registration and reviewed admission must be resolved first.
 
 After source registration and full admission, resolve the existing reviewed
 `BRANCH` to exact `SUBJECT` and retain its reviewed `BASE`. GitHub's
@@ -264,6 +295,6 @@ basis refresh leaves adapter/contract/caller/command-owner bytes unchanged.
 Exact-head workspace results and source/review custody are retained in Draft
 PR #7929; neither local compile proof nor the upstream required result supplies
 central artifact transport, #7164 pool/lifecycle or #4840 native-G evidence.
-The minimal Bash shim is the required central entrypoint; Rust owns the adapter.
+The minimal Bash product shim is the required central entrypoint; Rust owns the adapter. The bounded Bash/jq result script avoids heavy bootstrap in the control job.
 Revert this staged caller, adapter, shim and scoped policy/doc additions to remove
 rehearsal without changing the existing required producer or live settings.

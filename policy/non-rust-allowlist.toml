@@ -883,3 +883,12 @@ surface = "ci"
 classification = "tooling"
 reason = "#4988: pinned EM CI requires a Bash script path; minimal shim prepares workspace temp and delegates command ownership to Rust and existing Rust Gates."
 covered_by = ["cargo test -p xtask --example contabo_product_proof"]
+
+[[allow]]
+glob = ".ci/contabo-result.sh"
+kind = "ci-entrypoint"
+owner = "ci"
+surface = "ci"
+classification = "tooling"
+reason = "#4988: EM CI requires a Bash result script; bounded jq policy consumes the centrally authenticated product import without Cargo bootstrap, another uploader or native-auth implementation."
+covered_by = ["cargo test -p xtask --test contabo_result_policy"]
