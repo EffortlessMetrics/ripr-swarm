@@ -1,0 +1,1087 @@
+{
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "reviewed_source_sha": "e00018da7d224bd13b4c4e3466d1e626ca0b15f6",
+  "predecessor_source_sha": "d08c77d144c016078364fcc1fcf2fa593d21cefc",
+  "observed_date_utc": "2026-10-16",
+  "producer_binary_sha256": "cac488c0fbd606c87f071b9b8f6c838b68cb19f06ab289823fd4ed70e9080d53",
+  "compiler_artifact": {
+    "reason": "compiler-artifact",
+    "package_id": "path+file:///workspace/scratch/snapshot-audit/source/crates/ripr#0.11.0",
+    "manifest_path": "/workspace/scratch/snapshot-audit/source/crates/ripr/Cargo.toml",
+    "target": {
+      "kind": [
+        "bin"
+      ],
+      "crate_types": [
+        "bin"
+      ],
+      "name": "ripr",
+      "src_path": "/workspace/scratch/snapshot-audit/source/crates/ripr/src/main.rs",
+      "edition": "2024",
+      "doc": true,
+      "doctest": false,
+      "test": true
+    },
+    "profile": {
+      "opt_level": "0",
+      "debuginfo": 0,
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": false
+    },
+    "features": [
+      "lang-rust"
+    ],
+    "filenames": [
+      "/workspace/scratch/snapshot-audit/target/debug/ripr"
+    ],
+    "executable": "/workspace/scratch/snapshot-audit/target/debug/ripr",
+    "fresh": false
+  },
+  "native_matrix": {
+    "fixture_variants": 16,
+    "test_executions": 48,
+    "passed_test_commands": 8,
+    "intentionally_failing_test_commands": 8,
+    "ignored": 0
+  },
+  "matrix": [
+    {
+      "variant": "current_equivalent",
+      "test_exit": 0,
+      "tests": [
+        {
+          "name": "tests::discount_tiers_file_snapshot",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::receipt_text_is_pinned_inline",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::record_json_with_redacted_id",
+          "outcome": "ok"
+        }
+      ],
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "infection_unknown",
+          "discriminate": {
+            "state": "weak",
+            "confidence": "medium",
+            "summary": "Medium oracle found: snapshot assertion observes the changed behavior"
+          }
+        }
+      ],
+      "source_sha256": "bcb04645049737810bfcbc45492b87fbef82f244de4abb1aa809792d41c0b798",
+      "diff_sha256": "e93e406a879ea1e2d6e98e24a896774b8f0a4c85b7714adb8e987a3bf4ab3c97"
+    },
+    {
+      "variant": "stale_expected",
+      "test_exit": 101,
+      "tests": [
+        {
+          "name": "tests::discount_tiers_file_snapshot",
+          "outcome": "FAILED"
+        },
+        {
+          "name": "tests::receipt_text_is_pinned_inline",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::record_json_with_redacted_id",
+          "outcome": "ok"
+        }
+      ],
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "infection_unknown",
+          "discriminate": {
+            "state": "weak",
+            "confidence": "medium",
+            "summary": "Medium oracle found: snapshot assertion observes the changed behavior"
+          }
+        }
+      ],
+      "source_sha256": "bcb04645049737810bfcbc45492b87fbef82f244de4abb1aa809792d41c0b798",
+      "diff_sha256": "e93e406a879ea1e2d6e98e24a896774b8f0a4c85b7714adb8e987a3bf4ab3c97"
+    },
+    {
+      "variant": "missing_expected",
+      "test_exit": 101,
+      "tests": [
+        {
+          "name": "tests::discount_tiers_file_snapshot",
+          "outcome": "FAILED"
+        },
+        {
+          "name": "tests::receipt_text_is_pinned_inline",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::record_json_with_redacted_id",
+          "outcome": "ok"
+        }
+      ],
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "infection_unknown",
+          "discriminate": {
+            "state": "weak",
+            "confidence": "medium",
+            "summary": "Medium oracle found: snapshot assertion observes the changed behavior"
+          }
+        }
+      ],
+      "source_sha256": "bcb04645049737810bfcbc45492b87fbef82f244de4abb1aa809792d41c0b798",
+      "diff_sha256": "e93e406a879ea1e2d6e98e24a896774b8f0a4c85b7714adb8e987a3bf4ab3c97"
+    },
+    {
+      "variant": "snap_new_only",
+      "test_exit": 101,
+      "tests": [
+        {
+          "name": "tests::discount_tiers_file_snapshot",
+          "outcome": "FAILED"
+        },
+        {
+          "name": "tests::receipt_text_is_pinned_inline",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::record_json_with_redacted_id",
+          "outcome": "ok"
+        }
+      ],
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "infection_unknown",
+          "discriminate": {
+            "state": "weak",
+            "confidence": "medium",
+            "summary": "Medium oracle found: snapshot assertion observes the changed behavior"
+          }
+        }
+      ],
+      "source_sha256": "bcb04645049737810bfcbc45492b87fbef82f244de4abb1aa809792d41c0b798",
+      "diff_sha256": "e93e406a879ea1e2d6e98e24a896774b8f0a4c85b7714adb8e987a3bf4ab3c97"
+    },
+    {
+      "variant": "wrong_test_file",
+      "test_exit": 101,
+      "tests": [
+        {
+          "name": "tests::discount_tiers_file_snapshot",
+          "outcome": "FAILED"
+        },
+        {
+          "name": "tests::receipt_text_is_pinned_inline",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::record_json_with_redacted_id",
+          "outcome": "ok"
+        }
+      ],
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "infection_unknown",
+          "discriminate": {
+            "state": "weak",
+            "confidence": "medium",
+            "summary": "Medium oracle found: snapshot assertion observes the changed behavior"
+          }
+        }
+      ],
+      "source_sha256": "bcb04645049737810bfcbc45492b87fbef82f244de4abb1aa809792d41c0b798",
+      "diff_sha256": "e93e406a879ea1e2d6e98e24a896774b8f0a4c85b7714adb8e987a3bf4ab3c97"
+    },
+    {
+      "variant": "boundary_wrong_value",
+      "test_exit": 101,
+      "tests": [
+        {
+          "name": "tests::discount_tiers_file_snapshot",
+          "outcome": "FAILED"
+        },
+        {
+          "name": "tests::receipt_text_is_pinned_inline",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::record_json_with_redacted_id",
+          "outcome": "ok"
+        }
+      ],
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "infection_unknown",
+          "discriminate": {
+            "state": "weak",
+            "confidence": "medium",
+            "summary": "Medium oracle found: snapshot assertion observes the changed behavior"
+          }
+        }
+      ],
+      "source_sha256": "73a4db616002b5ea0ba22a4a772618b2b086fdc64fff65512d5d5db44d59bbd7",
+      "diff_sha256": "7286ea972564e75599d2e346d1939cd3fab09c72b3f0dd7216911295b95d4035"
+    },
+    {
+      "variant": "redacted_id_wrong",
+      "test_exit": 0,
+      "tests": [
+        {
+          "name": "tests::discount_tiers_file_snapshot",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::receipt_text_is_pinned_inline",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::record_json_with_redacted_id",
+          "outcome": "ok"
+        }
+      ],
+      "findings": [
+        {
+          "family": "field_construction",
+          "classification": "weakly_exposed",
+          "discriminate": {
+            "state": "weak",
+            "confidence": "medium",
+            "summary": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+          }
+        }
+      ],
+      "source_sha256": "8db151acad875762e9e1c34fa01b08fb3ca6d48ac543d39ff1cbe4ef6e15554d",
+      "diff_sha256": "71cad5f557b0c80037f191350f5963e95357bdb570237ba1576efe5e7f565333",
+      "fields": [
+        {
+          "seam_id": "f7f1e6d1ebd92dfe",
+          "expression": "id: format!(\"{}-{:04}\", prefix, seq + 2)",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        },
+        {
+          "seam_id": "00e2ffd1f0fe3bc6",
+          "expression": "total_cents: items.iter().map(line_total).sum()",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        },
+        {
+          "seam_id": "0a06b5d1f64dfaee",
+          "expression": "items: items.len()",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        }
+      ]
+    },
+    {
+      "variant": "unredacted_items_wrong",
+      "test_exit": 101,
+      "tests": [
+        {
+          "name": "tests::discount_tiers_file_snapshot",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::receipt_text_is_pinned_inline",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::record_json_with_redacted_id",
+          "outcome": "FAILED"
+        }
+      ],
+      "findings": [
+        {
+          "family": "field_construction",
+          "classification": "weakly_exposed",
+          "discriminate": {
+            "state": "weak",
+            "confidence": "medium",
+            "summary": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+          }
+        }
+      ],
+      "source_sha256": "6b33dfaf1794f952f87d5573c55775be57e8b675e80a725ae461572a555e4a2d",
+      "diff_sha256": "6c90fb5ffd63a4423d96c1f1d19596cb3f679f5a7d7f36bb88aaa9cf1818589d",
+      "fields": [
+        {
+          "seam_id": "f7f1e6d1ebd92dfe",
+          "expression": "id: format!(\"{}-{:04}\", prefix, seq + 1)",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        },
+        {
+          "seam_id": "00e2ffd1f0fe3bc6",
+          "expression": "total_cents: items.iter().map(line_total).sum()",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        },
+        {
+          "seam_id": "0a06b5d1f64dfaee",
+          "expression": "items: items.len() + 1",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        }
+      ]
+    },
+    {
+      "variant": "sibling_only_wrong_id",
+      "test_exit": 0,
+      "tests": [
+        {
+          "name": "tests::discount_tiers_file_snapshot",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::receipt_text_is_pinned_inline",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::record_json_with_redacted_id",
+          "outcome": "ok"
+        }
+      ],
+      "findings": [
+        {
+          "family": "field_construction",
+          "classification": "weakly_exposed",
+          "discriminate": {
+            "state": "weak",
+            "confidence": "medium",
+            "summary": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+          }
+        }
+      ],
+      "source_sha256": "4213eb80db86a71a7121b577c52636923aeac63196c3597b1fd17e3e7f759940",
+      "diff_sha256": "887c68911ff12e416e7eda19721614f49720a889f5435eb194e735e0191195e1",
+      "fields": [
+        {
+          "seam_id": "f7f1e6d1ebd92dfe",
+          "expression": "id: format!(\"{}-{:04}\", prefix, seq + 2)",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        },
+        {
+          "seam_id": "00e2ffd1f0fe3bc6",
+          "expression": "total_cents: items.iter().map(line_total).sum()",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        },
+        {
+          "seam_id": "0a06b5d1f64dfaee",
+          "expression": "items: items.len()",
+          "grip_class": "strongly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "yes"
+          },
+          "recommended_repair": "No new RIPR action; current static evidence already observes this seam."
+        }
+      ]
+    },
+    {
+      "variant": "unrelated_snapshot_wrong_boundary",
+      "test_exit": 0,
+      "tests": [
+        {
+          "name": "tests::discount_tiers_file_snapshot",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::receipt_text_is_pinned_inline",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::record_json_with_redacted_id",
+          "outcome": "ok"
+        }
+      ],
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "infection_unknown",
+          "discriminate": {
+            "state": "weak",
+            "confidence": "medium",
+            "summary": "Medium oracle found: snapshot assertion observes the changed behavior"
+          }
+        }
+      ],
+      "source_sha256": "d88e2ab33fb881a705f91b0f99b6852fc9dbb426b2d88ef348db42f6471beb8b",
+      "diff_sha256": "a651b74f2c542f793874fee8370162733205fda37b0a6f7023224166cc61dac7"
+    },
+    {
+      "variant": "production_and_expected_items_change",
+      "test_exit": 0,
+      "tests": [
+        {
+          "name": "tests::discount_tiers_file_snapshot",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::receipt_text_is_pinned_inline",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::record_json_with_redacted_id",
+          "outcome": "ok"
+        }
+      ],
+      "findings": [
+        {
+          "family": "field_construction",
+          "classification": "weakly_exposed",
+          "discriminate": {
+            "state": "weak",
+            "confidence": "medium",
+            "summary": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+          }
+        }
+      ],
+      "source_sha256": "6b33dfaf1794f952f87d5573c55775be57e8b675e80a725ae461572a555e4a2d",
+      "diff_sha256": "6c90fb5ffd63a4423d96c1f1d19596cb3f679f5a7d7f36bb88aaa9cf1818589d"
+    },
+    {
+      "variant": "direct_field_snapshot",
+      "test_exit": 101,
+      "tests": [
+        {
+          "name": "tests::discount_tiers_file_snapshot",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::receipt_text_is_pinned_inline",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::record_json_with_redacted_id",
+          "outcome": "FAILED"
+        }
+      ],
+      "findings": [
+        {
+          "family": "field_construction",
+          "classification": "weakly_exposed",
+          "discriminate": {
+            "state": "weak",
+            "confidence": "medium",
+            "summary": "Medium oracle found: snapshot assertion observes the changed behavior"
+          }
+        }
+      ],
+      "source_sha256": "aa9b574c4c3667a41d2e0a38211d065681d7fca30a111a0f37749aceaf9f5b05",
+      "diff_sha256": "8d313202a69af52ebe7a2a08c555ac18b58e8e9693bc375e3238417090145da1",
+      "fields": [
+        {
+          "seam_id": "f7f1e6d1ebd92dfe",
+          "expression": "id: format!(\"{}-{:04}\", prefix, seq + 1)",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        },
+        {
+          "seam_id": "00e2ffd1f0fe3bc6",
+          "expression": "total_cents: items.iter().map(line_total).sum()",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        },
+        {
+          "seam_id": "0a06b5d1f64dfaee",
+          "expression": "items: items.len() + 1",
+          "grip_class": "strongly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "yes"
+          },
+          "recommended_repair": "No new RIPR action; current static evidence already observes this seam."
+        }
+      ]
+    },
+    {
+      "variant": "direct_field_missing",
+      "test_exit": 101,
+      "tests": [
+        {
+          "name": "tests::discount_tiers_file_snapshot",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::receipt_text_is_pinned_inline",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::record_json_with_redacted_id",
+          "outcome": "FAILED"
+        }
+      ],
+      "findings": [
+        {
+          "family": "field_construction",
+          "classification": "weakly_exposed",
+          "discriminate": {
+            "state": "weak",
+            "confidence": "medium",
+            "summary": "Medium oracle found: snapshot assertion observes the changed behavior"
+          }
+        }
+      ],
+      "source_sha256": "aa9b574c4c3667a41d2e0a38211d065681d7fca30a111a0f37749aceaf9f5b05",
+      "diff_sha256": "8d313202a69af52ebe7a2a08c555ac18b58e8e9693bc375e3238417090145da1",
+      "fields": [
+        {
+          "seam_id": "f7f1e6d1ebd92dfe",
+          "expression": "id: format!(\"{}-{:04}\", prefix, seq + 1)",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        },
+        {
+          "seam_id": "00e2ffd1f0fe3bc6",
+          "expression": "total_cents: items.iter().map(line_total).sum()",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        },
+        {
+          "seam_id": "0a06b5d1f64dfaee",
+          "expression": "items: items.len() + 1",
+          "grip_class": "strongly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "yes"
+          },
+          "recommended_repair": "No new RIPR action; current static evidence already observes this seam."
+        }
+      ]
+    },
+    {
+      "variant": "wrong_receiver_items",
+      "test_exit": 0,
+      "tests": [
+        {
+          "name": "tests::discount_tiers_file_snapshot",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::receipt_text_is_pinned_inline",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::record_json_with_redacted_id",
+          "outcome": "ok"
+        }
+      ],
+      "findings": [
+        {
+          "family": "field_construction",
+          "classification": "weakly_exposed",
+          "discriminate": {
+            "state": "weak",
+            "confidence": "medium",
+            "summary": "Medium oracle found: snapshot assertion observes the changed behavior"
+          }
+        }
+      ],
+      "source_sha256": "8af29ca68af6767a1161acec761783b29b88927cda4318d76a32b1b32a67095a",
+      "diff_sha256": "547afda20336d56a9eb2ef915ef750ecc722a5d157bc89383105a684918c6c0c",
+      "fields": [
+        {
+          "seam_id": "f7f1e6d1ebd92dfe",
+          "expression": "id: format!(\"{}-{:04}\", prefix, seq + 1)",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        },
+        {
+          "seam_id": "00e2ffd1f0fe3bc6",
+          "expression": "total_cents: items.iter().map(line_total).sum()",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        },
+        {
+          "seam_id": "0a06b5d1f64dfaee",
+          "expression": "items: items.len() + 1",
+          "grip_class": "strongly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "yes"
+          },
+          "recommended_repair": "No new RIPR action; current static evidence already observes this seam."
+        }
+      ]
+    },
+    {
+      "variant": "direct_field_baseline",
+      "test_exit": 0,
+      "tests": [
+        {
+          "name": "tests::discount_tiers_file_snapshot",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::receipt_text_is_pinned_inline",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::record_json_with_redacted_id",
+          "outcome": "ok"
+        }
+      ],
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "infection_unknown",
+          "discriminate": {
+            "state": "weak",
+            "confidence": "medium",
+            "summary": "Medium oracle found: snapshot assertion observes the changed behavior"
+          }
+        }
+      ],
+      "source_sha256": "30f51c2895cfd983de17e849c5bf103dce0b2c64205def65c46369c1a0f144c8",
+      "diff_sha256": "d7265f37fbb73421c6c6ac460b20a1274a2e1b30aac9305bde543772b6461faa",
+      "fields": [
+        {
+          "seam_id": "f7f1e6d1ebd92dfe",
+          "expression": "id: format!(\"{}-{:04}\", prefix, seq + 1)",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        },
+        {
+          "seam_id": "00e2ffd1f0fe3bc6",
+          "expression": "total_cents: items.iter().map(line_total).sum()",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        },
+        {
+          "seam_id": "0a06b5d1f64dfaee",
+          "expression": "items: items.len()",
+          "grip_class": "strongly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "yes"
+          },
+          "recommended_repair": "No new RIPR action; current static evidence already observes this seam."
+        }
+      ]
+    },
+    {
+      "variant": "wrong_receiver_without_assertion",
+      "test_exit": 0,
+      "tests": [
+        {
+          "name": "tests::discount_tiers_file_snapshot",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::receipt_text_is_pinned_inline",
+          "outcome": "ok"
+        },
+        {
+          "name": "tests::record_json_with_redacted_id",
+          "outcome": "ok"
+        }
+      ],
+      "findings": [
+        {
+          "family": "field_construction",
+          "classification": "weakly_exposed",
+          "discriminate": {
+            "state": "weak",
+            "confidence": "medium",
+            "summary": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+          }
+        }
+      ],
+      "source_sha256": "89cfbffaa22544ab773b8743a1b4b34d53ac2a036d9aa2b74db4587d1411f585",
+      "diff_sha256": "488729f9c8da6d8cacc452762f9fb5ef76e3ddefac2de5a71feaa9de4c5634e3",
+      "fields": [
+        {
+          "seam_id": "f7f1e6d1ebd92dfe",
+          "expression": "id: format!(\"{}-{:04}\", prefix, seq + 1)",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        },
+        {
+          "seam_id": "00e2ffd1f0fe3bc6",
+          "expression": "total_cents: items.iter().map(line_total).sum()",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        },
+        {
+          "seam_id": "0a06b5d1f64dfaee",
+          "expression": "items: items.len() + 1",
+          "grip_class": "weakly_gripped",
+          "evidence": {
+            "reach": "yes",
+            "activate": "yes",
+            "propagate": "yes",
+            "observe": "yes",
+            "discriminate": "weak"
+          },
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`."
+        }
+      ]
+    }
+  ],
+  "expectation_only_sequence": [
+    {
+      "state": "baseline",
+      "source_sha256": "30f51c2895cfd983de17e849c5bf103dce0b2c64205def65c46369c1a0f144c8",
+      "snapshot_sha256": "1f00c1ab446677a81ad5ca870e25d9a336745650c13c9068c41ad5fa7b06d0d7",
+      "test": {
+        "argv": [
+          "cargo",
+          "test",
+          "--locked",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 17.294
+      },
+      "analysis": {
+        "argv": [
+          "/workspace/scratch/snapshot-audit/target/debug/ripr",
+          "check",
+          "--root",
+          "/workspace/scratch/snapshot-audit/fixtures-current/direct_field_baseline",
+          "--format",
+          "repo-exposure-json"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 0.115
+      },
+      "projection": {
+        "seam_id": "0a06b5d1f64dfaee",
+        "expression": "items: items.len()",
+        "grip_class": "strongly_gripped",
+        "evidence": {
+          "reach": "yes",
+          "activate": "yes",
+          "propagate": "yes",
+          "observe": "yes",
+          "discriminate": "yes"
+        }
+      },
+      "recommended_repair": "No new RIPR action; current static evidence already observes this seam.",
+      "test_summaries": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "state": "stale",
+      "source_sha256": "30f51c2895cfd983de17e849c5bf103dce0b2c64205def65c46369c1a0f144c8",
+      "snapshot_sha256": "8115da7bcea5ca7f2cfcf6cfb3f398c900127553d4aa88e586b4f7d9e61cea64",
+      "test": {
+        "argv": [
+          "cargo",
+          "test",
+          "--locked",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 101,
+        "elapsed_seconds": 0.114
+      },
+      "analysis": {
+        "argv": [
+          "/workspace/scratch/snapshot-audit/target/debug/ripr",
+          "check",
+          "--root",
+          "/workspace/scratch/snapshot-audit/fixtures-current/direct_field_baseline",
+          "--format",
+          "repo-exposure-json"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 0.064
+      },
+      "projection": {
+        "seam_id": "0a06b5d1f64dfaee",
+        "expression": "items: items.len()",
+        "grip_class": "strongly_gripped",
+        "evidence": {
+          "reach": "yes",
+          "activate": "yes",
+          "propagate": "yes",
+          "observe": "yes",
+          "discriminate": "yes"
+        }
+      },
+      "recommended_repair": "No new RIPR action; current static evidence already observes this seam.",
+      "test_summaries": [
+        "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s"
+      ]
+    },
+    {
+      "state": "missing",
+      "source_sha256": "30f51c2895cfd983de17e849c5bf103dce0b2c64205def65c46369c1a0f144c8",
+      "snapshot_sha256": null,
+      "test": {
+        "argv": [
+          "cargo",
+          "test",
+          "--locked",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 101,
+        "elapsed_seconds": 0.064
+      },
+      "analysis": {
+        "argv": [
+          "/workspace/scratch/snapshot-audit/target/debug/ripr",
+          "check",
+          "--root",
+          "/workspace/scratch/snapshot-audit/fixtures-current/direct_field_baseline",
+          "--format",
+          "repo-exposure-json"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 0.064
+      },
+      "projection": {
+        "seam_id": "0a06b5d1f64dfaee",
+        "expression": "items: items.len()",
+        "grip_class": "strongly_gripped",
+        "evidence": {
+          "reach": "yes",
+          "activate": "yes",
+          "propagate": "yes",
+          "observe": "yes",
+          "discriminate": "yes"
+        }
+      },
+      "recommended_repair": "No new RIPR action; current static evidence already observes this seam.",
+      "test_summaries": [
+        "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s"
+      ]
+    },
+    {
+      "state": "restored",
+      "source_sha256": "30f51c2895cfd983de17e849c5bf103dce0b2c64205def65c46369c1a0f144c8",
+      "snapshot_sha256": "1f00c1ab446677a81ad5ca870e25d9a336745650c13c9068c41ad5fa7b06d0d7",
+      "test": {
+        "argv": [
+          "cargo",
+          "test",
+          "--locked",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 0.117
+      },
+      "analysis": {
+        "argv": [
+          "/workspace/scratch/snapshot-audit/target/debug/ripr",
+          "check",
+          "--root",
+          "/workspace/scratch/snapshot-audit/fixtures-current/direct_field_baseline",
+          "--format",
+          "repo-exposure-json"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 0.065
+      },
+      "projection": {
+        "seam_id": "0a06b5d1f64dfaee",
+        "expression": "items: items.len()",
+        "grip_class": "strongly_gripped",
+        "evidence": {
+          "reach": "yes",
+          "activate": "yes",
+          "propagate": "yes",
+          "observe": "yes",
+          "discriminate": "yes"
+        }
+      },
+      "recommended_repair": "No new RIPR action; current static evidence already observes this seam.",
+      "test_summaries": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    }
+  ],
+  "cold_missing_control": {
+    "argv": [
+      "/workspace/scratch/snapshot-audit/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/snapshot-audit/fixtures-current/snapshot-only-missing-cold",
+      "--format",
+      "repo-exposure-json"
+    ],
+    "exit": 0,
+    "source_sha256": "30f51c2895cfd983de17e849c5bf103dce0b2c64205def65c46369c1a0f144c8",
+    "projection": {
+      "seam_id": "0a06b5d1f64dfaee",
+      "expression": "items: items.len()",
+      "grip_class": "strongly_gripped",
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "yes"
+      }
+    },
+    "run_status": "complete",
+    "non_claim": "Fresh analyzer control only; no additional fixture test execution is claimed."
+  },
+  "limits": [
+    "Rust-only feature build; no default-feature/all-workspace/native-Windows/hosted qualification",
+    "Snapshot setup failures are not behavioral mutation detection",
+    "The deliberately failing cases are review controls, not a green source candidate",
+    "Excluded shared-target snapshot-only attempt is retained separately; all 16 accepted matrix compiles bind the expected fixture path",
+    "No package/build/install equivalence, intended-business-behavior proof, support promotion or release claim"
+  ]
+}
