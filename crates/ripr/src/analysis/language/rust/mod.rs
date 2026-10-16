@@ -7481,6 +7481,49 @@ fn absent_delimiter_boundary_returns_head() {
     }
 
     #[test]
+    fn a_harness_false_target_keeps_its_tests_when_a_harness_is_registered() -> Result<(), String> {
+        // #8016: a registered harness may collect a `harness = false`
+        // target itself, so only an unregistered package drops it.
+        let root = temp_root("harness-false-registered")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n\n\
+             [[test]]\nname='custom'\nharness=false\n",
+        )?;
+        write(&root.join("src/lib.rs"), "")?;
+        let file = PathBuf::from("tests/custom.rs");
+        write(&root.join(&file), "#[test]\nfn check() {}\nfn main() {}\n")?;
+        let loaded = vec![(
+            file.clone(),
+            b"#[test]\nfn check() {}\nfn main() {}\n".to_vec(),
+        )];
+        let harness = crate::config::TestHarnessRegistration {
+            registration_id: "custom".to_string(),
+            target: file.clone(),
+            kind: crate::config::TestHarnessKind::RegisteredAttribute,
+            adapter: crate::config::TestHarnessAdapter::ExactAttributeV1,
+            marker: "test".to_string(),
+        };
+        let context = crate::analysis::workspace::SourceRoleContext::empty();
+        for registered in [false, true] {
+            let harnesses = if registered {
+                vec![harness.clone()]
+            } else {
+                Vec::new()
+            };
+            let kept =
+                super::drop_unreached_test_files(&root, &context, &[], &harnesses, loaded.clone());
+            assert_eq!(
+                kept.len(),
+                usize::from(registered),
+                "registered={registered}"
+            );
+        }
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn diff_analysis_names_the_unresolved_path_a_changed_file_is_reached_through()
     -> Result<(), String> {
         // #4435 follow-up: `src/platform/unix_impl.rs` enters the crate only
