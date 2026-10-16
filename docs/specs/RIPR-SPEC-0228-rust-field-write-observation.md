@@ -179,12 +179,16 @@ never confirms a field-path collection write (examples 12 and 13).
 A read of only element zero of the written collection (`c.items.first()`,
 `c.items.get(0)`, `c.items[0]`, and the bare-receiver forms) does not
 confirm a `push` (#8203): `push` appends, so element zero is the pushed
-element only when the collection started empty, which this observer
-does not establish. Such a test stays `weakly_exposed`, pinned by
-`fixtures/rust_preseeded_first_element` in the RIPR-SPEC-0108 honesty
-corpus. A read of the pushed element (`last()`, a non-zero index, or
-the whole collection) still confirms, as
-`fixtures/rust_pushed_element_last` pins.
+element only when the collection started empty. Such a test stays
+`weakly_exposed`, pinned by `fixtures/rust_preseeded_first_element` in
+the RIPR-SPEC-0108 honesty corpus. A read of the pushed element
+(`last()`, a non-zero index, or the whole collection) still confirms,
+as `fixtures/rust_pushed_element_last` pins. The one exception is a
+bare receiver whose test body proves an empty start (a narrow empty
+construction such as `Vec::new()` with no test-side seeding of that
+receiver): there element zero is the pushed element, and the read
+still confirms. Field-path first-element reads stay demoted, because
+this observer does not establish the field collection's start state.
 
 ### Limits
 

@@ -13,19 +13,22 @@ confirms that push in the collection observer, because the element may
 predate the push; the pre-seeded fixture stays weakly_exposed in the
 RIPR-SPEC-0108 honesty corpus. Reads of the pushed element (last(), a
 non-zero index, or the whole collection) still confirm and stay
-exposed. No new classification vocabulary, probe family, schema, or
-runtime execution.
+exposed. On a bare receiver, a first-element read still confirms when
+the test body proves the collection started empty (a narrow empty
+construction with no test-side seeding). Field-path first-element
+reads stay conservatively demoted. No new classification vocabulary,
+probe family, schema, or runtime execution.
 """
 
 non_goals = [
-  "proving a collection started empty so a first-element read could confirm",
+  "proving a field-path collection started empty so a first-element read could confirm",
   "new classification vocabulary or probe families",
   "runtime execution, coverage, or mutation-score framing",
   "changes to insert or keyed-read confirmation",
 ]
 
 return_conditions = [
-  "Return to root if a first-element read must be credited when the collection was empty before the push.",
+  "Return to root if a field-path first-element read must be credited when the field collection was empty before the push.",
   "Return to root if a golden outside the two new fixtures flips class because of this rule.",
 ]
 
@@ -56,4 +59,3 @@ state = "outstanding"
 
 [support_claim]
 state = "unchanged"
-

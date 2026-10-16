@@ -10,7 +10,7 @@ use super::builder_override::{
 };
 use super::propagation_witness::{
     assertion_field_collection_reads, assertion_keyed_getter_reads,
-    assertion_observes_direct_collection, direct_collection_mutation_receiver,
+    assertion_observes_direct_collection_in_test, direct_collection_mutation_receiver,
     field_collection_insert_key, field_collection_write_path,
 };
 use super::reach::{invokes_opaque_macro, is_proximity_only};
@@ -438,11 +438,15 @@ fn effect_observer_confirms(assertion: &OracleFact) -> bool {
     )
 }
 
-fn collection_observer_confirms(expression: &str, assertion: &OracleFact) -> bool {
+fn collection_observer_confirms(
+    expression: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+) -> bool {
     let Some(receiver) = direct_collection_mutation_receiver(expression) else {
         return false;
     };
-    assertion_observes_direct_collection(&assertion.text, receiver)
+    assertion_observes_direct_collection_in_test(&assertion.text, receiver, &test.body)
 }
 
 /// RIPR-SPEC-0228: whether `assertion` observes the field collection `path`
@@ -1907,7 +1911,7 @@ fn analyze_related_assertions(
                 let observation_confirmed = !self_computed
                     && (!confirm_required
                         || (confirms_observation
-                            && (collection_observer_confirms(&probe.expression, assertion)
+                            && (collection_observer_confirms(&probe.expression, test, assertion)
                                 || field_collection_read
                                 || collection_argument_read
                                 || (direct_collection_mutation_receiver(&probe.expression)

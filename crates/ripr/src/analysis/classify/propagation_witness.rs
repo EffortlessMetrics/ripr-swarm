@@ -963,13 +963,115 @@ pub(in crate::analysis) fn assertion_observes_direct_collection(
     assertion_text: &str,
     receiver: &str,
 ) -> bool {
+    assertion_observes_direct_collection_with_start(assertion_text, receiver, false)
+}
+
+/// Like [`assertion_observes_direct_collection`], but the test `body` may
+/// prove the receiver started empty, in which case a first-element read
+/// does observe the pushed element and keeps its credit.
+pub(in crate::analysis) fn assertion_observes_direct_collection_in_test(
+    assertion_text: &str,
+    receiver: &str,
+    body: &str,
+) -> bool {
+    assertion_observes_direct_collection_with_start(
+        assertion_text,
+        receiver,
+        receiver_starts_empty_in_body(body, receiver),
+    )
+}
+
+fn assertion_observes_direct_collection_with_start(
+    assertion_text: &str,
+    receiver: &str,
+    starts_empty: bool,
+) -> bool {
     if !is_bare_ident(receiver) {
         return false;
     }
     let Some(subject) = assertion_primary_subject(assertion_text) else {
         return false;
     };
-    subject_names_collection(&subject, receiver) && !reads_only_first_element(&subject, receiver)
+    subject_names_collection(&subject, receiver)
+        && (starts_empty || !reads_only_first_element(&subject, receiver))
+}
+
+/// True when `body` proves `receiver` started empty: every assignment to
+/// it is a narrow empty construction (`Vec::new()`, `vec![]`,
+/// `Vec::with_capacity(..)`, `Vec::default()`, `VecDeque::new()`), at
+/// least one such assignment exists, and the test never seeds the
+/// receiver itself (no push/extend/insert-style call or index write on
+/// it anywhere in the body). Anything else is not proof.
+fn receiver_starts_empty_in_body(body: &str, receiver: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let bound_at = |at: usize| {
+        masked[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|before| !(ident(before) || before == '.'))
+    };
+    let name_ends = |at: usize| masked[at..].chars().next().is_none_or(|next| !ident(next));
+    let empty_start = |expr: &str| {
+        let expr = expr.trim().trim_start_matches('&').trim();
+        expr.starts_with("Vec::new()")
+            || expr.starts_with("vec![]")
+            || expr.starts_with("Vec::with_capacity(")
+            || expr.starts_with("Vec::default()")
+            || expr.starts_with("VecDeque::new()")
+    };
+    let mut saw_empty_assignment = false;
+    for (at, _) in masked.match_indices(receiver) {
+        if !bound_at(at) || !name_ends(at + receiver.len()) {
+            continue;
+        }
+        let rest = masked[at + receiver.len()..].trim_start();
+        // A seeding call or index write on the receiver defeats the proof.
+        if let Some(after_dot) = rest.strip_prefix('.') {
+            let method: String = after_dot.chars().take_while(|ch| ident(*ch)).collect();
+            if matches!(
+                method.as_str(),
+                "push"
+                    | "push_front"
+                    | "push_back"
+                    | "extend"
+                    | "extend_from_slice"
+                    | "insert"
+                    | "append"
+                    | "splice"
+                    | "resize"
+            ) {
+                return false;
+            }
+        }
+        if rest.starts_with('[')
+            && rest.split(']').nth(1).is_some_and(|after| {
+                let after = after.trim_start();
+                after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>")
+            })
+        {
+            return false;
+        }
+        // An assignment (optionally through a type annotation) must be a
+        // narrow empty construction; any other binding is not proof.
+        let assigned = if let Some(annotated) = rest.strip_prefix(':') {
+            annotated
+                .split_once('=')
+                .filter(|(_, after)| !after.starts_with('=') && !after.starts_with('>'))
+                .map(|(_, after)| after)
+        } else if rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>") {
+            Some(&rest[1..])
+        } else {
+            None
+        };
+        if let Some(expr) = assigned {
+            if !empty_start(expr) {
+                return false;
+            }
+            saw_empty_assignment = true;
+        }
+    }
+    saw_empty_assignment
 }
 
 /// #8203: true when `subject` reads only element zero of `receiver`
@@ -3962,6 +4064,41 @@ mod tests {
             !assertion_observes_direct_collection("assert_eq!(items.first(), Some(&5));", "items"),
             "a first-element read may predate the push and must not confirm it (#8203)"
         );
+        // #8203: a provably empty start makes element zero the pushed
+        // element, so first-element reads keep their credit there.
+        for body in [
+            "let mut items = Vec::new(); record(&mut items, 20);",
+            "let mut items: Vec<u32> = vec![]; record(&mut items, 20);",
+            "let mut items = Vec::with_capacity(4); record(&mut items, 20);",
+        ] {
+            for assertion in [
+                "assert_eq!(items[0], 20);",
+                "assert_eq!(items.first(), Some(&20));",
+                "assert_eq!(items.get(0), Some(&20));",
+            ] {
+                assert!(
+                    assertion_observes_direct_collection_in_test(assertion, "items", body),
+                    "empty-start first-element read must observe the push: {body} {assertion}"
+                );
+            }
+        }
+        // Seeded or test-seeded starts are not proof of an empty start.
+        for body in [
+            "let mut items = vec![9]; record(&mut items, 20);",
+            "let mut items = Vec::new(); items.push(9); record(&mut items, 20);",
+            "let mut items = Vec::new(); items.extend([9]); record(&mut items, 20);",
+            "let mut items = other; record(&mut items, 20);",
+            "record(&mut items, 20);",
+        ] {
+            assert!(
+                !assertion_observes_direct_collection_in_test(
+                    "assert_eq!(items[0], 9);",
+                    "items",
+                    body
+                ),
+                "seeded first-element read must not observe the push: {body}"
+            );
+        }
         assert!(
             assertion_observes_direct_collection("assert_eq!(items[1], 5);", "items"),
             "a non-zero index into the collection must still observe it"
