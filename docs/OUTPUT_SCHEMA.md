@@ -2186,6 +2186,8 @@ Enabled example carries `"enabled": true`, `"analyzed": true`, and a
 - `language` — stable wire string; one of `typescript`, `javascript`, `python`
 - `file_count` — enabled adapters count admitted files; generated/excluded paths
   and Python paths carrying `changed_file_absent_from_worktree` are omitted.
+  Under `limited_partial_scope`, enabled counts and samples cover only the
+  selected partition. A wholly omitted enabled language has no advisory row.
   Disabled adapters retain the raw routed count (RIPR-SPEC-0082).
 - `sample_paths` — up to three normalized (forward-slash) file paths
 - `enabled` — whether the preview adapter was enabled (ran) for this analysis
@@ -2195,8 +2197,10 @@ Enabled example carries `"enabled": true`, `"analyzed": true`, and a
 - `why` — advisory rationale string (case-specific)
 
 An empty or absent `preview_languages` array can also mean every enabled
-preview path was withheld. Consult `analysis_outcome` for skipped or missing
-source limitations; absence of an advisory is not a completeness claim. A non-empty array is an honesty signal: either the listed
+preview path was withheld. Consult `analysis_scope` for selected partitions and
+`analysis_outcome` for skipped or missing source limitations; absence of an
+advisory is not a completeness claim. A non-empty array is an honesty signal:
+either the listed
 preview-language files were not analyzed at all (`enabled == false`) or were
 analyzed under advisory preview support that may be incomplete
 (`enabled == true`). In neither case is an empty result a Rust-grade clean
@@ -3237,6 +3241,7 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
     "delta": "control",
     "file": "src/lib.rs",
     "line": 88,
+    "owner_signature": "discount(amount: u32, threshold: u32) -> Option<u32>",
     "changed_expression": "if amount >= discount_threshold {"
   },
   "ripr": {
@@ -3300,7 +3305,15 @@ producer-owned facts: `fix_site` and `oracle_location` are absent when the
 producer cannot identify them, and `suggested_assertion` remains `null` until
 the producer supplies a symbol-resolved assertion template. `limitations[]`
 names unavailable evidence; renderers must not infer it from paths, lines,
-classes, or prose. `source_currentness` (RIPR-SPEC-0152) mirrors the finding's
+classes, or prose. `probe.owner_signature` (#7796) carries the changed
+function's observed call shape — the same producer-owned signature `ripr
+agent stub` reads — so an agent can write the call without opening the
+source. It is optional and absent whenever the shape cannot be honestly
+named: the finding is not `candidate_current`, the source file is missing or
+unparses, no function covers the changed line, or the owner takes a typed
+`self` receiver, declares unbound type generics, or otherwise cannot be
+named and called from a test. It is observed source data only; no assertion
+value is synthesized. `source_currentness` (RIPR-SPEC-0152) mirrors the finding's
 disposition: agent consumers must not treat a `base_deleted`,
 `moved_or_renamed`, or `unresolved_subject` packet as a candidate edit
 target.
@@ -16224,20 +16237,35 @@ recommendation is elsewhere in the repo and name `ripr check --root <root>` for
 the change itself, adding `--worktree` when the diff came from the working tree
 (plain `ripr check` reads committed history only). The partial (timeout) summary carries no `current_change`.
 
-When the repo-exposure inventory limit triggers a successful current-change
-supplement, `current_change.absent_changed_files` is an optional array of
-portable root-relative paths requested by that supplement but absent from the
-working tree. These paths project the producer's existing
-`changed_file_absent_from_worktree` limitations; they are not a missing-seam
-count. The field is omitted if the supplement did not run or failed, and an
-empty array means the successful supplement found no absent requested files.
-An empty array does not assert that every changed seam was classified.
+Independently of the current-change supplement, when Rust is enabled and the
+loaded change names Rust source files, `current_change.absent_changed_files`
+records the shared source-admission observation as an optional array of portable
+root-relative paths absent from the working tree. These paths project the
+producer's existing `changed_file_absent_from_worktree` limitations; they are
+not a missing-seam count. A null entry represents the existing bounded path-less
+disclosure when a name is refused. The field is omitted when no source-admission
+observation was requested, including Rust-disabled scope. An empty array means
+the observation found no absent requested files; it does not assert that every
+changed seam was classified. Intentionally deleted files are excluded by the
+shared diff parser.
+
+Both the fallback and a successful current-change supplement apply the shared
+diff-aware generated-source exclusions before checking presence, including exact
+handwritten opt-ins, stronger explicit patterns and changed vendor checksum
+markers. The supplement keeps all changed paths as policy context, including
+an absent changed marker, while classifying only the changed Rust subjects.
+Source known to be excluded receives no missing-source warning under either
+inventory cap. The supplement observes absence before classification and carries
+that observation only on success; classification errors retain their caveat.
+Header-only exclusions require available worktree bytes or an active
+committed-source overlay; pilot creates no new overlay and does not establish
+the header of a sparse missing file.
 
 The terminal and Markdown "Inspected" block names each absent path, the
 `changed_file_absent_from_worktree` category, and the producer's recovery
 guidance, even when `top_recommendation_in_change` is true for a present file.
 A successful empty classification retains the same disclosure. Restoring the
-regular source file at the same HEAD lets the next supplement inspect it and
+regular source file at the same HEAD lets the next run inspect it and
 replace the absence array with an empty array, clearing the stale disclosure.
 This coverage fact is separate from an inventory seam-limit denominator and
 does not alter the diff-independent classified cache. The optional field is

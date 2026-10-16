@@ -14,7 +14,7 @@ use crate::app::test_stub::{
 };
 use crate::cli::CommandError;
 use crate::cli::agent::AgentStubOptions;
-use crate::cli::commands_context::ensure_command_root;
+use crate::cli::commands_context::{ensure_command_root, write_stderr_refusal_json};
 use crate::config::{RiprConfig, load_for_root};
 use crate::output::gap_vocabulary::exposure_counterpart;
 
@@ -44,9 +44,7 @@ pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandErr
                 // `CommandError` after the envelope.
                 match render_selector_refusal_document(&options.selector, refusal_kind, &message) {
                     // A JSON document, not report text: keep it parseable (#6309).
-                    Ok(rendered) => {
-                        ::std::eprintln!("{}", crate::terminal_text::json_terminal_safe(rendered))
-                    }
+                    Ok(rendered) => write_stderr_refusal_json(rendered),
                     Err(render_error) => eprintln!("ripr: {render_error}"),
                 }
             }
@@ -72,10 +70,7 @@ pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandErr
                     "warnings": disclosure.warnings,
                 });
                 // A JSON document, not report text: keep it parseable (#6309).
-                ::std::eprintln!(
-                    "{}",
-                    crate::terminal_text::json_terminal_safe(render(&document)?)
-                );
+                write_stderr_refusal_json(render(&document)?);
             }
             return Err(CommandError::Decision(format!(
                 "agent stub: no test stub for seam {} ({}): {}",

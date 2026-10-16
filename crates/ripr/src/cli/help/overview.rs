@@ -23,8 +23,10 @@ Usage:
   ripr <command> [options]
 
 Try this first:
-  ripr doctor                     Check this workspace can produce evidence.
   ripr check                      Analyze the current diff, name the top gap.
+
+Uses tracked edits, or committed history when clean. On a clean base branch,
+edit a tracked source file first; new files need git add -N PATH.
 
 The loop is: ripr names one gap -> you add one focused test -> ripr records
 whether the gap closed. `ripr.toml` is optional; the zero-config run is the

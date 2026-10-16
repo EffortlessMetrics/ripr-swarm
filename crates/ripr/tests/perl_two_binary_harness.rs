@@ -29,8 +29,14 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use serde_json::Value;
+
+#[path = "perl_two_binary_harness/command.rs"]
+mod command;
+
+const COMMAND_DEADLINE: Duration = Duration::from_secs(30);
 
 /// The CPAN-style fixture root (lib/Pricing.pm + t/pricing.t live here).
 fn cpan_alpha_input() -> PathBuf {
@@ -77,41 +83,43 @@ fn ripr_bin() -> PathBuf {
 ///
 /// The assertion is packet-semantic — the harness does not care which binary
 /// produced the packet, only that a valid `ripr-perl-facts-v1` JSON was emitted.
-fn producer_on_path() -> Option<String> {
+fn producer_on_path() -> Result<Option<String>, String> {
     // 1. Env override (highest priority).
     if let Ok(path) = std::env::var("PERL_RIPR_FACTS")
         && !path.is_empty()
     {
-        return Some(path);
+        return Ok(Some(path));
     }
     if let Ok(path) = std::env::var("RIPR_PERL_FACTS_EXPORTER")
         && !path.is_empty()
     {
-        return Some(path);
+        return Ok(Some(path));
     }
     // 2. Canonical exporter.
-    if which("perl-ripr-facts") {
-        return Some("perl-ripr-facts".to_string());
+    if which("perl-ripr-facts")? {
+        return Ok(Some("perl-ripr-facts".to_string()));
     }
     // 3. Compatibility wrappers.
-    if which("perllsp") {
-        Some("perllsp".to_string())
-    } else if which("perl-lsp") {
-        Some("perl-lsp".to_string())
+    if which("perllsp")? {
+        Ok(Some("perllsp".to_string()))
+    } else if which("perl-lsp")? {
+        Ok(Some("perl-lsp".to_string()))
     } else {
-        None
+        Ok(None)
     }
 }
 
-/// Mirror of `cli/commands.rs::which()` (which is private to that module).
-fn which(bin: &str) -> bool {
+/// Use the platform lookup program, distinguishing absence from a failed probe.
+fn which(bin: &str) -> Result<bool, String> {
     let lookup = if cfg!(unix) { "which" } else { "where" };
-    Command::new(lookup)
-        .arg(bin)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+    let mut child = Command::new(lookup);
+    child.arg(bin);
+    let output = command::capture(child, Duration::from_secs(5))?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(format!("{lookup} {bin} failed: {}", output.status)),
+    }
 }
 
 /// Run `<producer> ripr-facts ...` with the SPEC-0064-canonical arg surface
@@ -139,11 +147,9 @@ fn run_producer(producer: &str, root: &Path, diff: &str, out: &str) -> Result<Pa
         "--out",
         out,
     ];
-    let output = Command::new(producer)
-        .current_dir(root)
-        .args(argv)
-        .output()
-        .map_err(|err| format!("spawn {producer}: {err}"))?;
+    let mut child = Command::new(producer);
+    child.current_dir(root).args(argv);
+    let output = command::capture(child, COMMAND_DEADLINE)?;
     if !output.status.success() {
         return Err(format!(
             "{producer} ripr-facts failed (exit {:?})\nstderr:\n{}",
@@ -163,15 +169,15 @@ fn run_producer(producer: &str, root: &Path, diff: &str, out: &str) -> Result<Pa
 /// Run the worktree-absolute ripr binary with `check --perl-facts <out> --json`.
 /// Returns the captured stdout on success; Err names the failure.
 fn run_ripr(facts: &Path, root: &Path) -> Result<String, String> {
-    let output = Command::new(ripr_bin())
+    let mut child = Command::new(ripr_bin());
+    child
         .arg("check")
         .arg("--root")
         .arg(root)
         .arg("--perl-facts")
         .arg(facts)
-        .arg("--json")
-        .output()
-        .map_err(|err| format!("spawn ripr: {err}"))?;
+        .arg("--json");
+    let output = command::capture(child, COMMAND_DEADLINE)?;
     if !output.status.success() {
         return Err(format!(
             "ripr check failed (exit {:?})\nstderr:\n{}",
@@ -251,7 +257,7 @@ fn two_binary_proof_three_outcomes_against_real_perllsp() -> Result<(), String> 
     // Returning Ok(()) (rather than `#[ignore]`) follows the `which()` +
     // graceful-degrade precedent in cli/commands.rs and keeps the test in the
     // default run set, so it runs automatically once a Perl facts exporter is on PATH.
-    let Some(producer) = producer_on_path() else {
+    let Some(producer) = producer_on_path()? else {
         eprintln!(
             "SKIP perl_two_binary_harness: no Perl facts exporter on PATH \
              (`perl-ripr-facts`, `perllsp`, `perl-lsp` all absent). The real \

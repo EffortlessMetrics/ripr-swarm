@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- In the `Hidden:` block, each omitted-finding bullet now appends its source-currentness category (`lower-priority candidate`, `base-side`, or `unresolved currentness`) whenever the omitted set mixes categories, so the count line's clauses connect to individual rows and a base-deleted evidence row is no longer mistaken for an outranked candidate at the same file:line. Single-category omitted sets keep the legacy unlabeled bullet, which the count line already names (#7643).

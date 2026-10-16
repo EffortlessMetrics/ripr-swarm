@@ -91,6 +91,9 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// Run-scoped activation memo, keyed by slots of the same index.
     test_value_facts: super::TestValueFacts,
     owner_pin_syntax: super::OwnerPinSyntax,
+    /// Run-scoped unseen-reach scan. `includes_external_docs` parses each
+    /// file; asking per owner re-parsed the crate on every changed function.
+    unseen_reach: super::UnseenReachNames,
     /// Run-scoped #5830 caller-walk memo, keyed by owner slot (#7024).
     owner_caller_names: super::super::classifier::OwnerCallerNames,
     /// The analysis root that probe paths are joined onto, while index and
@@ -163,6 +166,7 @@ impl RelatedTestCandidateIndex {
             }
         }
         candidates.common_tokens = CommonTestTokens::new(index.tests());
+        candidates.unseen_reach = super::UnseenReachNames::build(index);
 
         candidates
     }
@@ -175,6 +179,10 @@ impl RelatedTestCandidateIndex {
 
     pub(in crate::analysis) fn owner_pin_syntax(&self) -> &super::OwnerPinSyntax {
         &self.owner_pin_syntax
+    }
+
+    pub(in crate::analysis) fn unseen_reach_names(&self) -> &super::UnseenReachNames {
+        &self.unseen_reach
     }
 
     /// Record the root that probe paths are joined onto, so same-file
