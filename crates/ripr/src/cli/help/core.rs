@@ -119,9 +119,44 @@ including the `repo-exposure.json` that `ripr pilot` writes, carries no head;
 ripr then says so and cannot verify the pair came from the same repository or
 adjacent commits. Matching heads still do not mean matching working trees.
 "#;
+pub(super) const CHECK_HELP_SHORT: &str = r#"Analyze a diff and name changed behavior the nearby tests may not catch.
+
+Usage: ripr check [OPTIONS]
+
+Start here:
+  ripr check                     Compare the default base with HEAD (or the
+                                 working tree when it has tracked edits).
+  ripr check --base HEAD~1       Compare against one commit back.
+  ripr check --worktree          Include uncommitted tracked edits.
+
+Options:
+  --root PATH              Workspace root. Defaults to the current directory,
+                           then the nearest Cargo workspace or git top level.
+  --base REV               Base revision for the git diff. When omitted, ripr
+                           tries origin/HEAD, origin/main, origin/master,
+                           main, then master; the output names what ran.
+  --diff PATH              Read a unified diff file instead of running git
+                           diff (`--diff -` reads stdin).
+  --worktree               Diff the base against the live working tree.
+  --committed              Diff committed history only (base...HEAD).
+  --mode MODE              instant | draft (default) | fast | deep | ready.
+                           Modes change indexing cost, never what a class
+                           means.
+  --format FORMAT          human (default) | human-full | json | github |
+                           sarif | repo-badge-shields. Choose by consumer:
+                           eyes, drill-in, scripts, Actions, code scanning.
+  --json                   Shortcut for `--format json`.
+
+Exit status: 0 means the run completed (an empty result is not proof the
+change is covered); 2 is a usage or operational error; 3 is a refusal with
+a typed reason. Full option, format, environment-variable, and exit
+reference: `ripr check --help --all`.
+"#;
 pub(super) const CHECK_HELP: &str = r#"Analyze a diff or workspace and emit findings in human, JSON, SARIF, or badge form.
 
 Usage: ripr check [OPTIONS]
+       ripr check --help --all   This exhaustive reference (the default
+                                 `--help` screen is the short form).
 
 Options:
   --root PATH              Workspace root. Defaults to current directory, then

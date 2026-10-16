@@ -564,7 +564,21 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 quiet = true;
             }
             "--help" | "-h" => {
-                help::print_check_help();
+                // Progressive help: the default screen is the short form;
+                // `--help --all` keeps the exhaustive reference.
+                if args[i + 1..].iter().any(|arg| arg == "--all") {
+                    help::print_check_help_all();
+                } else {
+                    help::print_check_help();
+                }
+                return Ok(());
+            }
+            "--all"
+                if args[i + 1..]
+                    .iter()
+                    .any(|arg| arg == "--help" || arg == "-h") =>
+            {
+                help::print_check_help_all();
                 return Ok(());
             }
             other => return Err(unknown_argument("check", other)),

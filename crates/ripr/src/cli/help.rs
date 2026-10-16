@@ -218,6 +218,10 @@ pub(super) fn print_workflow(name: Option<&str>) -> Result<(), String> {
 }
 
 pub(super) fn print_check_help() {
+    println!("{CHECK_HELP_SHORT}");
+}
+
+pub(super) fn print_check_help_all() {
     println!("{CHECK_HELP}");
 }
 

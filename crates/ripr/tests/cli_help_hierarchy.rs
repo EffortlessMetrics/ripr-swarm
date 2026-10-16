@@ -508,8 +508,11 @@ fn help_index_routes_agent_repair_to_repair_help() -> Result<(), String> {
 /// the full table lives (#4378), not only list the bare names.
 #[test]
 fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), String> {
-    for command in ["check", "context"] {
-        let help = normalized(&rendered_help(&[command, "--help"])?);
+    for (command, args) in [
+        ("check", vec!["check", "--help", "--all"]),
+        ("context", vec!["context", "--help"]),
+    ] {
+        let help = normalized(&rendered_help(&args)?);
         for needle in [
             "instant (changed files only, cheapest)",
             "deep and ready (whole workspace, slowest)",
@@ -526,7 +529,7 @@ fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), Stri
 /// base through the same authority (#3952), so its help states the same order.
 #[test]
 fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
-    let check = normalized(&rendered_help(&["check", "--help"])?);
+    let check = normalized(&rendered_help(&["check", "--help", "--all"])?);
     for needle in [
         "the local origin/HEAD ref, then origin/main, origin/master, main, and master in order",
         "when none of those resolves, the analysis does not run",
@@ -556,7 +559,7 @@ fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
 /// the group list. Each task below must keep exactly its recommended path.
 #[test]
 fn check_help_chooses_one_format_per_task() -> Result<(), String> {
-    let check = normalized(&rendered_help(&["check", "--help"])?);
+    let check = normalized(&rendered_help(&["check", "--help", "--all"])?);
     for needle in [
         "Choose by task:",
         "eye review -> human",
@@ -631,6 +634,34 @@ fn doc_flag_guard_rejects_removed_flags_and_accepts_prose() -> Result<(), String
     let drift = undocumented_doc_flags(&[("good.md", good)], &mut cache, &run_ripr)?;
     if !drift.is_empty() {
         return Err(format!("guard rejected valid prose: {drift:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn check_help_default_fits_one_screen_and_all_keeps_everything() -> Result<(), String> {
+    let short = rendered_help(&["check", "--help"])?;
+    let lines = short.lines().count();
+    if lines > 60 {
+        return Err(format!(
+            "default check help must fit one screen, got {lines} lines"
+        ));
+    }
+    for needle in ["--base", "--diff", "--format", "check --help --all"] {
+        assert_contains("`ripr check --help`", &short, needle)?;
+    }
+    let all = rendered_help(&["check", "--help", "--all"])?;
+    for needle in [
+        "--candidate-tree",
+        "--suppression-policy",
+        "--write-artifact",
+        "RIPR_GIT_TIMEOUT",
+        "repo-badge-plus-shields",
+    ] {
+        assert_contains("`ripr check --help --all`", &all, needle)?;
+    }
+    if all.lines().count() <= lines {
+        return Err("exhaustive check help must be longer than the short screen".to_string());
     }
     Ok(())
 }
