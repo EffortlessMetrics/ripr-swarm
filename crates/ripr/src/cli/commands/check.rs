@@ -2310,6 +2310,48 @@ mod tests {
         Ok(())
     }
 
+    /// The value-taking flags the parser actually consumes, read from the
+    /// option `match` arms of this file. Unlike the documentation-derived test
+    /// above, this fails when a flag is dropped from BOTH `CHECK_VALUE_OPTIONS`
+    /// and the help while its parser arm still takes a value.
+    #[test]
+    fn check_value_options_match_the_parser_arms() -> Result<(), String> {
+        let source = include_str!("check.rs");
+        let start = source
+            .find("            \"--root\" => {")
+            .ok_or("option match start not found")?;
+        let end = source[start..]
+            .find("other => return Err(unknown_argument(\"check\", other))")
+            .map(|offset| start + offset)
+            .ok_or("option match end not found")?;
+        let mut parsed = std::collections::BTreeSet::new();
+        let mut arms = 0usize;
+        let mut current: Option<&str> = None;
+        for line in source[start..end].lines() {
+            let trimmed = line.trim_start();
+            let is_arm_head = line.starts_with("            \"") && trimmed.contains("=>");
+            if is_arm_head {
+                arms += 1;
+                current = trimmed
+                    .strip_prefix('"')
+                    .and_then(|rest| rest.split('"').next())
+                    .filter(|flag| flag.starts_with("--"));
+            }
+            if let Some(flag) = current
+                && line.contains("expect_value(")
+            {
+                parsed.insert(flag.to_string());
+            }
+        }
+        assert!(arms >= 15, "parser arm scan found only {arms} arms");
+        let declared: std::collections::BTreeSet<String> = CHECK_VALUE_OPTIONS
+            .iter()
+            .map(|flag| (*flag).to_string())
+            .collect();
+        assert_eq!(parsed, declared);
+        Ok(())
+    }
+
     #[test]
     fn git_timeout_cli_values_are_parsed_before_dispatch() -> Result<(), String> {
         assert_eq!(check(&args(&["--git-timeout", "0", "--help"])), Ok(()));
@@ -2454,7 +2496,7 @@ mod tests {
     fn check_rejects_unknown_argument() {
         assert_eq!(
             check(&args(&["--wat"])),
-            Err("unknown check argument \"--wat\". Run `ripr check --help`.".to_string())
+            Err("unknown check argument \"--wat\". Run `ripr check --help --all`.".to_string())
         );
     }
 

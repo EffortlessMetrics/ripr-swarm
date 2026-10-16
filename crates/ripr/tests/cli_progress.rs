@@ -330,6 +330,27 @@ fn check_help_does_not_spray_progress() -> Result<(), String> {
     Ok(())
 }
 
+/// The default one-screen route stays a short command too: it writes nothing
+/// to stderr, names `--quiet`, and points at the reference that carries the
+/// unknown-totals and no-speed-claim disclosure (SPEC-0185).
+#[test]
+fn check_default_help_does_not_spray_progress() -> Result<(), String> {
+    let output = ripr()
+        .args(["check", "--help"])
+        .output()
+        .map_err(|error| format!("run check help: {error}"))?;
+    assert!(output.status.success());
+    let stderr = stderr_text(&output);
+    assert!(
+        stderr.is_empty(),
+        "default help is a short command with no stderr: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--quiet"));
+    assert!(stdout.contains("ripr check --help --all"));
+    Ok(())
+}
+
 #[test]
 fn check_github_stdout_is_unchanged_by_progress() -> Result<(), String> {
     machine_format_stdout_is_unchanged("github")

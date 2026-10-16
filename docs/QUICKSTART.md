@@ -126,8 +126,9 @@ ripr check --base REF
 ```
 
 On an unchanged base branch, an empty diff is expected. To analyze a saved patch,
-use `ripr check --diff PATH`, replacing `PATH` with your patch file. Details and
-options are available in `ripr help check`.
+use `ripr check --diff PATH`, replacing `PATH` with your patch file. The common
+options are in `ripr help check`; `ripr help check --all` lists every option,
+output format, and environment variable.
 
 ### Explore the repository
 
