@@ -1,0 +1,3614 @@
+{
+  "timestamp_utc": "2026-10-16T04:04:58.577679+00:00",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "pr": 8004,
+  "disposition": "CANDIDATE_REPAIRED / MATERIAL_RECOVERY_OBSERVED / REVIEW_INCOMPLETE; keep Draft",
+  "subjects": {
+    "source": "77474e347bbdd8ef2101b7f9865e65f094df44c1",
+    "source_tree": "6aafd27b5ee2971dcfa052bfc911bae74b69a4d8",
+    "candidate": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+    "candidate_tree": "da4222d49d37aa82662003e0b6ef4ca8715dbac3",
+    "basis": "f2ba9522267e88dfb03e3006e83129dfd2a8bb72",
+    "observed_main": "116598e5207372cdca620a8931600dcb8890b514",
+    "complete_fixtures_tree": "9cef3bf61fb43d24b0ac728bb4ca3cff53bb724d",
+    "fixtures_identical": true,
+    "changed_paths": [
+      ".ripr/traceability.toml",
+      "changelog.d/7415-inherent-receiver-admission.md",
+      "crates/ripr/src/analysis/classify/owner_pin.rs",
+      "crates/ripr/src/analysis/classify/owner_pin/tests.rs",
+      "crates/ripr/src/analysis/classify/related_tests.rs",
+      "crates/ripr/src/analysis/syntax/mod.rs",
+      "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+      "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
+    ],
+    "profile_experiment": "88ee314a0e14ef9a768032d4587ce8d26adadc2e",
+    "profile_tree": "1cf613b295cf8883aa6e9a8773d94dc5efd44e75"
+  },
+  "binaries": {
+    "baseline": {
+      "source": "77474e347bbdd8ef2101b7f9865e65f094df44c1",
+      "bytes": 33026608,
+      "sha256": "14f33ad70bc5faa922663d8136eeda8ac386db6106bf09cce1b85ab266091e78",
+      "artifact": {
+        "reason": "compiler-artifact",
+        "package_id": "path+file:///workspace/shadow8004/base/crates/ripr#0.11.0",
+        "manifest_path": "/workspace/shadow8004/base/crates/ripr/Cargo.toml",
+        "target": {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "ripr",
+          "src_path": "/workspace/shadow8004/base/crates/ripr/src/main.rs",
+          "edition": "2024",
+          "doc": true,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": false
+        },
+        "features": [
+          "default",
+          "lang-python",
+          "lang-rust",
+          "lang-typescript"
+        ],
+        "filenames": [
+          "/workspace/shadow8004/target-release/release/ripr"
+        ],
+        "executable": "/workspace/shadow8004/target-release/release/ripr",
+        "fresh": false
+      },
+      "version": "ripr 0.11.0 (77474e347bbdd8ef2101b7f9865e65f094df44c1)",
+      "retained_binary_digest_reproduced": true
+    },
+    "candidate": {
+      "source": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+      "tree": "da4222d49d37aa82662003e0b6ef4ca8715dbac3",
+      "dirty": false,
+      "version": "ripr 0.11.0 (8e0444b1a62ead18584d40b18278c6e8716dc56c)",
+      "artifact": {
+        "reason": "compiler-artifact",
+        "package_id": "path+file:///workspace/ripr-swarm/crates/ripr#0.11.0",
+        "manifest_path": "/workspace/ripr-swarm/crates/ripr/Cargo.toml",
+        "target": {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "ripr",
+          "src_path": "/workspace/ripr-swarm/crates/ripr/src/main.rs",
+          "edition": "2024",
+          "doc": true,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": false
+        },
+        "features": [
+          "default",
+          "lang-python",
+          "lang-rust",
+          "lang-typescript"
+        ],
+        "filenames": [
+          "/workspace/shadow8004/target-release/release/ripr"
+        ],
+        "executable": "/workspace/shadow8004/target-release/release/ripr",
+        "fresh": false
+      },
+      "path": "/workspace/shadow8004/bin/candidate",
+      "bytes": 33047248,
+      "sha256": "9a4674f89a81c5ff153e1422946e1425cf1491cc578f5e478aa43a420b3c3d84",
+      "rustc": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.95.0\nLLVM version: 22.1.2\n"
+    },
+    "instrumented": {
+      "source": "88ee314a0e14ef9a768032d4587ce8d26adadc2e",
+      "tree": "1cf613b295cf8883aa6e9a8773d94dc5efd44e75",
+      "dirty": false,
+      "version": "ripr 0.11.0 (88ee314a0e14ef9a768032d4587ce8d26adadc2e)",
+      "artifact": {
+        "reason": "compiler-artifact",
+        "package_id": "path+file:///workspace/shadow8004/profile/crates/ripr#0.11.0",
+        "manifest_path": "/workspace/shadow8004/profile/crates/ripr/Cargo.toml",
+        "target": {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "ripr",
+          "src_path": "/workspace/shadow8004/profile/crates/ripr/src/main.rs",
+          "edition": "2024",
+          "doc": true,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": false
+        },
+        "features": [
+          "default",
+          "lang-python",
+          "lang-rust",
+          "lang-typescript"
+        ],
+        "filenames": [
+          "/workspace/shadow8004/target-release/release/ripr"
+        ],
+        "executable": "/workspace/shadow8004/target-release/release/ripr",
+        "fresh": false
+      },
+      "path": "/workspace/shadow8004/bin/profile",
+      "bytes": 33067192,
+      "sha256": "fea8f40476beee8ac5a6fe5ea5a0a3a9fab1aa7b6a5eebf5061269bbc50374bc",
+      "rustc": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.95.0\nLLVM version: 22.1.2\n"
+    }
+  },
+  "recovery": {
+    "timestamp_utc": "2026-10-16T03:15:29.690446+00:00",
+    "packets": [
+      {
+        "packet": "562cb1447b74a46fc86512500149c4b957cdb020",
+        "path": "/workspace/shadow8004/evidence/8004/independent-runtime774",
+        "checksums": [
+          {
+            "path": "README.md",
+            "bytes": 9494,
+            "sha256": "3b300473d967ea917a372e75f16d16d9a2de930f29a3d09ab574b88acf6576f4"
+          },
+          {
+            "path": "receipt.json",
+            "bytes": 49232,
+            "sha256": "b0cd0acafa5fd0226eb9154ab5232e1b0301eb2bb1272a75fbbf36a61008b6c7"
+          },
+          {
+            "path": "MANIFEST.json",
+            "bytes": 1183843,
+            "sha256": "9f1befd38f6026acef98db0956032c83636edcf132ac5c2646a681994d5f6cd1"
+          },
+          {
+            "path": "raw.tar.xz",
+            "bytes": 672216,
+            "sha256": "ad8b2ed75f2c4f539962534fb2a58bfb5604fd7ea5b2723b7521767f2b56137f"
+          }
+        ],
+        "member_files": 4660,
+        "member_bytes": 143648337,
+        "all_member_bytes_sizes_modes_match": true,
+        "timestamp_claim": "No exact nanosecond claim; original packet timestamp-rounding limits retained"
+      },
+      {
+        "packet": "525d1e7d489710bb4cabb5b7a1cf2047eaf993ad",
+        "path": "/workspace/shadow8004/evidence/8004/source-snapshot-repair",
+        "checksums": [
+          {
+            "path": "ARCHIVE-MANIFEST.json",
+            "bytes": 1453266,
+            "sha256": "0424823dc3a661a87b0788c2d589d192229b9349a8d083d58cb436c8a34d3449"
+          },
+          {
+            "path": "PROTOCOL.md",
+            "bytes": 4371,
+            "sha256": "3d39c4b4ac873a355f57a815974e0f1e10916b327240d80a33456011baf767f9"
+          },
+          {
+            "path": "README.md",
+            "bytes": 9737,
+            "sha256": "1609e60751dd9b6d3c8617b76b4f5532f10165044098b3af93324596cfa14171"
+          },
+          {
+            "path": "REPLAY.md",
+            "bytes": 4523,
+            "sha256": "295d5b1dda39255ea00dda9772241e2b8fa93fc9477dadbb306033235ad27d17"
+          },
+          {
+            "path": "raw.tar.xz",
+            "bytes": 4135816,
+            "sha256": "ba735ee291c29ac30508e43376686235fda66add86c46a250e1c2d57468ca0f1"
+          }
+        ],
+        "member_files": 5464,
+        "member_bytes": 23165797,
+        "all_member_bytes_sizes_modes_match": true,
+        "timestamp_claim": "No exact nanosecond claim; original packet timestamp-rounding limits retained"
+      }
+    ]
+  },
+  "validation": {
+    "units": 888,
+    "integrations": 14,
+    "native_originals": 63,
+    "native_mutants": {
+      "fail": 28,
+      "survive": 35
+    },
+    "native_workload_tests": 176,
+    "release_CLI": 189,
+    "development_CLI": 189,
+    "baseline_CLI": 189,
+    "invalidation_reports": 12,
+    "check_fast_gates": 15,
+    "typed_precommit_paths": 173,
+    "precommit_skips": [],
+    "precommit_limitations": [],
+    "golden_fixtures": 465,
+    "golden_surfaces": 1157,
+    "drift": 0,
+    "honesty": {
+      "passed": 324,
+      "failed": 0,
+      "not_run": 1,
+      "total": 325
+    },
+    "dogfood": "pass advisory"
+  },
+  "performance": {
+    "processes": 120,
+    "nonzero_exits": [],
+    "groups": [
+      {
+        "workload": "fixture-mix-16",
+        "mode": "compact",
+        "variant": "base",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 3.467907591,
+        "MAD_s": 0.09164428400000002,
+        "min_s": 3.361234854,
+        "max_s": 3.559551875,
+        "samples_s": [
+          3.467907591,
+          3.559551875,
+          3.361234854
+        ]
+      },
+      {
+        "workload": "fixture-mix-16",
+        "mode": "compact",
+        "variant": "base",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.004233463,
+        "MAD_s": 0.00010352599999999962,
+        "min_s": 0.004129937,
+        "max_s": 0.006246973,
+        "samples_s": [
+          0.004129937,
+          0.006246973,
+          0.004233463
+        ]
+      },
+      {
+        "workload": "fixture-mix-16",
+        "mode": "compact",
+        "variant": "candidate",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 0.063197007,
+        "MAD_s": 0.0004409870000000038,
+        "min_s": 0.06275602,
+        "max_s": 0.064543981,
+        "samples_s": [
+          0.064543981,
+          0.063197007,
+          0.06275602
+        ]
+      },
+      {
+        "workload": "fixture-mix-16",
+        "mode": "compact",
+        "variant": "candidate",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.004326424,
+        "MAD_s": 0.00021549599999999992,
+        "min_s": 0.004110928,
+        "max_s": 0.00456923,
+        "samples_s": [
+          0.004326424,
+          0.004110928,
+          0.00456923
+        ]
+      },
+      {
+        "workload": "fixture-mix-16",
+        "mode": "full",
+        "variant": "base",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 1.272920789,
+        "MAD_s": 0.12761662900000004,
+        "min_s": 1.14530416,
+        "max_s": 1.583908575,
+        "samples_s": [
+          1.14530416,
+          1.583908575,
+          1.272920789
+        ]
+      },
+      {
+        "workload": "fixture-mix-16",
+        "mode": "full",
+        "variant": "base",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.021317082,
+        "MAD_s": 0.0006089900000000002,
+        "min_s": 0.020708092,
+        "max_s": 0.037033215,
+        "samples_s": [
+          0.021317082,
+          0.020708092,
+          0.037033215
+        ]
+      },
+      {
+        "workload": "fixture-mix-16",
+        "mode": "full",
+        "variant": "candidate",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 0.080537854,
+        "MAD_s": 0.004862083999999989,
+        "min_s": 0.075490521,
+        "max_s": 0.085399938,
+        "samples_s": [
+          0.080537854,
+          0.085399938,
+          0.075490521
+        ]
+      },
+      {
+        "workload": "fixture-mix-16",
+        "mode": "full",
+        "variant": "candidate",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.021632037,
+        "MAD_s": 4.314500000000138e-05,
+        "min_s": 0.021588892,
+        "max_s": 0.024707913,
+        "samples_s": [
+          0.021588892,
+          0.021632037,
+          0.024707913
+        ]
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "compact",
+        "variant": "base",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 1.237119284,
+        "MAD_s": 0.03308610199999995,
+        "min_s": 1.148484673,
+        "max_s": 1.270205386,
+        "samples_s": [
+          1.270205386,
+          1.237119284,
+          1.148484673
+        ]
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "compact",
+        "variant": "base",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.00468171,
+        "MAD_s": 9.47830000000002e-05,
+        "min_s": 0.004586927,
+        "max_s": 0.00735008,
+        "samples_s": [
+          0.00735008,
+          0.004586927,
+          0.00468171
+        ]
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "compact",
+        "variant": "candidate",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 0.146851834,
+        "MAD_s": 0.0038306490000000193,
+        "min_s": 0.124115499,
+        "max_s": 0.150682483,
+        "samples_s": [
+          0.146851834,
+          0.150682483,
+          0.124115499
+        ]
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "compact",
+        "variant": "candidate",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.004406695,
+        "MAD_s": 6.907500000000004e-05,
+        "min_s": 0.00433762,
+        "max_s": 0.004765717,
+        "samples_s": [
+          0.004406695,
+          0.004765717,
+          0.00433762
+        ]
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "full",
+        "variant": "base",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 0.498432501,
+        "MAD_s": 0.015073137999999986,
+        "min_s": 0.483359363,
+        "max_s": 0.545215704,
+        "samples_s": [
+          0.545215704,
+          0.498432501,
+          0.483359363
+        ]
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "full",
+        "variant": "base",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.02345495,
+        "MAD_s": 0.00011055800000000018,
+        "min_s": 0.022300978,
+        "max_s": 0.023565508,
+        "samples_s": [
+          0.022300978,
+          0.02345495,
+          0.023565508
+        ]
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "full",
+        "variant": "candidate",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 0.108979693,
+        "MAD_s": 0.0012371689999999963,
+        "min_s": 0.099343805,
+        "max_s": 0.110216862,
+        "samples_s": [
+          0.110216862,
+          0.108979693,
+          0.099343805
+        ]
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "full",
+        "variant": "candidate",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.02495099,
+        "MAD_s": 0.001836411999999999,
+        "min_s": 0.022902405,
+        "max_s": 0.026787402,
+        "samples_s": [
+          0.026787402,
+          0.022902405,
+          0.02495099
+        ]
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "compact",
+        "variant": "base",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 0.146038291,
+        "MAD_s": 0.0001288389999999917,
+        "min_s": 0.145909452,
+        "max_s": 0.14811392,
+        "samples_s": [
+          0.145909452,
+          0.146038291,
+          0.14811392
+        ]
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "compact",
+        "variant": "base",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.004446675,
+        "MAD_s": 4.938399999999954e-05,
+        "min_s": 0.004397291,
+        "max_s": 0.004684985,
+        "samples_s": [
+          0.004397291,
+          0.004446675,
+          0.004684985
+        ]
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "compact",
+        "variant": "candidate",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 0.063376882,
+        "MAD_s": 0.007609056000000003,
+        "min_s": 0.054394297,
+        "max_s": 0.070985938,
+        "samples_s": [
+          0.063376882,
+          0.054394297,
+          0.070985938
+        ]
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "compact",
+        "variant": "candidate",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.004391772,
+        "MAD_s": 4.38560000000001e-05,
+        "min_s": 0.004347916,
+        "max_s": 0.00705884,
+        "samples_s": [
+          0.004391772,
+          0.004347916,
+          0.00705884
+        ]
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "full",
+        "variant": "base",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 0.076047776,
+        "MAD_s": 0.009178791000000006,
+        "min_s": 0.066042052,
+        "max_s": 0.085226567,
+        "samples_s": [
+          0.066042052,
+          0.076047776,
+          0.085226567
+        ]
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "full",
+        "variant": "base",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.022160085,
+        "MAD_s": 0.00020130399999999937,
+        "min_s": 0.017370401,
+        "max_s": 0.022361389,
+        "samples_s": [
+          0.017370401,
+          0.022361389,
+          0.022160085
+        ]
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "full",
+        "variant": "candidate",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 0.048272668,
+        "MAD_s": 0.0005240819999999952,
+        "min_s": 0.047748586,
+        "max_s": 0.049685801,
+        "samples_s": [
+          0.049685801,
+          0.047748586,
+          0.048272668
+        ]
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "full",
+        "variant": "candidate",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.018429852,
+        "MAD_s": 0.0006087300000000018,
+        "min_s": 0.017821122,
+        "max_s": 0.020878609,
+        "samples_s": [
+          0.018429852,
+          0.017821122,
+          0.020878609
+        ]
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "compact",
+        "variant": "base",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 88.640483282,
+        "MAD_s": 0.4247422279999995,
+        "min_s": 87.122267489,
+        "max_s": 89.06522551,
+        "samples_s": [
+          88.640483282,
+          89.06522551,
+          87.122267489
+        ]
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "compact",
+        "variant": "base",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.008585724,
+        "MAD_s": 0.001006354000000001,
+        "min_s": 0.007010828,
+        "max_s": 0.009592078,
+        "samples_s": [
+          0.007010828,
+          0.008585724,
+          0.009592078
+        ]
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "compact",
+        "variant": "candidate",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 9.614556958,
+        "MAD_s": 0.14725295000000038,
+        "min_s": 9.229472839,
+        "max_s": 9.761809908,
+        "samples_s": [
+          9.229472839,
+          9.614556958,
+          9.761809908
+        ]
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "compact",
+        "variant": "candidate",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.007173123,
+        "MAD_s": 0.0004020969999999997,
+        "min_s": 0.006771026,
+        "max_s": 0.007736256,
+        "samples_s": [
+          0.006771026,
+          0.007173123,
+          0.007736256
+        ]
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "full",
+        "variant": "base",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 33.695439675,
+        "MAD_s": 1.2353453849999951,
+        "min_s": 31.990770192,
+        "max_s": 34.93078506,
+        "samples_s": [
+          34.93078506,
+          31.990770192,
+          33.695439675
+        ]
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "full",
+        "variant": "base",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.078350233,
+        "MAD_s": 0.0019285460000000032,
+        "min_s": 0.076421687,
+        "max_s": 0.10441997,
+        "samples_s": [
+          0.076421687,
+          0.078350233,
+          0.10441997
+        ]
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "full",
+        "variant": "candidate",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 3.419138898,
+        "MAD_s": 0.06737779299999991,
+        "min_s": 3.351761105,
+        "max_s": 3.528822562,
+        "samples_s": [
+          3.528822562,
+          3.351761105,
+          3.419138898
+        ]
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "full",
+        "variant": "candidate",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.081952,
+        "MAD_s": 0.004563154,
+        "min_s": 0.077388846,
+        "max_s": 0.08970754,
+        "samples_s": [
+          0.081952,
+          0.08970754,
+          0.077388846
+        ]
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "compact",
+        "variant": "base",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 3.608362562,
+        "MAD_s": 0.16244347299999973,
+        "min_s": 3.445919089,
+        "max_s": 4.351276035,
+        "samples_s": [
+          4.351276035,
+          3.608362562,
+          3.445919089
+        ]
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "compact",
+        "variant": "base",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.011194789,
+        "MAD_s": 4.335500000000013e-05,
+        "min_s": 0.011151434,
+        "max_s": 0.016608142,
+        "samples_s": [
+          0.016608142,
+          0.011151434,
+          0.011194789
+        ]
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "compact",
+        "variant": "candidate",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 2.093525709,
+        "MAD_s": 0.012659197000000066,
+        "min_s": 2.080866512,
+        "max_s": 2.301336784,
+        "samples_s": [
+          2.301336784,
+          2.093525709,
+          2.080866512
+        ]
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "compact",
+        "variant": "candidate",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.009544238,
+        "MAD_s": 0.0005569159999999993,
+        "min_s": 0.008987322,
+        "max_s": 0.013270807,
+        "samples_s": [
+          0.013270807,
+          0.009544238,
+          0.008987322
+        ]
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "full",
+        "variant": "base",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 1.203767039,
+        "MAD_s": 0.02670193300000001,
+        "min_s": 1.177065106,
+        "max_s": 1.357635247,
+        "samples_s": [
+          1.357635247,
+          1.177065106,
+          1.203767039
+        ]
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "full",
+        "variant": "base",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.067012473,
+        "MAD_s": 0.006412797000000005,
+        "min_s": 0.060599676,
+        "max_s": 0.077643832,
+        "samples_s": [
+          0.077643832,
+          0.060599676,
+          0.067012473
+        ]
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "full",
+        "variant": "candidate",
+        "cache": "cold",
+        "n": 3,
+        "median_s": 0.743790455,
+        "MAD_s": 0.023548263000000014,
+        "min_s": 0.720242192,
+        "max_s": 0.828954097,
+        "samples_s": [
+          0.828954097,
+          0.743790455,
+          0.720242192
+        ]
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "full",
+        "variant": "candidate",
+        "cache": "warm",
+        "n": 3,
+        "median_s": 0.064886862,
+        "MAD_s": 0.002955835000000004,
+        "min_s": 0.061931027,
+        "max_s": 0.06786792,
+        "samples_s": [
+          0.061931027,
+          0.06786792,
+          0.064886862
+        ]
+      }
+    ],
+    "paired": [
+      {
+        "workload": "fixture-mix-16",
+        "mode": "compact",
+        "cache": "cold",
+        "repair_over_774_ratios": [
+          0.01861179379966933,
+          0.01775420311861588,
+          0.018670525186693782
+        ],
+        "median_ratio": 0.01861179379966933
+      },
+      {
+        "workload": "fixture-mix-16",
+        "mode": "compact",
+        "cache": "warm",
+        "repair_over_774_ratios": [
+          1.0475762705339087,
+          0.6580671951039326,
+          1.0793126100310786
+        ],
+        "median_ratio": 1.0475762705339087
+      },
+      {
+        "workload": "fixture-mix-16",
+        "mode": "full",
+        "cache": "cold",
+        "repair_over_774_ratios": [
+          0.07032005716280643,
+          0.053917214255879635,
+          0.0593049635549632
+        ],
+        "median_ratio": 0.0593049635549632
+      },
+      {
+        "workload": "fixture-mix-16",
+        "mode": "full",
+        "cache": "warm",
+        "repair_over_774_ratios": [
+          1.0127508070757525,
+          1.0446175823441386,
+          0.6671825008981802
+        ],
+        "median_ratio": 1.0127508070757525
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "compact",
+        "cache": "cold",
+        "repair_over_774_ratios": [
+          0.11561266832795494,
+          0.12180109464690876,
+          0.10806892065506912
+        ],
+        "median_ratio": 0.11561266832795494
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "compact",
+        "cache": "warm",
+        "repair_over_774_ratios": [
+          0.599543814489094,
+          1.0389781655561556,
+          0.9265033502715888
+        ],
+        "median_ratio": 0.9265033502715888
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "full",
+        "cache": "cold",
+        "repair_over_774_ratios": [
+          0.20215276484405886,
+          0.2186448371271038,
+          0.2055278383011275
+        ],
+        "median_ratio": 0.2055278383011275
+      },
+      {
+        "workload": "sync-16-single",
+        "mode": "full",
+        "cache": "warm",
+        "repair_over_774_ratios": [
+          1.201176109854913,
+          0.9764422861698704,
+          1.058792791566386
+        ],
+        "median_ratio": 1.058792791566386
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "compact",
+        "cache": "cold",
+        "repair_over_774_ratios": [
+          0.4343576179012721,
+          0.3724659924978169,
+          0.47926581107299027
+        ],
+        "median_ratio": 0.4343576179012721
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "compact",
+        "cache": "warm",
+        "repair_over_774_ratios": [
+          0.9987449090815231,
+          0.977790371457325,
+          1.5066942583594185
+        ],
+        "median_ratio": 0.9987449090815231
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "full",
+        "cache": "cold",
+        "repair_over_774_ratios": [
+          0.7523358147623881,
+          0.6278761656356657,
+          0.5664039946604912
+        ],
+        "median_ratio": 0.6278761656356657
+      },
+      {
+        "workload": "sync-16-split",
+        "mode": "full",
+        "cache": "warm",
+        "repair_over_774_ratios": [
+          1.060991741065736,
+          0.7969595269775057,
+          0.9421718824634472
+        ],
+        "median_ratio": 0.9421718824634472
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "compact",
+        "cache": "cold",
+        "repair_over_774_ratios": [
+          0.10412254646262974,
+          0.1079496167325204,
+          0.11204724336671472
+        ],
+        "median_ratio": 0.1079496167325204
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "compact",
+        "cache": "warm",
+        "repair_over_774_ratios": [
+          0.9657954809332079,
+          0.8354709515470099,
+          0.8065255516062317
+        ],
+        "median_ratio": 0.8354709515470099
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "full",
+        "cache": "cold",
+        "repair_over_774_ratios": [
+          0.10102328235505167,
+          0.10477275429393013,
+          0.1014718588324816
+        ],
+        "median_ratio": 0.1014718588324816
+      },
+      {
+        "workload": "sync-64-single",
+        "mode": "full",
+        "cache": "warm",
+        "repair_over_774_ratios": [
+          1.0723657539776634,
+          1.1449556250841015,
+          0.741130705170668
+        ],
+        "median_ratio": 1.0723657539776634
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "compact",
+        "cache": "cold",
+        "repair_over_774_ratios": [
+          0.5288877941755309,
+          0.5801871826980783,
+          0.6038640079050329
+        ],
+        "median_ratio": 0.5801871826980783
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "compact",
+        "cache": "warm",
+        "repair_over_774_ratios": [
+          0.79905428313414,
+          0.8558753968323716,
+          0.8028129873640316
+        ],
+        "median_ratio": 0.8028129873640316
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "full",
+        "cache": "cold",
+        "repair_over_774_ratios": [
+          0.6105867528349461,
+          0.6319025610466105,
+          0.5983235698149066
+        ],
+        "median_ratio": 0.6105867528349461
+      },
+      {
+        "workload": "sync-64-split",
+        "mode": "full",
+        "cache": "warm",
+        "repair_over_774_ratios": [
+          0.7976297074054769,
+          1.1199386610581878,
+          0.9682803677458672
+        ],
+        "median_ratio": 0.9682803677458672
+      }
+    ],
+    "within_variant_mismatches": [],
+    "full_compact_metric_mismatches": [],
+    "cross_variant_differences": [],
+    "denominator": "three paired descriptive repetitions of774 versus8e; no general no-regression, a5/base98 equivalence or qualification claim"
+  },
+  "resources": [
+    {
+      "workload": "fixture-mix-16",
+      "mode": "compact",
+      "variant": "base",
+      "cache": "cold",
+      "cpu_median_s": 3.69,
+      "cpu_range_s": [
+        3.55,
+        3.76
+      ],
+      "rss_median_bytes": 28336128,
+      "rss_range_bytes": [
+        28065792,
+        28397568
+      ]
+    },
+    {
+      "workload": "fixture-mix-16",
+      "mode": "compact",
+      "variant": "base",
+      "cache": "warm",
+      "cpu_median_s": 0.0,
+      "cpu_range_s": [
+        0.0,
+        0.0
+      ],
+      "rss_median_bytes": 12410880,
+      "rss_range_bytes": [
+        12378112,
+        12410880
+      ]
+    },
+    {
+      "workload": "fixture-mix-16",
+      "mode": "compact",
+      "variant": "candidate",
+      "cache": "cold",
+      "cpu_median_s": 0.06,
+      "cpu_range_s": [
+        0.05,
+        0.06
+      ],
+      "rss_median_bytes": 19288064,
+      "rss_range_bytes": [
+        19206144,
+        19582976
+      ]
+    },
+    {
+      "workload": "fixture-mix-16",
+      "mode": "compact",
+      "variant": "candidate",
+      "cache": "warm",
+      "cpu_median_s": 0.0,
+      "cpu_range_s": [
+        0.0,
+        0.0
+      ],
+      "rss_median_bytes": 12521472,
+      "rss_range_bytes": [
+        12443648,
+        12578816
+      ]
+    },
+    {
+      "workload": "fixture-mix-16",
+      "mode": "full",
+      "variant": "base",
+      "cache": "cold",
+      "cpu_median_s": 4.95,
+      "cpu_range_s": [
+        4.35,
+        6.15
+      ],
+      "rss_median_bytes": 56229888,
+      "rss_range_bytes": [
+        54116352,
+        57831424
+      ]
+    },
+    {
+      "workload": "fixture-mix-16",
+      "mode": "full",
+      "variant": "base",
+      "cache": "warm",
+      "cpu_median_s": 0.01,
+      "cpu_range_s": [
+        0.01,
+        0.01
+      ],
+      "rss_median_bytes": 14000128,
+      "rss_range_bytes": [
+        13910016,
+        14581760
+      ]
+    },
+    {
+      "workload": "fixture-mix-16",
+      "mode": "full",
+      "variant": "candidate",
+      "cache": "cold",
+      "cpu_median_s": 0.13,
+      "cpu_range_s": [
+        0.12,
+        0.17
+      ],
+      "rss_median_bytes": 21270528,
+      "rss_range_bytes": [
+        20963328,
+        21393408
+      ]
+    },
+    {
+      "workload": "fixture-mix-16",
+      "mode": "full",
+      "variant": "candidate",
+      "cache": "warm",
+      "cpu_median_s": 0.01,
+      "cpu_range_s": [
+        0.01,
+        0.01
+      ],
+      "rss_median_bytes": 14381056,
+      "rss_range_bytes": [
+        14254080,
+        14598144
+      ]
+    },
+    {
+      "workload": "sync-16-single",
+      "mode": "compact",
+      "variant": "base",
+      "cache": "cold",
+      "cpu_median_s": 1.31,
+      "cpu_range_s": [
+        1.22,
+        1.39
+      ],
+      "rss_median_bytes": 30752768,
+      "rss_range_bytes": [
+        30171136,
+        30752768
+      ]
+    },
+    {
+      "workload": "sync-16-single",
+      "mode": "compact",
+      "variant": "base",
+      "cache": "warm",
+      "cpu_median_s": 0.0,
+      "cpu_range_s": [
+        0.0,
+        0.0
+      ],
+      "rss_median_bytes": 11919360,
+      "rss_range_bytes": [
+        9666560,
+        11993088
+      ]
+    },
+    {
+      "workload": "sync-16-single",
+      "mode": "compact",
+      "variant": "candidate",
+      "cache": "cold",
+      "cpu_median_s": 0.14,
+      "cpu_range_s": [
+        0.11,
+        0.14
+      ],
+      "rss_median_bytes": 19623936,
+      "rss_range_bytes": [
+        19570688,
+        19759104
+      ]
+    },
+    {
+      "workload": "sync-16-single",
+      "mode": "compact",
+      "variant": "candidate",
+      "cache": "warm",
+      "cpu_median_s": 0.0,
+      "cpu_range_s": [
+        0.0,
+        0.0
+      ],
+      "rss_median_bytes": 12214272,
+      "rss_range_bytes": [
+        12140544,
+        12316672
+      ]
+    },
+    {
+      "workload": "sync-16-single",
+      "mode": "full",
+      "variant": "base",
+      "cache": "cold",
+      "cpu_median_s": 1.85,
+      "cpu_range_s": [
+        1.82,
+        2.01
+      ],
+      "rss_median_bytes": 53334016,
+      "rss_range_bytes": [
+        53125120,
+        58974208
+      ]
+    },
+    {
+      "workload": "sync-16-single",
+      "mode": "full",
+      "variant": "base",
+      "cache": "warm",
+      "cpu_median_s": 0.01,
+      "cpu_range_s": [
+        0.01,
+        0.01
+      ],
+      "rss_median_bytes": 14110720,
+      "rss_range_bytes": [
+        13619200,
+        14200832
+      ]
+    },
+    {
+      "workload": "sync-16-single",
+      "mode": "full",
+      "variant": "candidate",
+      "cache": "cold",
+      "cpu_median_s": 0.25,
+      "cpu_range_s": [
+        0.21,
+        0.26
+      ],
+      "rss_median_bytes": 21528576,
+      "rss_range_bytes": [
+        21311488,
+        21712896
+      ]
+    },
+    {
+      "workload": "sync-16-single",
+      "mode": "full",
+      "variant": "candidate",
+      "cache": "warm",
+      "cpu_median_s": 0.01,
+      "cpu_range_s": [
+        0.01,
+        0.02
+      ],
+      "rss_median_bytes": 13758464,
+      "rss_range_bytes": [
+        13320192,
+        13832192
+      ]
+    },
+    {
+      "workload": "sync-16-split",
+      "mode": "compact",
+      "variant": "base",
+      "cache": "cold",
+      "cpu_median_s": 0.16,
+      "cpu_range_s": [
+        0.15,
+        0.16
+      ],
+      "rss_median_bytes": 29179904,
+      "rss_range_bytes": [
+        28430336,
+        29372416
+      ]
+    },
+    {
+      "workload": "sync-16-split",
+      "mode": "compact",
+      "variant": "base",
+      "cache": "warm",
+      "cpu_median_s": 0.0,
+      "cpu_range_s": [
+        0.0,
+        0.0
+      ],
+      "rss_median_bytes": 11952128,
+      "rss_range_bytes": [
+        9682944,
+        12165120
+      ]
+    },
+    {
+      "workload": "sync-16-split",
+      "mode": "compact",
+      "variant": "candidate",
+      "cache": "cold",
+      "cpu_median_s": 0.07,
+      "cpu_range_s": [
+        0.06,
+        0.08
+      ],
+      "rss_median_bytes": 20877312,
+      "rss_range_bytes": [
+        20860928,
+        20967424
+      ]
+    },
+    {
+      "workload": "sync-16-split",
+      "mode": "compact",
+      "variant": "candidate",
+      "cache": "warm",
+      "cpu_median_s": 0.0,
+      "cpu_range_s": [
+        0.0,
+        0.0
+      ],
+      "rss_median_bytes": 11993088,
+      "rss_range_bytes": [
+        11984896,
+        12029952
+      ]
+    },
+    {
+      "workload": "sync-16-split",
+      "mode": "full",
+      "variant": "base",
+      "cache": "cold",
+      "cpu_median_s": 0.16,
+      "cpu_range_s": [
+        0.14,
+        0.21
+      ],
+      "rss_median_bytes": 34414592,
+      "rss_range_bytes": [
+        33873920,
+        35991552
+      ]
+    },
+    {
+      "workload": "sync-16-split",
+      "mode": "full",
+      "variant": "base",
+      "cache": "warm",
+      "cpu_median_s": 0.0,
+      "cpu_range_s": [
+        0.0,
+        0.01
+      ],
+      "rss_median_bytes": 13787136,
+      "rss_range_bytes": [
+        13774848,
+        13807616
+      ]
+    },
+    {
+      "workload": "sync-16-split",
+      "mode": "full",
+      "variant": "candidate",
+      "cache": "cold",
+      "cpu_median_s": 0.08,
+      "cpu_range_s": [
+        0.07,
+        0.08
+      ],
+      "rss_median_bytes": 22421504,
+      "rss_range_bytes": [
+        22355968,
+        22908928
+      ]
+    },
+    {
+      "workload": "sync-16-split",
+      "mode": "full",
+      "variant": "candidate",
+      "cache": "warm",
+      "cpu_median_s": 0.01,
+      "cpu_range_s": [
+        0.01,
+        0.01
+      ],
+      "rss_median_bytes": 13774848,
+      "rss_range_bytes": [
+        11505664,
+        13807616
+      ]
+    },
+    {
+      "workload": "sync-64-single",
+      "mode": "compact",
+      "variant": "base",
+      "cache": "cold",
+      "cpu_median_s": 97.04,
+      "cpu_range_s": [
+        95.03,
+        97.64
+      ],
+      "rss_median_bytes": 38359040,
+      "rss_range_bytes": [
+        37744640,
+        38379520
+      ]
+    },
+    {
+      "workload": "sync-64-single",
+      "mode": "compact",
+      "variant": "base",
+      "cache": "warm",
+      "cpu_median_s": 0.0,
+      "cpu_range_s": [
+        0.0,
+        0.0
+      ],
+      "rss_median_bytes": 12156928,
+      "rss_range_bytes": [
+        12021760,
+        12161024
+      ]
+    },
+    {
+      "workload": "sync-64-single",
+      "mode": "compact",
+      "variant": "candidate",
+      "cache": "cold",
+      "cpu_median_s": 9.64,
+      "cpu_range_s": [
+        9.26,
+        9.8
+      ],
+      "rss_median_bytes": 32165888,
+      "rss_range_bytes": [
+        32063488,
+        32464896
+      ]
+    },
+    {
+      "workload": "sync-64-single",
+      "mode": "compact",
+      "variant": "candidate",
+      "cache": "warm",
+      "cpu_median_s": 0.0,
+      "cpu_range_s": [
+        0.0,
+        0.0
+      ],
+      "rss_median_bytes": 12029952,
+      "rss_range_bytes": [
+        12025856,
+        12369920
+      ]
+    },
+    {
+      "workload": "sync-64-single",
+      "mode": "full",
+      "variant": "base",
+      "cache": "cold",
+      "cpu_median_s": 133.35,
+      "cpu_range_s": [
+        127.16,
+        139.1
+      ],
+      "rss_median_bytes": 242999296,
+      "rss_range_bytes": [
+        76595200,
+        269242368
+      ]
+    },
+    {
+      "workload": "sync-64-single",
+      "mode": "full",
+      "variant": "base",
+      "cache": "warm",
+      "cpu_median_s": 0.06,
+      "cpu_range_s": [
+        0.06,
+        0.09
+      ],
+      "rss_median_bytes": 18649088,
+      "rss_range_bytes": [
+        16384000,
+        18718720
+      ]
+    },
+    {
+      "workload": "sync-64-single",
+      "mode": "full",
+      "variant": "candidate",
+      "cache": "cold",
+      "cpu_median_s": 12.25,
+      "cpu_range_s": [
+        11.98,
+        12.41
+      ],
+      "rss_median_bytes": 38928384,
+      "rss_range_bytes": [
+        38731776,
+        39202816
+      ]
+    },
+    {
+      "workload": "sync-64-single",
+      "mode": "full",
+      "variant": "candidate",
+      "cache": "warm",
+      "cpu_median_s": 0.07,
+      "cpu_range_s": [
+        0.06,
+        0.07
+      ],
+      "rss_median_bytes": 18665472,
+      "rss_range_bytes": [
+        18579456,
+        18731008
+      ]
+    },
+    {
+      "workload": "sync-64-split",
+      "mode": "compact",
+      "variant": "base",
+      "cache": "cold",
+      "cpu_median_s": 4.15,
+      "cpu_range_s": [
+        3.86,
+        4.94
+      ],
+      "rss_median_bytes": 34107392,
+      "rss_range_bytes": [
+        33370112,
+        34725888
+      ]
+    },
+    {
+      "workload": "sync-64-split",
+      "mode": "compact",
+      "variant": "base",
+      "cache": "warm",
+      "cpu_median_s": 0.0,
+      "cpu_range_s": [
+        0.0,
+        0.0
+      ],
+      "rss_median_bytes": 12283904,
+      "rss_range_bytes": [
+        12058624,
+        12328960
+      ]
+    },
+    {
+      "workload": "sync-64-split",
+      "mode": "compact",
+      "variant": "candidate",
+      "cache": "cold",
+      "cpu_median_s": 2.43,
+      "cpu_range_s": [
+        2.35,
+        2.66
+      ],
+      "rss_median_bytes": 34349056,
+      "rss_range_bytes": [
+        34222080,
+        34488320
+      ]
+    },
+    {
+      "workload": "sync-64-split",
+      "mode": "compact",
+      "variant": "candidate",
+      "cache": "warm",
+      "cpu_median_s": 0.0,
+      "cpu_range_s": [
+        0.0,
+        0.0
+      ],
+      "rss_median_bytes": 12181504,
+      "rss_range_bytes": [
+        12111872,
+        12316672
+      ]
+    },
+    {
+      "workload": "sync-64-split",
+      "mode": "full",
+      "variant": "base",
+      "cache": "cold",
+      "cpu_median_s": 4.42,
+      "cpu_range_s": [
+        4.35,
+        4.58
+      ],
+      "rss_median_bytes": 61698048,
+      "rss_range_bytes": [
+        55873536,
+        63262720
+      ]
+    },
+    {
+      "workload": "sync-64-split",
+      "mode": "full",
+      "variant": "base",
+      "cache": "warm",
+      "cpu_median_s": 0.05,
+      "cpu_range_s": [
+        0.04,
+        0.06
+      ],
+      "rss_median_bytes": 17682432,
+      "rss_range_bytes": [
+        17629184,
+        17686528
+      ]
+    },
+    {
+      "workload": "sync-64-split",
+      "mode": "full",
+      "variant": "candidate",
+      "cache": "cold",
+      "cpu_median_s": 2.62,
+      "cpu_range_s": [
+        2.49,
+        2.89
+      ],
+      "rss_median_bytes": 45711360,
+      "rss_range_bytes": [
+        44224512,
+        48570368
+      ]
+    },
+    {
+      "workload": "sync-64-split",
+      "mode": "full",
+      "variant": "candidate",
+      "cache": "warm",
+      "cpu_median_s": 0.05,
+      "cpu_range_s": [
+        0.04,
+        0.05
+      ],
+      "rss_median_bytes": 17653760,
+      "rss_range_bytes": [
+        15351808,
+        17657856
+      ]
+    }
+  ],
+  "profile": [
+    {
+      "workload": "fixture-mix-16",
+      "mode": "full",
+      "wall_s": 0.07759137300035945,
+      "sites": [
+        {
+          "kind": "executable_query",
+          "file": "crates/ripr/src/analysis/classify/related_tests.rs",
+          "line": 3126,
+          "calls": 3612,
+          "inclusive_ns": 51383408,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 3611,
+          "inclusive_s": 0.051383408
+        },
+        {
+          "kind": "shadow_answer_miss",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 9924,
+          "calls": 377,
+          "inclusive_ns": 9250539,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 376,
+          "inclusive_s": 0.009250539
+        },
+        {
+          "kind": "fragment_query",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 73,
+          "calls": 7305,
+          "inclusive_ns": 5788863,
+          "input_bytes": 496372,
+          "unique_inputs": 35,
+          "repeated_calls": 7270,
+          "inclusive_s": 0.005788863
+        },
+        {
+          "kind": "declaration_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 213,
+          "calls": 44,
+          "inclusive_ns": 3033308,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 43,
+          "inclusive_s": 0.003033308
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 1107,
+          "calls": 3,
+          "inclusive_ns": 2543672,
+          "input_bytes": 26190,
+          "unique_inputs": 1,
+          "repeated_calls": 2,
+          "inclusive_s": 0.002543672
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 1107,
+          "calls": 3,
+          "inclusive_ns": 1974131,
+          "input_bytes": 26190,
+          "unique_inputs": 1,
+          "repeated_calls": 2,
+          "inclusive_s": 0.001974131
+        },
+        {
+          "kind": "name_scopes_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 242,
+          "calls": 21,
+          "inclusive_ns": 1799808,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 20,
+          "inclusive_s": 0.001799808
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 1,
+          "inclusive_ns": 787449,
+          "input_bytes": 8730,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000787449
+        },
+        {
+          "kind": "fragment_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 79,
+          "calls": 35,
+          "inclusive_ns": 763828,
+          "input_bytes": 2873,
+          "unique_inputs": 35,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000763828
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 35,
+          "inclusive_ns": 735488,
+          "input_bytes": 2873,
+          "unique_inputs": 35,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000735488
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 481,
+          "calls": 1,
+          "inclusive_ns": 653476,
+          "input_bytes": 8730,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000653476
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 35,
+          "inclusive_ns": 614439,
+          "input_bytes": 2873,
+          "unique_inputs": 35,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000614439
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 1,
+          "inclusive_ns": 583811,
+          "input_bytes": 8730,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000583811
+        },
+        {
+          "kind": "owner_file_scopes_query",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 6861,
+          "calls": 293,
+          "inclusive_ns": 330090,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 292,
+          "inclusive_s": 0.00033009
+        },
+        {
+          "kind": "shadow_scope_build",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 144,
+          "calls": 1,
+          "inclusive_ns": 147252,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000147252
+        }
+      ]
+    },
+    {
+      "workload": "fixture-mix-16",
+      "mode": "compact",
+      "wall_s": 0.07453895299931901,
+      "sites": [
+        {
+          "kind": "executable_query",
+          "file": "crates/ripr/src/analysis/classify/related_tests.rs",
+          "line": 3126,
+          "calls": 2973,
+          "inclusive_ns": 28180228,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 2972,
+          "inclusive_s": 0.028180228
+        },
+        {
+          "kind": "shadow_answer_miss",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 9924,
+          "calls": 377,
+          "inclusive_ns": 9032299,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 376,
+          "inclusive_s": 0.009032299
+        },
+        {
+          "kind": "declaration_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 213,
+          "calls": 44,
+          "inclusive_ns": 3446377,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 43,
+          "inclusive_s": 0.003446377
+        },
+        {
+          "kind": "name_scopes_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 242,
+          "calls": 21,
+          "inclusive_ns": 1789014,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 20,
+          "inclusive_s": 0.001789014
+        },
+        {
+          "kind": "fragment_query",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 73,
+          "calls": 6040,
+          "inclusive_ns": 1008656,
+          "input_bytes": 412354,
+          "unique_inputs": 35,
+          "repeated_calls": 6005,
+          "inclusive_s": 0.001008656
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 1,
+          "inclusive_ns": 773548,
+          "input_bytes": 8730,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000773548
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 481,
+          "calls": 1,
+          "inclusive_ns": 678725,
+          "input_bytes": 8730,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000678725
+        },
+        {
+          "kind": "fragment_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 79,
+          "calls": 35,
+          "inclusive_ns": 615460,
+          "input_bytes": 2873,
+          "unique_inputs": 35,
+          "repeated_calls": 0,
+          "inclusive_s": 0.00061546
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 35,
+          "inclusive_ns": 599739,
+          "input_bytes": 2873,
+          "unique_inputs": 35,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000599739
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 1,
+          "inclusive_ns": 536470,
+          "input_bytes": 8730,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.00053647
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 35,
+          "inclusive_ns": 492363,
+          "input_bytes": 2873,
+          "unique_inputs": 35,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000492363
+        },
+        {
+          "kind": "owner_file_scopes_query",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 6861,
+          "calls": 234,
+          "inclusive_ns": 179142,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 233,
+          "inclusive_s": 0.000179142
+        },
+        {
+          "kind": "shadow_scope_build",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 144,
+          "calls": 1,
+          "inclusive_ns": 147993,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000147993
+        }
+      ]
+    },
+    {
+      "workload": "sync-16-single",
+      "mode": "full",
+      "wall_s": 0.10678651600028388,
+      "sites": [
+        {
+          "kind": "executable_query",
+          "file": "crates/ripr/src/analysis/classify/related_tests.rs",
+          "line": 3126,
+          "calls": 21515,
+          "inclusive_ns": 151288476,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 21514,
+          "inclusive_s": 0.151288476
+        },
+        {
+          "kind": "shadow_answer_miss",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 9924,
+          "calls": 768,
+          "inclusive_ns": 16607931,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 767,
+          "inclusive_s": 0.016607931
+        },
+        {
+          "kind": "fragment_query",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 73,
+          "calls": 30044,
+          "inclusive_ns": 5650572,
+          "input_bytes": 1883154,
+          "unique_inputs": 6,
+          "repeated_calls": 30038,
+          "inclusive_s": 0.005650572
+        },
+        {
+          "kind": "name_scopes_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 242,
+          "calls": 48,
+          "inclusive_ns": 3936110,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 47,
+          "inclusive_s": 0.00393611
+        },
+        {
+          "kind": "declaration_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 213,
+          "calls": 48,
+          "inclusive_ns": 3403809,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 47,
+          "inclusive_s": 0.003403809
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 1107,
+          "calls": 2,
+          "inclusive_ns": 1720768,
+          "input_bytes": 17676,
+          "unique_inputs": 1,
+          "repeated_calls": 1,
+          "inclusive_s": 0.001720768
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 1107,
+          "calls": 2,
+          "inclusive_ns": 1289598,
+          "input_bytes": 17676,
+          "unique_inputs": 1,
+          "repeated_calls": 1,
+          "inclusive_s": 0.001289598
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 1,
+          "inclusive_ns": 796312,
+          "input_bytes": 8838,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000796312
+        },
+        {
+          "kind": "owner_file_scopes_query",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 6861,
+          "calls": 849,
+          "inclusive_ns": 622494,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 848,
+          "inclusive_s": 0.000622494
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 481,
+          "calls": 1,
+          "inclusive_ns": 608829,
+          "input_bytes": 8838,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000608829
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 1,
+          "inclusive_ns": 595509,
+          "input_bytes": 8838,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000595509
+        },
+        {
+          "kind": "shadow_scope_build",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 144,
+          "calls": 1,
+          "inclusive_ns": 145109,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000145109
+        },
+        {
+          "kind": "fragment_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 79,
+          "calls": 6,
+          "inclusive_ns": 85702,
+          "input_bytes": 379,
+          "unique_inputs": 6,
+          "repeated_calls": 0,
+          "inclusive_s": 8.5702e-05
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 6,
+          "inclusive_ns": 82856,
+          "input_bytes": 379,
+          "unique_inputs": 6,
+          "repeated_calls": 0,
+          "inclusive_s": 8.2856e-05
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 6,
+          "inclusive_ns": 66801,
+          "input_bytes": 379,
+          "unique_inputs": 6,
+          "repeated_calls": 0,
+          "inclusive_s": 6.6801e-05
+        }
+      ]
+    },
+    {
+      "workload": "sync-16-single",
+      "mode": "compact",
+      "wall_s": 0.15412507499968342,
+      "sites": [
+        {
+          "kind": "executable_query",
+          "file": "crates/ripr/src/analysis/classify/related_tests.rs",
+          "line": 3126,
+          "calls": 19416,
+          "inclusive_ns": 96831473,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 19415,
+          "inclusive_s": 0.096831473
+        },
+        {
+          "kind": "shadow_answer_miss",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 9924,
+          "calls": 768,
+          "inclusive_ns": 14130942,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 767,
+          "inclusive_s": 0.014130942
+        },
+        {
+          "kind": "name_scopes_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 242,
+          "calls": 48,
+          "inclusive_ns": 4359760,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 47,
+          "inclusive_s": 0.00435976
+        },
+        {
+          "kind": "declaration_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 213,
+          "calls": 48,
+          "inclusive_ns": 3715824,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 47,
+          "inclusive_s": 0.003715824
+        },
+        {
+          "kind": "fragment_query",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 73,
+          "calls": 27112,
+          "inclusive_ns": 1405710,
+          "input_bytes": 1699392,
+          "unique_inputs": 6,
+          "repeated_calls": 27106,
+          "inclusive_s": 0.00140571
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 1,
+          "inclusive_ns": 812497,
+          "input_bytes": 8838,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000812497
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 481,
+          "calls": 1,
+          "inclusive_ns": 620888,
+          "input_bytes": 8838,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000620888
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 1,
+          "inclusive_ns": 618874,
+          "input_bytes": 8838,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000618874
+        },
+        {
+          "kind": "owner_file_scopes_query",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 6861,
+          "calls": 768,
+          "inclusive_ns": 167782,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 767,
+          "inclusive_s": 0.000167782
+        },
+        {
+          "kind": "shadow_scope_build",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 144,
+          "calls": 1,
+          "inclusive_ns": 144268,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000144268
+        },
+        {
+          "kind": "fragment_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 79,
+          "calls": 6,
+          "inclusive_ns": 77327,
+          "input_bytes": 379,
+          "unique_inputs": 6,
+          "repeated_calls": 0,
+          "inclusive_s": 7.7327e-05
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 6,
+          "inclusive_ns": 75393,
+          "input_bytes": 379,
+          "unique_inputs": 6,
+          "repeated_calls": 0,
+          "inclusive_s": 7.5393e-05
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 6,
+          "inclusive_ns": 61802,
+          "input_bytes": 379,
+          "unique_inputs": 6,
+          "repeated_calls": 0,
+          "inclusive_s": 6.1802e-05
+        }
+      ]
+    },
+    {
+      "workload": "sync-16-split",
+      "mode": "full",
+      "wall_s": 0.053677150000112306,
+      "sites": [
+        {
+          "kind": "executable_query",
+          "file": "crates/ripr/src/analysis/classify/related_tests.rs",
+          "line": 3126,
+          "calls": 855,
+          "inclusive_ns": 34144111,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 854,
+          "inclusive_s": 0.034144111
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/owner_pin.rs",
+          "line": 1330,
+          "calls": 268,
+          "inclusive_ns": 5262650,
+          "input_bytes": 53064,
+          "unique_inputs": 1,
+          "repeated_calls": 267,
+          "inclusive_s": 0.00526265
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/owner_pin.rs",
+          "line": 1330,
+          "calls": 268,
+          "inclusive_ns": 4266234,
+          "input_bytes": 53064,
+          "unique_inputs": 1,
+          "repeated_calls": 267,
+          "inclusive_s": 0.004266234
+        },
+        {
+          "kind": "owner_file_scopes_query",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 6861,
+          "calls": 804,
+          "inclusive_ns": 2583540,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 803,
+          "inclusive_s": 0.00258354
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 1107,
+          "calls": 21,
+          "inclusive_ns": 2104440,
+          "input_bytes": 11601,
+          "unique_inputs": 16,
+          "repeated_calls": 5,
+          "inclusive_s": 0.00210444
+        },
+        {
+          "kind": "shadow_answer_miss",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 9924,
+          "calls": 768,
+          "inclusive_ns": 2020739,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 767,
+          "inclusive_s": 0.002020739
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 16,
+          "inclusive_ns": 1904386,
+          "input_bytes": 8838,
+          "unique_inputs": 16,
+          "repeated_calls": 0,
+          "inclusive_s": 0.001904386
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 1107,
+          "calls": 21,
+          "inclusive_ns": 1723355,
+          "input_bytes": 11601,
+          "unique_inputs": 16,
+          "repeated_calls": 5,
+          "inclusive_s": 0.001723355
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 16,
+          "inclusive_ns": 1581687,
+          "input_bytes": 8838,
+          "unique_inputs": 16,
+          "repeated_calls": 0,
+          "inclusive_s": 0.001581687
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 481,
+          "calls": 17,
+          "inclusive_ns": 1477089,
+          "input_bytes": 9036,
+          "unique_inputs": 17,
+          "repeated_calls": 0,
+          "inclusive_s": 0.001477089
+        },
+        {
+          "kind": "fragment_query",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 73,
+          "calls": 1123,
+          "inclusive_ns": 963599,
+          "input_bytes": 73365,
+          "unique_inputs": 5,
+          "repeated_calls": 1118,
+          "inclusive_s": 0.000963599
+        },
+        {
+          "kind": "name_scopes_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 242,
+          "calls": 48,
+          "inclusive_ns": 769471,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 47,
+          "inclusive_s": 0.000769471
+        },
+        {
+          "kind": "declaration_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 213,
+          "calls": 48,
+          "inclusive_ns": 483392,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 47,
+          "inclusive_s": 0.000483392
+        },
+        {
+          "kind": "shadow_scope_build",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 144,
+          "calls": 16,
+          "inclusive_ns": 355807,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 15,
+          "inclusive_s": 0.000355807
+        },
+        {
+          "kind": "fragment_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 79,
+          "calls": 5,
+          "inclusive_ns": 107953,
+          "input_bytes": 332,
+          "unique_inputs": 5,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000107953
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 5,
+          "inclusive_ns": 103646,
+          "input_bytes": 332,
+          "unique_inputs": 5,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000103646
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 5,
+          "inclusive_ns": 85740,
+          "input_bytes": 332,
+          "unique_inputs": 5,
+          "repeated_calls": 0,
+          "inclusive_s": 8.574e-05
+        }
+      ]
+    },
+    {
+      "workload": "sync-16-split",
+      "mode": "compact",
+      "wall_s": 0.07235313300043344,
+      "sites": [
+        {
+          "kind": "executable_query",
+          "file": "crates/ripr/src/analysis/classify/related_tests.rs",
+          "line": 3126,
+          "calls": 816,
+          "inclusive_ns": 44354858,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 815,
+          "inclusive_s": 0.044354858
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/owner_pin.rs",
+          "line": 1330,
+          "calls": 256,
+          "inclusive_ns": 5272413,
+          "input_bytes": 50688,
+          "unique_inputs": 1,
+          "repeated_calls": 255,
+          "inclusive_s": 0.005272413
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/owner_pin.rs",
+          "line": 1330,
+          "calls": 256,
+          "inclusive_ns": 4429263,
+          "input_bytes": 50688,
+          "unique_inputs": 1,
+          "repeated_calls": 255,
+          "inclusive_s": 0.004429263
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 481,
+          "calls": 17,
+          "inclusive_ns": 2285661,
+          "input_bytes": 9036,
+          "unique_inputs": 17,
+          "repeated_calls": 0,
+          "inclusive_s": 0.002285661
+        },
+        {
+          "kind": "shadow_answer_miss",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 9924,
+          "calls": 768,
+          "inclusive_ns": 2164422,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 767,
+          "inclusive_s": 0.002164422
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 16,
+          "inclusive_ns": 1202205,
+          "input_bytes": 8838,
+          "unique_inputs": 16,
+          "repeated_calls": 0,
+          "inclusive_s": 0.001202205
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 16,
+          "inclusive_ns": 964785,
+          "input_bytes": 8838,
+          "unique_inputs": 16,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000964785
+        },
+        {
+          "kind": "owner_file_scopes_query",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 6861,
+          "calls": 768,
+          "inclusive_ns": 622248,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 767,
+          "inclusive_s": 0.000622248
+        },
+        {
+          "kind": "name_scopes_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 242,
+          "calls": 48,
+          "inclusive_ns": 454325,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 47,
+          "inclusive_s": 0.000454325
+        },
+        {
+          "kind": "declaration_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 213,
+          "calls": 48,
+          "inclusive_ns": 256756,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 47,
+          "inclusive_s": 0.000256756
+        },
+        {
+          "kind": "shadow_scope_build",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 144,
+          "calls": 16,
+          "inclusive_ns": 194695,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 15,
+          "inclusive_s": 0.000194695
+        },
+        {
+          "kind": "fragment_query",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 73,
+          "calls": 1072,
+          "inclusive_ns": 147974,
+          "input_bytes": 70032,
+          "unique_inputs": 5,
+          "repeated_calls": 1067,
+          "inclusive_s": 0.000147974
+        },
+        {
+          "kind": "fragment_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 79,
+          "calls": 5,
+          "inclusive_ns": 59901,
+          "input_bytes": 332,
+          "unique_inputs": 5,
+          "repeated_calls": 0,
+          "inclusive_s": 5.9901e-05
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 5,
+          "inclusive_ns": 58346,
+          "input_bytes": 332,
+          "unique_inputs": 5,
+          "repeated_calls": 0,
+          "inclusive_s": 5.8346e-05
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 5,
+          "inclusive_ns": 47801,
+          "input_bytes": 332,
+          "unique_inputs": 5,
+          "repeated_calls": 0,
+          "inclusive_s": 4.7801e-05
+        }
+      ]
+    },
+    {
+      "workload": "sync-64-split",
+      "mode": "full",
+      "wall_s": 0.6090429120004046,
+      "sites": [
+        {
+          "kind": "executable_query",
+          "file": "crates/ripr/src/analysis/classify/related_tests.rs",
+          "line": 3126,
+          "calls": 12480,
+          "inclusive_ns": 1384078751,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 12479,
+          "inclusive_s": 1.384078751
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/owner_pin.rs",
+          "line": 1330,
+          "calls": 4096,
+          "inclusive_ns": 229756455,
+          "input_bytes": 3366912,
+          "unique_inputs": 1,
+          "repeated_calls": 4095,
+          "inclusive_s": 0.229756455
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/owner_pin.rs",
+          "line": 1330,
+          "calls": 4096,
+          "inclusive_ns": 200332103,
+          "input_bytes": 3366912,
+          "unique_inputs": 1,
+          "repeated_calls": 4095,
+          "inclusive_s": 0.200332103
+        },
+        {
+          "kind": "shadow_answer_miss",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 9924,
+          "calls": 12288,
+          "inclusive_ns": 25046479,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 12287,
+          "inclusive_s": 0.025046479
+        },
+        {
+          "kind": "owner_file_scopes_query",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 6861,
+          "calls": 12288,
+          "inclusive_ns": 11026563,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 12287,
+          "inclusive_s": 0.011026563
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 481,
+          "calls": 65,
+          "inclusive_ns": 8803352,
+          "input_bytes": 36204,
+          "unique_inputs": 65,
+          "repeated_calls": 0,
+          "inclusive_s": 0.008803352
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 1107,
+          "calls": 64,
+          "inclusive_ns": 7164290,
+          "input_bytes": 35382,
+          "unique_inputs": 64,
+          "repeated_calls": 0,
+          "inclusive_s": 0.00716429
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 1107,
+          "calls": 64,
+          "inclusive_ns": 5873109,
+          "input_bytes": 35382,
+          "unique_inputs": 64,
+          "repeated_calls": 0,
+          "inclusive_s": 0.005873109
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 64,
+          "inclusive_ns": 5536160,
+          "input_bytes": 35382,
+          "unique_inputs": 64,
+          "repeated_calls": 0,
+          "inclusive_s": 0.00553616
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 64,
+          "inclusive_ns": 4491650,
+          "input_bytes": 35382,
+          "unique_inputs": 64,
+          "repeated_calls": 0,
+          "inclusive_s": 0.00449165
+        },
+        {
+          "kind": "fragment_query",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 73,
+          "calls": 16576,
+          "inclusive_ns": 2753681,
+          "input_bytes": 1081920,
+          "unique_inputs": 5,
+          "repeated_calls": 16571,
+          "inclusive_s": 0.002753681
+        },
+        {
+          "kind": "name_scopes_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 242,
+          "calls": 192,
+          "inclusive_ns": 1833478,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 191,
+          "inclusive_s": 0.001833478
+        },
+        {
+          "kind": "declaration_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 213,
+          "calls": 192,
+          "inclusive_ns": 1329241,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 191,
+          "inclusive_s": 0.001329241
+        },
+        {
+          "kind": "shadow_scope_build",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 144,
+          "calls": 64,
+          "inclusive_ns": 846512,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 63,
+          "inclusive_s": 0.000846512
+        },
+        {
+          "kind": "fragment_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 79,
+          "calls": 5,
+          "inclusive_ns": 83637,
+          "input_bytes": 332,
+          "unique_inputs": 5,
+          "repeated_calls": 0,
+          "inclusive_s": 8.3637e-05
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 5,
+          "inclusive_ns": 81584,
+          "input_bytes": 332,
+          "unique_inputs": 5,
+          "repeated_calls": 0,
+          "inclusive_s": 8.1584e-05
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 5,
+          "inclusive_ns": 65849,
+          "input_bytes": 332,
+          "unique_inputs": 5,
+          "repeated_calls": 0,
+          "inclusive_s": 6.5849e-05
+        }
+      ]
+    },
+    {
+      "workload": "sync-64-split",
+      "mode": "compact",
+      "wall_s": 2.018408994999845,
+      "sites": [
+        {
+          "kind": "executable_query",
+          "file": "crates/ripr/src/analysis/classify/related_tests.rs",
+          "line": 3126,
+          "calls": 12480,
+          "inclusive_ns": 1714195639,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 12479,
+          "inclusive_s": 1.714195639
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/owner_pin.rs",
+          "line": 1330,
+          "calls": 4096,
+          "inclusive_ns": 246760250,
+          "input_bytes": 3366912,
+          "unique_inputs": 1,
+          "repeated_calls": 4095,
+          "inclusive_s": 0.24676025
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/owner_pin.rs",
+          "line": 1330,
+          "calls": 4096,
+          "inclusive_ns": 198657027,
+          "input_bytes": 3366912,
+          "unique_inputs": 1,
+          "repeated_calls": 4095,
+          "inclusive_s": 0.198657027
+        },
+        {
+          "kind": "shadow_answer_miss",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 9924,
+          "calls": 12288,
+          "inclusive_ns": 28723916,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 12287,
+          "inclusive_s": 0.028723916
+        },
+        {
+          "kind": "owner_file_scopes_query",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 6861,
+          "calls": 12288,
+          "inclusive_ns": 11369356,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 12287,
+          "inclusive_s": 0.011369356
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 64,
+          "inclusive_ns": 5591036,
+          "input_bytes": 35382,
+          "unique_inputs": 64,
+          "repeated_calls": 0,
+          "inclusive_s": 0.005591036
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 481,
+          "calls": 65,
+          "inclusive_ns": 5141643,
+          "input_bytes": 36204,
+          "unique_inputs": 65,
+          "repeated_calls": 0,
+          "inclusive_s": 0.005141643
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 64,
+          "inclusive_ns": 4557685,
+          "input_bytes": 35382,
+          "unique_inputs": 64,
+          "repeated_calls": 0,
+          "inclusive_s": 0.004557685
+        },
+        {
+          "kind": "name_scopes_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 242,
+          "calls": 192,
+          "inclusive_ns": 1874062,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 191,
+          "inclusive_s": 0.001874062
+        },
+        {
+          "kind": "fragment_query",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 73,
+          "calls": 16576,
+          "inclusive_ns": 1606811,
+          "input_bytes": 1081920,
+          "unique_inputs": 5,
+          "repeated_calls": 16571,
+          "inclusive_s": 0.001606811
+        },
+        {
+          "kind": "declaration_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 213,
+          "calls": 192,
+          "inclusive_ns": 1208833,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 191,
+          "inclusive_s": 0.001208833
+        },
+        {
+          "kind": "shadow_scope_build",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 144,
+          "calls": 64,
+          "inclusive_ns": 907521,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 63,
+          "inclusive_s": 0.000907521
+        },
+        {
+          "kind": "fragment_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 79,
+          "calls": 5,
+          "inclusive_ns": 60662,
+          "input_bytes": 332,
+          "unique_inputs": 5,
+          "repeated_calls": 0,
+          "inclusive_s": 6.0662e-05
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 5,
+          "inclusive_ns": 59208,
+          "input_bytes": 332,
+          "unique_inputs": 5,
+          "repeated_calls": 0,
+          "inclusive_s": 5.9208e-05
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 5,
+          "inclusive_ns": 47642,
+          "input_bytes": 332,
+          "unique_inputs": 5,
+          "repeated_calls": 0,
+          "inclusive_s": 4.7642e-05
+        }
+      ]
+    },
+    {
+      "workload": "sync-64-single",
+      "mode": "full",
+      "wall_s": 3.6960404390001713,
+      "sites": [
+        {
+          "kind": "executable_query",
+          "file": "crates/ripr/src/analysis/classify/related_tests.rs",
+          "line": 3126,
+          "calls": 1320948,
+          "inclusive_ns": 10109100874,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 1320947,
+          "inclusive_s": 10.109100874
+        },
+        {
+          "kind": "shadow_answer_miss",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 9924,
+          "calls": 12288,
+          "inclusive_ns": 1120591458,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 12287,
+          "inclusive_s": 1.120591458
+        },
+        {
+          "kind": "fragment_query",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 73,
+          "calls": 1848411,
+          "inclusive_ns": 206275482,
+          "input_bytes": 115703433,
+          "unique_inputs": 6,
+          "repeated_calls": 1848405,
+          "inclusive_s": 0.206275482
+        },
+        {
+          "kind": "name_scopes_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 242,
+          "calls": 192,
+          "inclusive_ns": 60438714,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 191,
+          "inclusive_s": 0.060438714
+        },
+        {
+          "kind": "declaration_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 213,
+          "calls": 192,
+          "inclusive_ns": 54626596,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 191,
+          "inclusive_s": 0.054626596
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 1107,
+          "calls": 4,
+          "inclusive_ns": 17520387,
+          "input_bytes": 141528,
+          "unique_inputs": 1,
+          "repeated_calls": 3,
+          "inclusive_s": 0.017520387
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 1107,
+          "calls": 4,
+          "inclusive_ns": 13452254,
+          "input_bytes": 141528,
+          "unique_inputs": 1,
+          "repeated_calls": 3,
+          "inclusive_s": 0.013452254
+        },
+        {
+          "kind": "owner_file_scopes_query",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 6861,
+          "calls": 12555,
+          "inclusive_ns": 3637350,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 12554,
+          "inclusive_s": 0.00363735
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 1,
+          "inclusive_ns": 3072039,
+          "input_bytes": 35382,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.003072039
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 481,
+          "calls": 1,
+          "inclusive_ns": 2354656,
+          "input_bytes": 35382,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.002354656
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 1,
+          "inclusive_ns": 2281295,
+          "input_bytes": 35382,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.002281295
+        },
+        {
+          "kind": "shadow_scope_build",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 144,
+          "calls": 1,
+          "inclusive_ns": 761019,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000761019
+        },
+        {
+          "kind": "fragment_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 79,
+          "calls": 6,
+          "inclusive_ns": 105069,
+          "input_bytes": 379,
+          "unique_inputs": 6,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000105069
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 6,
+          "inclusive_ns": 102847,
+          "input_bytes": 379,
+          "unique_inputs": 6,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000102847
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 6,
+          "inclusive_ns": 85279,
+          "input_bytes": 379,
+          "unique_inputs": 6,
+          "repeated_calls": 0,
+          "inclusive_s": 8.5279e-05
+        }
+      ]
+    },
+    {
+      "workload": "sync-64-single",
+      "mode": "compact",
+      "wall_s": 9.64117828200051,
+      "sites": [
+        {
+          "kind": "executable_query",
+          "file": "crates/ripr/src/analysis/classify/related_tests.rs",
+          "line": 3126,
+          "calls": 1292640,
+          "inclusive_ns": 7512867896,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 1292639,
+          "inclusive_s": 7.512867896
+        },
+        {
+          "kind": "shadow_answer_miss",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 9924,
+          "calls": 12288,
+          "inclusive_ns": 846192172,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 12287,
+          "inclusive_s": 0.846192172
+        },
+        {
+          "kind": "fragment_query",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 73,
+          "calls": 1808800,
+          "inclusive_ns": 99780223,
+          "input_bytes": 113223936,
+          "unique_inputs": 6,
+          "repeated_calls": 1808794,
+          "inclusive_s": 0.099780223
+        },
+        {
+          "kind": "name_scopes_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 242,
+          "calls": 192,
+          "inclusive_ns": 63209631,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 191,
+          "inclusive_s": 0.063209631
+        },
+        {
+          "kind": "declaration_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 213,
+          "calls": 192,
+          "inclusive_ns": 51381448,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 191,
+          "inclusive_s": 0.051381448
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/ra.rs",
+          "line": 481,
+          "calls": 1,
+          "inclusive_ns": 3860230,
+          "input_bytes": 35382,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.00386023
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 1,
+          "inclusive_ns": 2919238,
+          "input_bytes": 35382,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.002919238
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 129,
+          "calls": 1,
+          "inclusive_ns": 2157659,
+          "input_bytes": 35382,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.002157659
+        },
+        {
+          "kind": "owner_file_scopes_query",
+          "file": "crates/ripr/src/analysis/classify/owner_pin.rs",
+          "line": 6861,
+          "calls": 12288,
+          "inclusive_ns": 1726441,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 12287,
+          "inclusive_s": 0.001726441
+        },
+        {
+          "kind": "shadow_scope_build",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 144,
+          "calls": 1,
+          "inclusive_ns": 579595,
+          "input_bytes": 0,
+          "unique_inputs": 1,
+          "repeated_calls": 0,
+          "inclusive_s": 0.000579595
+        },
+        {
+          "kind": "fragment_miss",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 79,
+          "calls": 6,
+          "inclusive_ns": 91718,
+          "input_bytes": 379,
+          "unique_inputs": 6,
+          "repeated_calls": 0,
+          "inclusive_s": 9.1718e-05
+        },
+        {
+          "kind": "parse_clean_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 6,
+          "inclusive_ns": 89515,
+          "input_bytes": 379,
+          "unique_inputs": 6,
+          "repeated_calls": 0,
+          "inclusive_s": 8.9515e-05
+        },
+        {
+          "kind": "parse_source_file",
+          "file": "crates/ripr/src/analysis/syntax/source_snapshot.rs",
+          "line": 80,
+          "calls": 6,
+          "inclusive_ns": 74533,
+          "input_bytes": 379,
+          "unique_inputs": 6,
+          "repeated_calls": 0,
+          "inclusive_s": 7.4533e-05
+        }
+      ]
+    }
+  ],
+  "isolated_removal": {
+    "parent": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+    "experiment": "13a423c05a5eaba2bc9dc0d1c7d91a10aa50eb39",
+    "tree": "a06b1b1957ea5c72acce34d40dd6c7ed3fbeb5f1",
+    "binary": "/workspace/shadow8004/bin/unit-removal",
+    "bytes": 247102840,
+    "sha256": "b6d2a35b3032f1c6c7d87d2ba36bc38cd94d5db35109f9c297824865e637b529",
+    "compiler_artifact": {
+      "reason": "compiler-artifact",
+      "package_id": "path+file:///workspace/shadow8004/removal/crates/ripr#0.11.0",
+      "manifest_path": "/workspace/shadow8004/removal/crates/ripr/Cargo.toml",
+      "target": {
+        "kind": [
+          "lib"
+        ],
+        "crate_types": [
+          "lib"
+        ],
+        "name": "ripr",
+        "src_path": "/workspace/shadow8004/removal/crates/ripr/src/lib.rs",
+        "edition": "2024",
+        "doc": true,
+        "doctest": true,
+        "test": true
+      },
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": 0,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": true
+      },
+      "features": [
+        "default",
+        "lang-python",
+        "lang-rust",
+        "lang-typescript"
+      ],
+      "filenames": [
+        "/workspace/shadow8004/target-dev/debug/deps/ripr-67c20de708634f70"
+      ],
+      "executable": "/workspace/shadow8004/target-dev/debug/deps/ripr-67c20de708634f70",
+      "fresh": false
+    },
+    "patch_sha256": "071ae57c9db791c766c0b8a90ba1b86d8de3f7c8d5e35950c68364b09b834248",
+    "results": [
+      {
+        "test": "module_shadow_snapshot_shares_facts_and_complete_answers",
+        "argv": [
+          "/workspace/shadow8004/bin/unit-removal",
+          "module_shadow_snapshot_shares_facts_and_complete_answers",
+          "--test-threads=1"
+        ],
+        "exit": 101,
+        "intended_failure": true,
+        "matched_diagnostic": "identical shadow queries must compute once"
+      },
+      {
+        "test": "fragment_parses_share_only_exact_bytes_and_clones_start_empty",
+        "argv": [
+          "/workspace/shadow8004/bin/unit-removal",
+          "fragment_parses_share_only_exact_bytes_and_clones_start_empty",
+          "--test-threads=1"
+        ],
+        "exit": 101,
+        "intended_failure": true,
+        "matched_diagnostic": "assertion failed: std::ptr::eq"
+      }
+    ]
+  },
+  "independent_review_files": [
+    "independent-review/candidate-unit-audit.json",
+    "independent-review/profile-raw-audit.json",
+    "independent-review/release-raw-audit.json",
+    "independent-review/removal-audit.json",
+    "independent-review/retained-evidence-audit.json"
+  ],
+  "source_composition": {
+    "observed_utc": "2026-10-16T04:01:50.082633+00:00",
+    "source_head": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+    "source_tree": "da4222d49d37aa82662003e0b6ef4ca8715dbac3",
+    "integrated_basis": "f2ba9522267e88dfb03e3006e83129dfd2a8bb72",
+    "observed_main": "97cc171257fd76a1b3b9e79cc41ad949e0ecc861",
+    "composition_tree": "aa1da91442e93efce823769a1951d4e63ccf63c9",
+    "composition_operation": "git merge-tree --write-tree",
+    "conflicts": false,
+    "executed": false,
+    "source_integrated_with_main": false,
+    "judgment": "Main movements unrelated; equivalent shadow repair not on main, clean composition; behind-only does not require integration. Current source validation is not latest-main/hosted qualification.",
+    "previous_observations": [
+      {
+        "observed_utc": "2026-10-16T03:49:50.698478+00:00",
+        "source_head": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+        "source_tree": "da4222d49d37aa82662003e0b6ef4ca8715dbac3",
+        "integrated_basis": "f2ba9522267e88dfb03e3006e83129dfd2a8bb72",
+        "observed_main": "b772d9e13cafcdc84a19ea77d9b90fbc6cb91ecc",
+        "composition_tree": "729be0a2ca639fa4c144e3fa01dfae2e07da2fae",
+        "composition_operation": "git merge-tree --write-tree",
+        "conflicts": false,
+        "executed": false,
+        "source_integrated_with_main": false,
+        "judgment": "Main movements unrelated; equivalent shadow repair not on main, clean composition; behind-only does not require integration. Current source validation is not latest-main/hosted qualification."
+      }
+    ],
+    "github_observed_merge": {
+      "commit": "086e9012f13d6ed1bcdfdb26b89796c38404e5f9",
+      "tree": "aa1da91442e93efce823769a1951d4e63ccf63c9",
+      "parents": [
+        "97cc171257fd76a1b3b9e79cc41ad949e0ecc861",
+        "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+      ],
+      "executed": false,
+      "hosted_actual_checkout_observed": false
+    }
+  },
+  "preserved_failures": [
+    "initial local publication staging copied archive before packaging completed; verifier rejected checksum, failed local commit4e815 retained without push; final packet staged only after terminal verification",
+    "baseline worktree doctor behind-main failure retained; no material main integration prerequisite identified",
+    "baseline parallel release build interrupted at memory pressure; serial exact 774 build reproduced retained digest",
+    "initial workload --locked attempt lacked lock; preserved and generated offline lock before native replay",
+    "new use-alias test oracle corrected to existing file_renames_to authority before execution",
+    "246 test-only green.as_ref API compile failure; fixed8e",
+    "test build begun during test-only commit had246 dirty stamp; deliberately interrupted and clean8e rebuilt"
+  ],
+  "remaining_limits": [
+    "Three paired descriptive repeats, no general no-regression/full performance qualification, no new a5/base98 equivalence.",
+    "Inclusive profile spans overlap: never sum or claim exclusive wall/CPU attribution. Instrumented elapsed time is not release benchmark time.",
+    "Broader runtime evidence author-executed and independently data-audited; independent reviewer reused author-built frozen binaries for eight controls and memo-removal failures, not an independent build/full rerun.",
+    "Latest-main/hosted actual checkout, native Windows and full workspace runtime qualification remain separate.",
+    "Honesty corpus 324 pass/0 fail/1 pinned-external not run; precommit zero skips is a separate denominator.",
+    "Existing unsupported async, closures/items, lexical/module ambiguities and bounded resolver limits remain. Index-local memo memory follows unique source/fragment/query cardinality; per-query AST walks and short-lived owner syntax scans remain.",
+    "Prior censored runs, accuracy costs, setup/compiler failures and resource interruptions retained, no corpus rebless.",
+    "Open Draft REVIEW_INCOMPLETE; no Ready/merge/thread resolution/release/deploy/bot contact. Issue8005 not read or retried."
+  ]
+}

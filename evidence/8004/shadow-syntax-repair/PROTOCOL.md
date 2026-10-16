@@ -1,0 +1,17 @@
+# Next measured immutable-syntax repair — Draft8004
+
+Frozen source baseline77474e347bbdd8ef2101b7f9865e65f094df44c1; candidate8e0444b1a62ead18584d40b18278c6e8716dc56c. Integrated basis remainsf2ba9522267e88dfb03e3006e83129dfd2a8bb72. These source subjects are distinct from any main composition or GitHub merge object; no latest-main or hosted-checkout qualification is inferred.
+
+Protocol recorded before timed execution: unchanged locked Rust1.95.0/default-feature release opt3/LTO/codegen-units1/strip profile. Linux four-CPU quota,16GiB, Rayon4. Source and packet ownership verified before editing; no overlapping source writer. Keep Draft; fresh review required. No truth/golden refresh.
+
+Recover both immutable prior packets and verify every published checksum and complete archive member bytes/sizes/modes before consuming. Preserve all prior failures, censoring and limitations; timestamp-rounding limits stay with their original receipt. Original witnesses are inputs, not new candidate results.
+
+Run all63 immutable native originals and owner mutants with nonempty test inventory. Replay189 full/fresh-compact/diff reports on the new exact-head executable and repeat the baseline reports with separate cold analyzer caches. Compare complete reports after removing only artifact metadata and explicitly rebasing replay-root paths. Preserve unsupported native-positive static refusals and all negative reach/grip limits. Replay the12 same-path sync→async→sync reused/fresh-cache controls. Verify the complete fixtures/corpus tree remains identical.
+
+Run three alternating AB/BA pairs for each retained fixture-mix16, sync16-single/split and sync64-single/split workload, full/compact, cold with immediate warm partner:120 processes total. Preserve timeout120, monotonic time, raw stdout/stderr, phase/resource traces and separate variant caches. Cold means analyzer-cache-cold, not OS-cold. No setup/build/profile overlaps any timed sample. Native-check every workload before timing; ordered single/split body bytes must match. Record medians, ranges, MAD and paired ratios; n=3 is descriptive, not general no-regression or full qualification. Do not add a new a5/base98 ratio.
+
+Run a separate isolated instrumented release on the same10 workload/mode combinations, timeout180. Retain experiment parent/tree/patch/binary identity. Require every instrumented report to equal the unmodified candidate after artifact removal. Count complete-source parsing, fragment hits/misses and shared shadow-scope builds/answer misses. Inclusive spans overlap; do not sum them or claim exclusive wall/CPU attribution.
+
+Candidate validation: inherited baseline libcheck and15-gate check-fast; retain worktree-doctor behind-main failure without forcing unrelated integration. Candidate sharing/identity/invalidation/shadow regressions plus an isolated memo-removal runtime control; affected unit selections,14 public-path integrations, applicable check-fast/precommit, honesty corpus and retained golden checks. Distinguish test setup/instrument failures from assertion/source failures. Bind every receipt to exact source and executed compiler artifact. Any source change refreshes affected dimensions.
+
+Serialize heavy compilations after initial memory-pressure interruption; keep that interrupted baseline build. Reserve6GiB free overlay,2GiB tmp; peak additional admission12GiB recorded in resource-admission.md. Preserve inherited target/unknown resources. Retain task-owned source, binaries and negative witnesses for review; no destructive cleanup.
