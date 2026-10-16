@@ -1,0 +1,4755 @@
+use crate::domain::{OracleKind, OracleStrength, SymbolId};
+#[cfg(test)]
+use ra_ap_syntax::Edition;
+use ra_ap_syntax::{
+    AstNode, SourceFile, TextSize,
+    ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasName},
+};
+#[cfg(test)]
+mod module_scope_walk_tests;
+mod property_macros;
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use super::super::extract::ShadowAuthority;
+use super::super::extract::extract_pattern_words;
+use super::super::facts::FileFacts;
+use super::super::facts::FunctionContainer;
+use super::super::facts::FunctionImplContext;
+use super::super::facts::FunctionItemFact;
+use super::super::facts::FunctionSourceRole;
+use super::super::facts::LetBindingFact;
+use super::super::facts::ModuleDeclarationFact;
+use super::super::facts::ModulePathTarget;
+use super::super::facts::SourceRoleProvenance;
+use super::super::facts::cfg_predicates;
+use super::{
+    RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange, parse_clean_source_file,
+    rust_nesting_refusal,
+};
+use crate::analysis::rust_index::{
+    FunctionFact, OracleFact, ProbeShapeFact, ProbeShapeKind, SourceText, TestFact,
+    classify_assertion, err_return_guard_oracles, extract_call_facts, extract_identifier_tokens,
+    extract_line_scanned_oracles, extract_literal_facts, extract_return_facts,
+    guarded_result_match_scan_with_shadow_authority, is_unwrap_err_bound_error_assertion,
+    unwrap_err_bound_variables,
+};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RustIncludeDirective {
+    pub(crate) line: usize,
+    pub(crate) expression: String,
+    pub(crate) literal_path: Option<PathBuf>,
+    pub(crate) is_file_level: bool,
+    /// True when the `include!` invocation's own attributes structurally
+    /// require a test build (`#[cfg(test)] include!(...)`) — the invocation
+    /// then only exists in test builds (#3533).
+    pub(crate) requires_test: bool,
+}
+
+/// Extract actual `include!` macro nodes from parser-backed Rust syntax.
+/// Comments, string contents, and similarly named macros never enter this
+/// producer. Non-literal token trees remain explicit unsupported directives.
+pub(crate) fn rust_include_directives(
+    _path: &Path,
+    text: &str,
+    max_directives: usize,
+) -> Result<Vec<RustIncludeDirective>, String> {
+    let Some(parse) = parse_clean_source_file(text) else {
+        return Err("rust_include_parent_parse_unavailable".to_string());
+    };
+    let line_index = LineIndex::new(text);
+    let mut directives = Vec::new();
+    for macro_call in parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+    {
+        // The macro-call node spans its attributes too, so the call's own
+        // text starts at its path token: an attributed invocation
+        // (`#[cfg(test)] include!(...)`) would otherwise carry the attribute
+        // prefix into the callee check and be silently dropped.
+        let call_range = macro_call.syntax().text_range();
+        let call_start = macro_call
+            .path()
+            .map(|path| path.syntax().text_range().start())
+            .unwrap_or(call_range.start());
+        let expression = slice_text(text, call_start, call_range.end());
+        let Some((callee, _)) = expression.split_once('!') else {
+            continue;
+        };
+        if callee.trim() != "include" {
+            continue;
+        }
+        let attributes = macro_call
+            .attrs()
+            .map(|attr| attr.syntax().text().to_string())
+            .collect::<Vec<_>>();
+        directives.push(RustIncludeDirective {
+            line: line_index.line(call_start),
+            literal_path: include_literal_path(&expression),
+            is_file_level: !macro_call
+                .syntax()
+                .ancestors()
+                .skip(1)
+                .any(|node| ast::Module::can_cast(node.kind())),
+            requires_test: cfg_predicates::attributes_require_test(
+                attributes.iter().map(String::as_str),
+            ),
+            expression,
+        });
+        if directives.len() > max_directives {
+            break;
+        }
+    }
+    directives.sort_by(|left, right| {
+        left.line
+            .cmp(&right.line)
+            .then(left.expression.cmp(&right.expression))
+    });
+    Ok(directives)
+}
+
+/// Re-extract oracles from a promoted function with the parser-backed rules
+/// used by ordinary Rust tests. Comments and string contents therefore cannot
+/// become assertion evidence. `None` means the function text was not
+/// parser-valid; callers may use their existing lexical fallback then.
+pub(crate) fn parser_oracles_for_function(
+    function_text: &str,
+    function_start_line: usize,
+) -> Option<Vec<OracleFact>> {
+    let parse = parse_clean_source_file(function_text)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let line_index = LineIndex::new(function_text);
+    // The re-parse holds only this function, so no file scope is visible.
+    let mut oracles =
+        extract_parser_oracles(&function, function_text, &line_index, DropInScope::Unknown);
+    let line_offset = function_start_line.saturating_sub(1);
+    for oracle in &mut oracles {
+        oracle.line += line_offset;
+    }
+    Some(oracles)
+}
+
+/// Module scope of a file's functions, keyed by (fn-token line, name) as
+/// function and test facts record them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(into = "ModuleItemScopesWire", from = "ModuleItemScopesWire")]
+pub(crate) struct ModuleItemScopes {
+    /// Every fn that is a direct item of the file or of an inline
+    /// `mod name { .. }`, mapped to the line span of its innermost inline
+    /// module (`None` at the file's top level). A fn nested in another fn's
+    /// body, or an associated fn, is absent: it is not visible module-wide.
+    pub(crate) item_fns: BTreeMap<(usize, String), Option<(usize, usize)>>,
+    /// Fns whose body holds a `use` item, which may shadow a module item.
+    pub(crate) fns_with_local_use: std::collections::BTreeSet<(usize, String)>,
+    /// Fns whose code may not run when called: an `async fn` (the call
+    /// only builds a future) or a body holding a closure or `async` block.
+    pub(crate) fns_with_deferred_code: std::collections::BTreeSet<(usize, String)>,
+    /// Names each fn calls as a parsed single-segment free function
+    /// (`check(..)`), outside macro arguments, strings, comments, closures,
+    /// `async` blocks and nested `fn` items.
+    pub(crate) direct_calls: BTreeMap<(usize, String), std::collections::BTreeSet<String>>,
+    /// Fns carrying a `cfg` or `cfg_attr` attribute anywhere in their
+    /// syntax (outer, inner `#![..]`, or on a statement), whitespace
+    /// ignored: such a fn may not be the one that compiles.
+    pub(crate) fns_with_cfg: std::collections::BTreeSet<(usize, String)>,
+    /// Names each fn binds inside itself: every identifier pattern
+    /// (parameters, `let`, `for`, `if let`, closure and match bindings)
+    /// and every named node in its body (`const`, `static`, nested `fn`,
+    /// tuple `struct`, enum variant, macro, and so on).
+    pub(crate) bound_names: BTreeMap<(usize, String), std::collections::BTreeSet<String>>,
+}
+
+/// One row per fn, since JSON object keys cannot be `(line, name)` tuples.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ModuleItemScopesWire {
+    fns: Vec<FnScopeWire>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct FnScopeWire {
+    line: usize,
+    name: String,
+    item: FnItemScope,
+    local_use: bool,
+    deferred_code: bool,
+    cfg: bool,
+    direct_calls: Option<BTreeSet<String>>,
+    bound_names: Option<BTreeSet<String>>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+enum FnItemScope {
+    /// Nested in another fn, or associated: not a module item.
+    NotItem,
+    TopLevel,
+    Module {
+        start: usize,
+        end: usize,
+    },
+}
+
+impl From<ModuleItemScopes> for ModuleItemScopesWire {
+    fn from(scopes: ModuleItemScopes) -> Self {
+        let mut keys: BTreeSet<(usize, String)> = BTreeSet::new();
+        keys.extend(scopes.item_fns.keys().cloned());
+        keys.extend(scopes.fns_with_local_use.iter().cloned());
+        keys.extend(scopes.fns_with_deferred_code.iter().cloned());
+        keys.extend(scopes.direct_calls.keys().cloned());
+        keys.extend(scopes.fns_with_cfg.iter().cloned());
+        keys.extend(scopes.bound_names.keys().cloned());
+        let fns = keys
+            .into_iter()
+            .map(|key| FnScopeWire {
+                item: match scopes.item_fns.get(&key) {
+                    None => FnItemScope::NotItem,
+                    Some(None) => FnItemScope::TopLevel,
+                    Some(Some((start, end))) => FnItemScope::Module {
+                        start: *start,
+                        end: *end,
+                    },
+                },
+                local_use: scopes.fns_with_local_use.contains(&key),
+                deferred_code: scopes.fns_with_deferred_code.contains(&key),
+                cfg: scopes.fns_with_cfg.contains(&key),
+                direct_calls: scopes.direct_calls.get(&key).cloned(),
+                bound_names: scopes.bound_names.get(&key).cloned(),
+                line: key.0,
+                name: key.1,
+            })
+            .collect();
+        Self { fns }
+    }
+}
+
+impl From<ModuleItemScopesWire> for ModuleItemScopes {
+    fn from(wire: ModuleItemScopesWire) -> Self {
+        let mut scopes = Self::default();
+        for row in wire.fns {
+            let key = (row.line, row.name);
+            match row.item {
+                FnItemScope::NotItem => {}
+                FnItemScope::TopLevel => {
+                    scopes.item_fns.insert(key.clone(), None);
+                }
+                FnItemScope::Module { start, end } => {
+                    scopes.item_fns.insert(key.clone(), Some((start, end)));
+                }
+            }
+            if row.local_use {
+                scopes.fns_with_local_use.insert(key.clone());
+            }
+            if row.deferred_code {
+                scopes.fns_with_deferred_code.insert(key.clone());
+            }
+            if row.cfg {
+                scopes.fns_with_cfg.insert(key.clone());
+            }
+            if let Some(called) = row.direct_calls {
+                scopes.direct_calls.insert(key.clone(), called);
+            }
+            if let Some(bound) = row.bound_names {
+                scopes.bound_names.insert(key, bound);
+            }
+        }
+        scopes
+    }
+}
+
+impl ModuleItemScopes {
+    /// Keep only the call and binding names in `keep`. Same-file helper
+    /// crediting only asks whether a name of one of the file's functions, or
+    /// a name one of them calls, is called or bound, so the producer stores
+    /// this compact form in the file-fact cache.
+    pub(crate) fn retain_names(&mut self, keep: &std::collections::BTreeSet<&str>) {
+        for names in self
+            .direct_calls
+            .values_mut()
+            .chain(self.bound_names.values_mut())
+        {
+            names.retain(|name| keep.contains(name.as_str()));
+        }
+    }
+}
+
+/// The module scopes of `text`'s functions. `None` when the file does not
+/// parse cleanly, so a caller that needs module scope fails closed.
+pub(crate) fn module_item_scopes(text: &str) -> Option<ModuleItemScopes> {
+    let parse = parse_clean_source_file(text)?;
+    Some(module_item_scopes_in(&parse.tree(), &LineIndex::new(text)))
+}
+
+/// [`module_item_scopes`] over a tree the caller already parsed cleanly.
+pub(crate) fn module_item_scopes_in(
+    source: &ast::SourceFile,
+    line_index: &LineIndex,
+) -> ModuleItemScopes {
+    let mut scopes = ModuleItemScopes::default();
+    for function in source.syntax().descendants().filter_map(ast::Fn::cast) {
+        let (Some(name), Some(fn_token)) = (function.name(), function.fn_token()) else {
+            continue;
+        };
+        let key = (
+            line_index.line(fn_token.text_range().start()),
+            name.text().to_string(),
+        );
+        if function
+            .syntax()
+            .descendants()
+            .filter_map(ast::Attr::cast)
+            .any(|attribute| {
+                let compact: String = attribute
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .chars()
+                    .filter(|character| !character.is_whitespace())
+                    .collect();
+                compact.starts_with("#[cfg") || compact.starts_with("#![cfg")
+            })
+        {
+            scopes.fns_with_cfg.insert(key.clone());
+        }
+        let bound = function
+            .syntax()
+            .descendants()
+            .filter(|node| node != function.syntax())
+            .filter_map(|node| {
+                ast::AnyHasName::cast(node)
+                    .and_then(|named| named.name())
+                    .map(|name| name.text().to_string())
+            })
+            .collect();
+        scopes.bound_names.insert(key.clone(), bound);
+        if let Some(body) = function.body() {
+            if body
+                .syntax()
+                .descendants()
+                .any(|node| ast::Use::can_cast(node.kind()))
+            {
+                scopes.fns_with_local_use.insert(key.clone());
+            }
+            if function.async_token().is_some()
+                || body.syntax().descendants().any(|node| {
+                    ast::ClosureExpr::can_cast(node.kind())
+                        || ast::BlockExpr::cast(node)
+                            .is_some_and(|block| block.async_token().is_some())
+                })
+            {
+                scopes.fns_with_deferred_code.insert(key.clone());
+            }
+            let called = body
+                .syntax()
+                .descendants()
+                .filter_map(ast::CallExpr::cast)
+                // A call inside a closure, `async` block or nested `fn` may
+                // never run.
+                .filter(|call| !enclosed_by_nested_fn_like(call.syntax(), &body))
+                .filter_map(|call| match call.expr()? {
+                    ast::Expr::PathExpr(path) => {
+                        let path = path.path()?;
+                        if path.qualifier().is_some() {
+                            return None;
+                        }
+                        Some(path.segment()?.name_ref()?.text().to_string())
+                    }
+                    _ => None,
+                })
+                .collect();
+            scopes.direct_calls.insert(key.clone(), called);
+        }
+        let Some(parent) = function.syntax().parent() else {
+            continue;
+        };
+        let module = match parent.kind() {
+            ra_ap_syntax::SyntaxKind::SOURCE_FILE => None,
+            ra_ap_syntax::SyntaxKind::ITEM_LIST => {
+                match parent.parent().and_then(ast::Module::cast) {
+                    Some(module) => {
+                        let range = module.syntax().text_range();
+                        Some((
+                            line_index.line(range.start()),
+                            line_index.line_for_range_end(range.end()),
+                        ))
+                    }
+                    None => continue,
+                }
+            }
+            _ => continue,
+        };
+        scopes.item_fns.insert(key, module);
+    }
+    scopes
+}
+
+/// How many times the first `fn` item in `fn_text` binds `name`: every
+/// named node inside it (parameter and `let`/`for`/`if let`/closure/match
+/// identifier patterns, nested items), the fn's own name excluded. `None`
+/// when the text does not parse cleanly or holds no `fn`, so a caller that
+/// needs an exact binding count fails closed. Identifiers bound inside a
+/// macro invocation's token tree are not parsed patterns and are not
+/// counted here; callers keep a lexical scan for those.
+pub(crate) fn fn_name_binding_count(fn_text: &str, name: &str) -> Option<usize> {
+    let parse = parse_clean_source_file(fn_text)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    Some(
+        function
+            .syntax()
+            .descendants()
+            .filter(|node| node != function.syntax())
+            .filter_map(|node| ast::AnyHasName::cast(node).and_then(|named| named.name()))
+            .filter(|bound| bound.text() == name)
+            .count(),
+    )
+}
+
+pub(super) fn include_literal_path(expression: &str) -> Option<PathBuf> {
+    let (_, arguments) = expression.split_once('!')?;
+    let arguments = arguments.trim();
+    let arguments = arguments.strip_suffix(';').unwrap_or(arguments).trim();
+    let inner = match (arguments.chars().next()?, arguments.chars().last()?) {
+        ('(', ')') | ('{', '}') | ('[', ']') => arguments.get(1..arguments.len() - 1)?.trim(),
+        _ => return None,
+    };
+    parse_rust_string_literal(inner).map(PathBuf::from)
+}
+
+pub(super) fn parse_rust_string_literal(literal: &str) -> Option<String> {
+    if let Some(body) = literal
+        .strip_prefix('"')
+        .and_then(|body| body.strip_suffix('"'))
+    {
+        let mut decoded = String::new();
+        let mut chars = body.chars();
+        while let Some(ch) = chars.next() {
+            if ch != '\\' {
+                decoded.push(ch);
+                continue;
+            }
+            match chars.next()? {
+                '\\' => decoded.push('\\'),
+                '"' => decoded.push('"'),
+                'n' => decoded.push('\n'),
+                'r' => decoded.push('\r'),
+                't' => decoded.push('\t'),
+                '0' => decoded.push('\0'),
+                _ => return None,
+            }
+        }
+        return Some(decoded);
+    }
+
+    let hash_count = literal
+        .strip_prefix('r')?
+        .chars()
+        .take_while(|ch| *ch == '#')
+        .count();
+    let prefix_len = 1 + hash_count;
+    let suffix = format!("\"{}", "#".repeat(hash_count));
+    let body = literal.get(prefix_len..)?.strip_prefix('"')?;
+    body.strip_suffix(&suffix).map(ToString::to_string)
+}
+
+impl RustSyntaxAdapter for RaRustSyntaxAdapter {
+    fn summarize_file(&self, path: &Path, text: &str) -> Result<FileFacts, String> {
+        summarize_file_with_parser(path, text)
+    }
+
+    fn changed_nodes(
+        &self,
+        functions: crate::analysis::facts::FactSlice<'_, crate::analysis::facts::FunctionFact>,
+        ranges: &[TextRange],
+    ) -> Vec<SyntaxNodeFact> {
+        owner_changed_nodes(functions, ranges)
+    }
+}
+
+pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, String> {
+    summarize_file_with_item_scopes(path, text, module_item_scopes_in)
+}
+
+fn summarize_file_with_item_scopes(
+    path: &Path,
+    text: &str,
+    collect_scopes: impl FnOnce(&ast::SourceFile, &LineIndex) -> ModuleItemScopes,
+) -> Result<FileFacts, String> {
+    if let Some(reason) = rust_nesting_refusal(text) {
+        return Err(reason);
+    }
+    let parse = super::nesting::parse_source_file(text);
+    let errors = parse.errors();
+    if !errors.is_empty() {
+        return Err(format!("parser reported {} syntax errors", errors.len()));
+    }
+
+    let source = parse.tree();
+    let line_index = LineIndex::new(text);
+    // #5415 step 2: one allocation for the file; bodies and shape snippets
+    // below share spans of it instead of copying substrings.
+    let shared_source: Arc<str> = Arc::from(text);
+    let empty_invocations = super::owner_pin::empty_local_macro_invocation_ranges(source.syntax());
+    let module_declarations = module_declaration_facts(&source, &line_index);
+    let mut functions = Vec::new();
+    let mut tests = Vec::new();
+    let mut file_returns = Vec::new();
+    let mut file_literals = Vec::new();
+    let mut file_probe_shapes = Vec::new();
+    let path_buf = path.to_path_buf();
+
+    for function in source.syntax().descendants().filter_map(ast::Fn::cast) {
+        let Some(name) = function.name().map(|name| name.text().to_string()) else {
+            continue;
+        };
+        let fn_start = function
+            .fn_token()
+            .map(|token| token.text_range().start())
+            .unwrap_or_else(|| function.syntax().text_range().start());
+        let fn_end = function.syntax().text_range().end();
+        let start_line = line_index.line(fn_start);
+        let end_line = line_index.line_for_range_end(fn_end);
+        let body = slice_text(text, fn_start, fn_end);
+        // Keep the original function body as source authority. Only call
+        // evidence excludes known-empty invocations, including their bytes on
+        // a mixed line that later argument/activation readers consume.
+        let call_offset = u32::from(fn_start) as usize;
+        let call_end = u32::from(fn_end) as usize;
+        let call_body = crate::analysis::extract::property_macros::mask_evidence_ranges(
+            &body,
+            empty_invocations
+                .iter()
+                .filter(|range| range.start >= call_offset && range.end <= call_end)
+                .map(|range| range.start - call_offset..range.end - call_offset),
+        );
+        let calls = extract_call_facts(&call_body, start_line);
+        let returns = extract_return_facts(&body, start_line);
+        let literals = extract_literal_facts(&body, start_line);
+        let probe_shapes =
+            extract_parser_probe_shapes(&function, text, &shared_source, &line_index);
+        // A plain helper inside an inline `#[cfg(test)]` module is test
+        // infrastructure even when it has no `#[test]` attribute. Classify
+        // that role at the producer boundary so diff probes, seam inventory,
+        // evidence relation, and every downstream renderer consume the same
+        // fact instead of re-inferring it independently. The typed role
+        // (#3531) keeps the executable-test and evidence-only helper
+        // meanings apart instead of collapsing both into one bit.
+        let has_test_attribute = has_test_attribute(&function);
+        let source_role = if has_test_attribute {
+            FunctionSourceRole::TestAttribute
+        } else if is_cfg_test_module_member(&function) {
+            FunctionSourceRole::CfgTestModule
+        } else {
+            FunctionSourceRole::Production
+        };
+        let attrs = collect_attr_syntax(&function);
+        // #3727 Slice A: parser-backed test-body shadow facts. Nested `fn`
+        // item names and `let` binding facts over this function's body,
+        // body-relative (relative to the `fn` keyword line, which is also
+        // where the stored `body` slice starts). The lexical fallback
+        // producer leaves both fields empty; on parser-backed files an
+        // empty set is a real "no definition" result.
+        let (nested_fn_names, let_bindings) =
+            collect_body_shadow_facts(&function, &|offset| line_index.line(offset), start_line);
+
+        file_returns.extend(returns.clone());
+        file_literals.extend(literals.clone());
+        file_probe_shapes.extend(probe_shapes);
+
+        let function_fact = FunctionFact {
+            id: parser_symbol_id(path, &function, &name),
+            name: name.clone(),
+            file: path_buf.clone(),
+            start_line,
+            end_line,
+            body: SourceText::shared_or_owned(&shared_source, u32::from(fn_start) as usize, &body),
+            calls: calls.clone(),
+            returns: returns.clone(),
+            literals: literals.clone(),
+            source_role,
+            attrs: attrs.clone(),
+            impl_attrs: collect_impl_attr_syntax(&function),
+            nested_fn_names: nested_fn_names.clone(),
+            let_bindings: let_bindings.clone(),
+            item: function_item_fact(&function),
+            impl_context: function_impl_context(&function),
+        };
+
+        if has_test_attribute {
+            tests.push(TestFact {
+                name,
+                file: path_buf.clone(),
+                start_line,
+                end_line,
+                body: SourceText::shared_or_owned(
+                    &shared_source,
+                    u32::from(fn_start) as usize,
+                    &body,
+                ),
+                calls,
+                assertions: extract_parser_oracles(
+                    &function,
+                    text,
+                    &line_index,
+                    DropInScope::WholeFile,
+                ),
+                literals,
+                attrs,
+                nested_fn_names,
+                let_bindings,
+            });
+        }
+
+        functions.push(function_fact);
+    }
+
+    disambiguate_duplicate_symbol_ids(&mut functions);
+
+    file_returns.sort_by(|a, b| a.line.cmp(&b.line).then(a.text.cmp(&b.text)));
+    file_returns.dedup_by(|a, b| a.line == b.line && a.text == b.text);
+    file_literals.sort_by(|a, b| a.line.cmp(&b.line).then(a.value.cmp(&b.value)));
+    file_literals.dedup_by(|a, b| a.line == b.line && a.value == b.value);
+    file_probe_shapes.sort_by(|a, b| {
+        a.start_line
+            .cmp(&b.start_line)
+            .then(a.end_line.cmp(&b.end_line))
+            .then(a.kind.as_str().cmp(b.kind.as_str()))
+            .then(a.text.cmp(&b.text))
+    });
+    file_probe_shapes.dedup_by(|a, b| {
+        a.start_line == b.start_line
+            && a.end_line == b.end_line
+            && a.kind == b.kind
+            && a.text == b.text
+    });
+
+    let mut item_scopes = collect_scopes(&source, &line_index);
+    let keep: std::collections::BTreeSet<&str> = functions
+        .iter()
+        .flat_map(|function: &FunctionFact| {
+            std::iter::once(function.name.as_str())
+                .chain(function.calls.iter().map(|call| call.name.as_str()))
+        })
+        .collect();
+    item_scopes.retain_names(&keep);
+
+    Ok(FileFacts {
+        path: path_buf,
+        functions,
+        tests,
+        returns: file_returns,
+        literals: file_literals,
+        probe_shapes: file_probe_shapes,
+        used_lexical_fallback: false,
+        module_declarations,
+        unresolved_property_macros: property_macros::unresolved_property_macros(
+            &source,
+            &line_index,
+        ),
+        role_provenance: SourceRoleProvenance::default(),
+        source: shared_source,
+        item_scopes: Some(Box::new(item_scopes)),
+        macro_candidates: Some(Box::new(super::owner_pin::macro_binding_candidates(
+            &source,
+        ))),
+    })
+}
+
+/// Extracts the file's top-level out-of-line `mod name;` declarations (#3533).
+///
+/// This is the producer side of the module composition edge: each fact carries
+/// the declared name, the `#[path]` target shape, and the cfg-test requirement
+/// classified once through the shared `cfg_predicates` authority (#3530).
+///
+/// Deliberately not captured here (typed fail-closed status quo, no composed
+/// role is granted from them):
+/// - inline `mod name { ... }` bodies — their members are classified by the
+///   same-file cfg-test membership walk;
+/// - out-of-line declarations nested inside an inline module — cross-file
+///   resolution through inline nesting has no producer yet;
+/// - block modules (`fn f() { mod inner; }`) — not top-level items.
+///
+/// The lexical fallback producer emits no module declarations at all: without
+/// a parse, the facts layer cannot see declarations, and guessing from line
+/// text would re-create the drifted-matcher family #3530 removed.
+fn module_declaration_facts(
+    source: &SourceFile,
+    line_index: &LineIndex,
+) -> Vec<ModuleDeclarationFact> {
+    let mut declarations = Vec::new();
+    for module in source.syntax().children().filter_map(ast::Module::cast) {
+        // Out-of-line only: `mod name;` carries no item list.
+        if module.item_list().is_some() {
+            continue;
+        }
+        let Some(name) = module.name() else {
+            continue;
+        };
+        let line = module
+            .mod_token()
+            .map(|token| line_index.line(token.text_range().start()))
+            .unwrap_or_else(|| line_index.line(module.syntax().text_range().start()));
+        let attributes = module
+            .attrs()
+            .map(|attr| attr.syntax().text().to_string())
+            .collect::<Vec<_>>();
+        declarations.push(ModuleDeclarationFact {
+            name: name.text().to_string(),
+            line,
+            path_target: path_target_from_attributes(&attributes),
+            requires_test: cfg_predicates::attributes_require_test(
+                attributes.iter().map(String::as_str),
+            ),
+        });
+    }
+    declarations.sort_by(|left, right| left.line.cmp(&right.line).then(left.name.cmp(&right.name)));
+    declarations.dedup();
+    declarations
+}
+
+/// Collects the parser-backed test-body shadow facts for one function
+/// (#3727 Slice A): the names of `fn` items nested inside the function's
+/// body, and one [`LetBindingFact`] per whole-word name in every
+/// initialized `let` binding's pattern, line-relative to the function's
+/// `fn` keyword line.
+///
+/// The semantics are deliberately scanner-equivalent at line granularity
+/// (see `analysis::extract::shadow`): a nested `fn <callee>` item is
+/// hoisted and defeats the whole body, and a binding defeats uses at and
+/// after its own body-relative line. No scope extents, no columns. The
+/// pattern names are extracted with the shared lexical authority's
+/// whole-word vocabulary (`extract_pattern_words`), so the fact-derived
+/// decisions equal the lexical scanners' decisions on the same masked body
+/// for realistic Rust — the equivalence battery in this module pins it.
+///
+/// `line_of` maps a tree offset to a 1-based line, and `fn_line` is the
+/// 1-based line of the function's `fn` keyword — the two inputs that make
+/// this helper reusable over the file text (the summarizer) and over a
+/// standalone function text (re-extraction), each with its own
+/// [`LineIndex`].
+fn collect_body_shadow_facts(
+    function: &ast::Fn,
+    line_of: &impl Fn(TextSize) -> usize,
+    fn_line: usize,
+) -> (Vec<String>, Vec<LetBindingFact>) {
+    let mut nested_fn_names: Vec<String> = Vec::new();
+    for nested_fn in function.syntax().descendants().filter_map(ast::Fn::cast) {
+        // Descendants include the function itself; text ranges uniquely
+        // identify nodes within the tree, so this drops exactly the self
+        // entry.
+        if nested_fn.syntax().text_range() == function.syntax().text_range() {
+            continue;
+        }
+        if let Some(name) = nested_fn.name() {
+            nested_fn_names.push(name.text().to_string());
+        }
+    }
+    nested_fn_names.sort();
+    nested_fn_names.dedup();
+
+    let mut let_bindings: Vec<LetBindingFact> = Vec::new();
+    for let_stmt in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::LetStmt::cast)
+    {
+        // The initializer-less `;` bound (#3728 round-5): `let flag;` has
+        // no initializer, produces no binding fact, and can never shadow.
+        if let_stmt.initializer().is_none() {
+            continue;
+        }
+        let Some(pattern) = let_stmt.pat() else {
+            continue;
+        };
+        let let_line = let_stmt
+            .let_token()
+            .map(|token| line_of(token.text_range().start()))
+            .unwrap_or_else(|| line_of(let_stmt.syntax().text_range().start()));
+        let Some(body_relative_line) = let_line.checked_sub(fn_line) else {
+            continue;
+        };
+        for name in extract_pattern_words(&pattern.syntax().text().to_string()) {
+            let_bindings.push(LetBindingFact {
+                line: body_relative_line,
+                name,
+            });
+        }
+    }
+    let_bindings.sort_by(|left, right| left.line.cmp(&right.line).then(left.name.cmp(&right.name)));
+    let_bindings.dedup();
+    (nested_fn_names, let_bindings)
+}
+
+/// Parser-backed shadow facts (#3727 Slice A) for a bare body text that is
+/// not necessarily a `fn` item — harness-subject invocation spans and
+/// merged evidence bodies. The text is wrapped in a synthetic `fn` item
+/// whose braces share the body's first line, so every wrapped fact's
+/// body-relative line equals its line relative to the ORIGINAL body text
+/// and needs no offset repair. Empty facts when the wrapped text does not
+/// parse cleanly: the descent only ever sees real syntax, and the
+/// consumers' flag law routes fallback decisions off these fields.
+pub(crate) fn shadow_facts_for_body_text(body: &str) -> (Vec<String>, Vec<LetBindingFact>) {
+    // The wrapper must be a COMPLETE fn item: an unclosed brace makes
+    // `SourceFile::parse` report errors and the fail-closed branch below
+    // return empty facts for every body — the exact producer regression
+    // the non-empty-facts tests pin (#3739 review). The closing brace sits
+    // on its own line after the body, so the opening line — and every
+    // body-relative offset — is unchanged.
+    let wrapped = format!("fn __ripr_shadow_facts__() {{ {body}\n}}");
+    let Some(parse) = parse_clean_source_file(&wrapped) else {
+        return (Vec::new(), Vec::new());
+    };
+    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return (Vec::new(), Vec::new());
+    };
+    let line_index = LineIndex::new(&wrapped);
+    // The `fn` keyword sits at offset 0, i.e. line 1 — exactly the base
+    // that makes `line - fn_line` body-relative for the original text.
+    collect_body_shadow_facts(&function, &|offset| line_index.line(offset), 1)
+}
+
+/// Classifies the `#[path]` attributes of one declaration into the bounded
+/// target shape. Exactly one plain string-literal attribute resolves; absence
+/// falls back to default name resolution; anything else (multiple `path`
+/// attributes, macro-call arguments, concatenated targets) is a typed unknown
+/// that fails closed downstream instead of resolving the wrong file.
+///
+/// A `path` attribute introduced conditionally by `cfg_attr` is also a typed
+/// unknown (#3533): which file the compiler loads depends on the active
+/// configuration, so neither the introduced target nor the default layout is
+/// statically resolvable. Returning `Default` here would resolve the default
+/// file that Rust does not compile under the conditional configuration and
+/// could hand its functions an evidence role they did not earn.
+pub(super) fn path_target_from_attributes(attributes: &[String]) -> ModulePathTarget {
+    if cfg_predicates::attributes_conditionally_introduce_path(
+        attributes.iter().map(String::as_str),
+    ) {
+        return ModulePathTarget::Unknown;
+    }
+    let path_attributes = attributes
+        .iter()
+        .filter(|attribute| attribute_path_name(attribute).as_deref() == Some("path"))
+        .collect::<Vec<_>>();
+    match path_attributes.as_slice() {
+        [] => ModulePathTarget::Default,
+        [attribute] => match attribute_string_literal(attribute) {
+            Some(literal) => ModulePathTarget::Literal(literal),
+            None => ModulePathTarget::Unknown,
+        },
+        // Duplicate `#[path]` attributes are ambiguous input.
+        [..] => ModulePathTarget::Unknown,
+    }
+}
+
+/// Returns the attribute's path name (`path` for `#[path = "..."]` and
+/// `#[r#path = "..."]`), using the same whitespace-insensitive normalization
+/// as the test-attribute classifier. The raw-identifier prefix is stripped so
+/// callers compare the ident rustc uses, not the source spelling.
+fn attribute_path_name(attribute: &str) -> Option<String> {
+    let body = attribute.trim().strip_prefix("#[")?;
+    let body = body.strip_prefix("![").unwrap_or(body);
+    let closing = body.rfind(']')?;
+    let head = body.get(..closing)?.trim();
+    let head = head.split('=').next()?.trim();
+    let path = head
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    let path = path.trim_start_matches("::");
+    let path = cfg_predicates::rust_ident_name(path);
+    (!path.is_empty()).then_some(path.to_string())
+}
+
+/// Returns the string-literal argument of `#[path = "<literal>"]`, decoding
+/// plain and raw string spellings. `None` for any other shape.
+fn attribute_string_literal(attribute: &str) -> Option<String> {
+    let body = attribute.trim().strip_prefix("#[")?;
+    let closing = body.rfind(']')?;
+    let head = body.get(..closing)?;
+    let (_, value) = head.split_once('=')?;
+    parse_rust_string_literal(value.trim())
+}
+
+fn parser_symbol_id(path: &Path, function: &ast::Fn, name: &str) -> SymbolId {
+    // The stable text projection keeps distinct raw-byte paths distinct
+    // in owner identity; lossy rendering would merge same-named
+    // functions across invalid-byte filenames (#3609).
+    let mut segments = vec![crate::analysis::stable_path_text(path)];
+
+    let mut modules = function
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .filter_map(ast::Module::cast)
+        .filter_map(|module| {
+            module
+                .name()
+                .map(|module_name| module_name.text().to_string())
+        })
+        .collect::<Vec<_>>();
+    modules.reverse();
+    segments.extend(modules);
+
+    if let Some(impl_block) = function
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .find_map(ast::Impl::cast)
+    {
+        segments.push(impl_owner_segment(&impl_block));
+    }
+
+    segments.push(name.to_string());
+    SymbolId(segments.join("::"))
+}
+
+/// Where `function` is declared (#4478): the nearest enclosing item that
+/// decides which call syntax can name it. The walk stops at the first `fn`,
+/// `impl` or `trait` ancestor, so a helper `fn` nested in a method body is
+/// `Local`, not a method of the `impl`.
+fn function_item_fact(function: &ast::Fn) -> FunctionItemFact {
+    let container = function
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .find_map(|node| {
+            if ast::Fn::can_cast(node.kind()) {
+                return Some(FunctionContainer::Local);
+            }
+            if let Some(impl_block) = ast::Impl::cast(node.clone()) {
+                let self_ty = impl_block
+                    .self_ty()
+                    .map(|ty| compact_syntax_text(ty.syntax().text().to_string()));
+                return Some(match (impl_block.trait_(), self_ty) {
+                    (_, None) => FunctionContainer::Unknown,
+                    (None, Some(self_ty)) => FunctionContainer::Inherent { self_ty },
+                    (Some(trait_ty), Some(self_ty)) => FunctionContainer::TraitImpl {
+                        trait_path: compact_syntax_text(trait_ty.syntax().text().to_string()),
+                        self_ty,
+                    },
+                });
+            }
+            let trait_item = ast::Trait::cast(node)?;
+            Some(match trait_item.name() {
+                Some(name) => FunctionContainer::Trait {
+                    trait_name: name.text().to_string(),
+                },
+                None => FunctionContainer::Unknown,
+            })
+        })
+        .unwrap_or(FunctionContainer::Free);
+    let has_self_param = function
+        .param_list()
+        .is_some_and(|params| params.self_param().is_some());
+    FunctionItemFact {
+        container,
+        has_self_param,
+        has_body: function.body().is_some(),
+    }
+}
+
+/// The item a type-path call `T::name(` would find this `fn` in (#4558).
+/// The nearest enclosing `fn`, `impl` or `trait` decides; modules and the
+/// file root make it a free function.
+fn function_impl_context(function: &ast::Fn) -> FunctionImplContext {
+    for ancestor in function.syntax().ancestors().skip(1) {
+        if ast::Fn::can_cast(ancestor.kind())
+            || ast::BlockExpr::can_cast(ancestor.kind())
+            || ast::Const::can_cast(ancestor.kind())
+            || ast::Static::can_cast(ancestor.kind())
+        {
+            // A `fn` item local to a function, block, const or static
+            // initializer is not nameable through a type.
+            return FunctionImplContext::Free;
+        }
+        if ast::Trait::can_cast(ancestor.kind()) {
+            return FunctionImplContext::Unknown;
+        }
+        if let Some(impl_block) = ast::Impl::cast(ancestor) {
+            return impl_self_type_name(&impl_block)
+                .map_or(FunctionImplContext::Unknown, |self_type| {
+                    FunctionImplContext::Impl { self_type }
+                });
+        }
+    }
+    FunctionImplContext::Free
+}
+
+/// Last segment of an impl's self type when it is a plain named path that
+/// is not one of the impl's own generic parameters (`impl<T> Trait for T`
+/// reaches every type).
+fn impl_self_type_name(impl_block: &ast::Impl) -> Option<String> {
+    let ast::Type::PathType(path_type) = impl_block.self_ty()? else {
+        return None;
+    };
+    let segment = path_type.path()?.segment()?;
+    let name = segment.name_ref()?.text().to_string();
+    let is_generic_parameter = impl_block.generic_param_list().is_some_and(|params| {
+        params.type_or_const_params().any(|param| {
+            param
+                .syntax()
+                .children()
+                .filter_map(ast::Name::cast)
+                .any(|param_name| param_name.text() == name.as_str())
+        })
+    });
+    (!is_generic_parameter).then_some(name)
+}
+
+fn impl_owner_segment(impl_block: &ast::Impl) -> String {
+    let self_ty = match impl_block.self_ty() {
+        Some(ty) => compact_syntax_text(ty.syntax().text().to_string()),
+        None => "unknown".to_string(),
+    };
+    match impl_block.trait_() {
+        Some(trait_ty) => format!(
+            "impl {} for {self_ty}",
+            compact_syntax_text(trait_ty.syntax().text().to_string())
+        ),
+        None => format!("impl {self_ty}"),
+    }
+}
+
+fn compact_syntax_text(text: String) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn disambiguate_duplicate_symbol_ids(functions: &mut [FunctionFact]) {
+    let mut totals = BTreeMap::new();
+    for function in functions.iter() {
+        let entry = totals.entry(function.id.0.clone()).or_insert(0usize);
+        *entry += 1;
+    }
+
+    for function in functions.iter_mut() {
+        let total = match totals.get(&function.id.0) {
+            Some(total) => *total,
+            None => 0,
+        };
+        if total > 1 {
+            function.id.0 = format!("{}#L{}", function.id.0, function.start_line);
+        }
+    }
+}
+
+fn has_test_attribute(function: &ast::Fn) -> bool {
+    function.attrs().any(|attr| {
+        let compact = attr
+            .syntax()
+            .text()
+            .to_string()
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect::<String>();
+        compact == "#[test]"
+            || compact.starts_with("#[tokio::test")
+            || compact.starts_with("#[async_std::test")
+            || compact == "#[rstest]"
+            || compact.starts_with("#[rstest(")
+    })
+}
+
+/// Returns whether a function is nested in a module gated by a test-only cfg.
+///
+/// The cfg-term semantics live in one shared authority
+/// (`facts::cfg_predicates`, #3530) so the parser producer and the facts
+/// normalizer cannot drift: nested `all(test, ...)` conjunctions, whitespace
+/// and multi-line spellings, and bounded `cfg_attr` forms classify
+/// identically on both sides.
+fn is_cfg_test_module_member(function: &ast::Fn) -> bool {
+    function
+        .syntax()
+        .ancestors()
+        .filter_map(ast::Module::cast)
+        .any(|module| module_attributes_require_test(&module))
+}
+
+/// One parser-backed inline or out-of-line module whose attributes structurally
+/// require a test build. Nested modules inside an already test-gated module
+/// are omitted so they cannot compete as insertion anchors.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct GovernedCfgTestModule {
+    pub(crate) name: String,
+    pub(crate) parent_modules: Vec<String>,
+    pub(crate) item_start: usize,
+    pub(crate) body_start: Option<usize>,
+    pub(crate) close_brace_start: Option<usize>,
+    pub(crate) is_inline: bool,
+    /// Every outer and inner attribute on the module is known to be enabled
+    /// in a plain `cargo test` build. `false` covers feature, target and
+    /// other gates whose state ripr does not assume.
+    pub(crate) enabled_in_test_build: bool,
+}
+
+/// Parser-owned inventory of governed `cfg(test)` modules in one source file.
+///
+/// Uses the same `cfg_predicates` authority as cfg-test membership. `None`
+/// means the file was not parser-valid; callers stay Missing rather than
+/// guessing from line text.
+pub(crate) fn governed_cfg_test_modules(source: &str) -> Option<Vec<GovernedCfgTestModule>> {
+    let parse = parse_clean_source_file(source)?;
+    Some(governed_cfg_test_modules_in(&parse.tree()))
+}
+
+/// Module facts new-test-target admission reads from one source file.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct InlineUnitModuleLayout {
+    /// [`governed_cfg_test_modules`] for the file.
+    pub(crate) modules: Vec<GovernedCfgTestModule>,
+    /// Every function's enclosing non-cfg-test module names, keyed by start
+    /// line, as [`production_owner_module_path`] answers one line at a time.
+    pub(crate) owner_module_paths: BTreeMap<usize, Vec<String>>,
+}
+
+/// [`InlineUnitModuleLayout`] from one parse of `source`. `None` when the
+/// file is not parser-valid.
+pub(crate) fn inline_unit_module_layout(source: &str) -> Option<InlineUnitModuleLayout> {
+    let parse = parse_clean_source_file(source)?;
+    let file = parse.tree();
+    Some(InlineUnitModuleLayout {
+        modules: governed_cfg_test_modules_in(&file),
+        owner_module_paths: production_owner_module_paths_in(&file, &LineIndex::new(source)),
+    })
+}
+
+fn governed_cfg_test_modules_in(file: &ast::SourceFile) -> Vec<GovernedCfgTestModule> {
+    let mut modules = Vec::new();
+    for module in file.syntax().descendants().filter_map(ast::Module::cast) {
+        if module
+            .syntax()
+            .ancestors()
+            .skip(1)
+            .any(|node| ast::Fn::can_cast(node.kind()))
+        {
+            continue;
+        }
+        if !module_attributes_require_test(&module) {
+            continue;
+        }
+        if ancestor_module_requires_test(&module) {
+            continue;
+        }
+        let Some(name) = module.name() else {
+            continue;
+        };
+        let parent_modules = ancestor_module_names(&module);
+        let item_start = usize::from(module.syntax().text_range().start());
+        let enabled_in_test_build = module
+            .attrs()
+            .chain(
+                module
+                    .item_list()
+                    .into_iter()
+                    .flat_map(|items| items.attrs()),
+            )
+            .all(|attr| {
+                cfg_predicates::attribute_test_build_availability(&attr.syntax().text().to_string())
+                    == Some(true)
+            });
+        match module.item_list() {
+            Some(items) => {
+                let Some(open) = items.l_curly_token() else {
+                    continue;
+                };
+                let Some(close) = items.r_curly_token() else {
+                    continue;
+                };
+                modules.push(GovernedCfgTestModule {
+                    name: name.text().to_string(),
+                    parent_modules,
+                    item_start,
+                    body_start: Some(usize::from(open.text_range().end())),
+                    close_brace_start: Some(usize::from(close.text_range().start())),
+                    is_inline: true,
+                    enabled_in_test_build,
+                });
+            }
+            None => modules.push(GovernedCfgTestModule {
+                name: name.text().to_string(),
+                parent_modules,
+                item_start,
+                body_start: None,
+                close_brace_start: None,
+                is_inline: false,
+                enabled_in_test_build,
+            }),
+        }
+    }
+    modules.sort_by(|left, right| {
+        left.parent_modules
+            .cmp(&right.parent_modules)
+            .then(left.name.cmp(&right.name))
+            .then(left.item_start.cmp(&right.item_start))
+    });
+    modules
+}
+
+/// Enclosing module names of the production function on `start_line`, excluding
+/// cfg-test modules. `None` when the file does not parse or the function is
+/// missing.
+#[cfg(test)]
+pub(crate) fn production_owner_module_path(source: &str, start_line: usize) -> Option<Vec<String>> {
+    let parse = parse_clean_source_file(source)?;
+    production_owner_module_paths_in(&parse.tree(), &LineIndex::new(source)).remove(&start_line)
+}
+
+/// Enclosing non-cfg-test module names of every function, keyed by start
+/// line. When two functions start on one line, the first in source order
+/// wins, matching a preorder search for that line.
+fn production_owner_module_paths_in(
+    file: &ast::SourceFile,
+    line_index: &LineIndex,
+) -> BTreeMap<usize, Vec<String>> {
+    let mut paths = BTreeMap::new();
+    for function in file.syntax().descendants().filter_map(ast::Fn::cast) {
+        let line = function
+            .fn_token()
+            .map(|token| line_index.line(token.text_range().start()))
+            .unwrap_or_else(|| line_index.line(function.syntax().text_range().start()));
+        paths.entry(line).or_insert_with(|| {
+            let mut modules = Vec::new();
+            for module in function
+                .syntax()
+                .ancestors()
+                .skip(1)
+                .filter_map(ast::Module::cast)
+            {
+                if module_attributes_require_test(&module) {
+                    continue;
+                }
+                if let Some(name) = module.name() {
+                    modules.push(name.text().to_string());
+                }
+            }
+            modules.reverse();
+            modules
+        });
+    }
+    paths
+}
+
+pub(super) fn module_attributes_require_test(module: &ast::Module) -> bool {
+    cfg_predicates::attributes_require_test(
+        module.attrs().map(|attr| attr.syntax().text().to_string()),
+    )
+}
+
+fn ancestor_module_requires_test(module: &ast::Module) -> bool {
+    module
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .filter_map(ast::Module::cast)
+        .any(|ancestor| module_attributes_require_test(&ancestor))
+}
+
+fn ancestor_module_names(module: &ast::Module) -> Vec<String> {
+    let mut names = module
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .filter_map(ast::Module::cast)
+        .filter_map(|ancestor| ancestor.name().map(|name| name.text().to_string()))
+        .collect::<Vec<_>>();
+    names.reverse();
+    names
+}
+
+fn collect_attr_syntax(function: &ast::Fn) -> Vec<String> {
+    function
+        .attrs()
+        .map(|attr| attr.syntax().text().to_string())
+        .collect()
+}
+
+/// Attributes on the `impl` block directly enclosing `function`, empty for a
+/// free function or a trait body.
+fn collect_impl_attr_syntax(function: &ast::Fn) -> Vec<String> {
+    function
+        .syntax()
+        .parent()
+        .and_then(|list| list.parent())
+        .and_then(ast::Impl::cast)
+        .map(|item| {
+            item.attrs()
+                .map(|attr| attr.syntax().text().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whether `node` sits under a closure, nested `fn`, or `async` block of
+/// `body`. Those constructs have their own return target; the owner `fn`
+/// itself is outside `body`, so its returns and direct calls stay.
+fn enclosed_by_nested_fn_like(node: &ra_ap_syntax::SyntaxNode, body: &ast::BlockExpr) -> bool {
+    node.ancestors()
+        .take_while(|ancestor| ancestor != body.syntax())
+        .any(|ancestor| {
+            ast::ClosureExpr::can_cast(ancestor.kind())
+                || ast::Fn::can_cast(ancestor.kind())
+                || ast::BlockExpr::cast(ancestor).is_some_and(|block| block.async_token().is_some())
+        })
+}
+
+fn extract_parser_probe_shapes(
+    function: &ast::Fn,
+    text: &str,
+    source: &Arc<str>,
+    line_index: &LineIndex,
+) -> Vec<ProbeShapeFact> {
+    let mut shapes = Vec::new();
+    push_unsafe_boundary_probe_shapes(&mut shapes, function, source, line_index);
+
+    for if_expr in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::IfExpr::cast)
+    {
+        if let Some(condition) = if_expr.condition() {
+            push_probe_shape(
+                &mut shapes,
+                line_index,
+                text,
+                source,
+                ProbeShapeKind::Predicate,
+                condition.syntax().text_range().start(),
+                condition.syntax().text_range().end(),
+            );
+        }
+    }
+
+    for while_expr in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::WhileExpr::cast)
+    {
+        if let Some(condition) = while_expr.condition() {
+            push_probe_shape(
+                &mut shapes,
+                line_index,
+                text,
+                source,
+                ProbeShapeKind::Predicate,
+                condition.syntax().text_range().start(),
+                condition.syntax().text_range().end(),
+            );
+        }
+    }
+
+    for bin_expr in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::BinExpr::cast)
+    {
+        if bin_expr
+            .op_token()
+            .is_some_and(|token| is_predicate_operator(token.text()))
+        {
+            push_probe_shape(
+                &mut shapes,
+                line_index,
+                text,
+                source,
+                ProbeShapeKind::Predicate,
+                bin_expr.syntax().text_range().start(),
+                bin_expr.syntax().text_range().end(),
+            );
+        }
+        // RIPR-SPEC-0228: a field assignment (`self.f = ..`, `self.f op= ..`)
+        // is a field write, probed as `field_construction` like a
+        // constructed field instead of falling to `static_unknown`.
+        if field_assignment_path(&bin_expr).is_some() {
+            push_probe_shape(
+                &mut shapes,
+                line_index,
+                text,
+                source,
+                ProbeShapeKind::FieldConstruction,
+                bin_expr.syntax().text_range().start(),
+                bin_expr.syntax().text_range().end(),
+            );
+        }
+    }
+
+    let body = function.body();
+    for return_expr in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::ReturnExpr::cast)
+    {
+        let range = return_expr.syntax().text_range();
+        push_probe_shape(
+            &mut shapes,
+            line_index,
+            text,
+            source,
+            ProbeShapeKind::ReturnValue,
+            range.start(),
+            range.end(),
+        );
+        let return_text = slice_text(text, range.start(), range.end());
+        // #6904: a `return` inside a closure, `async` block or nested `fn`
+        // leaves that body, not the owner. Share the `direct_calls` filter.
+        if has_error_path_text(&return_text)
+            && !body
+                .as_ref()
+                .is_some_and(|body| enclosed_by_nested_fn_like(return_expr.syntax(), body))
+        {
+            push_probe_shape(
+                &mut shapes,
+                line_index,
+                text,
+                source,
+                ProbeShapeKind::ErrorPath,
+                range.start(),
+                range.end(),
+            );
+        }
+    }
+
+    if let Some(tail_expr) = body.as_ref().and_then(|body| body.tail_expr()) {
+        let range = tail_expr.syntax().text_range();
+        let tail_text = slice_text(text, range.start(), range.end());
+        if is_tail_return_value_text(&tail_text) {
+            push_probe_shape(
+                &mut shapes,
+                line_index,
+                text,
+                source,
+                ProbeShapeKind::ReturnValue,
+                range.start(),
+                range.end(),
+            );
+            if has_error_path_text(&tail_text) {
+                push_probe_shape(
+                    &mut shapes,
+                    line_index,
+                    text,
+                    source,
+                    ProbeShapeKind::ErrorPath,
+                    range.start(),
+                    range.end(),
+                );
+            }
+        }
+    }
+
+    for call_expr in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::CallExpr::cast)
+    {
+        let range = call_expr.syntax().text_range();
+        let call_text = slice_text(text, range.start(), range.end());
+        push_call_deletion_probe_shape(&mut shapes, line_index, text, source, call_expr.syntax());
+        if has_return_value_text(&call_text) && !call_is_argument(&call_expr) {
+            push_probe_shape(
+                &mut shapes,
+                line_index,
+                text,
+                source,
+                ProbeShapeKind::ReturnValue,
+                range.start(),
+                range.end(),
+            );
+        }
+        if has_error_path_text(&call_text) {
+            push_probe_shape(
+                &mut shapes,
+                line_index,
+                text,
+                source,
+                ProbeShapeKind::ErrorPath,
+                range.start(),
+                range.end(),
+            );
+        }
+    }
+
+    for method_call in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::MethodCallExpr::cast)
+    {
+        let range = method_call.syntax().text_range();
+        let method_text = slice_text(text, range.start(), range.end());
+        push_call_deletion_probe_shape(&mut shapes, line_index, text, source, method_call.syntax());
+        if method_call
+            .name_ref()
+            .is_some_and(|name| is_effect_call_name(&name.syntax().text().to_string()))
+            || has_effect_text(&method_text)
+        {
+            push_probe_shape(
+                &mut shapes,
+                line_index,
+                text,
+                source,
+                ProbeShapeKind::SideEffect,
+                range.start(),
+                range.end(),
+            );
+        }
+    }
+
+    for field in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::RecordExprField::cast)
+    {
+        let range = field.syntax().text_range();
+        push_probe_shape(
+            &mut shapes,
+            line_index,
+            text,
+            source,
+            ProbeShapeKind::FieldConstruction,
+            range.start(),
+            range.end(),
+        );
+    }
+
+    for match_expr in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::MatchExpr::cast)
+    {
+        if let Some(token) = match_expr.match_token() {
+            let snippet = match_expr_probe_text(
+                text,
+                match_expr.expr().map(|expr| expr.syntax().text_range()),
+                match_expr.syntax().text_range(),
+            );
+            push_probe_shape_with_text(
+                &mut shapes,
+                line_index,
+                ProbeShapeKind::MatchArm,
+                token.text_range().start(),
+                token.text_range().end(),
+                link_shape_text(source, token.text_range().start(), snippet),
+                Some((
+                    line_index.line(token.text_range().start()),
+                    line_index.line_for_range_end(
+                        match_expr
+                            .expr()
+                            .map(|expr| expr.syntax().text_range().end())
+                            .unwrap_or(token.text_range().end()),
+                    ),
+                )),
+            );
+        }
+    }
+
+    for arm in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::MatchArm::cast)
+    {
+        if let Some(token) = arm.fat_arrow_token() {
+            let snippet = match_arm_probe_text(
+                text,
+                arm.syntax().text_range().start(),
+                token.text_range().start(),
+            );
+            push_probe_shape_with_text(
+                &mut shapes,
+                line_index,
+                ProbeShapeKind::MatchArm,
+                token.text_range().start(),
+                token.text_range().end(),
+                link_shape_text(source, token.text_range().start(), snippet),
+                Some((
+                    line_index.line(
+                        arm.pat()
+                            .map(|pat| pat.syntax().text_range().start())
+                            .unwrap_or(token.text_range().start()),
+                    ),
+                    line_index.line_for_range_end(token.text_range().end()),
+                )),
+            );
+        }
+    }
+
+    shapes.sort_by(|a, b| {
+        a.start_line
+            .cmp(&b.start_line)
+            .then(a.end_line.cmp(&b.end_line))
+            .then(a.kind.as_str().cmp(b.kind.as_str()))
+            .then(a.text.cmp(&b.text))
+    });
+    shapes.dedup_by(|a, b| {
+        a.start_line == b.start_line
+            && a.end_line == b.end_line
+            && a.kind == b.kind
+            && a.text == b.text
+    });
+    shapes
+}
+
+fn push_unsafe_boundary_probe_shapes(
+    shapes: &mut Vec<ProbeShapeFact>,
+    function: &ast::Fn,
+    source: &Arc<str>,
+    line_index: &LineIndex,
+) {
+    if let Some(unsafe_token) = function.unsafe_token() {
+        let name = function
+            .name()
+            .map(|name| name.text().to_string())
+            .unwrap_or_else(|| "<anonymous>".to_string());
+        push_probe_shape_with_text(
+            shapes,
+            line_index,
+            ProbeShapeKind::UnsafeBoundary,
+            unsafe_token.text_range().start(),
+            function.syntax().text_range().end(),
+            link_shape_text(
+                source,
+                unsafe_token.text_range().start(),
+                format!("unsafe fn {name}"),
+            ),
+            None,
+        );
+    }
+
+    for block in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::BlockExpr::cast)
+    {
+        let Some(unsafe_token) = block.unsafe_token() else {
+            continue;
+        };
+        push_probe_shape_with_text(
+            shapes,
+            line_index,
+            ProbeShapeKind::UnsafeBoundary,
+            unsafe_token.text_range().start(),
+            block.syntax().text_range().end(),
+            link_shape_text(
+                source,
+                unsafe_token.text_range().start(),
+                "unsafe block".to_string(),
+            ),
+            None,
+        );
+    }
+}
+
+/// RIPR-SPEC-0228: the field path after `self` written by an assignment or
+/// compound assignment (`count` for `self.count += 1`, `child.count` for
+/// `self.child.count = 0`). Any other place (a local, `*p`, an index, a
+/// field of a call result or of another binding) gives `None`, and so does
+/// an assignment that spans lines (a changed continuation line would carry
+/// only part of it) or whose right-hand side contains, at any depth, a call,
+/// method call, macro, closure, `?` or `.await`, or a choice between values
+/// (`if`, `match`, a comparison or `&&`/`||`): those keep their
+/// `call_deletion`, predicate and other probes (RIPR-SPEC-0228 Non-Goals).
+pub(crate) fn field_assignment_path(bin_expr: &ast::BinExpr) -> Option<String> {
+    let op = bin_expr.op_token()?;
+    if !matches!(
+        op.text(),
+        "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>="
+    ) {
+        return None;
+    }
+    let rhs = bin_expr.rhs()?;
+    let keeps_other_probe = rhs.syntax().descendants().any(|node| {
+        matches!(
+            ast::Expr::cast(node.clone()),
+            Some(
+                ast::Expr::CallExpr(_)
+                    | ast::Expr::MethodCallExpr(_)
+                    | ast::Expr::MacroExpr(_)
+                    | ast::Expr::TryExpr(_)
+                    | ast::Expr::AwaitExpr(_)
+                    | ast::Expr::IfExpr(_)
+                    | ast::Expr::MatchExpr(_)
+                    | ast::Expr::ClosureExpr(_)
+                    // A block or loop can leave the owner before the write
+                    // (`self.n = { let Some(n) = x else { return }; n };`).
+                    | ast::Expr::BlockExpr(_)
+                    | ast::Expr::ReturnExpr(_)
+                    | ast::Expr::BreakExpr(_)
+                    | ast::Expr::ContinueExpr(_)
+                    | ast::Expr::LetExpr(_)
+                    | ast::Expr::LoopExpr(_)
+                    | ast::Expr::WhileExpr(_)
+                    | ast::Expr::ForExpr(_)
+            )
+        ) || ast::BinExpr::cast(node).is_some_and(|inner| {
+            inner
+                .op_kind()
+                .is_some_and(|op| matches!(op, ast::BinaryOp::CmpOp(_) | ast::BinaryOp::LogicOp(_)))
+        })
+    });
+    // A comment inside the assignment hides it from the textual
+    // `field_assignment_target` reader, which the evidence guard and the
+    // seam skip rely on, so such writes keep no probe.
+    let has_comment = bin_expr
+        .syntax()
+        .descendants_with_tokens()
+        .any(|element| element.kind() == ra_ap_syntax::SyntaxKind::COMMENT);
+    if bin_expr.syntax().text().contains_char('\n') || keeps_other_probe || has_comment {
+        return None;
+    }
+    let mut place = bin_expr.lhs()?;
+    let mut segments = Vec::new();
+    loop {
+        match place {
+            ast::Expr::FieldExpr(field) => {
+                // Only plain ASCII names (no `self.0`, `self.r#type` or
+                // non-ASCII names), matching `field_assignment_target`.
+                let name = field.name_ref()?.text().to_string();
+                let plain = name
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+                    && name
+                        .chars()
+                        .all(|ch| ch == '_' || ch.is_ascii_alphanumeric());
+                if !plain {
+                    return None;
+                }
+                segments.push(name);
+                place = field.expr()?;
+            }
+            ast::Expr::PathExpr(path) => {
+                let path = path.path()?;
+                let is_self = path.qualifier().is_none()
+                    && path
+                        .segment()
+                        .is_some_and(|segment| segment.self_token().is_some());
+                if !is_self || segments.is_empty() {
+                    return None;
+                }
+                segments.reverse();
+                return Some(segments.join("."));
+            }
+            _ => return None,
+        }
+    }
+}
+
+fn push_probe_shape(
+    shapes: &mut Vec<ProbeShapeFact>,
+    line_index: &LineIndex,
+    text: &str,
+    source: &Arc<str>,
+    kind: ProbeShapeKind,
+    start: TextSize,
+    end: TextSize,
+) {
+    let raw = slice_text(text, start, end);
+    let snippet = raw.trim().trim_end_matches(';').to_string();
+    if snippet.is_empty() {
+        return;
+    }
+    // Trimming only strips edges, so the snippet still sits verbatim at the
+    // leading-trimmed offset; trailing whitespace and `;` fall outside the
+    // shared window. `shared_or_owned` re-validates and keeps an owned copy
+    // if the span ever disagrees.
+    let leading = raw.len() - raw.trim_start().len();
+    let link_start = (u32::from(start) as usize).saturating_add(leading);
+    let text = SourceText::shared_or_owned(source, link_start, &snippet);
+    push_probe_shape_with_text(shapes, line_index, kind, start, end, text, None);
+}
+
+fn push_probe_shape_with_text(
+    shapes: &mut Vec<ProbeShapeFact>,
+    line_index: &LineIndex,
+    kind: ProbeShapeKind,
+    start: TextSize,
+    end: TextSize,
+    text: SourceText,
+    source_lines: Option<(usize, usize)>,
+) {
+    if text.is_empty() {
+        return;
+    }
+    shapes.push(ProbeShapeFact {
+        start_line: line_index.line(start),
+        end_line: line_index.line_for_range_end(end),
+        start_byte: u32::from(start) as usize,
+        end_byte: u32::from(end) as usize,
+        kind,
+        text,
+        value_consumed: false,
+        source_lines,
+    });
+}
+
+/// Link a synthetic or normalized snippet that may not sit verbatim in the
+/// source. Verbatim snippets share the allocation; anything else (match-arm
+/// normalization, `unsafe fn {name}` synthesis) stays owned with identical
+/// text.
+fn link_shape_text(source: &Arc<str>, start: TextSize, snippet: String) -> SourceText {
+    SourceText::shared_or_owned(source, u32::from(start) as usize, &snippet)
+}
+
+fn match_expr_probe_text(
+    text: &str,
+    scrutinee_range: Option<ra_ap_syntax::TextRange>,
+    fallback_range: ra_ap_syntax::TextRange,
+) -> String {
+    if let Some(range) = scrutinee_range {
+        let scrutinee = normalize_probe_shape_text(&slice_text(text, range.start(), range.end()));
+        if !scrutinee.is_empty() {
+            return format!("match {scrutinee}");
+        }
+    }
+
+    let raw = slice_text(text, fallback_range.start(), fallback_range.end());
+    let snippet = raw.trim();
+    let head = snippet
+        .split_once('{')
+        .map(|(head, _)| head)
+        .unwrap_or(snippet);
+    normalize_probe_shape_text(head)
+}
+
+fn match_arm_probe_text(text: &str, start: TextSize, arrow_start: TextSize) -> String {
+    let raw = slice_text(text, start, arrow_start);
+    let pattern = raw.trim();
+    let head = format!("{pattern} =>");
+    normalize_probe_shape_text(&head)
+}
+
+fn normalize_probe_shape_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn is_predicate_operator(operator: &str) -> bool {
+    matches!(
+        operator,
+        "==" | "!=" | "<=" | ">=" | "<" | ">" | "&&" | "||"
+    )
+}
+
+fn has_return_value_text(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    trimmed.starts_with("Ok(")
+        || trimmed.starts_with("Some(")
+        || trimmed.contains(" Ok(")
+        || trimmed.contains(" Some(")
+        || trimmed.contains("None")
+}
+
+fn push_call_deletion_probe_shape(
+    shapes: &mut Vec<ProbeShapeFact>,
+    line_index: &LineIndex,
+    text: &str,
+    source: &Arc<str>,
+    call: &ra_ap_syntax::SyntaxNode,
+) {
+    let range = call.text_range();
+    let before = shapes.len();
+    push_probe_shape(
+        shapes,
+        line_index,
+        text,
+        source,
+        ProbeShapeKind::CallDeletion,
+        range.start(),
+        range.end(),
+    );
+    if shapes.len() > before
+        && let Some(shape) = shapes.last_mut()
+    {
+        shape.value_consumed = call_value_is_consumed(call);
+    }
+}
+
+/// Whether a call's value feeds a consumer: a condition or scrutinee, a
+/// named binding, an operand, an argument, a receiver, a field or index
+/// base, an element, or the function's non-unit return (through block
+/// tails, `if` branches, match arms and `break` out of a `loop` or labeled
+/// block). Deleting such a call does not
+/// compile, so no mutant answers the repo-scope `call_presence` question;
+/// the consumer's own seam carries the behavior (#6677). Any other
+/// position, including a statement, `let _ =`, `_ =`, a `_`-prefixed
+/// binding, a closure or async block body and a `return` from a unit
+/// function (including a same-module `type X = ();` alias, #7101), reads
+/// as unconsumed so the `call_presence` seam is kept.
+fn call_value_is_consumed(call: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::SyntaxKind as K;
+    let mut node = call.clone();
+    while let Some(parent) = node.parent() {
+        match parent.kind() {
+            K::PAREN_EXPR
+            | K::TRY_EXPR
+            | K::AWAIT_EXPR
+            | K::REF_EXPR
+            | K::CAST_EXPR
+            | K::MATCH_ARM_LIST => {}
+            // An async block's tail is the future's output, not the
+            // enclosing function's value; read it as unconsumed like a
+            // closure body.
+            K::BLOCK_EXPR => {
+                if ast::BlockExpr::cast(parent.clone())
+                    .is_some_and(|block| block.async_token().is_some())
+                {
+                    return false;
+                }
+            }
+            K::STMT_LIST => {
+                let is_tail = ast::StmtList::cast(parent.clone())
+                    .and_then(|list| list.tail_expr())
+                    .is_some_and(|tail| tail.syntax() == &node);
+                if !is_tail {
+                    return false;
+                }
+            }
+            K::FN => return fn_returns_value(&parent),
+            // `break f()` supplies the value of its `loop` or labeled block,
+            // so that expression's own position decides.
+            K::BREAK_EXPR => match break_value_target(&parent) {
+                Some(target) => {
+                    node = target;
+                    continue;
+                }
+                None => return false,
+            },
+            // `return f();` in a unit function still compiles as `return;`.
+            K::RETURN_EXPR => return returning_fn_returns_value(&parent),
+            // `_ = f();` discards the value like `let _ = f();`.
+            K::BIN_EXPR => {
+                let discards = ast::BinExpr::cast(parent.clone()).is_some_and(|expr| {
+                    matches!(expr.op_kind(), Some(ast::BinaryOp::Assignment { op: None }))
+                        && matches!(expr.lhs(), Some(ast::Expr::UnderscoreExpr(_)))
+                        && expr.rhs().is_some_and(|rhs| rhs.syntax() == &node)
+                });
+                return !discards;
+            }
+            K::IF_EXPR | K::WHILE_EXPR => {
+                let is_condition = parent
+                    .children()
+                    .find_map(ast::Expr::cast)
+                    .is_some_and(|condition| condition.syntax() == &node);
+                if is_condition {
+                    return true;
+                }
+                // A `while` body's value is discarded; an `if` branch's
+                // value is the `if` expression's value.
+                if parent.kind() == K::WHILE_EXPR {
+                    return false;
+                }
+            }
+            K::MATCH_EXPR => {
+                let is_scrutinee = ast::MatchExpr::cast(parent.clone())
+                    .and_then(|expr| expr.expr())
+                    .is_some_and(|scrutinee| scrutinee.syntax() == &node);
+                if is_scrutinee {
+                    return true;
+                }
+            }
+            K::FOR_EXPR => {
+                return ast::ForExpr::cast(parent)
+                    .and_then(|expr| expr.iterable())
+                    .is_some_and(|iterable| iterable.syntax() == &node);
+            }
+            K::MATCH_ARM => {
+                let is_arm_value = ast::MatchArm::cast(parent.clone())
+                    .and_then(|arm| arm.expr())
+                    .is_some_and(|value| value.syntax() == &node);
+                if !is_arm_value {
+                    return false;
+                }
+            }
+            K::MATCH_GUARD
+            | K::LET_EXPR
+            | K::PREFIX_EXPR
+            | K::ARG_LIST
+            | K::METHOD_CALL_EXPR
+            | K::CALL_EXPR
+            | K::FIELD_EXPR
+            | K::INDEX_EXPR
+            | K::RECORD_EXPR_FIELD
+            | K::TUPLE_EXPR
+            | K::ARRAY_EXPR
+            | K::RANGE_EXPR => return true,
+            K::LET_STMT => {
+                let Some(stmt) = ast::LetStmt::cast(parent) else {
+                    return false;
+                };
+                let is_initializer = stmt
+                    .initializer()
+                    .is_some_and(|init| init.syntax() == &node);
+                return is_initializer && stmt.pat().is_some_and(|pat| !pat_discards_value(&pat));
+            }
+            _ => return false,
+        }
+        node = parent;
+    }
+    false
+}
+
+/// Whether a function declares a non-unit return type. `()` written with
+/// spaces or comments is still unit. A same-module `type X = ();` alias
+/// used as a bare path is unit too (#7101); qualified paths, generics,
+/// chained aliases, and associated types stay unresolved and read as a
+/// value.
+fn fn_returns_value(function: &ra_ap_syntax::SyntaxNode) -> bool {
+    ast::Fn::cast(function.clone())
+        .and_then(|function| function.ret_type())
+        .and_then(|ret| ret.ty())
+        .is_some_and(|ty| type_returns_value(&ty, function))
+}
+
+fn type_returns_value(ty: &ast::Type, function: &ra_ap_syntax::SyntaxNode) -> bool {
+    match ty {
+        ast::Type::TupleType(tuple) => tuple.fields().next().is_some(),
+        ast::Type::PathType(path) => !same_module_unit_alias(path, function),
+        _ => true,
+    }
+}
+
+fn type_is_unit_tuple(ty: Option<ast::Type>) -> bool {
+    matches!(ty, Some(ast::Type::TupleType(tuple)) if tuple.fields().next().is_none())
+}
+
+/// Identifier spelling with one optional `r#` prefix removed. `Unit` and
+/// `r#Unit` are the same ident; two prefixes are left as-is.
+fn ident_name(spelling: &str) -> &str {
+    cfg_predicates::rust_ident_name(spelling)
+}
+
+/// Bare `Unit` in `fn run() -> Unit`, with no qualifier, turbofish, or `Self`.
+fn bare_type_path_name(path_type: &ast::PathType) -> Option<String> {
+    let path = path_type.path()?;
+    if path.qualifier().is_some() {
+        return None;
+    }
+    let segment = path.segment()?;
+    if segment.generic_arg_list().is_some() {
+        return None;
+    }
+    let name_ref = segment.name_ref()?;
+    let name = ident_name(name_ref.text()).to_string();
+    (name != "Self").then_some(name)
+}
+
+fn enclosing_module_item_list(
+    function: &ra_ap_syntax::SyntaxNode,
+) -> Option<ra_ap_syntax::SyntaxNode> {
+    use ra_ap_syntax::SyntaxKind as K;
+    // Nested `fn` items can see an outer function's body aliases, which this
+    // syntax walk does not resolve. Stop at the enclosing `fn` so a
+    // block-local `type Unit = u32` cannot be overridden by a module
+    // `type Unit = ()`. Const/static initializer blocks and other block
+    // expressions can also bind a local alias; stop there too. Methods
+    // still continue through `ASSOC_ITEM_LIST` to the module list. Extern
+    // blocks use `EXTERN_ITEM_LIST`, not `ITEM_LIST`.
+    for ancestor in function.ancestors().skip(1) {
+        match ancestor.kind() {
+            K::FN | K::BLOCK_EXPR | K::CONST | K::STATIC => return None,
+            K::SOURCE_FILE | K::ITEM_LIST => return Some(ancestor),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn generic_params_include_name(params: &ast::GenericParamList, name: &str) -> bool {
+    params.type_or_const_params().any(|param| match param {
+        ast::TypeOrConstParam::Type(type_param) => type_param
+            .name()
+            .is_some_and(|param_name| ident_name(param_name.text()) == name),
+        ast::TypeOrConstParam::Const(_) => false,
+    })
+}
+
+fn generic_type_param_named(function: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+    use ra_ap_syntax::SyntaxKind as K;
+    if ast::Fn::cast(function.clone())
+        .and_then(|function| function.generic_param_list())
+        .is_some_and(|params| generic_params_include_name(&params, name))
+    {
+        return true;
+    }
+    for ancestor in function.ancestors().skip(1) {
+        match ancestor.kind() {
+            K::FN | K::SOURCE_FILE | K::ITEM_LIST => return false,
+            K::IMPL => {
+                return ast::Impl::cast(ancestor)
+                    .and_then(|item| item.generic_param_list())
+                    .is_some_and(|params| generic_params_include_name(&params, name));
+            }
+            K::TRAIT => {
+                return ast::Trait::cast(ancestor)
+                    .and_then(|item| item.generic_param_list())
+                    .is_some_and(|params| generic_params_include_name(&params, name));
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn assoc_type_named(function: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+    use ra_ap_syntax::SyntaxKind as K;
+    function.parent().is_some_and(|parent| {
+        parent.kind() == K::ASSOC_ITEM_LIST
+            && parent
+                .children()
+                .filter_map(ast::TypeAlias::cast)
+                .any(|alias| {
+                    alias
+                        .name()
+                        .is_some_and(|alias_name| ident_name(alias_name.text()) == name)
+                })
+    })
+}
+
+fn meta_ident_name(meta: &ast::Meta) -> Option<String> {
+    let name = meta.simple_name()?;
+    Some(ident_name(&name).to_string())
+}
+
+/// Built-in attrs that cannot rewrite a type alias or a function return.
+/// Anything else — `cfg`, an unparsed `cfg_attr` leaf, a qualified path,
+/// or a proc-macro-like ident — is refused. `cfg_attr` is unwrapped first
+/// so introduced `allow` / `doc` / `expect` / `inline` still count as unit.
+fn attr_refuses_unit_alias(attribute: &ast::Attr) -> bool {
+    attribute
+        .skip_cfg_attrs()
+        .iter()
+        .any(meta_refuses_unit_alias)
+}
+
+fn meta_refuses_unit_alias(meta: &ast::Meta) -> bool {
+    if matches!(meta, ast::Meta::CfgMeta(_)) {
+        return true;
+    }
+    !matches!(
+        meta_ident_name(meta).as_deref(),
+        Some(
+            "doc"
+                | "allow"
+                | "expect"
+                | "warn"
+                | "deny"
+                | "forbid"
+                | "deprecated"
+                | "must_use"
+                | "inline"
+                | "cold"
+                | "track_caller"
+                | "no_mangle"
+        ),
+    )
+}
+
+fn attrs_refuse_unit_alias(mut attrs: impl Iterator<Item = ast::Attr>) -> bool {
+    attrs.any(|attribute| attr_refuses_unit_alias(&attribute))
+}
+
+fn type_alias_has_refusing_attr(alias: &ast::TypeAlias) -> bool {
+    attrs_refuse_unit_alias(alias.attrs())
+}
+
+/// A proc-macro on the function or an enclosing impl/trait/module can
+/// rewrite the return type while leaving `-> Unit` in the unexpanded tree.
+/// Continue through `ITEM_LIST` so an inline `mod` attribute is visible.
+fn fn_or_enclosing_item_refuses_unit_alias(function: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::SyntaxKind as K;
+    if ast::Fn::cast(function.clone()).is_some_and(|item| attrs_refuse_unit_alias(item.attrs())) {
+        return true;
+    }
+    for ancestor in function.ancestors().skip(1) {
+        match ancestor.kind() {
+            K::FN | K::SOURCE_FILE => return false,
+            K::ITEM_LIST => {}
+            K::MODULE
+                if ast::Module::cast(ancestor.clone())
+                    .is_some_and(|item| attrs_refuse_unit_alias(item.attrs())) =>
+            {
+                return true;
+            }
+            K::IMPL
+                if ast::Impl::cast(ancestor.clone())
+                    .is_some_and(|item| attrs_refuse_unit_alias(item.attrs())) =>
+            {
+                return true;
+            }
+            K::TRAIT
+                if ast::Trait::cast(ancestor.clone())
+                    .is_some_and(|item| attrs_refuse_unit_alias(item.attrs())) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn path_last_segment_name(path: &ast::Path) -> Option<String> {
+    let name_ref = path.segment()?.name_ref()?;
+    Some(ident_name(name_ref.text()).to_string())
+}
+
+fn use_tree_binds_name(tree: &ast::UseTree, name: &str) -> bool {
+    if let Some(rename) = tree.rename() {
+        return rename
+            .name()
+            .is_some_and(|rename_name| ident_name(rename_name.text()) == name);
+    }
+    if tree.star_token().is_some() {
+        return false;
+    }
+    if let Some(list) = tree.use_tree_list() {
+        return list
+            .use_trees()
+            .any(|child| use_tree_binds_name(&child, name));
+    }
+    tree.path()
+        .and_then(|path| path_last_segment_name(&path))
+        .is_some_and(|segment| segment == name)
+}
+
+fn item_list_use_binds_name(items: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+    items.children().filter_map(ast::Use::cast).any(|use_item| {
+        use_item
+            .use_tree()
+            .is_some_and(|tree| use_tree_binds_name(&tree, name))
+    })
+}
+
+/// Syntax-only: a same-module `type Name = ();` (or `( )`) whose name
+/// matches a bare return path, including one `r#` prefix. Aliases in other
+/// modules, associated types, a function or impl/trait type parameter of
+/// the same name, a further alias of that name, nested functions,
+/// cfg-gated aliases, unknown or proc-macro-like attributes on the alias,
+/// function, or enclosing impl/trait/module, and a competing same-name
+/// `use` stay unresolved.
+fn same_module_unit_alias(path_type: &ast::PathType, function: &ra_ap_syntax::SyntaxNode) -> bool {
+    let Some(name) = bare_type_path_name(path_type) else {
+        return false;
+    };
+    if assoc_type_named(function, &name)
+        || generic_type_param_named(function, &name)
+        || fn_or_enclosing_item_refuses_unit_alias(function)
+    {
+        return false;
+    }
+    let Some(items) = enclosing_module_item_list(function) else {
+        return false;
+    };
+    if item_list_use_binds_name(&items, &name) {
+        return false;
+    }
+    let mut saw_unit = false;
+    for child in items.children() {
+        let Some(alias) = ast::TypeAlias::cast(child) else {
+            continue;
+        };
+        let Some(alias_name) = alias.name() else {
+            continue;
+        };
+        if ident_name(alias_name.text()) != name.as_str() {
+            continue;
+        }
+        if alias.generic_param_list().is_some()
+            || !type_is_unit_tuple(alias.ty())
+            || type_alias_has_refusing_attr(&alias)
+        {
+            return false;
+        }
+        saw_unit = true;
+    }
+    saw_unit
+}
+
+/// Whether the function a `return` leaves returns a value. A `return`
+/// inside a closure or async block leaves that body instead, whose type is
+/// not checked here, so it reads as unconsumed.
+fn returning_fn_returns_value(return_expr: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::SyntaxKind as K;
+    for ancestor in return_expr.ancestors().skip(1) {
+        match ancestor.kind() {
+            K::FN => return fn_returns_value(&ancestor),
+            K::CLOSURE_EXPR => return false,
+            K::BLOCK_EXPR
+                if ast::BlockExpr::cast(ancestor.clone())
+                    .is_some_and(|block| block.async_token().is_some()) =>
+            {
+                return false;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The `loop` or labeled block whose value a `break` supplies. A `break`
+/// out of `while` or `for`, or one whose target is not found before a
+/// closure, async block or function boundary, has no value target.
+fn break_value_target(break_expr: &ra_ap_syntax::SyntaxNode) -> Option<ra_ap_syntax::SyntaxNode> {
+    use ra_ap_syntax::SyntaxKind as K;
+    let wanted = ast::BreakExpr::cast(break_expr.clone())?
+        .lifetime()
+        .map(|lifetime| lifetime.syntax().text().to_string());
+    for ancestor in break_expr.ancestors().skip(1) {
+        let label = || {
+            ancestor
+                .children()
+                .find_map(ast::Label::cast)
+                .and_then(|label| label.lifetime())
+                .map(|lifetime| lifetime.syntax().text().to_string())
+        };
+        match ancestor.kind() {
+            K::FN | K::CLOSURE_EXPR => return None,
+            K::BLOCK_EXPR
+                if ast::BlockExpr::cast(ancestor.clone())
+                    .is_some_and(|block| block.async_token().is_some()) =>
+            {
+                return None;
+            }
+            K::BLOCK_EXPR if wanted.is_some() && label() == wanted => return Some(ancestor),
+            K::LOOP_EXPR | K::WHILE_EXPR | K::FOR_EXPR if wanted.is_none() || label() == wanted => {
+                return (ancestor.kind() == K::LOOP_EXPR).then_some(ancestor);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `let _ = f()` and `let _unused = f()` keep the call only for its effect.
+fn pat_discards_value(pat: &ast::Pat) -> bool {
+    match pat {
+        ast::Pat::WildcardPat(_) => true,
+        ast::Pat::IdentPat(ident) => ident
+            .name()
+            .is_some_and(|name| name.text().starts_with('_')),
+        _ => false,
+    }
+}
+
+fn call_is_argument(call: &ast::CallExpr) -> bool {
+    call.syntax()
+        .parent()
+        .and_then(ast::ArgList::cast)
+        .is_some()
+}
+
+fn is_tail_return_value_text(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    !trimmed.is_empty()
+        && !trimmed.starts_with("if ")
+        && !trimmed.starts_with("match ")
+        && !trimmed.starts_with("while ")
+        && !trimmed.starts_with("for ")
+        && !trimmed.starts_with("loop ")
+}
+
+fn has_error_path_text(text: &str) -> bool {
+    text.contains("Err(")
+        || text.contains("Error::")
+        || text.contains("map_err")
+        || text.contains("bail!")
+        || text.contains("anyhow!")
+        // #6695: a `return`/tail `x.ok_or(Type::Variant)?` returns that error.
+        // Same fail-closed reader as the seam identity, so `E::Bad` is
+        // recognised without an `Error` suffix (PR #6786 review, Devin).
+        || (text.contains(".ok_or")
+            && crate::analysis::classify::changed_error_variant(text).is_some())
+}
+
+fn has_effect_text(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    [
+        ".save(",
+        ".publish(",
+        ".send(",
+        ".write(",
+        ".insert(",
+        ".push(",
+        ".remove(",
+        ".delete(",
+        ".emit(",
+        ".increment(",
+        "metrics.",
+        "log::",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+/// The expect-test comparison methods, called on an `expect![[..]]` or
+/// `expect_file![..]` value (bare or `expect_test::` qualified).
+const EXPECT_TEST_COMPARISONS: &[&str] = &["assert_eq", "assert_debug_eq"];
+
+pub(crate) fn is_expect_test_comparison(call: &ast::MethodCallExpr) -> bool {
+    call.name_ref().is_some_and(|name| {
+        EXPECT_TEST_COMPARISONS
+            .iter()
+            .any(|known| name.text() == *known)
+    }) && expect_test_receiver(call).is_some()
+}
+
+/// The receiver macro's path (`expect`, `expect_test::expect`, `expect_file`
+/// or `expect_test::expect_file`) when an expect-test comparison's receiver
+/// is that macro's invocation.
+pub(crate) fn expect_test_receiver(call: &ast::MethodCallExpr) -> Option<String> {
+    let ast::Expr::MacroExpr(receiver) = call.receiver()? else {
+        return None;
+    };
+    let path = receiver
+        .macro_call()?
+        .path()?
+        .syntax()
+        .text()
+        .to_string()
+        .replace(' ', "");
+    matches!(
+        path.as_str(),
+        "expect" | "expect_test::expect" | "expect_file" | "expect_test::expect_file"
+    )
+    .then_some(path)
+}
+
+fn is_effect_call_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "save"
+            | "publish"
+            | "send"
+            | "write"
+            | "insert"
+            | "push"
+            | "remove"
+            | "delete"
+            | "emit"
+            | "increment"
+    )
+}
+
+fn extract_parser_oracles(
+    function: &ast::Fn,
+    text: &str,
+    line_index: &LineIndex,
+    drop_in_scope: DropInScope,
+) -> Vec<OracleFact> {
+    // RIPR-SPEC-0106 (Part A): pre-scan the function body for `unwrap_err`/
+    // `expect_err` variable bindings so assertions on those variables can be
+    // upgraded to ExactErrorVariant.
+    let original_function_text = function.syntax().text().to_string();
+    let function_text = crate::analysis::extract::property_macros::property_safe_scanner_text(
+        &original_function_text,
+    );
+    let bound_error_vars = unwrap_err_bound_variables(&function_text);
+
+    let mut assertions = Vec::new();
+    for macro_call in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+    {
+        let Some(path) = macro_call.path() else {
+            continue;
+        };
+        let macro_name = path.syntax().text().to_string().replace(' ', "");
+        if !is_assertion_macro(&macro_name)
+            || drop_in_root_may_be_rebound(&macro_name, function.syntax(), drop_in_scope)
+        {
+            continue;
+        }
+        let range = macro_call.syntax().text_range();
+        let assertion_text = slice_macro_call_text(text, range.start(), range.end());
+        let mut classification = classify_assertion(&assertion_text);
+        // Upgrade exact assertions on unwrap_err-bound variables to
+        // ExactErrorVariant when the assertion pins a specific error result
+        // (RIPR-SPEC-0106, Part A). Constructor-payload equality reaches this
+        // point as WholeObjectEquality. An assertion RIPR-SPEC-0231 weakened
+        // is never upgraded, matching the line-scan path in `scan.rs`.
+        if matches!(
+            classification.kind,
+            OracleKind::ExactValue | OracleKind::WholeObjectEquality
+        ) && classification.strength == OracleStrength::Strong
+            && is_unwrap_err_bound_error_assertion(&assertion_text, &bound_error_vars)
+        {
+            classification.kind = OracleKind::ExactErrorVariant;
+            classification.strength = OracleStrength::Strong;
+        }
+        assertions.push(OracleFact {
+            line: line_index.line(range.start()),
+            kind: classification.kind,
+            strength: classification.strength,
+            observed_tokens: extract_identifier_tokens(&assertion_text),
+            text: assertion_text,
+            ok_value_observed: None,
+        });
+    }
+
+    for method_call in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::MethodCallExpr::cast)
+    {
+        let Some(name) = method_call
+            .name_ref()
+            .map(|name| name.syntax().text().to_string())
+        else {
+            continue;
+        };
+        // RIPR-SPEC-0227: `unwrap()` / `expect()` panic on the `Err` side
+        // and read smoke; an `unwrap_err()` or `expect_err(..)` whose value
+        // is never compared
+        // panics on the `Ok` side, so it observes the `Err` side
+        // (decision 2). Its statement shape is decided by the same
+        // `uncompared_unwrap_err` the line scanner uses.
+        let (kind, strength) = match name.as_str() {
+            "unwrap" | "expect" => (OracleKind::SmokeOnly, OracleStrength::Smoke),
+            "unwrap_err" | "expect_err" if uncompared_unwrap_err_statement(&method_call, text) => {
+                (OracleKind::BroadError, OracleStrength::Weak)
+            }
+            _ => continue,
+        };
+        let range = method_call.syntax().text_range();
+        let text = slice_text(text, range.start(), range.end())
+            .trim()
+            .trim_end_matches(';')
+            .to_string();
+        assertions.push(OracleFact {
+            line: line_index.line(range.start()),
+            kind,
+            strength,
+            observed_tokens: extract_identifier_tokens(&text),
+            text,
+            ok_value_observed: None,
+        });
+    }
+
+    // #6578: an expect-test comparison (`expect![[..]].assert_eq(actual)`)
+    // is a method call on the macro's value, which the macro walk above never
+    // sees. Its whole expression is the oracle, graded `snapshot` / medium
+    // (RIPR-SPEC-0231 step 6); the line scan below must
+    // not also read the `.assert_debug_eq(..)` continuation of a multi-line
+    // expectation as an assertion of its own.
+    let mut expect_test_lines = Vec::new();
+    for method_call in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::MethodCallExpr::cast)
+        .filter(is_expect_test_comparison)
+        // Only a statement or the tail of the function's own body: nested
+        // in `ready || { .. }`, a branch or a closure it may never run,
+        // which the classifier cannot see from the call text alone. The
+        // line scan below still reads those lines as it always has.
+        .filter(|call| {
+            let Some(parent) = call.syntax().parent() else {
+                return false;
+            };
+            let list = if parent.kind() == ra_ap_syntax::SyntaxKind::EXPR_STMT {
+                parent.parent()
+            } else {
+                Some(parent)
+            };
+            list.is_some_and(|list| {
+                function
+                    .body()
+                    .and_then(|body| body.stmt_list())
+                    .is_some_and(|own| own.syntax() == &list)
+            })
+        })
+    {
+        let range = method_call.syntax().text_range();
+        let assertion_text = slice_macro_call_text(text, range.start(), range.end());
+        // The parser verified the comparison's shape, so its `snapshot` /
+        // medium grade does not depend on the substring recognizer's
+        // spelling (`expect![..]`, `expect! [[..]]`, `.assert_eq (..)`, a
+        // call split across lines). That grade is a ceiling: a weaker
+        // reading of the compared value (a tautology, a broad `is_err()`)
+        // is kept, as the line scan keeps it.
+        let classification = classify_assertion(&assertion_text);
+        let (kind, strength) = if matches!(
+            classification.strength,
+            OracleStrength::Weak | OracleStrength::Smoke | OracleStrength::None
+        ) {
+            (classification.kind, classification.strength)
+        } else {
+            (OracleKind::Snapshot, OracleStrength::Medium)
+        };
+        let line = line_index.line(range.start());
+        expect_test_lines.push(line..=line_index.line_for_range_end(range.end()));
+        assertions.push(OracleFact {
+            line,
+            kind,
+            strength,
+            observed_tokens: extract_identifier_tokens(&assertion_text),
+            text: assertion_text,
+            ok_value_observed: None,
+        });
+    }
+
+    let function_start = line_index.line(function.syntax().text_range().start());
+    // #3284: terminal Err-return guards credit as their assertion twins
+    // on the parser path too, so both adapters agree.
+    for oracle in err_return_guard_oracles(&function_text, function_start) {
+        assertions.push(oracle);
+    }
+    // #3727 Slice A: parser-backed shadow facts over the scanned text. The
+    // guarded scan runs over `function_text` (the AST node text, which
+    // includes the attribute lines) and its use-site coordinate counts
+    // 0-based lines from the TOP of that text, so the facts must share
+    // that base: `line_of` maps to function_text lines and the base is
+    // line 1, making `LetBindingFact.line` a 0-based function_text line —
+    // the same verdict the lexical scanner over the same text would reach
+    // (#3739 review, coderabbit h6cfG: with a fn-keyword base, attribute
+    // lines shifted the let coordinates and a binding AFTER a guarded
+    // match could suppress that earlier oracle).
+    let node_start = function.syntax().text_range().start();
+    let local_line_index = LineIndex::new(&function_text);
+    let (nested_fn_names, let_bindings) = collect_body_shadow_facts(
+        function,
+        &|offset| local_line_index.line(offset - node_start),
+        1,
+    );
+    // #3709: guarded Result matches over direct callee results are extracted
+    // by the dedicated scanner, which owns the whole statement — the
+    // line-scanned statement joiner must not also swallow the match block
+    // through the `expect_` name sniff.
+    let guarded_matches = guarded_result_match_scan_with_shadow_authority(
+        &function_text,
+        function_start,
+        ShadowAuthority::ParserBodyFacts {
+            nested_fn_names: &nested_fn_names,
+            let_bindings: &let_bindings,
+        },
+    );
+    for oracle in extract_line_scanned_oracles(&function_text, function_start)
+        .into_iter()
+        .filter(|oracle| !guarded_matches.match_start_lines.contains(&oracle.line))
+        .filter(|oracle| {
+            !expect_test_lines
+                .iter()
+                .any(|lines| lines.contains(&oracle.line))
+        })
+    {
+        assertions.push(oracle);
+    }
+    for oracle in guarded_matches.oracles {
+        assertions.push(oracle);
+    }
+
+    assertions.sort_by(|a, b| a.line.cmp(&b.line).then(a.text.cmp(&b.text)));
+    assertions.dedup_by(|a, b| a.line == b.line && a.text == b.text);
+    assertions
+}
+
+/// Whether this `unwrap_err()` call is the whole value of a statement that
+/// never compares it (RIPR-SPEC-0227 decision 2): the statement text and the
+/// rest of the enclosing block go through `uncompared_unwrap_err`, so both
+/// adapters admit the same shapes.
+fn uncompared_unwrap_err_statement(method_call: &ast::MethodCallExpr, text: &str) -> bool {
+    let Some(statement) = method_call.syntax().parent() else {
+        return false;
+    };
+    if ast::LetStmt::cast(statement.clone()).is_none()
+        && ast::ExprStmt::cast(statement.clone()).is_none()
+    {
+        return false;
+    }
+    let range = statement.text_range();
+    let statement_text = slice_text(text, range.start(), range.end());
+    let block_end = statement
+        .parent()
+        .map_or(range.end(), |block| block.text_range().end());
+    let rest = slice_text(text, range.end(), block_end);
+    crate::analysis::extract::uncompared_unwrap_err(&statement_text, &rest).is_some_and(|value| {
+        let call = method_call.syntax().text().to_string();
+        value.split_whitespace().eq(call.split_whitespace())
+    })
+}
+
+/// Token-local leaf form of [`is_assertion_macro`] for scanners that see
+/// one path segment at a time: the exact built-in assertion names plus the
+/// supported snapshot-macro naming boundary (`*_snapshot`). The
+/// source-side `contains("snapshot")` rule is deliberately NOT carried
+/// over — a leaf ident like `snapshot_helper` must not classify, while
+/// `assert_snapshot` / `assert_json_snapshot` do.
+pub(crate) fn is_assertion_macro_leaf(name: &str) -> bool {
+    // `matches!` computes a bool. Only an asserting wrapper observes it;
+    // admitting the computation itself credits discarded values (#5713).
+    matches!(
+        name,
+        "assert" | "assert_eq" | "assert_ne" | "assert_matches"
+    ) || name.ends_with("snapshot")
+}
+
+pub(crate) fn is_assertion_macro(macro_name: &str) -> bool {
+    let macro_name = drop_in_assertion_leaf(macro_name).unwrap_or(macro_name);
+    matches!(
+        macro_name,
+        "assert" | "assert_eq" | "assert_ne" | "assert_matches"
+    ) || macro_name.starts_with("insta::assert")
+        || macro_name.contains("snapshot")
+}
+
+/// Crates whose path-qualified assertion macros keep the std semantics:
+/// `pretty_assertions` and `similar_asserts` only change the failure diff,
+/// `std`/`core` are the built-ins, and `assert_matches` exports the
+/// std-shaped `assert_matches!`. Any other crate path stays unadmitted, so
+/// an unknown `other::assert_eq!` never gains assertion authority.
+const DROP_IN_ASSERTION_CRATES: &[&str] = &[
+    "std",
+    "core",
+    "pretty_assertions",
+    "similar_asserts",
+    "assert_matches",
+];
+
+/// The leaf of `crate::leaf` when `crate` is a known drop-in assertion crate.
+/// The owner-return admission gate shares it, so a qualified drop-in
+/// `assert_eq!` faces the same execution admission as a bare one.
+pub(crate) fn drop_in_assertion_leaf(macro_name: &str) -> Option<&str> {
+    let path = macro_name.strip_prefix("::").unwrap_or(macro_name);
+    let (crate_name, leaf) = path.split_once("::")?;
+    (DROP_IN_ASSERTION_CRATES.contains(&crate_name) && !leaf.contains("::")).then_some(leaf)
+}
+
+/// Whether the tree a parser oracle is read from is the function's whole
+/// source file, so a drop-in crate root can be checked against the file's own
+/// bindings.
+#[derive(Clone, Copy)]
+enum DropInScope {
+    WholeFile,
+    /// A re-parse of the function text alone: the file is not visible.
+    Unknown,
+}
+
+/// Nonrecursive whole-file root proof for each qualified statement macro.
+/// Unknown glob roots remain unproved.
+pub(crate) fn assertion_root_binding_is_unrebound(
+    path: &str,
+    node: &ra_ap_syntax::SyntaxNode,
+) -> bool {
+    drop_in_assertion_leaf(path).is_some()
+        && !drop_in_root_may_be_rebound(path, node, DropInScope::WholeFile)
+        && node.ancestors().last().is_some_and(|file| {
+            !file
+                .descendants()
+                .filter_map(ast::UseTree::cast)
+                .any(|tree| tree.star_token().is_some())
+        })
+}
+
+/// Whether a `std::`- or `core::`-qualified macro path (`std::assert_eq`,
+/// `::core::assert`) names the standard macro as far as its file shows
+/// (#7857). The root must pass the drop-in rebinding checks and be
+/// available, and every glob import in the file must read an in-file
+/// module (`self::*`, or `super::*` inside an inline module), so no glob
+/// brings a `std` or `core` item from another file. Other drop-in crates
+/// (`pretty_assertions::`) also need a manifest check, which this file-local
+/// proof cannot make, so they stay unproved here.
+pub(crate) fn std_macro_root_is_unrebound(path: &str, node: &ra_ap_syntax::SyntaxNode) -> bool {
+    let unrooted = path.strip_prefix("::").unwrap_or(path);
+    matches!(unrooted.split_once("::"), Some(("std" | "core", leaf)) if !leaf.contains("::"))
+        && !drop_in_root_may_be_rebound(path, node, DropInScope::WholeFile)
+        && assertion_root_is_available(path, node)
+        && node.ancestors().last().is_some_and(|file| {
+            file.descendants()
+                .filter_map(ast::UseTree::cast)
+                .filter(|tree| tree.star_token().is_some())
+                .all(|tree| glob_reads_in_file_module(&tree))
+        })
+}
+
+/// `use self::*;`, or `use super::*;` inside an inline module: a glob whose
+/// source module is in the same file. Any other glob shape, including one
+/// nested in a use list, is not established.
+fn glob_reads_in_file_module(tree: &ast::UseTree) -> bool {
+    let Some(path) = tree.path() else {
+        return false;
+    };
+    if !tree
+        .syntax()
+        .parent()
+        .is_some_and(|parent| ast::Use::can_cast(parent.kind()))
+    {
+        return false;
+    }
+    match path.syntax().text().to_string().as_str() {
+        "self" => true,
+        "super" => tree
+            .syntax()
+            .ancestors()
+            .filter_map(ast::Module::cast)
+            .any(|module| module.item_list().is_some()),
+        _ => false,
+    }
+}
+
+/// Qualified operand capture requires every statement macro in the same
+/// function to retain its independently established binding.
+pub(crate) fn assertion_root_is_unrebound(
+    path: &str,
+    node: &ra_ap_syntax::SyntaxNode,
+    statement_bound: &dyn Fn(&ast::MacroCall) -> bool,
+) -> bool {
+    let function = node.ancestors().find_map(ast::Fn::cast);
+    assertion_root_binding_is_unrebound(path, node)
+        && node.ancestors().last().is_some_and(|file| {
+            file.descendants()
+                .filter_map(ast::MacroCall::cast)
+                .filter(|call| call.syntax().ancestors().find_map(ast::Fn::cast) == function)
+                .filter(crate::analysis::syntax::macro_call_is_statement)
+                .all(|call| statement_bound(&call))
+        })
+}
+
+/// Initial qualified capture keeps no-implicit-prelude contexts refused.
+/// A no_std root supplies std only through an explicit unrenamed declaration.
+pub(crate) fn assertion_root_is_available(path: &str, node: &ra_ap_syntax::SyntaxNode) -> bool {
+    let Some((root, _)) = path.strip_prefix("::").unwrap_or(path).split_once("::") else {
+        return false;
+    };
+    let Some(file) = node.ancestors().last() else {
+        return false;
+    };
+    let attributes: Vec<_> = node
+        .ancestors()
+        .flat_map(|ancestor| ancestor.children().filter_map(ast::Attr::cast))
+        .collect();
+    let mentions = |name: &str| {
+        attributes.iter().any(|attribute| {
+            attribute
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|e| e.into_token())
+                .any(|token| token.text() == name)
+                && !cfg_predicates::attribute_is_known_inactive_prelude_flags(
+                    &attribute.syntax().text().to_string(),
+                )
+        })
+    };
+    !mentions("no_implicit_prelude")
+        && (root != "std"
+            || !mentions("no_std")
+            || file
+                .children()
+                .filter_map(ast::ExternCrate::cast)
+                .any(|krate| {
+                    krate.rename().is_none()
+                        && crate::analysis::syntax::supported_targeted_item_context(krate.syntax())
+                        && krate.name_ref().is_some_and(|name| name.text() == "std")
+                }))
+}
+
+/// Whether a crate-qualified drop-in assertion (`pretty_assertions::assert_eq!`)
+/// may name something other than the crate. It may when the file declares a
+/// module or an `extern crate` rename with the root's name, imports another
+/// item under it, or has an item-position macro call that could emit such a
+/// binding; and always when the file is not visible. Any such binding
+/// anywhere in the file refuses, without resolving which module it sits in,
+/// so a local module that re-exports a non-checking `assert_eq` gains no
+/// assertion authority. A binding in another file reached through a glob
+/// import (`use super::*` in an out-of-line test module), and a Cargo package
+/// rename, are not visible here.
+fn drop_in_root_may_be_rebound(
+    macro_name: &str,
+    node: &ra_ap_syntax::SyntaxNode,
+    scope: DropInScope,
+) -> bool {
+    use ra_ap_syntax::SyntaxKind as K;
+    if drop_in_assertion_leaf(macro_name).is_none() {
+        return false;
+    }
+    let path = macro_name.strip_prefix("::").unwrap_or(macro_name);
+    let Some((root, _)) = path.split_once("::") else {
+        return false;
+    };
+    let (DropInScope::WholeFile, Some(file)) = (scope, node.ancestors().last()) else {
+        return true;
+    };
+    let names = |name: Option<ast::Name>| {
+        name.is_some_and(|name| name.text().trim_start_matches("r#") == root)
+    };
+    super::use_rebinds_crate_name(&file, root)
+        || file.descendants().any(|node| {
+            if let Some(module) = ast::Module::cast(node.clone()) {
+                return names(module.name());
+            }
+            if let Some(krate) = ast::ExternCrate::cast(node.clone()) {
+                return names(krate.rename().and_then(|rename| rename.name()));
+            }
+            ast::MacroCall::can_cast(node.kind())
+                && node
+                    .parent()
+                    .is_some_and(|parent| matches!(parent.kind(), K::SOURCE_FILE | K::ITEM_LIST))
+        })
+}
+
+pub(crate) struct LineIndex {
+    starts: Vec<usize>,
+}
+
+impl LineIndex {
+    pub(crate) fn new(text: &str) -> Self {
+        let mut starts = vec![0];
+        for (index, byte) in text.bytes().enumerate() {
+            if byte == b'\n' {
+                starts.push(index + 1);
+            }
+        }
+        Self { starts }
+    }
+
+    pub(crate) fn line(&self, offset: TextSize) -> usize {
+        self.line_from_offset(text_size_to_usize(offset))
+    }
+
+    pub(crate) fn line_for_range_end(&self, offset: TextSize) -> usize {
+        self.line_from_offset(text_size_to_usize(offset).saturating_sub(1))
+    }
+
+    fn line_from_offset(&self, offset: usize) -> usize {
+        match self.starts.binary_search(&offset) {
+            Ok(index) => index + 1,
+            Err(index) => index.max(1),
+        }
+    }
+}
+
+fn text_size_to_usize(offset: TextSize) -> usize {
+    let value: u32 = offset.into();
+    value as usize
+}
+
+pub(crate) fn slice_text(text: &str, start: TextSize, end: TextSize) -> String {
+    let start = text_size_to_usize(start);
+    let end = text_size_to_usize(end);
+    text.get(start..end).unwrap_or("").to_string()
+}
+
+pub(super) fn slice_macro_call_text(text: &str, start: TextSize, end: TextSize) -> String {
+    let start = text_size_to_usize(start);
+    let mut end = text_size_to_usize(end);
+    let bytes = text.as_bytes();
+    let mut cursor = end;
+    while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() && bytes[cursor] != b'\n' {
+        cursor += 1;
+    }
+    if bytes.get(cursor) == Some(&b';') {
+        end = cursor + 1;
+    }
+    text.get(start..end).unwrap_or("").trim().to_string()
+}
+
+fn owner_changed_nodes(
+    functions: crate::analysis::facts::FactSlice<'_, crate::analysis::facts::FunctionFact>,
+    ranges: &[TextRange],
+) -> Vec<SyntaxNodeFact> {
+    let mut nodes = Vec::new();
+    for range in ranges {
+        let mut owners = functions
+            .iter()
+            .filter(|function| {
+                ranges_overlap(
+                    range.start_line,
+                    range.end_line,
+                    function.start_line,
+                    function.end_line,
+                )
+            })
+            .collect::<Vec<_>>();
+        owners.sort_by(|left, right| {
+            function_span(left)
+                .cmp(&function_span(right))
+                .then(right.start_line.cmp(&left.start_line))
+                .then(left.id.0.cmp(&right.id.0))
+        });
+        if let Some(function) = owners.first() {
+            nodes.push(SyntaxNodeFact {
+                file: function.file.clone(),
+                kind: if function.source_role.is_evidence_role() {
+                    "test_function".to_string()
+                } else {
+                    "function".to_string()
+                },
+                start_line: function.start_line,
+                end_line: function.end_line,
+                text: function.body.to_string(),
+                owner: Some(function.id.clone()),
+            });
+        }
+    }
+    nodes.sort_by(|left, right| {
+        left.file
+            .cmp(&right.file)
+            .then(left.start_line.cmp(&right.start_line))
+            .then(left.end_line.cmp(&right.end_line))
+            .then(left.kind.cmp(&right.kind))
+            .then(left.owner.cmp(&right.owner))
+    });
+    nodes.dedup_by(|left, right| {
+        left.file == right.file
+            && left.start_line == right.start_line
+            && left.end_line == right.end_line
+            && left.kind == right.kind
+            && left.owner == right.owner
+    });
+    nodes
+}
+
+fn ranges_overlap(start1: usize, end1: usize, start2: usize, end2: usize) -> bool {
+    start1 <= end2 && start2 <= end1
+}
+
+fn function_span(function: &FunctionFact) -> usize {
+    function.end_line - function.start_line
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// #4558: where each `fn` sits, as a type-path call `T::name(` sees it.
+    #[test]
+    fn impl_context_names_the_self_type_only_for_plain_named_impls() -> Result<(), Box<dyn Error>> {
+        let source = concat!(
+            "pub fn current() {}\n",
+            "pub struct LevelFilter;\n",
+            "impl LevelFilter { pub fn inherent() { fn local() {} } }\n",
+            "impl core::fmt::Display for crate::metadata::LevelFilter { fn fmt_like() {} }\n",
+            "impl<T> Wrapper<T> { fn generic_args() {} }\n",
+            "impl<T: Tr> Tr2 for T { fn blanket() {} }\n",
+            "impl Tr for &LevelFilter { fn by_ref() {} }\n",
+            "trait Tr { fn defaulted() {} }\n",
+            "mod nested { pub fn in_module() {} }\n",
+            "impl LevelFilter { const C: () = { fn in_const() {} }; }\n",
+        );
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
+        let context = |name: &str| {
+            facts
+                .functions
+                .iter()
+                .find(|function| function.name == name)
+                .map(|function| function.impl_context.clone())
+        };
+        let named = |self_type: &str| {
+            Some(FunctionImplContext::Impl {
+                self_type: self_type.to_string(),
+            })
+        };
+        assert_eq!(context("current"), Some(FunctionImplContext::Free));
+        assert_eq!(context("in_module"), Some(FunctionImplContext::Free));
+        assert_eq!(context("local"), Some(FunctionImplContext::Free));
+        assert_eq!(context("in_const"), Some(FunctionImplContext::Free));
+        assert_eq!(context("inherent"), named("LevelFilter"));
+        assert_eq!(context("fmt_like"), named("LevelFilter"));
+        assert_eq!(context("generic_args"), named("Wrapper"));
+        assert_eq!(context("blanket"), Some(FunctionImplContext::Unknown));
+        assert_eq!(context("by_ref"), Some(FunctionImplContext::Unknown));
+        assert_eq!(context("defaulted"), Some(FunctionImplContext::Unknown));
+        Ok(())
+    }
+
+    #[test]
+    fn impl_block_attrs_are_kept_apart_from_the_method_attrs() -> Result<(), String> {
+        let source = r#"
+#[pymethods]
+impl Ledger {
+    #[getter]
+    pub fn charge(&self) -> u64 { 1 }
+}
+
+#[pyfunction]
+pub fn fee() -> u64 { 5 }
+"#;
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
+        let function = |name: &str| {
+            facts
+                .functions
+                .iter()
+                .find(|function| function.name == name)
+        };
+        let charge = function("charge").ok_or("charge not summarized")?;
+        assert_eq!(charge.attrs, vec!["#[getter]".to_string()]);
+        assert_eq!(charge.impl_attrs, vec!["#[pymethods]".to_string()]);
+        let fee = function("fee").ok_or("fee not summarized")?;
+        assert_eq!(fee.attrs, vec!["#[pyfunction]".to_string()]);
+        assert!(
+            fee.impl_attrs.is_empty(),
+            "a free function has no impl attributes"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn parser_symbol_id_keeps_raw_byte_files_distinct() -> Result<(), Box<dyn Error>> {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let source = "fn bounds_check() {}\n";
+        let parse_a = SourceFile::parse(source, Edition::CURRENT);
+        let parse_b = SourceFile::parse(source, Edition::CURRENT);
+        let function = |tree: &SourceFile| {
+            tree.syntax()
+                .descendants()
+                .find_map(ast::Fn::cast)
+                .ok_or("function present")
+        };
+        let function_a = function(&parse_a.tree())?;
+        let function_b = function(&parse_b.tree())?;
+        let raw_a = Path::new(OsStr::from_bytes(b"pricing_\xff.rs"));
+        let raw_b = Path::new(OsStr::from_bytes(b"pricing_\xfe.rs"));
+        let id_a = parser_symbol_id(raw_a, &function_a, "bounds_check");
+        let id_b = parser_symbol_id(raw_b, &function_b, "bounds_check");
+        assert_ne!(
+            id_a, id_b,
+            "distinct raw-byte files must own distinct symbols"
+        );
+        Ok(())
+    }
+
+    fn temp_dir(name: &str) -> Result<PathBuf, Box<dyn Error>> {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let dir = std::env::temp_dir().join(format!("ripr-{name}-{stamp}"));
+        fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
+
+    fn write_manifest(root: &Path) -> Result<(), Box<dyn Error>> {
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='test'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn ra_adapter_parses_valid_rust_source() -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("ra_parser")?;
+        fs::create_dir_all(root.join("src"))?;
+        write_manifest(&root)?;
+        fs::write(
+            root.join("src/lib.rs"),
+            r#"
+pub fn calculate(x: i32, y: i32) -> i32 {
+    if x > y { x } else { y }
+}
+
+#[test]
+fn test_calculate() {
+    assert_eq!(calculate(5, 3), 5);
+}
+"#,
+        )?;
+
+        let adapter = RaRustSyntaxAdapter;
+        let text = fs::read_to_string(root.join("src/lib.rs"))?;
+        let facts = adapter.summarize_file(&root.join("src/lib.rs"), &text)?;
+
+        assert!(!facts.functions.is_empty());
+        assert!(!facts.tests.is_empty());
+        assert!(!facts.probe_shapes.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn ra_adapter_ignores_unannotated_helpers_in_test_files_and_keeps_rstest()
+    -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("ra_test_helpers")?;
+        fs::create_dir_all(root.join("tests"))?;
+        write_manifest(&root)?;
+        fs::write(
+            root.join("tests/pipeline.rs"),
+            r#"
+fn helper() {
+    run_pipeline();
+}
+
+#[rstest]
+#[case("alpha")]
+fn parameterized_case(input: &str) {
+    helper();
+    assert_eq!(input, "alpha");
+}
+
+#[test]
+fn integration_smoke() {
+    helper();
+}
+"#,
+        )?;
+
+        let adapter = RaRustSyntaxAdapter;
+        let text = fs::read_to_string(root.join("tests/pipeline.rs"))?;
+        let facts = adapter.summarize_file(&root.join("tests/pipeline.rs"), &text)?;
+        let test_names = facts
+            .tests
+            .iter()
+            .map(|test| test.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(facts.functions.len(), 3);
+        assert_eq!(test_names, vec!["parameterized_case", "integration_smoke"]);
+        assert!(
+            facts
+                .tests
+                .iter()
+                .find(|test| test.name == "parameterized_case")
+                .is_some_and(|test| test.attrs.iter().any(|attr| attr.contains("rstest"))),
+            "rstest attrs should remain available for value resolution"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ra_adapter_marks_inline_cfg_test_helpers_as_test_role() -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("ra_cfg_test_helpers")?;
+        fs::create_dir_all(root.join("src"))?;
+        write_manifest(&root)?;
+        fs::write(
+            root.join("src/lib.rs"),
+            r#"
+pub fn production_control(value: i32) -> Result<i32, String> {
+    if value < 0 { return Err("negative".to_string()); }
+    Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    fn helper_returns_result(value: i32) -> Result<(), String> {
+        if value < 0 { return Err("negative".to_string()); }
+        Ok(())
+    }
+
+    #[test]
+    fn helper_is_evidence() {
+        helper_returns_result(1).expect("fixture should pass");
+    }
+}
+"#,
+        )?;
+
+        let adapter = RaRustSyntaxAdapter;
+        let text = fs::read_to_string(root.join("src/lib.rs"))?;
+        let facts = adapter.summarize_file(&root.join("src/lib.rs"), &text)?;
+        let helper = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "helper_returns_result")
+            .ok_or("missing cfg(test) helper fact")?;
+
+        assert!(
+            helper.source_role == FunctionSourceRole::CfgTestModule,
+            "cfg(test) helper must carry the producer-owned evidence-only role"
+        );
+        assert!(
+            facts
+                .tests
+                .iter()
+                .any(|test| test.name == "helper_is_evidence"),
+            "actual test function remains available as evidence input"
+        );
+        assert!(
+            facts
+                .tests
+                .iter()
+                .all(|test| test.name != "helper_returns_result"),
+            "cfg(test) helper must not be promoted to a test fact"
+        );
+        assert!(
+            facts
+                .functions
+                .iter()
+                .find(|function| function.name == "production_control")
+                .is_some_and(|function| function.source_role == FunctionSourceRole::Production),
+            "production control must remain production role"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ra_adapter_extracts_probe_shapes() -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("ra_probe_shapes")?;
+        fs::create_dir_all(root.join("src"))?;
+        write_manifest(&root)?;
+        fs::write(
+            root.join("src/lib.rs"),
+            r#"
+pub fn validate(value: i32) -> Result<i32, String> {
+    if value < 0 {
+        Err("negative".to_string())
+    } else {
+        Ok(value * 2)
+    }
+}
+"#,
+        )?;
+
+        let adapter = RaRustSyntaxAdapter;
+        let text = fs::read_to_string(root.join("src/lib.rs"))?;
+        let facts = adapter.summarize_file(&root.join("src/lib.rs"), &text)?;
+
+        assert!(
+            facts
+                .probe_shapes
+                .iter()
+                .any(|p| p.kind == ProbeShapeKind::Predicate),
+            "Should extract predicate probe shapes"
+        );
+        assert!(
+            facts
+                .probe_shapes
+                .iter()
+                .any(|p| p.kind == ProbeShapeKind::ErrorPath),
+            "Should extract error_path probe shapes"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn same_module_unit_type_alias_return_is_not_a_consumed_tail() -> Result<(), Box<dyn Error>> {
+        // #7101: `type Unit = (); fn run() -> Unit { notify() }` still
+        // compiles as `fn run() -> Unit {}`, so the tail is unconsumed.
+        // cfg-gated aliases, competing imports, and const/static shadows
+        // stay consumed.
+        let source = r#"
+type Unit = ();
+type Spaced = ( );
+type Value = u32;
+type Nested = Unit;
+
+pub fn unit_alias_tail() -> Unit {
+    notify()
+}
+
+pub fn spaced_alias_tail() -> Spaced {
+    spaced_notify()
+}
+
+pub fn early_unit_alias(x: u32) -> Unit {
+    if x == 0 {
+        return reset();
+    }
+    work()
+}
+
+pub fn non_unit_alias_tail() -> Value {
+    produce()
+}
+
+pub fn qualified_alias_tail() -> self::Unit {
+    crate_notify()
+}
+
+pub fn chained_alias_tail() -> Nested {
+    chained_notify()
+}
+
+mod other {
+    type Unit = ();
+    pub fn inner_unit_tail() -> Unit {
+        inner_notify()
+    }
+}
+
+pub fn other_module_alias() -> other::Unit {
+    other_notify()
+}
+
+struct Holder;
+trait Make {
+    type Output;
+    fn assoc_unit() -> Self::Output;
+}
+impl Make for Holder {
+    type Output = ();
+    fn assoc_unit() -> Self::Output {
+        impl_notify()
+    }
+}
+
+pub fn outer_with_shadow() {
+    type Unit = u32;
+    fn inner_shadow() -> Unit {
+        nested_shadow_notify()
+    }
+    let _ = inner_shadow();
+}
+
+pub fn outer_nested_unit() {
+    fn inner_unit() -> Unit {
+        nested_unit_notify()
+    }
+    inner_unit()
+}
+
+pub fn generic_shadow<Unit>() -> Unit {
+    generic_notify()
+}
+
+struct GenericHolder<Unit>(Unit);
+impl<Unit> GenericHolder<Unit> {
+    fn method_generic() -> Unit {
+        method_generic_notify()
+    }
+}
+
+#[doc = "unconditional"]
+type Allowed = ();
+pub fn allowed_alias_tail() -> Allowed {
+    allowed_notify()
+}
+
+#[cfg_attr(test, allow(dead_code))]
+type CfgAttrAllowed = ();
+pub fn cfg_attr_allow_tail() -> CfgAttrAllowed {
+    cfg_attr_allow_notify()
+}
+
+#[cfg_attr(windows, cfg(test))]
+type NestedCfg = ();
+pub fn nested_cfg_tail() -> NestedCfg {
+    nested_cfg_notify()
+}
+
+pub fn const_generic_unit<const Unit: usize>() -> Unit {
+    const_generic_notify()
+}
+
+type r#RawUnit = ();
+pub fn raw_alias_tail() -> RawUnit {
+    raw_alias_notify()
+}
+
+pub fn raw_return_tail() -> r#Unit {
+    raw_return_notify()
+}
+
+pub fn raw_generic_shadow<r#Unit>() -> Unit {
+    raw_generic_notify()
+}
+
+#[expect(non_camel_case_types)]
+type unit = ();
+pub fn expect_alias_tail() -> unit {
+    expect_notify()
+}
+
+#[cfg_attr(test, expect(non_camel_case_types))]
+type cfg_attr_expect = ();
+pub fn cfg_attr_expect_tail() -> cfg_attr_expect {
+    cfg_attr_expect_notify()
+}
+
+#[rewrite_unit]
+type Rewritten = ();
+pub fn rewritten_alias_tail() -> Rewritten {
+    rewritten_notify()
+}
+
+#[cfg_attr(test, rewrite_unit)]
+type CfgAttrRewritten = ();
+pub fn cfg_attr_rewritten_tail() -> CfgAttrRewritten {
+    cfg_attr_rewritten_notify()
+}
+
+#[rewrite_fn]
+pub fn rewritten_fn_tail() -> Unit {
+    rewritten_fn_notify()
+}
+
+#[cfg_attr(test, rewrite_fn)]
+pub fn cfg_attr_rewritten_fn_tail() -> Unit {
+    cfg_attr_rewritten_fn_notify()
+}
+
+#[inline]
+pub fn inline_alias_tail() -> Unit {
+    inline_notify()
+}
+
+#[rewrite_impl]
+impl Holder {
+    fn rewritten_impl_method() -> Unit {
+        rewritten_impl_notify()
+    }
+}
+
+#[rewrite_mod]
+mod rewritten {
+    type Unit = ();
+    pub fn rewritten_mod_tail() -> Unit {
+        rewritten_mod_notify()
+    }
+}
+
+#[cfg_attr(test, doc = "note, cfg(test)")]
+type DocComma = ();
+pub fn doc_comma_tail() -> DocComma {
+    doc_comma_notify()
+}
+
+#[cfg_attr /* keep */ (test, allow(dead_code))]
+type CommentedAllow = ();
+pub fn commented_cfg_attr_allow_tail() -> CommentedAllow {
+    commented_cfg_attr_allow_notify()
+}
+
+#[cfg /* off */ (windows)]
+type CommentedCfg = ();
+pub fn commented_cfg_tail() -> CommentedCfg {
+    commented_cfg_notify()
+}
+
+#[r#cfg(windows)]
+type RawCfg = ();
+pub fn raw_cfg_tail() -> RawCfg {
+    raw_cfg_notify()
+}
+
+#[cfg_attr /* off */ (windows, cfg(test))]
+type CommentedNestedCfg = ();
+pub fn commented_nested_cfg_tail() -> CommentedNestedCfg {
+    commented_nested_cfg_notify()
+}
+
+#[cfg(windows)]
+type CfgUnit = ();
+mod cfg_other {
+    pub type CfgUnit = u32;
+}
+#[cfg(not(windows))]
+use cfg_other::CfgUnit;
+pub fn cfg_alias_tail() -> CfgUnit {
+    cfg_notify()
+}
+
+const _: () = {
+    type Unit = u32;
+    fn inner_const() -> Unit {
+        const_shadow_notify()
+    }
+};
+
+static SHADOW: () = {
+    type Unit = u32;
+    fn inner_static() -> Unit {
+        static_shadow_notify()
+    }
+};
+"#;
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
+        let consumed = |name: &str| {
+            facts.probe_shapes.iter().any(|shape| {
+                shape.kind == ProbeShapeKind::CallDeletion
+                    && shape.text.as_str() == name
+                    && shape.value_consumed
+            })
+        };
+        let unconsumed = |name: &str| {
+            facts.probe_shapes.iter().any(|shape| {
+                shape.kind == ProbeShapeKind::CallDeletion
+                    && shape.text.as_str() == name
+                    && !shape.value_consumed
+            })
+        };
+        for call in [
+            "notify()",
+            "spaced_notify()",
+            "reset()",
+            "work()",
+            "inner_notify()",
+            "allowed_notify()",
+            "cfg_attr_allow_notify()",
+            "const_generic_notify()",
+            "raw_alias_notify()",
+            "raw_return_notify()",
+            "commented_cfg_attr_allow_notify()",
+            "doc_comma_notify()",
+            "expect_notify()",
+            "cfg_attr_expect_notify()",
+            "inline_notify()",
+        ] {
+            assert!(
+                unconsumed(call),
+                "{call} should be an unconsumed unit-alias tail: {:?}",
+                facts
+                    .probe_shapes
+                    .iter()
+                    .filter(|shape| shape.kind == ProbeShapeKind::CallDeletion)
+                    .map(|shape| (shape.text.as_str(), shape.value_consumed))
+                    .collect::<Vec<_>>()
+            );
+        }
+        for call in [
+            "produce()",
+            "crate_notify()",
+            "chained_notify()",
+            "other_notify()",
+            "impl_notify()",
+            "nested_shadow_notify()",
+            "nested_unit_notify()",
+            "generic_notify()",
+            "method_generic_notify()",
+            "cfg_notify()",
+            "const_shadow_notify()",
+            "static_shadow_notify()",
+            "nested_cfg_notify()",
+            "raw_generic_notify()",
+            "commented_cfg_notify()",
+            "raw_cfg_notify()",
+            "commented_nested_cfg_notify()",
+            "rewritten_notify()",
+            "cfg_attr_rewritten_notify()",
+            "rewritten_fn_notify()",
+            "cfg_attr_rewritten_fn_notify()",
+            "rewritten_impl_notify()",
+            "rewritten_mod_notify()",
+        ] {
+            assert!(
+                consumed(call),
+                "{call} should stay consumed: {:?}",
+                facts
+                    .probe_shapes
+                    .iter()
+                    .filter(|shape| shape.kind == ProbeShapeKind::CallDeletion)
+                    .map(|shape| (shape.text.as_str(), shape.value_consumed))
+                    .collect::<Vec<_>>()
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn predicate_start_byte_skips_a_string_decoy_on_the_same_line() -> Result<(), Box<dyn Error>> {
+        let source = concat!(
+            "pub fn price(montant_é: i32, discount_threshold: i32) -> bool {\n",
+            "    let decoy = \"montant_é > discount_threshold { false } else { true }\"; if montant_é > discount_threshold { false } else { true }\n",
+            "}\n",
+        );
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        let predicates: Vec<_> = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::Predicate)
+            .collect();
+        assert!(
+            !predicates.is_empty(),
+            "expected predicate shapes, got {:?}",
+            facts.probe_shapes
+        );
+        let decoy = source
+            .find("montant_é > discount_threshold")
+            .ok_or("decoy missing")?;
+        let rest = source
+            .get(decoy.saturating_add(1)..)
+            .ok_or("slice after decoy is not a scalar boundary")?;
+        let producer = rest
+            .find("montant_é > discount_threshold")
+            .map(|offset| decoy.saturating_add(1).saturating_add(offset))
+            .ok_or("producer missing")?;
+        assert!(
+            predicates.iter().any(|shape| shape.start_byte == producer),
+            "if-condition start_byte missing: decoy={decoy} producer={producer} shapes={predicates:?}"
+        );
+        assert!(
+            predicates.iter().all(|shape| shape.start_byte != decoy),
+            "string decoy was credited as a predicate origin: {predicates:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn predicate_start_byte_survives_tab_cjk_astral_and_combining_prefix()
+    -> Result<(), Box<dyn Error>> {
+        let prefix = "\tlet 日本語 = \"🎉e\u{0301}\"; if ";
+        let source = format!(
+            "pub fn price(montant_é: i32, discount_threshold: i32) -> bool {{\n{prefix}montant_é > discount_threshold {{ false }} else {{ true }}\n}}\n"
+        );
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+        assert!(
+            !facts.used_lexical_fallback,
+            "parser should own this unicode prefix"
+        );
+        let predicates: Vec<_> = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::Predicate)
+            .collect();
+        let producer = source
+            .find("montant_é > discount_threshold")
+            .ok_or("predicate missing")?;
+        assert!(
+            predicates.iter().any(|shape| shape.start_byte == producer),
+            "producer={producer} shapes={predicates:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ra_adapter_extracts_unsafe_execution_boundaries_without_lexical_false_positives()
+    -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("ra_unsafe_boundaries")?;
+        fs::create_dir_all(root.join("src"))?;
+        write_manifest(&root)?;
+        fs::write(
+            root.join("src/lib.rs"),
+            r#"pub unsafe fn read_raw_unchecked(ptr: *const u8) -> u8 {
+    ptr.read()
+}
+
+pub fn read_raw(ptr: *const u8) -> u8 {
+    let marker = "unsafe { not syntax }";
+    // unsafe fn fake() {}
+    unsafe {
+        ptr.read()
+    }
+}
+"#,
+        )?;
+
+        let adapter = RaRustSyntaxAdapter;
+        let text = fs::read_to_string(root.join("src/lib.rs"))?;
+        let facts = adapter.summarize_file(&root.join("src/lib.rs"), &text)?;
+        let boundaries = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::UnsafeBoundary)
+            .map(|shape| (shape.text.to_string(), shape.start_line, shape.end_line))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            boundaries,
+            vec![
+                ("unsafe fn read_raw_unchecked".to_string(), 1, 3),
+                ("unsafe block".to_string(), 8, 10),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ra_adapter_does_not_promote_nested_constructor_arguments_to_returns()
+    -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("ra_nested_constructor_returns")?;
+        fs::create_dir_all(root.join("src"))?;
+        write_manifest(&root)?;
+        fs::write(
+            root.join("src/lib.rs"),
+            r#"
+fn consume(_: Option<u64>) {}
+
+pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
+    consume(Some(value));
+    Ok(Some(value))
+}
+"#,
+        )?;
+
+        let adapter = RaRustSyntaxAdapter;
+        let text = fs::read_to_string(root.join("src/lib.rs"))?;
+        let facts = adapter.summarize_file(&root.join("src/lib.rs"), &text)?;
+        let return_shapes = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::ReturnValue)
+            .map(|shape| shape.text.as_str())
+            .collect::<Vec<_>>();
+
+        if return_shapes != ["Ok(Some(value))"] {
+            return Err(format!("unexpected return probe shapes: {return_shapes:?}").into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn ra_adapter_handles_parser_errors() -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("ra_parser_error")?;
+        let adapter = RaRustSyntaxAdapter;
+        let invalid_rust = "pub fn broken( { invalid rust";
+        let result = adapter.summarize_file(&root.join("invalid.rs"), invalid_rust);
+
+        assert!(matches!(result, Err(ref err) if err.contains("syntax errors")));
+        Ok(())
+    }
+
+    #[test]
+    fn ra_adapter_changed_nodes_returns_empty_for_missing_file() {
+        let _index = crate::analysis::facts::RustIndex::default();
+        let adapter = RaRustSyntaxAdapter;
+        let ranges = vec![TextRange {
+            start_line: 1,
+            start_column: 1,
+            end_line: 10,
+            end_column: 80,
+        }];
+
+        let facts = crate::analysis::facts::FileFacts {
+            path: std::path::PathBuf::from("nonexistent.rs"),
+            functions: vec![],
+            tests: vec![],
+            returns: vec![],
+            literals: vec![],
+            probe_shapes: vec![],
+            used_lexical_fallback: false,
+            module_declarations: Vec::new(),
+            unresolved_property_macros: Vec::new(),
+            role_provenance: Default::default(),
+            source: String::new().into(),
+            item_scopes: None,
+            macro_candidates: None,
+        };
+        let nodes = adapter.changed_nodes(
+            crate::analysis::facts::FactSlice::from_slice(&facts.functions),
+            &ranges,
+        );
+
+        assert!(nodes.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod cfg_all_test_tests {
+    use super::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+    use crate::analysis::facts::FunctionSourceRole;
+    use crate::analysis::facts::cfg_predicates::{
+        CfgTestRequirement, attribute_requires_test, classify_attribute,
+    };
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_dir(name: &str) -> Result<PathBuf, String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("ripr-{name}-{stamp}"));
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        Ok(dir)
+    }
+
+    fn write_manifest(root: &std::path::Path) -> Result<(), String> {
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]
+name='test'
+version='0.1.0'
+edition='2024'
+",
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn cfg_test_predicate_is_order_insensitive_and_token_safe() {
+        // The producer no longer carries its own token matching; this table
+        // pins the shared cfg-predicate authority (#3530) at the spellings
+        // this producer's modules present. Reverting the producer to a
+        // drifted local matcher fails the nested-conjunct integration test
+        // below.
+        let requires_test = [
+            "#[cfg(test)]",
+            "#[ cfg ( test ) ]",
+            "#[cfg(all(test, feature = \"slow\"))]",
+            "#[cfg(all(feature = \"slow\", test))]",
+            "#[cfg(all(unix, test, feature = r#\"slow,test\"#))]",
+            "#[cfg(all(unix, all(test, feature = \"slow\")))]",
+        ];
+        for spelling in requires_test {
+            assert!(
+                attribute_requires_test(spelling),
+                "top-level or nested test conjunct must require test cfg: {spelling}"
+            );
+        }
+
+        let not_requires_test = [
+            (
+                "#[cfg(any(test, feature = \"slow\"))]",
+                CfgTestRequirement::MayIncludeTest,
+            ),
+            ("#[cfg(not(test))]", CfgTestRequirement::IndependentOfTest),
+            (
+                "#[cfg(all(any(test, feature = \"slow\"), unix))]",
+                CfgTestRequirement::MayIncludeTest,
+            ),
+            (
+                "#[cfg(all(feature = \"slow,test\", unix))]",
+                CfgTestRequirement::IndependentOfTest,
+            ),
+            (
+                "#[cfg(target_os = \"test\")]",
+                CfgTestRequirement::IndependentOfTest,
+            ),
+        ];
+        for (spelling, expected) in not_requires_test {
+            assert_eq!(
+                classify_attribute(spelling),
+                expected,
+                "alternative, negated, nested, or literal test token must stay production: {spelling}"
+            );
+        }
+    }
+
+    #[test]
+    fn cfg_all_test_module_members_carry_evidence_role() -> Result<(), String> {
+        // A direct `test` conjunct makes the module harness-only regardless of
+        // conjunct order. Trivia and literals cannot manufacture a conjunct;
+        // alternatives, negation, and nested alternatives stay production.
+        let root = temp_dir("ra_cfg_all_test")?;
+        fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        write_manifest(&root)?;
+        fs::write(
+            root.join("src/lib.rs"),
+            "pub fn production_control() -> i32 { 1 }\n\n#[cfg(all(test, feature = \"slow\"))]\nmod test_first {\n    fn helper_test_first() -> i32 { production_control() }\n}\n\n#[cfg(all(feature = \"slow\", test))]\nmod test_second {\n    fn helper_test_second() -> i32 { production_control() }\n}\n\n#[cfg(all(feature = \"slow\" /* fake ,test, */, test))]\nmod commented_test {\n    fn helper_commented_test() -> i32 { production_control() }\n}\n\n#[cfg(any(test, feature = \"slow\"))]\nmod any_control {\n    pub fn any_shape() -> i32 { 2 }\n}\n\n#[cfg(all(any(test, feature = \"slow\"), unix))]\nmod nested_any_control {\n    pub fn nested_any_shape() -> i32 { 3 }\n}\n\n#[cfg(all(feature = \"slow,test\", unix))]\nmod string_control {\n    pub fn string_content_shape() -> i32 { 4 }\n}\n\n#[cfg(all(feature = r#\"slow,test\"#, unix))]\nmod raw_string_control {\n    pub fn raw_string_content_shape() -> i32 { 5 }\n}\n\n#[cfg(all(feature = \"slow\" /*,test,*/, unix))]\nmod comment_control {\n    pub fn comment_content_shape() -> i32 { 6 }\n}\n\n#[cfg(not(test))]\nmod prod_only {\n    pub fn production_shape() -> i32 { 7 }\n}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let facts = RaRustSyntaxAdapter
+            .summarize_file(
+                &root.join("src/lib.rs"),
+                &fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+
+        for name in [
+            "helper_test_first",
+            "helper_test_second",
+            "helper_commented_test",
+        ] {
+            let function = facts
+                .functions
+                .iter()
+                .find(|function| function.name == name)
+                .ok_or_else(|| format!("{name} missing from facts"))?;
+            assert!(
+                function.source_role == FunctionSourceRole::CfgTestModule,
+                "{name} must carry the evidence-only cfg-test-module role"
+            );
+        }
+
+        for name in [
+            "any_shape",
+            "nested_any_shape",
+            "string_content_shape",
+            "raw_string_content_shape",
+            "comment_content_shape",
+            "production_shape",
+        ] {
+            let function = facts
+                .functions
+                .iter()
+                .find(|function| function.name == name)
+                .ok_or_else(|| format!("{name} missing from facts"))?;
+            assert!(
+                !function.source_role.is_evidence_role(),
+                "{name} must stay production role"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cfg_nested_all_and_cfg_attr_predicates_follow_the_shared_authority() -> Result<(), String> {
+        // #3530: the producer consumes `facts::cfg_predicates`, so a nested
+        // `all(test, ...)` conjunction earns the evidence role (a drifted
+        // local matcher without structural nesting would fail this), while
+        // `cfg_attr` introductions never promote an item to test-only.
+        let root = temp_dir("ra_cfg_predicates_authority")?;
+        fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        write_manifest(&root)?;
+        let source = "\
+pub fn production_control() -> i32 { 1 }
+
+#[cfg(all(unix, all(test, feature = \"slow\")))]
+mod nested_gate {
+    fn nested_all_helper() -> i32 { production_control() }
+}
+
+#[cfg_attr(feature = \"internal-tests\", cfg(test))]
+mod conditional_gate {
+    fn cfg_attr_conditional_helper() -> i32 { production_control() }
+}
+
+#[cfg_attr(test, allow(dead_code))]
+fn production_with_conditional_lint() -> i32 { 2 }
+";
+        fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+        let facts = RaRustSyntaxAdapter
+            .summarize_file(
+                &root.join("src/lib.rs"),
+                &fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+
+        let nested_all_helper = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "nested_all_helper")
+            .ok_or("nested_all_helper missing from facts")?;
+        assert!(
+            nested_all_helper.source_role == FunctionSourceRole::CfgTestModule,
+            "a nested all(test, ...) conjunction must carry evidence role through the shared authority"
+        );
+
+        for name in [
+            "cfg_attr_conditional_helper",
+            "production_with_conditional_lint",
+        ] {
+            let function = facts
+                .functions
+                .iter()
+                .find(|function| function.name == name)
+                .ok_or_else(|| format!("{name} missing from facts"))?;
+            assert!(
+                !function.source_role.is_evidence_role(),
+                "cfg_attr introductions must never promote {name} to test-only"
+            );
+        }
+        assert!(
+            facts.tests.is_empty(),
+            "cfg-gated helpers stay evidence-role functions without executable TestFacts"
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod guard_pipeline_debug_tests {
+    use super::RaRustSyntaxAdapter;
+    use super::RustSyntaxAdapter;
+
+    #[test]
+    fn parser_path_credits_err_guard_in_test_facts() -> Result<(), String> {
+        let source = "use parity_err_guard::discounted_total;\n\n#[test]\nfn boundary_matches_expected() -> Result<(), String> {\n    let actual = discounted_total(100, 100);\n    let expected = 90;\n    if actual != expected {\n        return Err(format!(\"actual={actual:?}\"));\n    }\n    Ok(())\n}\n";
+        let facts = RaRustSyntaxAdapter
+            .summarize_file(std::path::Path::new("tests/pricing.rs"), source)
+            .map_err(|error| error.to_string())?;
+        let test = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "boundary_matches_expected")
+            .ok_or_else(|| format!("test missing: {:?}", facts.tests))?;
+        assert!(
+            test.assertions
+                .iter()
+                .any(|oracle| oracle.kind == crate::domain::OracleKind::RelationalCheck),
+            "guard must credit through the parser path: {:?}",
+            test.assertions
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parser_path_credits_guarded_routing_match_in_test_facts() -> Result<(), String> {
+        // #3709: the guarded-routing form over a direct callee result —
+        // guarded accept arm plus loud catch-all, no `Ok` arm, as in the
+        // historical `expect_response` harness — must credit through the
+        // parser path, and the line-scanned joiner must not also swallow
+        // the same statement into a duplicate/mock-expectation fact.
+        let source = concat!(
+            "use routes_fixture::expect_ready;\n",
+            "\n",
+            "#[test]\n",
+            "fn rejects_unready_kind() {\n",
+            "    match expect_ready(\"busy\", 12) {\n",
+            "        Err(error) if error.kind() == io::ErrorKind::InvalidData => {}\n",
+            "        result => bail!(\"accepted: {result:?}\"),\n",
+            "    }\n",
+            "}\n",
+        );
+        let facts = RaRustSyntaxAdapter
+            .summarize_file(std::path::Path::new("tests/routes.rs"), source)
+            .map_err(|error| error.to_string())?;
+        let test = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "rejects_unready_kind")
+            .ok_or_else(|| format!("test missing: {:?}", facts.tests))?;
+        let guarded: Vec<_> = test
+            .assertions
+            .iter()
+            .filter(|oracle| oracle.kind == crate::domain::OracleKind::GuardedResultMatch)
+            .collect();
+        assert_eq!(
+            guarded.len(),
+            1,
+            "exactly one guarded Result match oracle: {:?}",
+            test.assertions
+        );
+        assert!(
+            guarded[0].text.contains("match expect_ready(..)"),
+            "the scrutinee callee is the binding token: {}",
+            guarded[0].text
+        );
+        assert!(
+            !test
+                .assertions
+                .iter()
+                .any(|oracle| oracle.kind == crate::domain::OracleKind::MockExpectation),
+            "the expect_-sniff joiner must not swallow the owned match: {:?}",
+            test.assertions
+        );
+        Ok(())
+    }
+
+    /// #3727 Slice A: on the parser path the guarded-match shadow defeat
+    /// derives from the parser-produced body facts. The `let` shadow sits
+    /// BEFORE the match, so the positional rule defeats under either
+    /// coordinate base; the base itself is pinned by
+    /// `parser_path_shadow_facts_share_the_scan_text_coordinate_base`,
+    /// which puts the binding after a compact match under the same
+    /// attribute lines. The clean control above proves the same shape
+    /// credits when no shadow exists.
+    #[test]
+    fn parser_path_shadow_defeats_guarded_match_through_facts() -> Result<(), String> {
+        let source = concat!(
+            "use routes_fixture::expect_ready;\n",
+            "\n",
+            "#[test]\n",
+            "fn rejects_unready_kind() {\n",
+            "    let expect_ready = build();\n",
+            "    match expect_ready(\"busy\", 12) {\n",
+            "        Err(error) if error.kind() == io::ErrorKind::InvalidData => {}\n",
+            "        result => bail!(\"accepted: {result:?}\"),\n",
+            "    }\n",
+            "}\n",
+        );
+        let facts = RaRustSyntaxAdapter
+            .summarize_file(std::path::Path::new("tests/routes.rs"), source)
+            .map_err(|error| error.to_string())?;
+        let test = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "rejects_unready_kind")
+            .ok_or_else(|| format!("test missing: {:?}", facts.tests))?;
+        assert!(
+            test.let_bindings
+                .iter()
+                .any(|binding| binding.name == "expect_ready" && binding.line == 1),
+            "the shadow binding fact is body-relative line 1: {:?}",
+            test.let_bindings
+        );
+        assert!(
+            !test
+                .assertions
+                .iter()
+                .any(|oracle| oracle.kind == crate::domain::OracleKind::GuardedResultMatch),
+            "a fact-shadowed bare scrutinee must not credit through the parser path: {:?}",
+            test.assertions
+        );
+        Ok(())
+    }
+
+    /// #3739 review (coderabbit h6cfG): the guarded scan's use-site
+    /// coordinate counts 0-based lines from the TOP of `function_text`
+    /// (attributes included), so the parser facts fed to the shadow
+    /// authority must share that base. The pre-fix fn-keyword base made a
+    /// `let` AFTER a guarded match defeat that earlier oracle whenever
+    /// attribute lines sat above the `fn` — one attribute line suffices
+    /// when the match is compact enough for the binding to follow within
+    /// the attribute count. The positional rule must keep crediting the
+    /// match here; the sibling test above pins the let-BEFORE defeat.
+    #[test]
+    fn parser_path_shadow_facts_share_the_scan_text_coordinate_base() -> Result<(), String> {
+        let source = concat!(
+            "use routes_fixture::expect_ready;\n",
+            "\n",
+            "#[test]\n",
+            "fn rejects_unready_kind() {\n",
+            "    match expect_ready(\"busy\", 12) { Err(error) if error.kind() == io::ErrorKind::InvalidData => {} result => bail!(\"accepted: {result:?}\") }\n",
+            "    let expect_ready = build();\n",
+            "}\n",
+        );
+        let facts = RaRustSyntaxAdapter
+            .summarize_file(std::path::Path::new("tests/routes.rs"), source)
+            .map_err(|error| error.to_string())?;
+        let test = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "rejects_unready_kind")
+            .ok_or_else(|| format!("test missing: {:?}", facts.tests))?;
+        assert!(
+            test.let_bindings
+                .iter()
+                .any(|binding| binding.name == "expect_ready" && binding.line == 2),
+            "the summarizer's binding fact is fn-relative line 2: {:?}",
+            test.let_bindings
+        );
+        let guarded: Vec<_> = test
+            .assertions
+            .iter()
+            .filter(|oracle| oracle.kind == crate::domain::OracleKind::GuardedResultMatch)
+            .collect();
+        assert_eq!(
+            guarded.len(),
+            1,
+            "a binding AFTER the match must never suppress the earlier oracle \
+             (shadow coordinates share the scan text's base): {:?}",
+            test.assertions
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod include_directive_tests {
+    use super::rust_include_directives;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn parser_extracts_only_real_include_macros_and_decodes_literals() -> Result<(), String> {
+        let source = r###"
+// include!("comment.rs");
+const SAMPLE: &str = "include!(\"string.rs\")";
+include!("plain.rs");
+include!(r#"raw.rs"#);
+include!("escaped\\path.rs");
+include!("quoted\"file.rs");
+include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+mod nested { include!("nested.rs"); }
+"###;
+
+        let directives = rust_include_directives(Path::new("src/lib.rs"), source, 16)?;
+        let literals = directives
+            .iter()
+            .filter_map(|directive| directive.literal_path.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            literals,
+            vec![
+                PathBuf::from("plain.rs"),
+                PathBuf::from("raw.rs"),
+                PathBuf::from("escaped\\path.rs"),
+                PathBuf::from("quoted\"file.rs"),
+                PathBuf::from("nested.rs")
+            ]
+        );
+        assert_eq!(directives.len(), 6);
+        assert!(directives[4].literal_path.is_none());
+        assert!(!directives[5].is_file_level);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod shadow_fact_equivalence_tests {
+    //! #3727 Slice A: the parser-produced body facts must decide the shared
+    //! shadow authority EXACTLY like the lexical scanners decide the same
+    //! masked body, so switching consumers between the two authorities
+    //! cannot move a verdict. The battery pins scanner equivalence over the
+    //! #3722/#3728 pin families plus the positional and same-line rules.
+
+    use super::*;
+    use crate::analysis::extract::{
+        ShadowAuthority, fact_body_defines_callee_fn, fact_body_let_shadow_line,
+        mask_comments_and_strings, test_body_defines_callee_fn, test_body_let_shadow_line,
+    };
+
+    /// The callees every battery body is probed against: shadowing names,
+    /// prefix-coincidence names, and absent names.
+    const CALLEES: [&str; 5] = [
+        "try_parse_summary",
+        "expect_response",
+        "parse_summary",
+        "try_parse_summary_result",
+        "score",
+    ];
+
+    fn parser_facts(source: &str) -> Result<(Vec<String>, Vec<LetBindingFact>), String> {
+        let parse = SourceFile::parse(source, Edition::CURRENT);
+        assert!(
+            parse.errors().is_empty(),
+            "battery source must parse cleanly: {source}"
+        );
+        let function = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(ast::Fn::cast)
+            .ok_or_else(|| format!("battery source carries no fn item: {source}"))?;
+        let line_index = LineIndex::new(source);
+        let fn_token = function
+            .fn_token()
+            .ok_or_else(|| format!("battery fn carries no fn token: {source}"))?;
+        let fn_line = line_index.line(fn_token.text_range().start());
+        Ok(collect_body_shadow_facts(
+            &function,
+            &|offset| line_index.line(offset),
+            fn_line,
+        ))
+    }
+
+    fn assert_scanner_equivalent(source: &str) -> Result<(), String> {
+        let (nested_fn_names, let_bindings) = parser_facts(source)?;
+        let masked = mask_comments_and_strings(source);
+        for callee in CALLEES {
+            assert_eq!(
+                fact_body_defines_callee_fn(&nested_fn_names, callee),
+                test_body_defines_callee_fn(&masked, callee),
+                "fn-defeat verdicts must agree for `{callee}` in:\n{source}"
+            );
+            assert_eq!(
+                fact_body_let_shadow_line(&let_bindings, callee),
+                test_body_let_shadow_line(&masked, callee),
+                "let-shadow verdicts must agree for `{callee}` in:\n{source}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn battery_plain_fn_and_let_shadows_are_equivalent() -> Result<(), String> {
+        assert_scanner_equivalent(
+            "fn probe() {\n    fn try_parse_summary(raw: &str) -> usize { raw.len() }\n    let r = try_parse_summary(\"x\");\n}\n",
+        )?;
+        assert_scanner_equivalent(
+            "fn probe() {\n    let result = parse_summary(\"@bad\");\n    let try_parse_summary = build();\n    let r = try_parse_summary;\n}\n",
+        )?;
+        assert_scanner_equivalent("fn probe() {\n    score(1);\n}\n")?;
+        Ok(())
+    }
+
+    #[test]
+    fn battery_let_mut_ref_typed_and_destructuring_are_equivalent() -> Result<(), String> {
+        assert_scanner_equivalent(
+            "fn probe() {\n    let mut expect_response = mock();\n    expect_response();\n}\n",
+        )?;
+        assert_scanner_equivalent(
+            "fn probe() {\n    let ref parse_summary = owner();\n    let _ = parse_summary;\n}\n",
+        )?;
+        assert_scanner_equivalent(
+            "fn probe() {\n    let try_parse_summary: Vec<u8> = build();\n    drop(try_parse_summary);\n}\n",
+        )?;
+        assert_scanner_equivalent(
+            "fn probe() {\n    let (a, try_parse_summary) = pair();\n    drop((a, try_parse_summary));\n}\n",
+        )?;
+        assert_scanner_equivalent(
+            "fn probe() {\n    let Summary { name, expect_response } = make();\n    drop((name, expect_response));\n}\n",
+        )?;
+        assert_scanner_equivalent(
+            "fn probe() {\n    let Some(score) = opt() else { return };\n    drop(score);\n}\n",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn battery_initializer_less_binding_is_equivalent() -> Result<(), String> {
+        // #3728 round-5: `let flag;` has no initializer and is not a
+        // shadow — the parser facts must skip it exactly like the lexical
+        // `;` bound, and must NOT borrow a LATER binding's `=`.
+        assert_scanner_equivalent(
+            "fn probe() {\n    let flag;\n    flag = true;\n    let try_parse_summary = build();\n    drop(try_parse_summary);\n}\n",
+        )?;
+        assert_scanner_equivalent(
+            "fn probe() {\n    let typed: expect_response;\n    drop(typed);\n}\n",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn battery_string_comment_char_and_multiline_shapes_are_equivalent() -> Result<(), String> {
+        // #3722/#3728 pins: shadow-shaped text inside strings, comments,
+        // char literals, and multiline strings never defeats — the parser
+        // facts never see those bytes as syntax at all.
+        assert_scanner_equivalent(
+            "fn probe() {\n    let text = \"let try_parse_summary = 1;\";\n    let note = \"fn expect_response() {}\";\n    real();\n}\n",
+        )?;
+        assert_scanner_equivalent(
+            "fn probe() {\n    // fn try_parse_summary(raw: &str) {}\n    // let expect_response = build();\n    real();\n}\n",
+        )?;
+        assert_scanner_equivalent(
+            "fn probe() {\n    /* let parse_summary = 1; */\n    real();\n}\n",
+        )?;
+        assert_scanner_equivalent(
+            "fn probe() {\n    let quote = '\"';\n    fn try_parse_summary() {}\n    try_parse_summary();\n}\n",
+        )?;
+        assert_scanner_equivalent(
+            "fn probe() {\n    let doc = \"let score = 1;\nfn parse_summary() {}\";\n    real();\n}\n",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn battery_positional_and_same_line_rules_are_equivalent() -> Result<(), String> {
+        // A call BEFORE the binding precedes the shadow: no defeat in
+        // either authority.
+        assert_scanner_equivalent(
+            "fn probe() {\n    let r = try_parse_summary(\"x\");\n    let try_parse_summary = build();\n    drop(r);\n}\n",
+        )?;
+        // Same-line conservative defeat: the binding and the use share a
+        // line, and both authorities defeat.
+        assert_scanner_equivalent(
+            "fn probe() {\n    let try_parse_summary = build(); let r = try_parse_summary();\n}\n",
+        )?;
+        // A use BEFORE the binding line is not defeated; one at or after
+        // it is.
+        assert_scanner_equivalent(
+            "fn probe() {\n    let r = expect_response(&mut cursor, 12);\n    let expect_response = build();\n    drop((r, expect_response));\n}\n",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn battery_nested_fns_and_nested_blocks_are_equivalent() -> Result<(), String> {
+        assert_scanner_equivalent(
+            "fn probe() {\n    fn outer() {\n        fn try_parse_summary() {}\n    }\n    try_parse_summary();\n}\n",
+        )?;
+        assert_scanner_equivalent(
+            "fn probe() {\n    if ready {\n        let expect_response = build();\n        expect_response();\n    }\n}\n",
+        )?;
+        assert_scanner_equivalent(
+            "fn probe() {\n    let closure = |raw: &str| {\n        let parse_summary = raw.len();\n        parse_summary\n    };\n    drop(closure);\n}\n",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn battery_prefix_coincidence_names_are_equivalent() -> Result<(), String> {
+        // `let try_parse_summary_result = ..` is a DIFFERENT binding; a
+        // `fn try_parse_summary_result` is a DIFFERENT item. Neither
+        // defeats a `try_parse_summary` callee in either authority.
+        assert_scanner_equivalent(
+            "fn probe() {\n    let try_parse_summary_result = build();\n    let r = real();\n    drop((try_parse_summary_result, r));\n}\n",
+        )?;
+        assert_scanner_equivalent(
+            "fn probe() {\n    fn try_parse_summary_result() {}\n    real();\n}\n",
+        )?;
+        assert_scanner_equivalent(
+            "fn probe() {\n    fn score_board() {}\n    let scoring = 1;\n    real(scoring);\n}\n",
+        )?;
+        Ok(())
+    }
+
+    /// Removal control at the producer boundary (#3727 acceptance): a
+    /// shadow-bearing body MUST produce non-empty facts on the parser
+    /// path. A producer regression that silently stops populating the
+    /// fields fails here instead of quietly letting parser-backed
+    /// consumers read "no shadow" and over-credit.
+    #[test]
+    fn producer_populates_shadow_facts_for_shadow_bearing_bodies() -> Result<(), String> {
+        let (nested, bindings) = parser_facts(
+            "fn probe() {\n    fn try_parse_summary() {}\n    let expect_response = build();\n    drop(expect_response);\n}\n",
+        )?;
+        assert!(nested.contains(&"try_parse_summary".to_string()));
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.name == "expect_response" && binding.line == 2)
+        );
+        Ok(())
+    }
+
+    /// #3739 review (devin h0fZ1, codex h6Z9y, gemini h6ZRp, coderabbit
+    /// h6cfM): the synthetic wrapper in [`shadow_facts_for_body_text`] must
+    /// CLOSE the fn item it opens. The pre-fix wrapper left the brace
+    /// unterminated, `SourceFile::parse` reported errors on every input,
+    /// and the fail-closed branch returned empty facts for every harness
+    /// body — parser-backed harness subjects then read "no shadow" and a
+    /// closure-local binding could impersonate the wrapper seam's callee.
+    /// These controls fail empty: a harness-style closure body with a
+    /// shadow-bearing `let` and a nested `fn` must produce the non-empty
+    /// facts its consumers' flag law reads.
+    #[test]
+    fn body_text_wrapper_produces_non_empty_facts_for_harness_bodies() {
+        let (nested, bindings) = shadow_facts_for_body_text(
+            "|| {\n    let try_parse_summary = fake;\n    try_parse_summary(input)\n}",
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.name == "try_parse_summary" && binding.line == 1),
+            "the harness body's shadow-bearing let must become a fact: {bindings:?}"
+        );
+        assert!(nested.is_empty(), "a closure body defines no fn items");
+
+        let (nested, bindings) = shadow_facts_for_body_text("{\n    fn fake_helper() {}\n}");
+        assert!(
+            nested.contains(&"fake_helper".to_string()),
+            "a nested fn item in a harness body must become a fact: {nested:?}"
+        );
+        assert!(bindings.is_empty(), "no let bindings in this body");
+    }
+
+    /// The stored `TestFact` fields are body-relative to the `fn` keyword
+    /// line — the same base `test.body` gives the lexical scanners — so a
+    /// parser-backed summary and a lexical scan of the same body agree
+    /// through the real summarizer, not just the descent helper.
+    #[test]
+    fn summarizer_facts_decide_like_the_lexical_scanners_on_test_body() -> Result<(), String> {
+        let source = concat!(
+            "use fixture::try_parse_summary;\n",
+            "\n",
+            "#[test]\n",
+            "fn misc_edge_case() {\n",
+            "    let try_parse_summary = build();\n",
+            "    let r = try_parse_summary;\n",
+            "}\n",
+        );
+        let facts = summarize_file_with_parser(std::path::Path::new("tests/fixture.rs"), source)
+            .map_err(|error| error.to_string())?;
+        let test = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "misc_edge_case")
+            .ok_or_else(|| format!("test fact missing: {:?}", facts.tests))?;
+        let masked = mask_comments_and_strings(&test.body);
+        for callee in CALLEES {
+            assert_eq!(
+                fact_body_defines_callee_fn(&test.nested_fn_names, callee),
+                test_body_defines_callee_fn(&masked, callee),
+                "stored facts must equal the lexical scan of `test.body` for `{callee}`"
+            );
+            assert_eq!(
+                fact_body_let_shadow_line(&test.let_bindings, callee),
+                test_body_let_shadow_line(&masked, callee),
+                "stored let facts must equal the lexical scan of `test.body` for `{callee}`"
+            );
+        }
+        assert!(
+            test.let_bindings
+                .iter()
+                .any(|binding| binding.name == "try_parse_summary" && binding.line == 1),
+            "the binding sits on body-relative line 1: {:?}",
+            test.let_bindings
+        );
+        Ok(())
+    }
+
+    /// Consumer-side equivalence for the guarded-match scanner: driving
+    /// `guarded_result_match_scan_with_shadow_authority` with the parser
+    /// facts of a body must emit exactly what the lexical entry point
+    /// emits on the same body.
+    #[test]
+    fn guarded_match_scan_with_parser_facts_matches_lexical_scan() -> Result<(), String> {
+        let bodies = [
+            // Clean guarded match: credited through both authorities.
+            "fn probe() {\n    match expect_response(\"busy\", 12) {\n        Ok(v) => assert_eq!(v, 12),\n        Err(e) => panic!(\"{e}\"),\n    }\n}\n",
+            // Let-shadowed callee: defeated through both authorities.
+            "fn probe() {\n    let expect_response = build();\n    match expect_response(\"busy\", 12) {\n        Ok(v) => assert_eq!(v, 12),\n        Err(e) => panic!(\"{e}\"),\n    }\n}\n",
+            // fn-shadowed callee: defeated through both authorities.
+            "fn probe() {\n    fn expect_response(a: &str, b: u8) -> Result<u8, String> { Ok(b) }\n    match expect_response(\"busy\", 12) {\n        Ok(v) => assert_eq!(v, 12),\n        Err(e) => panic!(\"{e}\"),\n    }\n}\n",
+            // Shadow-shaped text in a string never defeats in either.
+            "fn probe() {\n    let note = \"let expect_response = build();\";\n    match expect_response(\"busy\", 12) {\n        Ok(v) => assert_eq!(v, 12),\n        Err(e) => panic!(\"{e}\"),\n    }\n}\n",
+        ];
+        for body in bodies {
+            let (nested, bindings) = parser_facts(body)?;
+            let lexical = guarded_result_match_scan_with_shadow_authority(
+                body,
+                1,
+                ShadowAuthority::LexicalMaskedBody,
+            );
+            let parser_backed = guarded_result_match_scan_with_shadow_authority(
+                body,
+                1,
+                ShadowAuthority::ParserBodyFacts {
+                    nested_fn_names: &nested,
+                    let_bindings: &bindings,
+                },
+            );
+            assert_eq!(
+                lexical.oracles.len(),
+                parser_backed.oracles.len(),
+                "oracle counts must agree for:\n{body}"
+            );
+            for (left, right) in lexical.oracles.iter().zip(parser_backed.oracles.iter()) {
+                assert_eq!(left.line, right.line);
+                assert_eq!(left.text, right.text);
+                assert_eq!(left.kind, right.kind);
+            }
+            assert_eq!(
+                lexical.match_start_lines, parser_backed.match_start_lines,
+                "owned-statement lines must agree for:\n{body}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parser_bodies_and_verbatim_shapes_share_the_file_allocation() -> Result<(), String> {
+        // #5415 step 2 mechanism pin: parser bodies slice exact spans, so
+        // they must share the file allocation (one 36MB source instead of
+        // ~84MB of substring copies). Synthetic/normalized shape text stays
+        // owned by construction; verbatim shapes share.
+        let text = "fn alpha(x: i32) -> i32 {\n    if x > 0 {\n        x\n    } else {\n        0\n    }\n}\n#[test]\nfn beta() {\n    assert_eq!(alpha(1), 1);\n}\n";
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), text)?;
+        assert_eq!(facts.functions.len(), 2);
+        assert_eq!(facts.tests.len(), 1);
+        assert!(
+            !facts.probe_shapes.is_empty(),
+            "needs shapes to pin sharing"
+        );
+        let alpha = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "alpha")
+            .ok_or("missing alpha")?;
+        assert_eq!(
+            alpha.body.as_str(),
+            &text[..text.find("\n#[test]").unwrap_or(text.len())]
+        );
+        for body in facts
+            .functions
+            .iter()
+            .map(|function| &function.body)
+            .chain(facts.tests.iter().map(|test| &test.body))
+        {
+            assert!(
+                body.shared_source()
+                    .is_some_and(|arc| Arc::ptr_eq(arc, &facts.source)),
+                "parser body must share the file allocation: {body:?}"
+            );
+        }
+        assert!(
+            facts.probe_shapes.iter().any(|shape| shape
+                .text
+                .shared_source()
+                .is_some_and(|arc| Arc::ptr_eq(arc, &facts.source))),
+            "at least the verbatim predicate shape must share the allocation"
+        );
+        for shape in &facts.probe_shapes {
+            assert!(!shape.text.is_empty());
+        }
+        Ok(())
+    }
+
+    fn return_error_path_texts(source: &str) -> Result<Vec<String>, String> {
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
+        Ok(facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::ErrorPath)
+            .map(|shape| shape.text.as_str().to_string())
+            .filter(|text| text.trim_start().starts_with("return"))
+            .collect())
+    }
+
+    /// #6904: a `return` inside a closure or `async` block leaves that body,
+    /// so it must not add an owner `ErrorPath`. Function-level returns stay.
+    #[test]
+    fn return_error_path_shapes_skip_closure_and_async_block() -> Result<(), String> {
+        let source = concat!(
+            "pub enum E { Bad, Other }\n",
+            "pub fn parse(x: Option<u8>, flag: bool) -> Result<u8, E> {\n",
+            "    let _c = |c: Option<u8>| -> Result<u8, E> {\n",
+            "        if c.is_none() { return Err(E::Bad); }\n",
+            "        return c.ok_or(E::Bad)?;\n",
+            "    };\n",
+            "    let _a = async {\n",
+            "        if flag { return Err(E::Bad); }\n",
+            "        return x.ok_or(E::Bad)?;\n",
+            "    };\n",
+            "    if flag { return Err(E::Other); }\n",
+            "    return x.ok_or(E::Other)?;\n",
+            "}\n",
+        );
+        let return_errors = return_error_path_texts(source)?;
+        assert_eq!(
+            return_errors,
+            vec![
+                "return Err(E::Other)".to_string(),
+                "return x.ok_or(E::Other)?".to_string(),
+            ],
+            "closure/async returns must not add owner ErrorPath: {return_errors:?}"
+        );
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
+        let nested_returns: Vec<&str> = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::ReturnValue)
+            .map(|shape| shape.text.as_str())
+            .filter(|text| text.contains("E::Bad"))
+            .collect();
+        assert!(
+            nested_returns
+                .iter()
+                .any(|text| text.contains("return Err(E::Bad)")),
+            "ReturnValue for a nested return Err must stay: {nested_returns:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn nested_fn_still_emits_its_own_return_error_path() -> Result<(), String> {
+        let source = concat!(
+            "pub enum E { Bad }\n",
+            "pub fn parse() -> Result<u8, E> {\n",
+            "    fn inner() -> Result<u8, E> {\n",
+            "        return Err(E::Bad);\n",
+            "    }\n",
+            "    inner()\n",
+            "}\n",
+        );
+        let return_errors = return_error_path_texts(source)?;
+        assert_eq!(
+            return_errors,
+            vec!["return Err(E::Bad)".to_string()],
+            "the nested fn's own walk must still emit its return: {return_errors:?}"
+        );
+        Ok(())
+    }
+
+    /// RIPR-SPEC-0228: which assignments are probed as field writes.
+    #[test]
+    fn field_assignment_path_reads_single_line_plain_self_field_writes() {
+        let path = |statement: &str| {
+            let source = format!("impl P {{ fn f(&mut self) {{ {statement} }} }}");
+            let parse = SourceFile::parse(&source, Edition::CURRENT);
+            parse
+                .tree()
+                .syntax()
+                .descendants()
+                .find_map(ast::BinExpr::cast)
+                .and_then(|bin_expr| field_assignment_path(&bin_expr))
+        };
+        for (statement, expected) in [
+            ("self.count += 2 - 1;", "count"),
+            ("self.child.count = 0;", "child.count"),
+            ("self.state = State::Done;", "state"),
+            ("self.total <<= 1;", "total"),
+            // A trailing comment is trivia outside the assignment node.
+            ("self.total += 1 /* c */;", "total"),
+        ] {
+            assert_eq!(path(statement).as_deref(), Some(expected), "{statement}");
+        }
+        for statement in [
+            "self.0 = 1;",
+            "self.r#type = 1;",
+            "self.z\u{e4}hler = 1;",
+            "self.count =\n    self.count + 1;",
+            "self.label = compute(2);",
+            "self.count = self.count + compute(2);",
+            "self.count = (self.size() as u32) * 2;",
+            "self.ok = !self.a.is_empty();",
+            "self.label = self.name.clone();",
+            "self.label = format!(\"x\");",
+            "self.count = parse()?;",
+            "count += 1;",
+            "other.count = 1;",
+            "self.items[0] = 1;",
+            "self.count == 1;",
+            "self.locked = self.count >= 4;",
+            "self.ok = self.a && self.b;",
+            "self.count = if self.locked { 2 } else { 5 };",
+            "self.count = match self.locked { true => 1, false => 2 };",
+            // #8061 review: a block can leave the owner before the write,
+            // and a comment hides the write from the textual reader.
+            "self.count = { let Some(n) = self.next else { return }; n };",
+            "self.count = { 1 };",
+            "self.count = loop { break 2 };",
+            "self.count /* c */ += 1;",
+            "self.count += /* c */ 1;",
+        ] {
+            assert_eq!(path(statement), None, "{statement}");
+        }
+    }
+}

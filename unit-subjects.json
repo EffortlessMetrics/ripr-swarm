@@ -1,0 +1,375 @@
+{
+  "test-first-green": {
+    "receipt": "test-first-green.receipt.json",
+    "subjects": [
+      {
+        "name": "analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_macro_strings_and_external_modules",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_cfg_at_all_depths",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_raw_identifiers_and_signature_bindings",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_nested_visibility_and_shadowing",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_refusal_parity",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_same_line_keys_and_crlf_unicode",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_uses_deferred_and_bodyless",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_real_sources",
+        "result": "ok"
+      }
+    ]
+  },
+  "wrong-cfg-red": {
+    "receipt": "wrong-cfg-red.receipt.json",
+    "subjects": [
+      {
+        "name": "analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_cfg_at_all_depths",
+        "result": "FAILED"
+      }
+    ]
+  },
+  "candidate-parser-tests": {
+    "receipt": "candidate-parser-tests.receipt.json",
+    "subjects": [
+      {
+        "name": "analysis::syntax::ra::cfg_all_test_tests::cfg_nested_all_and_cfg_attr_predicates_follow_the_shared_authority",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::cfg_all_test_tests::cfg_test_predicate_is_order_insensitive_and_token_safe",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::cfg_all_test_tests::cfg_all_test_module_members_carry_evidence_role",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::guard_pipeline_debug_tests::parser_path_credits_err_guard_in_test_facts",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::guard_pipeline_debug_tests::parser_path_credits_guarded_routing_match_in_test_facts",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::guard_pipeline_debug_tests::parser_path_shadow_defeats_guarded_match_through_facts",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::include_directive_tests::parser_extracts_only_real_include_macros_and_decodes_literals",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::guard_pipeline_debug_tests::parser_path_shadow_facts_share_the_scan_text_coordinate_base",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_macro_strings_and_external_modules",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_cfg_at_all_depths",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_raw_identifiers_and_signature_bindings",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_nested_visibility_and_shadowing",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_refusal_parity",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_same_line_keys_and_crlf_unicode",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_uses_deferred_and_bodyless",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::property_macros::tests::drop_in_assertion_crate_paths_keep_assertion_authority",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::property_macros::tests::empty_local_macro_calls_preserve_real_call_text_and_original_source",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::property_macros::tests::opaque_mentions_ignore_comments_strings_and_identifier_substrings",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::property_macros::tests::opaque_property_blocks_keep_mentions_without_inventing_tests",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::property_macros::tests::ordinary_files_and_macro_lookalikes_have_no_property_witness",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::property_macros::tests::parser_raw_oracles_ignore_discarded_property_assertions",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::property_macros::tests::property_macro_names_do_not_grant_assertion_authority",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::property_macros::tests::qualified_drop_in_assertions_classify_unless_their_root_is_bound_locally",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::shadow_fact_equivalence_tests::battery_initializer_less_binding_is_equivalent",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::shadow_fact_equivalence_tests::battery_let_mut_ref_typed_and_destructuring_are_equivalent",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::shadow_fact_equivalence_tests::battery_nested_fns_and_nested_blocks_are_equivalent",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::shadow_fact_equivalence_tests::battery_plain_fn_and_let_shadows_are_equivalent",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::shadow_fact_equivalence_tests::battery_positional_and_same_line_rules_are_equivalent",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::shadow_fact_equivalence_tests::battery_prefix_coincidence_names_are_equivalent",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::shadow_fact_equivalence_tests::battery_string_comment_char_and_multiline_shapes_are_equivalent",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::shadow_fact_equivalence_tests::body_text_wrapper_produces_non_empty_facts_for_harness_bodies",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::shadow_fact_equivalence_tests::field_assignment_path_reads_single_line_plain_self_field_writes",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::shadow_fact_equivalence_tests::guarded_match_scan_with_parser_facts_matches_lexical_scan",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::shadow_fact_equivalence_tests::nested_fn_still_emits_its_own_return_error_path",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::shadow_fact_equivalence_tests::parser_bodies_and_verbatim_shapes_share_the_file_allocation",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::shadow_fact_equivalence_tests::producer_populates_shadow_facts_for_shadow_bearing_bodies",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::shadow_fact_equivalence_tests::return_error_path_shapes_skip_closure_and_async_block",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::shadow_fact_equivalence_tests::summarizer_facts_decide_like_the_lexical_scanners_on_test_body",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::tests::impl_block_attrs_are_kept_apart_from_the_method_attrs",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::tests::impl_context_names_the_self_type_only_for_plain_named_impls",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::tests::parser_symbol_id_keeps_raw_byte_files_distinct",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::tests::predicate_start_byte_skips_a_string_decoy_on_the_same_line",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::tests::predicate_start_byte_survives_tab_cjk_astral_and_combining_prefix",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::tests::ra_adapter_changed_nodes_returns_empty_for_missing_file",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::tests::ra_adapter_does_not_promote_nested_constructor_arguments_to_returns",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::tests::ra_adapter_extracts_probe_shapes",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::tests::ra_adapter_extracts_unsafe_execution_boundaries_without_lexical_false_positives",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::tests::ra_adapter_handles_parser_errors",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::tests::ra_adapter_ignores_unannotated_helpers_in_test_files_and_keeps_rstest",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::tests::ra_adapter_marks_inline_cfg_test_helpers_as_test_role",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::tests::ra_adapter_parses_valid_rust_source",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::tests::same_module_unit_type_alias_return_is_not_a_consumed_tail",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_real_sources",
+        "result": "ok"
+      }
+    ]
+  },
+  "candidate-helper-tests": {
+    "receipt": "candidate-helper-tests.receipt.json",
+    "subjects": [
+      {
+        "name": "analysis::facts::test_helpers::tests::commented_out_helper_assertion_is_not_credited",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::crate_root_integration_layout_rejects_src_tests_and_keeps_tests_roots",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::bench_and_example_helpers_are_not_credited",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::credited_helper_calls_stay_out_of_the_test_body_calls",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::excluded_nested_package_integration_helper_is_not_credited",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::harness_false_integration_helper_is_not_credited",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::helper_in_production_scope_is_not_an_assertion_helper",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::helper_called_twice_is_credited_once",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::helper_outside_the_test_module_is_not_credited",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::integration_target_assert_macro_helper_is_not_credited",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::integration_target_contains_helper_is_not_credited",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::integration_target_helpers_keep_the_cfg_test_refusal_gates",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::integration_target_top_level_helper_stays_production_and_is_credited",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::nested_or_example_tests_helpers_are_not_credited",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::helpers_that_cannot_be_resolved_to_one_cfg_test_function_grant_nothing",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::nested_package_integration_helper_is_credited",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::nested_support_tests_helper_is_not_credited",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::production_file_top_level_helper_beside_a_top_level_test_is_not_credited",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::required_features_default_enabled_integration_helper_is_credited",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::required_features_unmet_integration_helper_is_not_credited",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::src_tests_module_helper_is_not_credited",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::test_calling_cfg_test_helper_gains_the_helper_call_and_assertion",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::test_false_integration_helper_is_not_credited",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::test_false_parent_path_spelling_helper_is_not_credited",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::workspace_crate_integration_helper_is_credited",
+        "result": "ok"
+      },
+      {
+        "name": "analysis::facts::test_helpers::tests::the_parser_stores_the_scopes_crediting_would_parse_and_the_cache_keeps_them",
+        "result": "ok"
+      }
+    ]
+  },
+  "distinct_candidate_passing_subjects": 79
+}

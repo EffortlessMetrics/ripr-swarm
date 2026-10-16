@@ -1,0 +1,24 @@
+{
+  "independent_paths": [
+    "crates/ripr/src/analysis/syntax/ra.rs",
+    "crates/ripr/src/analysis/syntax/ra/module_scope_walk_tests.rs"
+  ],
+  "reported_changed_files": 2,
+  "selector": "stable",
+  "recorded_base_equals_merge_base": true,
+  "base": "3477bf95a9ead7f35ec099a4e6cf17af96708003",
+  "ten_gates_passed": true,
+  "clippy_command": [
+    "cargo",
+    "clippy",
+    "--workspace",
+    "--all-targets",
+    "--",
+    "-D",
+    "warnings"
+  ],
+  "skipped": [
+    "check-support-tiers not applicable",
+    "check-fixture-contracts"
+  ]
+}

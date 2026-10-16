@@ -1,0 +1,5 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -54 +54 @@
+-    if x >= 0 { x += get(x); }
++    if x > 0 { x += get(x); }

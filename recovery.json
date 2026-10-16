@@ -1,0 +1,24 @@
+{
+  "interrupted_action": "write_stdin on original baseline exec session75561",
+  "error": "exec-server transport disconnected; recovery timed out after25s",
+  "first_health_check": {
+    "command": "pwd",
+    "exit": 0,
+    "output": "/workspace"
+  },
+  "recovery": "Git/status/artifact reads succeeded; all four baseline steps have persisted native exit0 receipts. Frozen218024960-byte baseline executable and compiler-artifact metadata exist. No baseline driver, Cargo or rustc remained when checked.",
+  "original_session_readback": "Unknown process id75561 after reconnect; no retry of baseline builds",
+  "new_work": "Single preflight CLI control completed6.035s, exit0, cleanup empty. New test-first run admitted once as session46239.",
+  "source_status_at_recovery": "clean3477bf95a9ead7f35ec099a4e6cf17af96708003; no production patch had been applied",
+  "later_service_notice_1543": {
+    "harmless_pwd": "/workspace",
+    "git_head": "8ac12c026f976489630a767185be756b4fdcecb2",
+    "source_clean": true,
+    "original_check_fast_session": 37449,
+    "original_session_poll": "responding, still running",
+    "active_owned_driver_pid": 24691,
+    "active_cargo_pid": 24695,
+    "active_xtask_rustc_pid": 24830,
+    "duplicate_work_started": false
+  }
+}

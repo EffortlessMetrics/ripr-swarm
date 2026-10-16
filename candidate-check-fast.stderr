@@ -1,0 +1,11 @@
+   Compiling ripr v0.11.0 (/workspace/module-scope-walk/crates/ripr)
+   Compiling xtask v0.1.0 (/workspace/module-scope-walk/xtask)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6m 01s
+     Running `/workspace/ripr-swarm/target/debug/xtask check-fast`
+$ cargo fmt --check
+$ cargo clippy --workspace --all-targets -- -D warnings
+   Compiling ripr v0.11.0 (/workspace/module-scope-walk/crates/ripr)
+   Compiling repo-policy v0.1.0 (/workspace/module-scope-walk/tools/repo-policy)
+    Checking xtask v0.1.0 (/workspace/module-scope-walk/xtask)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8m 08s
+check-fast: ran 10 gate(s), skipped 2 (check-support-tiers (not applicable), check-fixture-contracts), base=origin/main, 2 file(s) changed

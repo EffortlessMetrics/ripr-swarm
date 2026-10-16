@@ -1,0 +1,580 @@
+warning: unused variable: `future`
+  --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:53:9
+   |
+53 |     let future = || local_get(gated);
+   |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `future`
+   --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:108:9
+    |
+108 |     let future = || local_get(gated);
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+   --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:163:9
+    |
+163 |     let future = || local_get(gated);
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+   --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:218:9
+    |
+218 |     let future = || local_get(gated);
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+   --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:273:9
+    |
+273 |     let future = || local_get(gated);
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+   --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:328:9
+    |
+328 |     let future = || local_get(gated);
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+   --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:383:9
+    |
+383 |     let future = || local_get(gated);
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+   --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:438:9
+    |
+438 |     let future = || local_get(gated);
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+   --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:493:9
+    |
+493 |     let future = || local_get(gated);
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+   --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:548:9
+    |
+548 |     let future = || local_get(gated);
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+   --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:603:9
+    |
+603 |     let future = || local_get(gated);
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+   --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:658:9
+    |
+658 |     let future = || local_get(gated);
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+   --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:713:9
+    |
+713 |     let future = || local_get(gated);
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+   --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:768:9
+    |
+768 |     let future = || local_get(gated);
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+   --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:823:9
+    |
+823 |     let future = || local_get(gated);
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+   --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:878:9
+    |
+878 |     let future = || local_get(gated);
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+   --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:933:9
+    |
+933 |     let future = || local_get(gated);
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+   --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:988:9
+    |
+988 |     let future = || local_get(gated);
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:1043:9
+     |
+1043 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:1098:9
+     |
+1098 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:1153:9
+     |
+1153 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:1208:9
+     |
+1208 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:1263:9
+     |
+1263 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:1318:9
+     |
+1318 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:1373:9
+     |
+1373 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:1428:9
+     |
+1428 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:1483:9
+     |
+1483 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:1538:9
+     |
+1538 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:1593:9
+     |
+1593 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:1648:9
+     |
+1648 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:1703:9
+     |
+1703 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:1758:9
+     |
+1758 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:1813:9
+     |
+1813 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:1868:9
+     |
+1868 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:1923:9
+     |
+1923 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:1978:9
+     |
+1978 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:2033:9
+     |
+2033 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:2088:9
+     |
+2088 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:2143:9
+     |
+2143 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:2198:9
+     |
+2198 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:2253:9
+     |
+2253 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:2308:9
+     |
+2308 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:2363:9
+     |
+2363 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:2418:9
+     |
+2418 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:2473:9
+     |
+2473 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:2528:9
+     |
+2528 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:2583:9
+     |
+2583 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:2638:9
+     |
+2638 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:2693:9
+     |
+2693 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:2748:9
+     |
+2748 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:2803:9
+     |
+2803 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:2858:9
+     |
+2858 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:2913:9
+     |
+2913 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:2968:9
+     |
+2968 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:3023:9
+     |
+3023 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:3078:9
+     |
+3078 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:3133:9
+     |
+3133 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:3188:9
+     |
+3188 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:3243:9
+     |
+3243 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:3298:9
+     |
+3298 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:3353:9
+     |
+3353 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:3408:9
+     |
+3408 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:3463:9
+     |
+3463 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:3518:9
+     |
+3518 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:3573:9
+     |
+3573 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:3628:9
+     |
+3628 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:3683:9
+     |
+3683 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:3738:9
+     |
+3738 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:3793:9
+     |
+3793 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:3848:9
+     |
+3848 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:3903:9
+     |
+3903 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:3958:9
+     |
+3958 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:4013:9
+     |
+4013 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:4068:9
+     |
+4068 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:4123:9
+     |
+4123 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:4178:9
+     |
+4178 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:4233:9
+     |
+4233 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:4288:9
+     |
+4288 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:4343:9
+     |
+4343 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:4398:9
+     |
+4398 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:4453:9
+     |
+4453 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:4508:9
+     |
+4508 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:4563:9
+     |
+4563 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:4618:9
+     |
+4618 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:4673:9
+     |
+4673 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:4728:9
+     |
+4728 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:4783:9
+     |
+4783 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:4838:9
+     |
+4838 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:4893:9
+     |
+4893 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:4948:9
+     |
+4948 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:5003:9
+     |
+5003 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:5058:9
+     |
+5058 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:5113:9
+     |
+5113 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:5168:9
+     |
+5168 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:5223:9
+     |
+5223 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: unused variable: `future`
+    --> /workspace/scratch/module-scope-walk/workload/src/lib.rs:5278:9
+     |
+5278 |     let future = || local_get(gated);
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_future`
+
+warning: 96 warnings emitted
+

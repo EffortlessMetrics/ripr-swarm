@@ -1,0 +1,13 @@
+{
+  "kind": "author source challenge; independent review pending",
+  "head": "8ac12c026f976489630a767185be756b4fdcecb2",
+  "module_item_placement_tail_byte_identical": true,
+  "nested_fn_closure_async_call_predicate_byte_identical": true,
+  "notes": [
+    "Source-wide function enumeration, fn-token line/name key construction and ordinary parser refusal are retained.",
+    "One per-function descendant walk preserves all-depth attribute/name collection; body-range containment restricts use/deferred/call collection to the existing body.",
+    "Ordered vectors feed the same BTreeSet collection, preserving bulk construction and duplicate semantics.",
+    "No global source cache, classifying authority or UnseenReachNames work is introduced.",
+    "Test-only oracle stays independent of the new walk. Full-facts and raw-scope comparisons, wrong-cfg behavior and public JSON/runtime checks remain separate observations."
+  ]
+}

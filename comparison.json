@@ -1,0 +1,121 @@
+{
+  "identity": {
+    "baseline_source": "3477bf95a9ead7f35ec099a4e6cf17af96708003",
+    "candidate_source": "8ac12c026f976489630a767185be756b4fdcecb2",
+    "baseline_binary_sha256": "6af070bb0f6152b5d61cf232e980e725dd2e58f7eea47bba295730d7fba49424",
+    "candidate_binary_sha256": "d1512ca5a9191539168b95c4c08fd851378c8d82aaf792d16aac23d1ddd07fb3",
+    "matched_profile": {
+      "opt_level": "0",
+      "debuginfo": "line-tables-only",
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": false
+    },
+    "matched_features": [
+      "default",
+      "lang-python",
+      "lang-rust",
+      "lang-typescript"
+    ],
+    "input_hashes": {
+      "src/lib.rs": "f20f17ced7987a2d0c51e1ca00b700667232de48962bc4a97989b2502164b354",
+      "Cargo.toml": "4c4cbf685a4225018f6268397dc8a94f9d5bd965986c91cbf7f7001387bc0e39",
+      "Cargo.lock": "927e1eea05bdc9f097cbd218f14ec72ea205cf5e82f48d8248e10055ec961146",
+      "change.diff": "cca115f1ddfaff86366117b8fd6f90eb48b225d6bbe54b29e41391f84e8989d8"
+    },
+    "input_bytes": 227350,
+    "functions": 97
+  },
+  "pairs": 4,
+  "completed_runs": 8,
+  "complete_public_json_byte_identical": true,
+  "stdout_sha256": "7379285334ee6ee7d857766f149f6d06021685dc63019929bfeaceb4a91786c3",
+  "stats": {
+    "baseline": {
+      "elapsed_s": {
+        "values": [
+          5.991090727002302,
+          5.206995801003359,
+          5.082029104996764,
+          5.116225605001091
+        ],
+        "median": 5.161610703002225,
+        "min": 5.082029104996764,
+        "max": 5.991090727002302
+      },
+      "cpu_s": {
+        "values": [
+          5.996611000000001,
+          5.227307000000001,
+          5.112626,
+          5.14257
+        ],
+        "median": 5.1849385,
+        "min": 5.112626,
+        "max": 5.996611000000001
+      },
+      "maxrss_kib": {
+        "values": [
+          64296,
+          64512,
+          64524,
+          65004
+        ],
+        "median": 64518.0,
+        "min": 64296,
+        "max": 65004
+      }
+    },
+    "candidate": {
+      "elapsed_s": {
+        "values": [
+          5.2225782050009,
+          5.166056366993871,
+          5.471836606004217,
+          5.0732211580034345
+        ],
+        "median": 5.194317285997386,
+        "min": 5.0732211580034345,
+        "max": 5.471836606004217
+      },
+      "cpu_s": {
+        "values": [
+          5.235245000000001,
+          5.184750999999999,
+          5.572201000000001,
+          5.089704
+        ],
+        "median": 5.209998000000001,
+        "min": 5.089704,
+        "max": 5.572201000000001
+      },
+      "maxrss_kib": {
+        "values": [
+          64856,
+          64848,
+          64688,
+          64896
+        ],
+        "median": 64852.0,
+        "min": 64688,
+        "max": 64896
+      }
+    }
+  },
+  "median_wall_reduction_percent": -0.6336507124827806,
+  "paired_wall_reduction_percent": [
+    12.827589449407883,
+    0.7862390440491418,
+    -7.6703122503605226,
+    0.8405502477377036
+  ],
+  "limits": [
+    "Single synthetic finite workload, four balanced serial alternating pairs; no broad or hosted runtime inference.",
+    "Initially absent RIPR caches are matched; OS page cache and host load are uncontrolled.",
+    "Dev opt-level0/default features/Linux x86_64 only; no release-profile or other-platform timing.",
+    "Wall timing uses10ms wait polling; reported CPU/RSS are root wait4 observations, not whole-process-tree resource profiling.",
+    "The preflight6.035s observation is excluded from paired statistics.",
+    "Binary hashes are streamed outside timed intervals to avoid inherited parent peak-RSS contamination.",
+    "No observer/profiler is attached during these timed runs."
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--lib",
+    "module_scope_walk_cfg_at_all_depths",
+    "--",
+    "--nocapture"
+  ],
+  "exit": 101,
+  "elapsed_s": 239.9238450240009,
+  "CARGO_INCREMENTAL": "1",
+  "head": "5d01de980b90507bdc31de11fa82901f4590d385",
+  "executed_worktree_tree": "888a98d1d7c2f00d62c0d6a163e89b3cf46d6644"
+}

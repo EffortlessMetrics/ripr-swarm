@@ -1,0 +1,22 @@
+{
+  "diff_sha256": "e437f1a3015580d482ec9debeee7b7a35a27e398e6b01f564128a2600a97b687",
+  "diff_bytes": 40870,
+  "reconstructed_argv": [
+    "git",
+    "diff",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--no-color",
+    "--unified=3",
+    "--inter-hunk-context=0",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+    "--binary",
+    "14afcde1c5e7777ecb5697bdbfb80394dd9e5fb2...e22fc35e53c40f273dcf0981ce81cacfc15236a7"
+  ],
+  "base": "14afcde1c5e7777ecb5697bdbfb80394dd9e5fb2",
+  "head": "e22fc35e53c40f273dcf0981ce81cacfc15236a7",
+  "checkout": "16a535defe78b3414f87b34043f565667e289ea7",
+  "tree": "ab2cb9eb86339ba146150e8568fbd832d8a00f00",
+  "cold_local_cache": "new diagnostic only; hosted cache condition not reproduced"
+}

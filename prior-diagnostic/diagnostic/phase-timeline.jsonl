@@ -1,0 +1,12 @@
+{"observed_elapsed_s": 0.5117105249992164, "new_stderr": "ripr progress: loading_input [diff]\nripr progress: analyzing [diff]\n"}
+{"observed_elapsed_s": 2.5591175359986664, "new_stderr": "ripr progress: analyzing still active after 2s\nripr_repo_exposure_latency phase=index_cached_parse status=start duration_ms=0\n"}
+{"observed_elapsed_s": 10.098876045998622, "new_stderr": "ripr progress: analyzing still active after 10s\n"}
+{"observed_elapsed_s": 18.346298994998506, "new_stderr": "ripr progress: analyzing still active after 10s\n"}
+{"observed_elapsed_s": 26.698641205999593, "new_stderr": "ripr progress: analyzing still active after 10s\n"}
+{"observed_elapsed_s": 34.95007236799938, "new_stderr": "ripr progress: analyzing still active after 30s\n"}
+{"observed_elapsed_s": 43.19259722499919, "new_stderr": "ripr progress: analyzing still active after 30s\n"}
+{"observed_elapsed_s": 50.3942079849985, "new_stderr": "ripr progress: analyzing still active after 30s\n"}
+{"observed_elapsed_s": 58.72320270199998, "new_stderr": "ripr progress: analyzing still active after 30s\n"}
+{"observed_elapsed_s": 67.02665416499804, "new_stderr": "ripr progress: analyzing still active after 1m\n"}
+{"observed_elapsed_s": 74.41241688399896, "new_stderr": "ripr progress: analyzing still active after 1m\n"}
+{"observed_elapsed_s": 82.82041038399984, "new_stderr": "ripr progress: analyzing still active after 1m\n"}

@@ -1,0 +1,227 @@
+{
+  "sample_count": 310,
+  "resolved_unique_pcs": 1528,
+  "modules": 2,
+  "frame_limit": 32,
+  "truncated_stacks": 219,
+  "fully_unresolved_stacks": 0,
+  "represented_cpu_delta_s": 209.95000000000005,
+  "buckets": [
+    {
+      "name": "other_file_facts_extraction",
+      "samples": 108,
+      "cpu_delta_weight_s": 99.97000000000001,
+      "percent_of_represented_cpu_deltas": 47.61609907120743
+    },
+    {
+      "name": "syntax_parse",
+      "samples": 43,
+      "cpu_delta_weight_s": 40.360000000000014,
+      "percent_of_represented_cpu_deltas": 19.223624672541085
+    },
+    {
+      "name": "endpoint_wait_transition_unattributed",
+      "samples": 92,
+      "cpu_delta_weight_s": 26.230000000000018,
+      "percent_of_represented_cpu_deltas": 12.493450821624203
+    },
+    {
+      "name": "cache_store_encode_hash",
+      "samples": 26,
+      "cpu_delta_weight_s": 21.110000000000007,
+      "percent_of_represented_cpu_deltas": 10.054774946415813
+    },
+    {
+      "name": "other_or_unresolved",
+      "samples": 30,
+      "cpu_delta_weight_s": 13.249999999999995,
+      "percent_of_represented_cpu_deltas": 6.311026434865441
+    },
+    {
+      "name": "probe_extraction",
+      "samples": 11,
+      "cpu_delta_weight_s": 9.029999999999998,
+      "percent_of_represented_cpu_deltas": 4.301024053346032
+    }
+  ],
+  "top_first_ripr_frames": [
+    [
+      "ripr::analysis::syntax::nesting::parse_source_file",
+      35.23000000000001
+    ],
+    [
+      "??",
+      26.230000000000018
+    ],
+    [
+      "ripr::analysis::syntax::ra::module_item_scopes_in",
+      17.919999999999987
+    ],
+    [
+      "ripr::analysis::syntax::ra::summarize_file_with_probe_shapes",
+      12.969999999999992
+    ],
+    [
+      "ripr::analysis::syntax::ra::extract_parser_oracles",
+      9.519999999999998
+    ],
+    [
+      "ripr::analysis::facts::model::_::<impl serde_core::ser::Serialize for ripr::analysis::facts::model::CallFact>::serialize",
+      7.93
+    ],
+    [
+      "ripr::analysis::syntax::ra::collect_body_shadow_facts",
+      7.739999999999996
+    ],
+    [
+      "ripr::analysis::facts::model::_::<impl serde_core::ser::Serialize for ripr::analysis::facts::model::ProbeShapeFactWire>::serialize",
+      7.480000000000009
+    ],
+    [
+      "ripr::analysis::extract::mask::scan",
+      7.310000000000002
+    ],
+    [
+      "ripr::analysis::syntax::ra::push_unsafe_boundary_probe_shapes",
+      5.379999999999999
+    ],
+    [
+      "ripr::analysis::extract::oracles::patterns::is_side_effect_observer_assertion::{{closure}}",
+      5.099999999999996
+    ],
+    [
+      "ripr::analysis::syntax::owner_pin::local_empty_macros",
+      5.049999999999994
+    ],
+    [
+      "ripr::analysis::facts::build::insert_cached_file_batches",
+      4.4699999999999935
+    ],
+    [
+      "ripr::analysis::syntax::ra::module_item_scopes_in::{{closure}}",
+      4.049999999999997
+    ],
+    [
+      "ripr::analysis::facts::model::_::<impl serde_core::ser::Serialize for ripr::analysis::facts::model::FileFactsWire>::serialize",
+      3.6500000000000017
+    ],
+    [
+      "ripr::analysis::syntax::owner_pin::macro_binding_candidates",
+      3.5199999999999996
+    ],
+    [
+      "ripr::analysis::syntax::ra::property_macros::unresolved_property_macros",
+      2.5400000000000027
+    ],
+    [
+      "ripr::analysis::syntax::ra::probe_shapes::ProbeShapeNodes::collect",
+      2.1500000000000012
+    ],
+    [
+      "ripr::analysis::extract::oracles::arguments::split_top_level_commas",
+      2.109999999999999
+    ],
+    [
+      "ripr::analysis::extract::oracles::scan::guarded_result_match_scan_with_shadow_authority",
+      2.080000000000001
+    ],
+    [
+      "ripr::analysis::extract::oracles::arguments::matcher_computation_expression",
+      2.0799999999999983
+    ],
+    [
+      "ripr::analysis::extract::calls::extract_call_facts",
+      2.070000000000001
+    ]
+  ],
+  "top_leaf_frames": [
+    [
+      "??",
+      41.93000000000003
+    ],
+    [
+      "core::iter::traits::iterator::Iterator::try_fold",
+      7.919999999999991
+    ],
+    [
+      "alloc::vec::Vec<T,A>::push_mut",
+      4.790000000000002
+    ],
+    [
+      "<core::slice::iter::Iter<T> as core::iter::traits::iterator::Iterator>::next",
+      4.259999999999993
+    ],
+    [
+      "<core::option::Option<T> as core::ops::try_trait::Try>::branch",
+      4.149999999999988
+    ],
+    [
+      "rowan::cursor::NodeData::green",
+      4.040000000000001
+    ],
+    [
+      "ripr::analysis::extract::mask::scan",
+      3.5400000000000036
+    ],
+    [
+      "core::iter::adapters::filter_map::filter_map_try_fold::{{closure}}",
+      3.3900000000000006
+    ],
+    [
+      "<core::str::iter::CharIndices as core::iter::traits::iterator::Iterator>::next",
+      3.1600000000000006
+    ],
+    [
+      "core::option::Option<T>::map",
+      3.119999999999999
+    ],
+    [
+      "core::ub_checks::maybe_is_nonoverlapping::runtime",
+      3.080000000000002
+    ],
+    [
+      "core::ptr::const_ptr::<impl *const T>::is_aligned_to",
+      3.070000000000002
+    ],
+    [
+      "core::ptr::copy_nonoverlapping::precondition_check",
+      3.0700000000000003
+    ],
+    [
+      "ra_ap_parser::syntax_kind::<impl core::convert::From<u16> for ra_ap_parser::syntax_kind::generated::SyntaxKind>::from",
+      3.039999999999999
+    ],
+    [
+      "core::option::Option<T>::and_then",
+      3.0100000000000016
+    ]
+  ],
+  "phase_trace": [
+    "ripr_repo_exposure_latency phase=index_cached_parse status=start duration_ms=0"
+  ],
+  "io_first": {
+    "rchar": 9712102,
+    "wchar": 68,
+    "syscr": 1441,
+    "syscw": 2,
+    "read_bytes": 0,
+    "write_bytes": 4096,
+    "cancelled_write_bytes": 0
+  },
+  "io_last": {
+    "rchar": 49097362,
+    "wchar": 306045495,
+    "syscr": 3315,
+    "syscw": 718,
+    "read_bytes": 0,
+    "write_bytes": 307769344,
+    "cancelled_write_bytes": 0
+  },
+  "symbolization_elapsed_s": 1.5840710619995662,
+  "limitations": [
+    "Symbol table function resolution only; no source lines or inline expansion.",
+    "CPU-delta-weighted endpoint-stack estimates, not exclusive instrumented timings.",
+    "32-frame truncation can hide owning ancestors; unresolved/other retained.",
+    "Cache serialization categorized only with cache store/encoder ancestry; serde alone is insufficient."
+  ]
+}

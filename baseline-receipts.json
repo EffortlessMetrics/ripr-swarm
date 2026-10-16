@@ -1,0 +1,55 @@
+[
+  {
+    "label": "doctor",
+    "argv": [
+      "cargo",
+      "xtask",
+      "worktree",
+      "doctor"
+    ],
+    "exit": 0,
+    "elapsed_s": 388.67046915800165,
+    "head": "3477bf95a9ead7f35ec099a4e6cf17af96708003"
+  },
+  {
+    "label": "baseline-check-fast",
+    "argv": [
+      "cargo",
+      "xtask",
+      "check-fast"
+    ],
+    "exit": 0,
+    "elapsed_s": 38.4665122639999,
+    "head": "3477bf95a9ead7f35ec099a4e6cf17af96708003"
+  },
+  {
+    "label": "baseline-check",
+    "argv": [
+      "cargo",
+      "check",
+      "--locked",
+      "-p",
+      "ripr",
+      "--all-targets"
+    ],
+    "exit": 0,
+    "elapsed_s": 349.2806433459991,
+    "head": "3477bf95a9ead7f35ec099a4e6cf17af96708003"
+  },
+  {
+    "label": "baseline-build",
+    "argv": [
+      "cargo",
+      "build",
+      "--locked",
+      "-p",
+      "ripr",
+      "--bin",
+      "ripr",
+      "--message-format=json"
+    ],
+    "exit": 0,
+    "elapsed_s": 277.43624332200125,
+    "head": "3477bf95a9ead7f35ec099a4e6cf17af96708003"
+  }
+]

@@ -1,0 +1,21 @@
+{
+  "source_head": "3477bf95a9ead7f35ec099a4e6cf17af96708003",
+  "executed_tree": "545cdd750d727ec04777d0f05793fc242cfd755b",
+  "observed_cargo_test_binary": "/workspace/ripr-swarm/target/debug/deps/ripr-4dfb141009a72db0",
+  "retained_binary": "test-first-green-tests",
+  "bytes": 417489376,
+  "sha256": "6211653016d8e2e149b7d1f5639484c93130072a9698ff79ecd17acbde05dba6",
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--lib",
+    "module_scope_walk_",
+    "--",
+    "--nocapture"
+  ],
+  "native_exit": 0,
+  "CARGO_INCREMENTAL": "1"
+}

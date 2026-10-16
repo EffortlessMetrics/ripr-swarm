@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--lib",
+    "analysis::syntax::ra::",
+    "--",
+    "--nocapture"
+  ],
+  "exit": 0,
+  "elapsed_s": 245.71517878599843,
+  "CARGO_INCREMENTAL": "1",
+  "head": "8ac12c026f976489630a767185be756b4fdcecb2",
+  "executed_worktree_tree": "b3b410906719b57307dee00f38d42bde01db03af"
+}

@@ -1,0 +1,10 @@
+{
+  "head": "8ac12c026f976489630a767185be756b4fdcecb2",
+  "tree": "b3b410906719b57307dee00f38d42bde01db03af",
+  "base": "3477bf95a9ead7f35ec099a4e6cf17af96708003",
+  "branch": "codex/module-scope-walk-reuse",
+  "author_status": "local proof complete; independent review/hosted qualification pending",
+  "timestamp_utc": "2026-10-16T16:51:41Z",
+  "claim": "one-pass module scope collection; exact behavior preserved in exercised controls; no end-to-end speedup established",
+  "resources": "source and distinct frozen executables/test witnesses retained for review; no cleanup or release"
+}

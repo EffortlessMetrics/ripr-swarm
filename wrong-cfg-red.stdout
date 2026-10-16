@@ -1,0 +1,11 @@
+
+running 1 test
+test analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_cfg_at_all_depths ... FAILED
+
+failures:
+
+failures:
+    analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_cfg_at_all_depths
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 11102 filtered out; finished in 0.01s
+

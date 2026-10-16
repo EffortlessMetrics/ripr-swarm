@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "cargo",
+    "xtask",
+    "precommit"
+  ],
+  "exit": 0,
+  "elapsed_s": 599.5821134069993,
+  "CARGO_INCREMENTAL": "0",
+  "head": "8ac12c026f976489630a767185be756b4fdcecb2",
+  "executed_worktree_tree": "b3b410906719b57307dee00f38d42bde01db03af"
+}

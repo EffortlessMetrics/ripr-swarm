@@ -1,0 +1,13 @@
+
+running 8 tests
+test analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_macro_strings_and_external_modules ... ok
+test analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_cfg_at_all_depths ... ok
+test analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_raw_identifiers_and_signature_bindings ... ok
+test analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_nested_visibility_and_shadowing ... ok
+test analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_refusal_parity ... ok
+test analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_same_line_keys_and_crlf_unicode ... ok
+test analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_uses_deferred_and_bodyless ... ok
+test analysis::syntax::ra::module_scope_walk_tests::module_scope_walk_real_sources ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 11095 filtered out; finished in 2.82s
+

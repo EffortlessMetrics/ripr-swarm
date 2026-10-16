@@ -1,0 +1,309 @@
+{
+  "observed_utc": "2026-10-16",
+  "open_count": 47,
+  "claim": "module_item_scopes_in repeated walk consolidation",
+  "searches": [
+    {
+      "q": "\"module_item_scopes_in\"",
+      "results": [
+        {
+          "n": 7028,
+          "title": "fix(rust): credit a test-local check helper's assert_eq! and pair boundaries through it (#6482)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7028"
+        }
+      ]
+    },
+    {
+      "q": "\"module scopes\"",
+      "results": [
+        {
+          "n": 8004,
+          "title": "fix(analysis): require bounded inherent receiver attribution",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004"
+        },
+        {
+          "n": 6867,
+          "title": "fix(analysis): settle same-named sibling-module calls by spelled path (#6292)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/6867"
+        },
+        {
+          "n": 7355,
+          "title": "fix(analysis): retain bounded returned-ledger identity evidence",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7355"
+        },
+        {
+          "n": 7267,
+          "title": "fix(seams): keep call_presence for same-module unit type alias returns",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7267"
+        },
+        {
+          "n": 7028,
+          "title": "fix(rust): credit a test-local check helper's assert_eq! and pair boundaries through it (#6482)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7028"
+        },
+        {
+          "n": 7176,
+          "title": "fix(owner-pin): a bare call pins only when the test binding resolves to the owner (#7097)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7176"
+        },
+        {
+          "n": 7045,
+          "title": "perf(check): answer cfg(test) module membership from one walk per file (#5363)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7045"
+        },
+        {
+          "n": 6993,
+          "title": "perf(check): store module item scopes in file facts; memo helper oracles (#5363)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/6993"
+        },
+        {
+          "n": 5430,
+          "title": "perf(cli): drop fixed subprocess waits; tiny-crate check 0.4s to under 0.1s (#5348)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/5430"
+        },
+        {
+          "n": 5331,
+          "title": "perf: cold pilot 3x faster, rust-lang/rust check 25x faster, 200k-function crate 20x faster, identical output",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/5331"
+        },
+        {
+          "n": 4715,
+          "title": "fix(rust): credit test helpers and rstest cases; keep ownerless reach undecided (#4574, #4601, #4613)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4715"
+        },
+        {
+          "n": 4968,
+          "title": "refactor(xtask): split eval_sweep_report into cohesive modules (#4390)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4968"
+        },
+        {
+          "n": 3721,
+          "title": "fix(ripr): exclude inline cfg(test) module lines from production probes (#3718)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/3721"
+        },
+        {
+          "n": 3655,
+          "title": "refactor(python): extract sink-alignment family into python/sink_alignment.rs (#1719 slice 9)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/3655"
+        },
+        {
+          "n": 3639,
+          "title": "analysis(harness): fail-closed reachability authority for trial subjects (#3636)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/3639"
+        },
+        {
+          "n": 3579,
+          "title": "analysis(rust): normalize test-required cfg and cfg_attr predicates with one authority",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/3579"
+        },
+        {
+          "n": 3550,
+          "title": "fix(analysis): isolate module import aliases by scope",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/3550"
+        },
+        {
+          "n": 3483,
+          "title": "fix(analysis): stop direct-import aliases crossing a module boundary (#3413)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/3483"
+        },
+        {
+          "n": 3487,
+          "title": "fix(analysis): preserve lexical alias ancestry across nested test modules (#3413)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/3487"
+        },
+        {
+          "n": 3403,
+          "title": "fix(analysis): preserve lexical alias scope across nested tests",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/3403"
+        }
+      ]
+    },
+    {
+      "q": "\"descendant\"",
+      "results": [
+        {
+          "n": 8082,
+          "title": "ci: stage reviewed qualification leaves in exact-subject caller",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8082"
+        },
+        {
+          "n": 8181,
+          "title": "ux(doctor): fit default human output on one 80x24 screen",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181"
+        },
+        {
+          "n": 8258,
+          "title": "perf(index): reuse descendant traversal across probe-shape scans",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8258"
+        },
+        {
+          "n": 8235,
+          "title": "fix(fixtures): bound nested CLI Rayon pools (#8226)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8235"
+        },
+        {
+          "n": 8249,
+          "title": "test(perl): bound two-binary harness child lifetimes (#8238)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8249"
+        },
+        {
+          "n": 8004,
+          "title": "fix(analysis): require bounded inherent receiver attribution",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004"
+        },
+        {
+          "n": 8243,
+          "title": "fix(npm): give missing native executables exact recovery advice",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8243"
+        },
+        {
+          "n": 8229,
+          "title": "fix(output): bind preview analyzed claims to partial diff scope (#8210)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8229"
+        },
+        {
+          "n": 8225,
+          "title": "fix(git): cancel and reap stalled batch reads (#8216)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8225"
+        },
+        {
+          "n": 8159,
+          "title": "fix(check): advise --base only when another branch could serve as base (#7644)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8159"
+        },
+        {
+          "n": 8059,
+          "title": "fix(field-observation): a test pinning one element of a returned array observes that element's field (#7858)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8059"
+        },
+        {
+          "n": 7408,
+          "title": "fix(vscode): bind multi-root sessions and add real-server acceptance",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7408"
+        },
+        {
+          "n": 8113,
+          "title": "Keep assert_eq! trusted inside binding-free local macro wrappers",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8113"
+        },
+        {
+          "n": 8130,
+          "title": "fix(cli): reject repeated config root option as missing value",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8130"
+        },
+        {
+          "n": 8127,
+          "title": "fix(lsp): publish relatedInformation on seam and gap diagnostics",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8127"
+        },
+        {
+          "n": 8085,
+          "title": "fix(repair): classify complete retry refusals and retain failed-read evidence (#8064)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8085"
+        },
+        {
+          "n": 8071,
+          "title": "fix(xtask): retain numeric native exits in local diagnostics (#8065)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8071"
+        },
+        {
+          "n": 7579,
+          "title": "feat(coverage): retain bounded ELF binary ID associations",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7579"
+        },
+        {
+          "n": 8056,
+          "title": "fix(oracles): path-call and negated-literal spellings of a bool-compared comparison are never exact (#7993)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8056"
+        },
+        {
+          "n": 8060,
+          "title": "fix(xtask): keep Linux proc scans out of native macOS builds",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8060"
+        }
+      ]
+    }
+  ],
+  "adjacent": [
+    {
+      "n": 8181,
+      "head": "2da1dd7bf56f50111042f715382155df91457d55",
+      "branch": "cursor/one-screen-doctor-1858",
+      "draft": false,
+      "merged": false,
+      "module_scope_symbol_in_diff": false,
+      "comments_read": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6207785171",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6207786355",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6208182718",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6208198755",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6208313545",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6208315345",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6208406009",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6208406670",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6208814582",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6208942765",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6208971942",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6209135867",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6209138774",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6209151511",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6209555023",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6209562918",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6209762342",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6209917173",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6210011576",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6210212952",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6212532066",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6212581513",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6214499354",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6215524795",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6215910137",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8181#issuecomment-6217624847"
+      ]
+    },
+    {
+      "n": 8258,
+      "head": "e22fc35e53c40f273dcf0981ce81cacfc15236a7",
+      "branch": "codex/probe-shape-walk-reuse",
+      "draft": false,
+      "merged": false,
+      "module_scope_symbol_in_diff": false,
+      "comments_read": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8258#issuecomment-6215204576",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8258#issuecomment-6215859416",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8258#issuecomment-6215923591",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8258#issuecomment-6216820234",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/8258#issuecomment-6217461098"
+      ]
+    }
+  ],
+  "coordination_comment": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8258#issuecomment-6218089425",
+  "disposition": "No equivalent active or landed optimization found. Adjacent same-file test seams may require later composition; their reviewed heads are not edited.",
+  "later_8181_update": {
+    "head": "d55bf8735c1ce3260900abc80927b7cb47b93e6b",
+    "draft": true,
+    "verified_with": "connected github_fetch_pr",
+    "owner_scope": "UnseenReachNames workspace reuse across classify/dependent-scope admission; avoid repeated external-doc parsing per owner",
+    "module_item_scopes_in_in_diff": false,
+    "disposition": "distinct; no classify/reach.rs or dependent-scope changes in this candidate. Historical2da1dd7 comparison retained unchanged; no new performance or hosted clearance inferred."
+  },
+  "latest_8181_update": {
+    "head": "6e96a037169ef83b58f147764241684e76ed95ba",
+    "draft": true,
+    "verified_with": "connected github_fetch_pr",
+    "unseen_reach_names_in_diff": true,
+    "binding_free_file_index_in_diff": true,
+    "module_item_scopes_in_in_diff": false,
+    "disposition": "separate cache/index owner retained; no classifier/dependent-scope/cache/index changes in this candidate; no new8181 timing or hosted clearance inferred; historical2da comparison unchanged"
+  },
+  "publication_recheck": {
+    "open_pr_count": 49,
+    "no_existing_branch_pr": true,
+    "main": "3477bf95a9ead7f35ec099a4e6cf17af96708003",
+    "8258_head": "e22fc35e53c40f273dcf0981ce81cacfc15236a7",
+    "8181_head": "342833f7a856a70bd8cb3de2b8d97d1129a9ff02",
+    "8181_draft": false,
+    "module_scope_symbol_in_8181_diff": false,
+    "disposition": "still distinct; cache/index owners preserved; historical110s request answered with dirty/gdb-observed packet, not clean-head reproducible receipt; no rerun"
+  }
+}

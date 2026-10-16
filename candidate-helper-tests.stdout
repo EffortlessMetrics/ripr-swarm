@@ -1,0 +1,31 @@
+
+running 26 tests
+test analysis::facts::test_helpers::tests::commented_out_helper_assertion_is_not_credited ... ok
+test analysis::facts::test_helpers::tests::crate_root_integration_layout_rejects_src_tests_and_keeps_tests_roots ... ok
+test analysis::facts::test_helpers::tests::bench_and_example_helpers_are_not_credited ... ok
+test analysis::facts::test_helpers::tests::credited_helper_calls_stay_out_of_the_test_body_calls ... ok
+test analysis::facts::test_helpers::tests::excluded_nested_package_integration_helper_is_not_credited ... ok
+test analysis::facts::test_helpers::tests::harness_false_integration_helper_is_not_credited ... ok
+test analysis::facts::test_helpers::tests::helper_in_production_scope_is_not_an_assertion_helper ... ok
+test analysis::facts::test_helpers::tests::helper_called_twice_is_credited_once ... ok
+test analysis::facts::test_helpers::tests::helper_outside_the_test_module_is_not_credited ... ok
+test analysis::facts::test_helpers::tests::integration_target_assert_macro_helper_is_not_credited ... ok
+test analysis::facts::test_helpers::tests::integration_target_contains_helper_is_not_credited ... ok
+test analysis::facts::test_helpers::tests::integration_target_helpers_keep_the_cfg_test_refusal_gates ... ok
+test analysis::facts::test_helpers::tests::integration_target_top_level_helper_stays_production_and_is_credited ... ok
+test analysis::facts::test_helpers::tests::nested_or_example_tests_helpers_are_not_credited ... ok
+test analysis::facts::test_helpers::tests::helpers_that_cannot_be_resolved_to_one_cfg_test_function_grant_nothing ... ok
+test analysis::facts::test_helpers::tests::nested_package_integration_helper_is_credited ... ok
+test analysis::facts::test_helpers::tests::nested_support_tests_helper_is_not_credited ... ok
+test analysis::facts::test_helpers::tests::production_file_top_level_helper_beside_a_top_level_test_is_not_credited ... ok
+test analysis::facts::test_helpers::tests::required_features_default_enabled_integration_helper_is_credited ... ok
+test analysis::facts::test_helpers::tests::required_features_unmet_integration_helper_is_not_credited ... ok
+test analysis::facts::test_helpers::tests::src_tests_module_helper_is_not_credited ... ok
+test analysis::facts::test_helpers::tests::test_calling_cfg_test_helper_gains_the_helper_call_and_assertion ... ok
+test analysis::facts::test_helpers::tests::test_false_integration_helper_is_not_credited ... ok
+test analysis::facts::test_helpers::tests::test_false_parent_path_spelling_helper_is_not_credited ... ok
+test analysis::facts::test_helpers::tests::workspace_crate_integration_helper_is_credited ... ok
+test analysis::facts::test_helpers::tests::the_parser_stores_the_scopes_crediting_would_parse_and_the_cache_keeps_them ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 11077 filtered out; finished in 0.33s
+

@@ -1,0 +1,6 @@
+{
+  "basis": "3477bf95a9ead7f35ec099a4e6cf17af96708003",
+  "original_body_equals_test_oracle": true,
+  "body_sha256": "5786ed6a8032f0192e39532743e854ea190783814d68496018001b4cf6f60574",
+  "normalization": "exclude function name/visibility/header layout; compare complete return signature and body byte for byte after rustfmt"
+}

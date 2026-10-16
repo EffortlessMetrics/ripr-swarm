@@ -1,0 +1,134 @@
+{
+  "compile_argv": [
+    "/workspace/.cargo/bin/rustc",
+    "--edition=2024",
+    "--crate-name",
+    "collector_micro",
+    "-Copt-level=0",
+    "-Cdebuginfo=line-tables-only",
+    "-Cdebug-assertions=yes",
+    "-Coverflow-checks=yes",
+    "--extern",
+    "ra_ap_syntax=/workspace/ripr-swarm/target/debug/deps/libra_ap_syntax-9e0dd195d2e96610.rlib",
+    "-L",
+    "dependency=/workspace/ripr-swarm/target/debug/deps",
+    "/workspace/scratch/module-scope-walk/collector-micro.rs",
+    "-o",
+    "/workspace/scratch/module-scope-walk/collector-micro"
+  ],
+  "compile_exit": 0,
+  "compile_elapsed_s": 1.2338315739980317,
+  "source_sha256": "b3f771ca9bc489eac7a7e2749c53aa5ae40d754f1e271fcdfb9115cdb59494c2",
+  "baseline_function_sha256": "5f15132a465a352e50c0ae43ecf1000ddd8951e3c3d3169655582f7ebbdbe8b3",
+  "candidate_function_sha256": "f20d51c34a76f5293e9dcb16b8cf31bdeb91ee9a333d5b210ffc3c6a310d62f0",
+  "adaptation": "Exact collector/LineIndex/predicate bodies; rename collector symbols, omit only serde derives/wire attribute from identical field/type struct. Isolated collector timing, not production CLI timing.",
+  "ra_artifact": {
+    "reason": "compiler-artifact",
+    "package_id": "registry+https://github.com/rust-lang/crates.io-index#ra_ap_syntax@0.0.349",
+    "manifest_path": "/workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ra_ap_syntax-0.0.349/Cargo.toml",
+    "target": {
+      "kind": [
+        "lib"
+      ],
+      "crate_types": [
+        "lib"
+      ],
+      "name": "ra_ap_syntax",
+      "src_path": "/workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ra_ap_syntax-0.0.349/src/lib.rs",
+      "edition": "2024",
+      "doc": true,
+      "doctest": false,
+      "test": true
+    },
+    "profile": {
+      "opt_level": "0",
+      "debuginfo": "line-tables-only",
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": false
+    },
+    "features": [
+      "default"
+    ],
+    "filenames": [
+      "/workspace/ripr-swarm/target/debug/deps/libra_ap_syntax-9e0dd195d2e96610.rlib",
+      "/workspace/ripr-swarm/target/debug/deps/libra_ap_syntax-9e0dd195d2e96610.rmeta"
+    ],
+    "executable": null,
+    "fresh": true
+  },
+  "run_exit": 0,
+  "binary_sha256": "cf5f97efac106d4b25b0de6a943fb0b397472f0a62e2acdb21c6032a8cc693e9",
+  "rows": [
+    {
+      "pair": 0,
+      "variant": "baseline",
+      "iterations": 3,
+      "elapsed_s": 1.699793489,
+      "function_rows": 97
+    },
+    {
+      "pair": 0,
+      "variant": "candidate",
+      "iterations": 3,
+      "elapsed_s": 0.586995186,
+      "function_rows": 97
+    },
+    {
+      "pair": 1,
+      "variant": "candidate",
+      "iterations": 3,
+      "elapsed_s": 0.715272195,
+      "function_rows": 97
+    },
+    {
+      "pair": 1,
+      "variant": "baseline",
+      "iterations": 3,
+      "elapsed_s": 1.222138088,
+      "function_rows": 97
+    },
+    {
+      "pair": 2,
+      "variant": "baseline",
+      "iterations": 3,
+      "elapsed_s": 1.542923075,
+      "function_rows": 97
+    },
+    {
+      "pair": 2,
+      "variant": "candidate",
+      "iterations": 3,
+      "elapsed_s": 1.0953551480000001,
+      "function_rows": 97
+    },
+    {
+      "pair": 3,
+      "variant": "candidate",
+      "iterations": 3,
+      "elapsed_s": 0.9547244610000001,
+      "function_rows": 97
+    },
+    {
+      "pair": 3,
+      "variant": "baseline",
+      "iterations": 3,
+      "elapsed_s": 1.314614577,
+      "function_rows": 97
+    }
+  ],
+  "median_per_iteration_s": {
+    "baseline": 0.47625627533333337,
+    "candidate": 0.27833277600000006
+  },
+  "median_reduction_percent": 41.55819242377562,
+  "input_sha256": "f20f17ced7987a2d0c51e1ca00b700667232de48962bc4a97989b2502164b354",
+  "limits": [
+    "Extracted function helper, not the production CLI executable.",
+    "One shared pre-parsed tree; parsing, full-FileFacts construction, equality checks and returned-map destruction excluded from measured call intervals.",
+    "Actual collector, LineIndex and nested-call predicate bodies retained; struct fields/types unchanged, only unused serde derives/wire annotation omitted.",
+    "Dev opt-level0 and checked arithmetic, actual pinned RA dependency from candidate Cargo artifact; Linux only.",
+    "Four balanced alternating pairs, three calls per timed row; host load uncontrolled; no end-to-end or hosted timeout improvement established."
+  ],
+  "ra_rlib_sha256": "e782eadc89e094d60ef2e748bf91968241062ca4d902b36d35739af9775d8691"
+}

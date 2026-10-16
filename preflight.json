@@ -1,0 +1,43 @@
+{
+  "input_hashes": {
+    "src/lib.rs": "f20f17ced7987a2d0c51e1ca00b700667232de48962bc4a97989b2502164b354",
+    "Cargo.toml": "4c4cbf685a4225018f6268397dc8a94f9d5bd965986c91cbf7f7001387bc0e39",
+    "Cargo.lock": "927e1eea05bdc9f097cbd218f14ec72ea205cf5e82f48d8248e10055ec961146",
+    "change.diff": "cca115f1ddfaff86366117b8fd6f90eb48b225d6bbe54b29e41391f84e8989d8"
+  },
+  "input_sha256": "f20f17ced7987a2d0c51e1ca00b700667232de48962bc4a97989b2502164b354",
+  "input_bytes": 227350,
+  "functions": 97,
+  "workload_functions": 96,
+  "records": [
+    {
+      "label": "preflight-baseline",
+      "argv": [
+        "/workspace/scratch/module-scope-walk/baseline-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/module-scope-walk/workload",
+        "--diff",
+        "/workspace/scratch/module-scope-walk/workload/change.diff",
+        "--format",
+        "json",
+        "--mode",
+        "ready"
+      ],
+      "environment": {
+        "RAYON_NUM_THREADS": "4",
+        "RUSTUP_TOOLCHAIN": "1.95.0",
+        "RIPR_CACHE_DIR": "/workspace/scratch/module-scope-walk/bench-cache-preflight-baseline",
+        "profiling_disabled": true
+      },
+      "elapsed_s": 6.035015558998566,
+      "cpu_s": 6.088107,
+      "maxrss_kib": 61252,
+      "exit": 0,
+      "censored": false,
+      "stdout_sha256": "7379285334ee6ee7d857766f149f6d06021685dc63019929bfeaceb4a91786c3",
+      "binary_sha256": "6af070bb0f6152b5d61cf232e980e725dd2e58f7eea47bba295730d7fba49424",
+      "remaining_owned_processes": {}
+    }
+  ]
+}

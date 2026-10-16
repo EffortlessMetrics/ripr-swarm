@@ -1,0 +1,8 @@
+{"pair":0,"variant":"baseline","iterations":3,"elapsed_s":1.699793489,"function_rows":97}
+{"pair":0,"variant":"candidate","iterations":3,"elapsed_s":0.586995186,"function_rows":97}
+{"pair":1,"variant":"candidate","iterations":3,"elapsed_s":0.715272195,"function_rows":97}
+{"pair":1,"variant":"baseline","iterations":3,"elapsed_s":1.222138088,"function_rows":97}
+{"pair":2,"variant":"baseline","iterations":3,"elapsed_s":1.542923075,"function_rows":97}
+{"pair":2,"variant":"candidate","iterations":3,"elapsed_s":1.0953551480000001,"function_rows":97}
+{"pair":3,"variant":"candidate","iterations":3,"elapsed_s":0.9547244610000001,"function_rows":97}
+{"pair":3,"variant":"baseline","iterations":3,"elapsed_s":1.314614577,"function_rows":97}

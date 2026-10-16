@@ -1,0 +1,14 @@
+ripr progress: loading_input [diff]
+ripr progress: analyzing [diff]
+ripr progress: analyzing still active after 2s
+ripr_repo_exposure_latency phase=index_cached_parse status=start duration_ms=0
+ripr progress: analyzing still active after 10s
+ripr progress: analyzing still active after 10s
+ripr progress: analyzing still active after 10s
+ripr progress: analyzing still active after 30s
+ripr progress: analyzing still active after 30s
+ripr progress: analyzing still active after 30s
+ripr progress: analyzing still active after 30s
+ripr progress: analyzing still active after 1m
+ripr progress: analyzing still active after 1m
+ripr progress: analyzing still active after 1m

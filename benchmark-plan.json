@@ -1,0 +1,27 @@
+{
+  "fixed_before_timed_runs": true,
+  "pairs": 4,
+  "order": [
+    [
+      "baseline",
+      "candidate"
+    ],
+    [
+      "candidate",
+      "baseline"
+    ],
+    [
+      "baseline",
+      "candidate"
+    ],
+    [
+      "candidate",
+      "baseline"
+    ]
+  ],
+  "root": "workload",
+  "ripr_cache": "separate absent path per run; OS page cache uncontrolled",
+  "cap_s_per_run": 30,
+  "acceptance": "every run completes with native0, nonempty findings, identical complete raw JSON bytes and no remaining owned processes",
+  "statistics": "report all observations, medians and ranges; no general runtime or hosted repair inference"
+}

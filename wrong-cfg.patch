@@ -1,0 +1,12 @@
+diff --git a/crates/ripr/src/analysis/syntax/ra.rs b/crates/ripr/src/analysis/syntax/ra.rs
+index 3f959c158..ef7d011b0 100644
+--- a/crates/ripr/src/analysis/syntax/ra.rs
++++ b/crates/ripr/src/analysis/syntax/ra.rs
+@@ -305,6 +305,7 @@ pub(crate) fn module_item_scopes_in(
+             .syntax()
+             .descendants()
+             .filter_map(ast::Attr::cast)
++            .filter(|attribute| attribute.syntax().parent().as_ref() == Some(function.syntax()))
+             .any(|attribute| {
+                 let compact: String = attribute
+                     .syntax()
