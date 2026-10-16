@@ -14573,6 +14573,9 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::tests::reordered_replacement_does_not_repeat_the_removed_static_unknown",
   "crates/ripr/src/analysis/probes/lexical.rs::tests::a_local_accumulator_update_is_not_a_call_deletion",
   "crates/ripr/src/analysis/probes/diff.rs::tests::an_accumulator_rewrite_of_a_call_leaves_no_removed_call_deletion",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::empty_collection_expectations_cannot_confirm_a_push",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::owner_may_exit_before_line_reads_everything_before_the_changed_expression",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::empty_collection_expectations_cap_effect_families_only_after_an_early_exit",
 ]
 fixtures = []
 code = [
@@ -14581,6 +14584,7 @@ code = [
   "crates/ripr/src/analysis/probes/lexical.rs",
   "crates/ripr/src/analysis/classify/activation.rs",
   "crates/ripr/src/analysis/classify/propagation_witness.rs",
+  "crates/ripr/src/analysis/classify/reveal.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0228-rust-field-write-observation.md",

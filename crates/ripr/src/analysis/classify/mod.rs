@@ -77,8 +77,8 @@ pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_observes_collection_argument,
     assertion_observes_direct_collection, current_path_witness_with,
-    direct_collection_mutation_receiver, field_assignment_target, retain_returned_ledger,
-    returned_ledger_witness,
+    direct_collection_mutation_receiver, field_assignment_target, owner_may_exit_before_line,
+    retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use propagation_witness::{
     constant_tail_witness, fallible_literal_witness, format_tail_witness,
