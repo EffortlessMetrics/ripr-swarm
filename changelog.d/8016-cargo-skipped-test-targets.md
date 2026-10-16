@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A test in a `[[test]]` target that `cargo test` never runs (`test = false`, `required-features` unmet under default features, or `harness = false` without a registered harness marker) no longer reads as an `exposed` discriminator; its changed behavior reads `no_static_path` (#8016). Other never-run shapes (`[lib] test = false`, examples, benches, `[[bin]] test = false`, non-default members) remain open on the issue.

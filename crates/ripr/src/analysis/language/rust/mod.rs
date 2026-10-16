@@ -357,6 +357,29 @@ fn drop_unreached_test_files(
                 .map(|path| workspace::normalize_path(path)),
         );
     }
+    // A `[[test]]` target cargo never runs (`test = false`, unmet
+    // `required-features`, `harness = false`) is reached by the walk, but
+    // its libtest items are not tests (#8016).
+    let harness_markers = test_harnesses
+        .iter()
+        .map(|harness| harness.marker.as_bytes())
+        .collect::<Vec<_>>();
+    orphans.extend(
+        workspace::cargo_non_running_test_files(
+            root,
+            loaded_files
+                .iter()
+                .filter(|(_, bytes)| holds_tests(bytes))
+                .map(|(path, bytes)| {
+                    let has_marker = harness_markers
+                        .iter()
+                        .any(|marker| contains_bytes(bytes, marker));
+                    (path.as_path(), has_marker)
+                }),
+        )
+        .iter()
+        .map(|path| workspace::normalize_path(path)),
+    );
     if orphans.is_empty() {
         return loaded_files;
     }
@@ -7358,6 +7381,97 @@ fn absent_delimiter_boundary_returns_head() {
                 .any(|name| name == "discount_applies_unbuilt"),
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_declared_test_targets_cargo_never_runs() -> Result<(), String> {
+        // #8016: `tests/gate.rs` is a declared target the walk reaches, but
+        // `test = false`, unmet `required-features` and `harness = false`
+        // each keep `cargo test` from running its `#[test]` items. Met
+        // default-feature `required-features` and an explicit libtest
+        // target run them, so those relate.
+        let base = "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n[workspace]\n";
+        let cases = [
+            ("test = false", "[[test]]\nname='gate'\ntest=false\n", false),
+            (
+                "unmet required-features",
+                "[features]\nnever=[]\n[[test]]\nname='gate'\nrequired-features=['never']\n",
+                false,
+            ),
+            (
+                "harness = false",
+                "[[test]]\nname='gate'\nharness=false\n",
+                false,
+            ),
+            (
+                "met default required-features",
+                "[features]\ndefault=['on']\non=[]\n[[test]]\nname='gate'\nrequired-features=['on']\n",
+                true,
+            ),
+            (
+                "explicit libtest target",
+                "[[test]]\nname='gate'\nharness=true\n",
+                true,
+            ),
+        ];
+        for (label, target, runs) in cases {
+            let root = temp_root("module-graph-cargo-skipped-test-target")?;
+            write(&root.join("Cargo.toml"), &format!("{base}{target}"))?;
+            write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+            write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+            write(
+                &root.join("tests/gate.rs"),
+                "use shop::used::discount;\n\n#[test]\nfn discount_applies_gate() {\n    assert_eq!(discount(150), 140);\n}\n",
+            )?;
+
+            let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+            let related = related_test_names(&root, &result, "src/used.rs");
+            assert_eq!(
+                related.iter().any(|name| name == "discount_applies_gate"),
+                runs,
+                "{label}: {related:?}"
+            );
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_harness_false_target_with_a_registered_marker_stays_indexed() -> Result<(), String> {
+        // #8016: `harness = false` is where a registered custom harness
+        // runs, so its marker keeps the file for the registry to judge; a
+        // plain `#[test]` in the same target never runs and drops.
+        let root = temp_root("harness-false-registered-marker")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n[workspace]\n\n[[test]]\nname='contracts'\nharness=false\n",
+        )?;
+        write(&root.join("src/lib.rs"), "")?;
+        let file = PathBuf::from("tests/contracts.rs");
+        let marked = b"#[myco::spec]\nfn check() {}\n".to_vec();
+        let plain = b"#[test]\nfn check() {}\nfn main() {}\n".to_vec();
+        write(&root.join(&file), "")?;
+        let harness = crate::config::TestHarnessRegistration {
+            registration_id: "contracts".to_string(),
+            target: file.clone(),
+            kind: crate::config::TestHarnessKind::RegisteredAttribute,
+            adapter: crate::config::TestHarnessAdapter::ExactAttributeV1,
+            marker: "myco::spec".to_string(),
+        };
+        let context = crate::analysis::workspace::SourceRoleContext::empty();
+        for (source, kept) in [(marked, 1), (plain, 0)] {
+            let remaining = super::drop_unreached_test_files(
+                &root,
+                &context,
+                &[],
+                std::slice::from_ref(&harness),
+                vec![(file.clone(), source)],
+            );
+            assert_eq!(remaining.len(), kept);
+        }
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }

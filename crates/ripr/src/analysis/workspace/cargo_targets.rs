@@ -799,6 +799,72 @@ fn workspace_test_target_owners(
     owners
 }
 
+/// Whether one manifest declares a `[[test]]` entry that can stop `cargo
+/// test` from running the libtest items in its file: `test = false`,
+/// `harness = false`, or any `required-features`. The cheap gate in front
+/// of the metadata probe, so a workspace with no such entry never pays for
+/// it (#8016).
+fn manifest_declares_conditional_test_target(value: &toml::Value) -> bool {
+    let Some(entries) = value.get("test").and_then(toml::Value::as_array) else {
+        return false;
+    };
+    entries.iter().any(|entry| {
+        entry.get("test").and_then(toml::Value::as_bool) == Some(false)
+            || entry.get("harness").and_then(toml::Value::as_bool) == Some(false)
+            || entry
+                .get("required-features")
+                .and_then(toml::Value::as_array)
+                .is_some_and(|features| !features.is_empty())
+    })
+}
+
+/// The candidate test files whose `#[test]` items `cargo test` provably
+/// never runs because the owning `[[test]]` target is `test = false`,
+/// has `required-features` unmet under cargo defaults, or is `harness =
+/// false` (#8016). Each candidate pairs a path with whether it spells a
+/// registered custom-harness marker: a `harness = false` target is the
+/// registered harness's own runner, so a file carrying the marker is kept
+/// for the harness registry to validate.
+///
+/// Only an established skip drops a file. A manifest with no conditional
+/// `[[test]]` entry never starts the metadata probe, and an unavailable
+/// probe, an unlisted path or a conflicting `harness` flag keeps the file
+/// (under-drop, never over-drop).
+pub(crate) fn cargo_non_running_test_files<'a>(
+    workspace_root: &Path,
+    candidates: impl IntoIterator<Item = (&'a Path, bool)>,
+) -> BTreeSet<PathBuf> {
+    let mut inventory = ManifestInventory::default();
+    let mut gated: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    let mut skipped = BTreeSet::new();
+    for (path, has_harness_marker) in candidates {
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            workspace_root.join(path)
+        };
+        let Some(manifest_dir) = nearest_manifest_dir(workspace_root, &absolute) else {
+            continue;
+        };
+        let conditional = *gated.entry(manifest_dir.clone()).or_insert_with(|| {
+            std::fs::read_to_string(manifest_dir.join("Cargo.toml"))
+                .ok()
+                .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+                .is_some_and(|value| manifest_declares_conditional_test_target(&value))
+        });
+        if !conditional {
+            continue;
+        }
+        if inventory.cargo_test_collection_skipped(workspace_root, path)
+            || (!has_harness_marker
+                && inventory.verdict(workspace_root, path) == CargoHarnessVerdict::HarnessDisabled)
+        {
+            skipped.insert(path.to_path_buf());
+        }
+    }
+    skipped
+}
+
 /// Resolve the Cargo target metadata verdict for one registered harness
 /// target path (#3608). Single-target form: constructs a throwaway
 /// [`ManifestInventory`]. Batch callers (the registry, the role-grant
