@@ -10846,6 +10846,8 @@ id = "RIPR-SPEC-0159"
 name = "Bounded helper-call transfer"
 spec = "docs/specs/RIPR-SPEC-0159-bounded-helper-transfer.md"
 tests = [
+  "crates/ripr/tests/one_hop_field_projection.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer/field_projection.rs::tests",
   "crates/ripr/src/analysis/classify/helper_transfer/returned_ledger.rs::tests",
   "crates/ripr/src/analysis/classify/helper_transfer/selected_inherent_call.rs::tests",
   "crates/ripr/src/analysis/classifier/evidence.rs::tests::gather_retains_selected_call_identity_without_completing_ledger_path",
@@ -10899,11 +10901,17 @@ tests = [
   "crates/ripr/tests/helper_wrapper_reach.rs::user_type_between_owner_and_caller_abstains",
 ]
 fixtures = [
+  "fixtures/one_hop_field_projection",
+  "fixtures/one_hop_field_projection_wrong_sink",
+  "fixtures/one_hop_field_projection_discarded",
+  "fixtures/one_hop_field_projection_sibling",
+
   "fixtures/helper_chain_one_hop",
   "fixtures/helper_chain_multi_hop",
   "fixtures/helper_chain_controls",
 ]
 code = [
+  "crates/ripr/src/analysis/classify/helper_transfer/field_projection.rs",
   "crates/ripr/src/analysis/classify/helper_transfer/returned_ledger.rs",
   "crates/ripr/src/analysis/classify/helper_transfer/selected_inherent_call.rs",
   "crates/ripr/src/analysis/classify/propagation_witness.rs",

@@ -194,6 +194,20 @@ impl ClassifiedProbeEvidence {
             }
             PropagationWitnessDiagnostic::from_witness(witness)
         });
+        let field_projection = propagation_witness.as_ref().and_then(|diagnostic| {
+            let PropagationWitnessDiagnostic::Valid(witness) = diagnostic else {
+                return None;
+            };
+            crate::analysis::classify::field_projection_receipt(context, pin_syntax, witness)
+        });
+        let propagation_witness = propagation_witness.map(|diagnostic| match diagnostic {
+            PropagationWitnessDiagnostic::Valid(mut witness) => {
+                witness.field_projection = field_projection.clone();
+                witness.semantic_digest = witness.compute_semantic_digest();
+                PropagationWitnessDiagnostic::from_witness(witness)
+            }
+            other => other,
+        });
         let mut gathered = activation_and_boundary_input(
             context.probe,
             context.owner_fn,
@@ -357,6 +371,7 @@ impl ClassifiedProbeEvidence {
                         )
                     } else {
                         !chain_forwards_to_observed_hops(&owner.name, chain, &context.related_tests)
+                            && field_projection.is_none()
                     } =>
             {
                 if let Some(ledger) = returned_ledger.as_ref().filter(|ledger| {
@@ -574,7 +589,9 @@ impl ClassifiedProbeEvidence {
             })
         };
         let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
-            fallible_checks
+            field_projection.as_ref().is_some_and(|receipt| {
+                receipt.valid_for(context.probe) && receipt.admits(test, assertion)
+            }) || fallible_checks
                 .iter()
                 .any(|receipt| receipt.valid_for(context.probe) && receipt.admits(test, assertion))
                 || owner_return_pin.as_ref().is_some_and(|pin| {
