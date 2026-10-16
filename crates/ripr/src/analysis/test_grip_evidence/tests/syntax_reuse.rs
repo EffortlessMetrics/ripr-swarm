@@ -11,10 +11,10 @@ const SHADOW_ONE: &str = "pub struct Bag { pub items: Vec<u32> }\npub fn add(v: 
 
 fn syntax_fixture(tests: usize, shadow_standard_root: bool) -> Result<FixtureIndex, String> {
     let (production, _) = NAMED_SOURCE
-        .split_once("#[cfg(test)]")
+        .split_once("mod tests {")
         .ok_or("missing fixture tests")?;
     let mut source = production.to_owned();
-    source.push_str("#[cfg(test)]\nmod tests {\n use super::*;\n");
+    source.push_str("mod tests {\n use super::*;\n");
     source.push_str(if shadow_standard_root {
         "macro_rules! assert_eq { ($($args:tt)*) => {} }\n"
     } else {
