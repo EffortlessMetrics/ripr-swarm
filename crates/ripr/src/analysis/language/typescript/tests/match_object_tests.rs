@@ -885,6 +885,22 @@ fn colon_proto_is_not_a_listed_match_object_field() -> Result<(), String> {
         Some(vec!["adult".to_string()]),
         "skipping colon __proto__: must still list sibling own fields"
     );
+    // A comment between the key and the colon is the same prototype
+    // setter: it must not list, and sibling own fields still list
+    // (#8148 review).
+    let commented = flat_object_keys("{ __proto__ /* note */: 0, adult: true }");
+    assert!(
+        commented
+            .as_ref()
+            .is_some_and(|keys| keys.iter().any(|key| key == "adult")),
+        "commented colon __proto__: must still list sibling own fields, got {commented:?}"
+    );
+    assert!(
+        !commented
+            .as_ref()
+            .is_some_and(|keys| keys.iter().any(|key| key == "__proto__")),
+        "commented colon __proto__: must not list an own field, got {commented:?}"
+    );
 
     let root = ts_unique_tempdir("match-object-colon-proto")?;
     ts_write_file(

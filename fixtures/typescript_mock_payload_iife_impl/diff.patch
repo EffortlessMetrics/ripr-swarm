@@ -1,0 +1,8 @@
+diff --git a/src/save.ts b/src/save.ts
+--- a/src/save.ts
++++ b/src/save.ts
+@@ -1,3 +1,3 @@
+ export function save(db: { write: (value: number) => void }, v: number): void {
+-    db.write(v);
++    db.write(v + 2);
+ }

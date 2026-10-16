@@ -540,7 +540,11 @@ fn keys_mock_once(literal: &str, property: &str, is_mock: fn(&str) -> bool) -> b
 /// opens `text`, or `None` when `text` is not one whose implementation (if
 /// any) is an arrow function. A named or `function` implementation can be
 /// called with the mock object as `this` and record the asserted call on
-/// itself (#8138); an arrow's `this` is the test's.
+/// itself (#8138); an arrow's `this` is the test's. The argument must
+/// itself be the arrow: a wrapper that merely contains one (a call such as
+/// `(() => recordTwo)()`, a conditional such as
+/// `ready ? (v) => v : recordTwo`, a grouping) can evaluate to a named
+/// implementation, so it refuses too (#8148 review).
 fn closed_mock_call(text: &str) -> Option<&str> {
     let rest = MOCK_FACTORIES
         .iter()
@@ -555,10 +559,37 @@ fn closed_mock_call(text: &str) -> Option<&str> {
     }
     let end = closing_offset(rest, '(', ')')?;
     let argument = rest[1..end - 1].trim();
-    let arrow = argument.contains("=>")
+    let arrow = is_arrow_expression(argument)
         && identifier_mentions(argument, "function") == 0
         && identifier_mentions(argument, "this") == 0;
     (argument.is_empty() || arrow).then(|| &rest[end..])
+}
+
+/// `true` when `text` is itself an arrow function expression: an optional
+/// `async`, then a parenthesized parameter list or a single identifier,
+/// followed by `=>`. A call (`(() => recordTwo)()`), a conditional
+/// (`ready ? (v) => v : recordTwo`) or any other wrapper can evaluate to a
+/// named or `function` implementation that records the asserted call
+/// (#8148 review), so a merely contained arrow refuses.
+fn is_arrow_expression(text: &str) -> bool {
+    let mut rest = text.trim_start();
+    if rest
+        .strip_prefix("async")
+        .is_some_and(|after| !after.starts_with(is_identifier_part))
+    {
+        rest = rest["async".len()..].trim_start();
+    }
+    if let Some(parameter_end) = rest
+        .starts_with('(')
+        .then(|| closing_offset(rest, '(', ')'))
+        .flatten()
+    {
+        return rest[parameter_end..].trim_start().starts_with("=>");
+    }
+    let word_end = rest
+        .find(|c: char| !is_identifier_part(c))
+        .unwrap_or(rest.len());
+    word_end > 0 && rest[word_end..].trim_start().starts_with("=>")
 }
 
 /// `true` when only whitespace stands before an explicit `;`, the block's

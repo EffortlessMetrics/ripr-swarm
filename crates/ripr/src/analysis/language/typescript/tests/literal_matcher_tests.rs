@@ -373,6 +373,9 @@ fn mock_payload_binding_must_be_exactly_a_fresh_mock() {
     for test in [
         "const db = { write: jest.fn() }; save(db, 1);",
         "const db = { write: jest.fn((v) => v) }; save(db, 1);",
+        "const db = { write: jest.fn(() => 2) }; save(db, 1);",
+        "const db = { write: jest.fn(async (v) => v) }; save(db, 1);",
+        "const db = { write: jest.fn(v => v) }; save(db, 1);",
         "const db = { write: vi.fn<(v: number) => void>() };\nsave(db, 1);",
     ] {
         assert!(facts.credits(&db_payload, test), "{test}");
@@ -381,6 +384,11 @@ fn mock_payload_binding_must_be_exactly_a_fresh_mock() {
         "const db = { write: jest.fn() && pre.write }; save(db, 1);",
         "const db = { write: jest.fn(recordTwo) }; save(db, 1);",
         "const db = { write: jest.fn(function (v) { this.write(2); }) }; save(db, 1);",
+        // A call or a conditional wrapping an arrow can evaluate to a named
+        // implementation (#8148 review); the arrow token inside it is not
+        // the implementation.
+        "const db = { write: jest.fn((() => recordTwo)()) }; save(db, 1);",
+        "const db = { write: jest.fn(ready ? (v) => v : recordTwo) }; save(db, 1);",
         "const db = { write: jest.fn(), inner: pre }.inner; save(db, 1);",
         "const db = { write: jest.fn() }\n  && pre;\nsave(db, 1);",
         "const db = { write: jest.fn().mockName(\"w\") }; save(db, 1);",
@@ -394,6 +402,7 @@ fn mock_payload_binding_must_be_exactly_a_fresh_mock() {
     for binding in [
         "const send = jest.fn();",
         "const send = jest.fn((m: string) => m);",
+        "const send = jest.fn(async (m: string) => m);",
         "const send = vi.fn<(m: string) => void>();",
         // A line break before a new statement ends it.
         "const send = jest.fn()",
@@ -411,6 +420,10 @@ fn mock_payload_binding_must_be_exactly_a_fresh_mock() {
         "const send = jest.fn()\n  (pre);",
         "const send = jest.fn(record);",
         "const send = jest.fn(function () {});",
+        // A wrapping call or conditional can hand back a named
+        // implementation (#8148 review).
+        "const send = jest.fn((() => recordTwo)());",
+        "const send = jest.fn(ready ? (m) => m : recordTwo);",
     ] {
         assert!(
             !notify_facts(Some(NOTIFY_OWNER)).credits(&order_payload(), &send(binding)),
