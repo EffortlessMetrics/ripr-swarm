@@ -634,3 +634,24 @@ fn doc_flag_guard_rejects_removed_flags_and_accepts_prose() -> Result<(), String
     }
     Ok(())
 }
+
+#[test]
+fn first_run_sequence_is_check_first_everywhere() -> Result<(), String> {
+    // #8158 claim 3: HELP, README, and QUICKSTART name one canonical first
+    // run. `check` is the first command; `doctor` diagnoses setup and is
+    // never a gate the first run must pass before `check`.
+    let help = rendered_help(&[])?;
+    let check_at = help.find("ripr check").ok_or("HELP must name ripr check")?;
+    let doctor_at = help
+        .find("ripr doctor")
+        .ok_or("HELP must name ripr doctor")?;
+    if check_at > doctor_at {
+        return Err("HELP Try-this-first must lead with ripr check, not doctor".to_string());
+    }
+    assert_contains(
+        "HELP first run",
+        &help,
+        "Diagnose setup when check cannot run",
+    )?;
+    Ok(())
+}

@@ -23,8 +23,8 @@ Usage:
   ripr <command> [options]
 
 Try this first:
-  ripr doctor                     Check this workspace can produce evidence.
   ripr check                      Analyze the current diff, name the top gap.
+  ripr doctor                     Diagnose setup when check cannot run.
 
 The loop is: ripr names one gap -> you add one focused test -> ripr records
 whether the gap closed. `ripr.toml` is optional; the zero-config run is the
