@@ -1543,8 +1543,7 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
     Ok(())
 }
 
-const SHOP_FEE_SOURCE: &str =
-    "def fee(amount):\n    if amount < 0:\n        raise ValueError('negative')\n    return amount * 3\n";
+const SHOP_FEE_SOURCE: &str = "def fee(amount):\n    if amount < 0:\n        raise ValueError('negative')\n    return amount * 3\n";
 const SHOP_FEE_NEW_LINE: &str = "    return amount * 3";
 const SHOP_FEE_OLD_LINE: &str = "    return amount * 2";
 
@@ -1594,7 +1593,10 @@ fn assert_shop_fee_withholds_stand_in_credit(finding: &crate::domain::Finding, c
         finding.class,
         finding.oracle_alignment,
         finding.related_tests.first().map(|test| &test.oracle_kind),
-        finding.related_tests.first().map(|test| &test.oracle_strength)
+        finding
+            .related_tests
+            .first()
+            .map(|test| &test.oracle_strength)
     );
 }
 
@@ -1624,6 +1626,11 @@ fn locally_rebound_owner_call_does_not_credit_exposed_exact_value() -> Result<()
     )?;
     assert_shop_fee_withholds_stand_in_credit(&local_def, "local def");
 
+    let bare_shadow = classify_shop_fee(
+        "from src.shop import fee as price\n\n\ndef test_fee():\n    def fee(amount):\n        return 30\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&bare_shadow, "bare local def beside aliased import");
+
     // Unshadowed control: the same assertion on the imported owner must
     // keep exposed / exact_value / strong.
     let control = classify_shop_fee(
@@ -1641,6 +1648,25 @@ fn nested_helper_local_shadow_keeps_outer_owner_credit() -> Result<(), String> {
         "from src.shop import fee\n\n\ndef test_fee():\n    def helper():\n        fee = lambda amount: 30\n        return fee(10)\n    assert fee(10) == 30\n",
     )?;
     assert_shop_fee_exposed(&finding);
+    Ok(())
+}
+
+#[test]
+fn genuine_alias_local_import_and_unrelated_helper_keep_owner_credit() -> Result<(), String> {
+    let aliased = classify_shop_fee(
+        "from src.shop import fee as price\n\n\ndef test_fee():\n    assert price(10) == 30\n",
+    )?;
+    assert_shop_fee_exposed(&aliased);
+
+    let local_import = classify_shop_fee(
+        "def test_fee():\n    from src.shop import fee\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_exposed(&local_import);
+
+    let unrelated = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef test_fee():\n    def helper(amount):\n        return 30\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_exposed(&unrelated);
     Ok(())
 }
 
