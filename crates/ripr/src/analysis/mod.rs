@@ -49,8 +49,8 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    AnalyzedRevisions, load_diff, load_diff_core, load_diff_range_with_deadline_core,
-    load_diff_with_effective_base_core, load_worktree_diff,
+    AnalyzedRevisions, another_base_candidate_exists, load_diff, load_diff_core,
+    load_diff_range_with_deadline_core, load_diff_with_effective_base_core, load_worktree_diff,
     load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
     probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_effective_base,
     resolve_effective_base_core, working_tree_has_tracked_changes,
@@ -60,7 +60,7 @@ pub(crate) use diff::{
 /// diff assembly (#4003): the one named owner for badge input base/diff,
 /// consumed by the analysis route and the xtask badge route alike. Neither
 /// route may hardcode a base ref or rebuild the diff argv inline.
-pub use diff::{another_base_candidate_exists, load_diff_range, resolve_default_base_commit};
+pub use diff::{load_diff_range, resolve_default_base_commit};
 pub(crate) use facts::attributes_define_test;
 pub(crate) use facts::cfg_predicates;
 pub(crate) use facts::validated_file_wide_harness_targets;
