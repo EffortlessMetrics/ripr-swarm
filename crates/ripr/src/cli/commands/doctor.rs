@@ -469,12 +469,10 @@ fn print_doctor_start_here_guidance(
             ),
         }
     }
-    println!(
-        "- Recovery states: missing artifact, stale evidence, wrong root, malformed artifact, no actionable gap, preview-limited evidence"
-    );
-    println!(
-        "- Proof rail: verify command, receipt command, and receipt path are advisory static movement evidence"
-    );
+    // The recovery-state list and proof-rail note used to print here. Both
+    // named ripr-internal concepts a first-run reader has not met yet, and
+    // neither changes the action this screen recommends; the first-pr
+    // packet that composes them is where they belong (#8158).
     // First-run honesty: when the working tree has uncommitted changes,
     // a committed-history `ripr check` analyzes committed history only and would
     // silently exclude the user's draft (the RIPR-SPEC-0112 dirty-worktree case).

@@ -11236,8 +11236,11 @@ fn doctor_reports_missing_config_defaults() -> Result<(), String> {
         !stdout.contains("Safe next action: run `ripr first-pr"),
         "a fresh workspace must not be sent to the compose command:\n{stdout}"
     );
-    assert!(stdout.contains("Recovery states: missing artifact, stale evidence, wrong root"));
-    assert!(stdout.contains("Proof rail: verify command, receipt command, and receipt path"));
+    // Internal vocabulary stays off the first screen (#8158): the reader
+    // gets the recommended first command, not the recovery/proof taxonomy.
+    assert!(!stdout.contains("Recovery states:"), "{stdout}");
+    assert!(!stdout.contains("Proof rail:"), "{stdout}");
+    assert!(stdout.contains("Recommended first command:"));
 
     ignore_remove_dir_all(&workspace);
     Ok(())
