@@ -46,16 +46,16 @@ outputs:
   claim:
     description: 'Normalized governing claim identity'
     value: ${{ steps.admit.outputs.claim }}
-  acceptance-delta:
+  acceptance_delta:
     description: 'Normalized acceptance delta'
     value: ${{ steps.admit.outputs.acceptance_delta }}
-  competing-prs:
+  competing_prs:
     description: 'Comma-separated unresolved competing PR numbers'
     value: ${{ steps.admit.outputs.competing_prs }}
-  changed-files:
+  changed_files:
     description: 'GitHub changed-files count for the current PR'
     value: ${{ steps.admit.outputs.changed_files }}
-  changed-lines:
+  changed_lines:
     description: 'GitHub additions plus deletions for the current PR'
     value: ${{ steps.admit.outputs.changed_lines }}
 
