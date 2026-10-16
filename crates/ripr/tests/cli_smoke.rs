@@ -17,6 +17,8 @@ mod agent_policy_guidance;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/artifact_mode_precedence.rs"]
 mod artifact_mode_precedence;
+#[path = "cli_smoke/baseline_path_values.rs"]
+mod baseline_path_values;
 #[path = "../src/build_commit_record.rs"]
 mod build_commit_record;
 #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
@@ -62,6 +64,9 @@ mod output_leaf_identity;
 ))]
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
+#[cfg(all(feature = "lang-rust", feature = "lang-python"))]
+#[path = "cli_smoke/portable_diff_paths.rs"]
+mod portable_diff_paths;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
@@ -105,6 +110,9 @@ mod typescript_effect_aliases;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unknown_explain.rs"]
 mod unknown_explain;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/unsupported_artifact.rs"]
+mod unsupported_artifact;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unsupported_check_exit.rs"]
 mod unsupported_check_exit;
