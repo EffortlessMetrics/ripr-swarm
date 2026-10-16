@@ -320,7 +320,13 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig) -> String {
     out.push_str(&format!(
         "ripr static RIPR exposure analysis\nmode: {}\nroot: {}\n",
         output.mode.as_str(),
-        output.root.display()
+        // #7728: one session shows one spelling — the same `human_path`
+        // renderer doctor's root line uses, so a backslash-typed or
+        // drive-letter verbatim `\\?\`-prefixed root does not leak raw
+        // `Path::display` bytes here while every sibling surface renders the
+        // forward-slash form. UNC and volume verbatim prefixes keep their
+        // raw spelling by design (`human_path_text`).
+        crate::output::path::human_path(&output.root)
     ));
     // RIPR-SPEC-0255 (#7536): name the ripr.toml that governed the run, in
     // the header CI logs keep. Absence is the explicit built-in-defaults
@@ -966,7 +972,27 @@ pub(crate) fn render_finding_with_context_command(
     // source fragments keep their exact bytes.
     let mut out =
         render_finding_with_config(finding, config, root, JsonPointerWording::ExplainNamesCheck);
-    out.push_str(&explain::render_verdict_explanation(finding));
+    // #7796: project the owner's observed call shape (the same producer
+    // `ripr agent stub` reads) into the verdict-change recipe. Only when the
+    // finding's recorded source still owns the analyzed root's checkout:
+    // for a base-deleted/moved/unresolved finding, or an analyzed candidate
+    // tree that is not the checkout, the on-disk file cannot speak for the
+    // finding and the recipe keeps the name-only form. The render itself
+    // never reads source files.
+    let owner_signature = match finding.source_currentness {
+        crate::domain::SourceCurrentness::CandidateCurrent => {
+            crate::analysis::owner_call_shape_at_line(
+                root,
+                &finding.probe.location.file,
+                finding.probe.location.line,
+            )
+        }
+        _ => None,
+    };
+    out.push_str(&explain::render_verdict_explanation(
+        finding,
+        owner_signature.as_deref(),
+    ));
     out.push_str(&format!("\nNext: {context_command}\n"));
     push_powershell_variant(&mut out, "", context_command);
     terminal_safe(out)
@@ -997,7 +1023,7 @@ pub(crate) use sections::render_finding_with_config;
 
 #[cfg(test)]
 mod tests {
-    use super::{render, render_finding, render_with_config, terminal_safe};
+    use super::{render, render_finding, render_header_summary, render_with_config, terminal_safe};
     use crate::analysis::PreviewLanguageAdvisory;
     use crate::app::{CheckOutput, Mode};
     use crate::config::RiprConfig;
@@ -1105,6 +1131,51 @@ mod tests {
         let rendered = render_with_config(&output, &loaded);
 
         assert!(rendered.contains("root: repo\nconfig: repo/ripr.toml\n"));
+    }
+
+    /// #7728: the check header's root line must use the same
+    /// `output::path::human_path` spelling as doctor's root line, not raw
+    /// `Path::display`, so one session shows one spelling of the analyzed
+    /// root (a verbatim `\\?\`-prefixed root strips on Windows; a
+    /// backslash-typed root normalizes there; Unix keeps the identity).
+    #[test]
+    fn header_root_line_uses_human_path_not_raw_display() {
+        let spaced_root = format!("C:{}tmp{}probe win space", '\\', '\\');
+        for root_text in [
+            r"\\?\C:\tmp\probe win space".to_string(),
+            spaced_root,
+            "repo".to_string(),
+        ] {
+            let root = PathBuf::from(root_text);
+            let output = CheckOutput {
+                harness_projections: Vec::new(),
+                schema_version: "0.1".to_string(),
+                tool: "ripr".to_string(),
+                mode: Mode::Draft,
+                root: root.clone(),
+                base: Some("main".to_string()),
+                summary: Summary::default(),
+                findings: vec![],
+                preview_language_advisories: Vec::new(),
+                language_runs: Vec::new(),
+                no_scope_provided: false,
+                unanalyzed_working_tree: false,
+                untracked_working_tree_source_paths: Vec::new(),
+                unlinked_python_tests: None,
+                suppression: None,
+                analysis_outcome: None,
+                partial_scope: None,
+                analyzed_revisions: None,
+            };
+
+            let rendered = render_header_summary(&output, &RiprConfig::default());
+
+            let expected = format!("root: {}\n", crate::output::path::human_path(&root));
+            assert!(
+                rendered.contains(&expected),
+                "header must render the root through human_path: expected {expected:?} in {rendered:?}"
+            );
+        }
     }
 
     /// #5258: when the unanalyzed working-tree state is untracked files, the

@@ -3,6 +3,119 @@ use std::path::Path;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+/// A retry can exit successfully in a valid decoy directory. Observe the
+/// selected files and the untouched decoy, rather than only command spelling.
+#[test]
+fn init_refusal_retries_replay_the_selected_root() -> TestResult {
+    let scratch = unique_temp_workspace("init-refusal-retry");
+    let selected = scratch.join("selected répo it's");
+    let decoy = scratch.join("decoy");
+    let config = "[analysis]\nmode = \"deep\"\n";
+    let workflow = "name: Existing\n";
+    let result: TestResult = (|| {
+        for root in [&selected, &decoy] {
+            std::fs::create_dir_all(root.join(".github/workflows"))?;
+            std::fs::write(root.join("ripr.toml"), config)?;
+            std::fs::write(root.join(".github/workflows/ripr.yml"), workflow)?;
+        }
+        let absolute = selected.to_str().ok_or("fixture root must be UTF-8")?;
+        for (cwd, root_args) in [
+            (&decoy, vec!["--root", absolute]),
+            (&scratch, vec!["--root", "selected répo it's"]),
+            (&selected, vec![]),
+        ] {
+            for ci in [false, true] {
+                for dry_run in [false, true] {
+                    std::fs::write(selected.join("ripr.toml"), config)?;
+                    std::fs::write(selected.join(".github/workflows/ripr.yml"), workflow)?;
+                    let mut args = vec!["init"];
+                    args.extend(&root_args);
+                    if ci {
+                        args.extend(["--ci", "github"]);
+                    }
+                    if dry_run {
+                        args.push("--dry-run");
+                    }
+                    let refused = run_command(env!("CARGO_BIN_EXE_ripr"), Some(cwd), &args)?;
+                    assert_eq!(refused.status.code(), Some(2), "{refused:?}");
+                    assert_eq!(std::fs::read_to_string(selected.join("ripr.toml"))?, config);
+                    assert_eq!(
+                        std::fs::read_to_string(selected.join(".github/workflows/ripr.yml"))?,
+                        workflow
+                    );
+                    let stderr = String::from_utf8(refused.stderr)?;
+                    let commands: Vec<_> = stderr
+                        .split('`')
+                        .filter(|text| text.starts_with("ripr init"))
+                        .collect();
+                    assert!(!commands.is_empty(), "{stderr}");
+                    for command in &commands {
+                        std::fs::write(selected.join("ripr.toml"), config)?;
+                        if !ci {
+                            // The config-preserving alternative has a new workflow to write.
+                            let path = selected.join(".github/workflows/ripr.yml");
+                            if path.exists() {
+                                std::fs::remove_file(path)?;
+                            }
+                        }
+                        let replay = replay_printed_ripr(command, &decoy)?;
+                        assert!(replay.status.success(), "{command}: {replay:?}");
+                        let after = std::fs::read_to_string(selected.join("ripr.toml"))?;
+                        if command.contains("--dry-run") || command.contains("--ci github") {
+                            assert_eq!(after, config, "{command}");
+                        } else {
+                            assert!(after.contains("mode = \"draft\""), "{command}: {after}");
+                        }
+                        if command.contains("--ci github") {
+                            let after = std::fs::read_to_string(
+                                selected.join(".github/workflows/ripr.yml"),
+                            )?;
+                            assert!(after.contains("name: RIPR"), "{command}: {after}");
+                        }
+                        assert_eq!(std::fs::read_to_string(decoy.join("ripr.toml"))?, config);
+                        assert_eq!(
+                            std::fs::read_to_string(decoy.join(".github/workflows/ripr.yml"))?,
+                            workflow
+                        );
+                    }
+                    assert_eq!(commands.len(), if ci { 1 } else { 3 }, "{stderr}");
+                }
+            }
+        }
+        Ok(())
+    })();
+    std::fs::remove_dir_all(&scratch)?;
+    result
+}
+
+#[cfg(unix)]
+#[test]
+fn init_refusal_omits_retries_for_an_unrepresentable_root() -> TestResult {
+    use std::os::unix::ffi::OsStringExt;
+    let scratch = unique_temp_workspace("init-refusal-lossless");
+    let selected = scratch.join(std::ffi::OsString::from_vec(b"selected-\xff".to_vec()));
+    let result: TestResult = (|| {
+        std::fs::create_dir_all(selected.join(".github/workflows"))?;
+        std::fs::write(selected.join("ripr.toml"), "[analysis]\n")?;
+        std::fs::write(
+            selected.join(".github/workflows/ripr.yml"),
+            "name: Existing\n",
+        )?;
+        for args in [vec!["init"], vec!["init", "--ci", "github"]] {
+            let refused = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&selected), &args)?;
+            assert_eq!(refused.status.code(), Some(2), "{refused:?}");
+            let stderr = String::from_utf8(refused.stderr)?;
+            assert!(stderr.contains("already exists"), "{stderr}");
+            assert!(stderr.contains("commands omitted"), "{stderr}");
+            assert!(stderr.contains("UTF-8"), "{stderr}");
+            assert!(!stderr.contains("`ripr init"), "{stderr}");
+        }
+        Ok(())
+    })();
+    std::fs::remove_dir_all(&scratch)?;
+    result
+}
+
 fn rust_repo(root: &Path) -> TestResult {
     std::fs::create_dir_all(root.join("src"))?;
     std::fs::write(

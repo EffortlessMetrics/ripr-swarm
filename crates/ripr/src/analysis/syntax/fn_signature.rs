@@ -466,6 +466,116 @@ pub(crate) fn owner_fn_line_span(source: &str, line: usize) -> Option<(usize, us
         })
 }
 
+impl OwnerSignature {
+    /// Observed call shape as written, e.g. `greet(name: &str) -> String`;
+    /// methods are qualified by their self type and keep the receiver slot
+    /// (`Bag::push(&mut self, value: i32) -> bool`), and `()`-returning
+    /// functions omit the arrow. This is observed source data for drill-in
+    /// surfaces, not a synthesized call: a typed `self` receiver, an `async`
+    /// owner, unbound type/const generics, or an owner that cannot be named
+    /// and called from a test (`OwnerContainer::Unsupported` / `GenericImpl`)
+    /// decline with `None` (#7796, #8259). An `async fn` call yields a
+    /// future, not the declared output; projecting `advance(input: u8) -> u8`
+    /// would make explain/context look like a direct call returns `u8`.
+    pub(crate) fn call_shape(&self) -> Option<String> {
+        if self.receiver == Some(OwnerReceiver::Typed) || self.has_type_generics || self.is_async {
+            return None;
+        }
+        let name = match &self.container {
+            OwnerContainer::Free => self.name.clone(),
+            OwnerContainer::Inherent { self_type } => format!("{self_type}::{}", self.name),
+            OwnerContainer::TraitImpl { self_type, .. } => format!("{self_type}::{}", self.name),
+            OwnerContainer::GenericImpl(_) | OwnerContainer::Unsupported(_) => return None,
+        };
+        let mut params: Vec<String> = Vec::new();
+        if let Some(receiver) = &self.receiver {
+            params.push(
+                match receiver {
+                    OwnerReceiver::Value => "self",
+                    OwnerReceiver::Ref => "&self",
+                    OwnerReceiver::RefMut => "&mut self",
+                    OwnerReceiver::Typed => return None,
+                }
+                .to_string(),
+            );
+        }
+        params.extend(self.params.iter().map(|param| match &param.name {
+            Some(name) => format!("{name}: {}", param.ty),
+            None => param.ty.clone(),
+        }));
+        match &self.return_type {
+            Some(return_type) => Some(format!("{name}({}) -> {return_type}", params.join(", "))),
+            None => Some(format!("{name}({})", params.join(", "))),
+        }
+    }
+}
+
+/// Signature of the innermost `fn` containing 1-based `line`, when the file
+/// parses and a function covers that line. `None` when sibling functions
+/// share the line (`fn a() {} fn b() {}` on one line): a line-only lookup
+/// cannot tell which one owns the changed expression, and naming the wrong
+/// owner is worse than declining (#7796 review).
+pub(crate) fn owner_signature_at_line(source: &str, line: usize) -> Option<OwnerSignature> {
+    let parse = parse_clean_source_file(source)?;
+    let line_of = |at: TextSize| {
+        source
+            .get(..usize::from(at))
+            .map_or(1, |prefix| prefix.matches('\n').count() + 1)
+    };
+    let covering: Vec<ast::Fn> = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            let range = function.syntax().text_range();
+            line_of(range.start()) <= line && line <= line_of(range.end())
+        })
+        .collect();
+    // Sibling ambiguity: two covering functions whose ranges do not nest
+    // cannot be told apart by line. Nested coverage (a function-local `fn`)
+    // is fine — the innermost start wins, as `owner_signature_at` decides.
+    let disjoint_siblings = covering.iter().any(|a| {
+        covering.iter().any(|b| {
+            a.syntax().text_range().end() <= b.syntax().text_range().start()
+                || b.syntax().text_range().end() <= a.syntax().text_range().start()
+        })
+    });
+    if disjoint_siblings {
+        return None;
+    }
+    let innermost = covering
+        .iter()
+        .max_by_key(|function| function.syntax().text_range().start())?;
+    let start_line = line_of(innermost.syntax().text_range().start());
+    let start_offset = if start_line <= 1 {
+        0
+    } else {
+        source
+            .match_indices('\n')
+            .nth(start_line - 2)
+            .map(|(idx, _)| idx + 1)?
+    };
+    // Land on the line's first token: leading whitespace is outside the
+    // parser's `fn` text range, so the raw line start could miss it.
+    let line_text = source.get(start_offset..)?;
+    let offset = start_offset + (line_text.len() - line_text.trim_start().len());
+    owner_signature_at(source, offset)
+}
+
+/// Observed call shape of the `fn` owning 1-based `line` in `root`/`file`
+/// (the context-packet/explain drill-in projection, #7796). `None` when the
+/// source is missing or unparsed, no function covers the line, or the shape
+/// is not honestly nameable. No assertion value is synthesized here.
+pub(crate) fn owner_call_shape_at_line(
+    root: &std::path::Path,
+    file: &std::path::Path,
+    line: usize,
+) -> Option<String> {
+    let source = std::fs::read_to_string(root.join(file)).ok()?;
+    owner_signature_at_line(&source, line)?.call_shape()
+}
+
 /// Whether the innermost struct-literal field at `byte_offset` belongs to the
 /// value its owning `fn` returns directly: the struct literal is that
 /// function's tail expression (through parentheses and nested block tails)
@@ -817,6 +927,141 @@ mod tests {
         assert_eq!(signature.return_type.as_deref(), Some("u32"));
         assert!(signature.parent_modules.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn call_shape_renders_observed_params_and_return() -> Result<(), String> {
+        let source = "pub fn greet(name: &str) -> String {\n    format!(\"HELLO, {}!\", name.to_uppercase())\n}\n";
+        let offset = source.find("format!").ok_or("fixture has a body")?;
+        let signature = owner_signature_at(source, offset).ok_or("signature parses")?;
+        assert_eq!(
+            signature.call_shape().as_deref(),
+            Some("greet(name: &str) -> String")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn call_shape_includes_receiver_slot_for_methods() -> Result<(), String> {
+        let source = "struct Bag;\nimpl Bag {\n    pub fn push(&mut self, value: i32) -> bool {\n        let _ = value;\n        true\n    }\n}\n";
+        let offset = source.find("let _ =").ok_or("fixture has a body")?;
+        let signature = owner_signature_at(source, offset).ok_or("signature parses")?;
+        assert_eq!(
+            signature.call_shape().as_deref(),
+            Some("Bag::push(&mut self, value: i32) -> bool")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn call_shape_omits_arrow_for_unit_return() -> Result<(), String> {
+        let source = "fn record(value: u8) {\n    let _ = value;\n}\n";
+        let offset = source.find("let _ =").ok_or("fixture has a body")?;
+        let signature = owner_signature_at(source, offset).ok_or("signature parses")?;
+        assert_eq!(signature.call_shape().as_deref(), Some("record(value: u8)"));
+        Ok(())
+    }
+
+    #[test]
+    fn call_shape_declines_unbound_type_generics() -> Result<(), String> {
+        let source = "fn identity<T>(value: T) -> T {\n    value\n}\n";
+        let offset = source.find("value\n").ok_or("fixture has a body")?;
+        let signature = owner_signature_at(source, offset).ok_or("signature parses")?;
+        assert_eq!(signature.call_shape(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn call_shape_declines_async_owners_instead_of_projecting_a_sync_shape() -> Result<(), String> {
+        // #8259: `is_async` was parsed and then dropped. The sync-looking
+        // projection `advance(input: u8) -> u8` is the residual this test
+        // rejects; a direct call of an async owner yields a future, so
+        // rustc rejects comparing that call to `u8` unless `.await` is
+        // added (historical compiler control on #8191; not spawned here).
+        let async_source = "pub async fn advance(input: u8) -> u8 {\n    input + 2\n}\n";
+        let offset = async_source
+            .find("input + 2")
+            .ok_or("async fixture has a body")?;
+        let signature = owner_signature_at(async_source, offset).ok_or("async signature parses")?;
+        assert!(signature.is_async, "producer still records the async token");
+        assert_eq!(signature.name, "advance");
+        assert_eq!(signature.container, OwnerContainer::Free);
+        assert_eq!(signature.call_shape(), None);
+        // The same line lookup feeds explain/context; it must decline too.
+        let at_line = owner_signature_at_line(async_source, 2).ok_or("line 2 is the body")?;
+        assert!(at_line.is_async);
+        assert_eq!(at_line.call_shape(), None);
+
+        let sync_source = "pub fn advance(input: u8) -> u8 {\n    input + 2\n}\n";
+        let offset = sync_source
+            .find("input + 2")
+            .ok_or("sync fixture has a body")?;
+        let sync = owner_signature_at(sync_source, offset).ok_or("sync signature parses")?;
+        assert!(!sync.is_async);
+        assert_eq!(
+            sync.call_shape().as_deref(),
+            Some("advance(input: u8) -> u8")
+        );
+
+        let async_method = "struct Client;\nimpl Client {\n    pub async fn advance(&self, input: u8) -> u8 {\n        input + 2\n    }\n}\n";
+        let offset = async_method
+            .find("input + 2")
+            .ok_or("method fixture has a body")?;
+        let method = owner_signature_at(async_method, offset).ok_or("method signature parses")?;
+        assert!(method.is_async);
+        assert_eq!(
+            method.container,
+            OwnerContainer::Inherent {
+                self_type: "Client".to_string()
+            }
+        );
+        assert_eq!(method.call_shape(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn call_shape_declines_impl_generic_methods_even_without_own_generics() -> Result<(), String> {
+        // The unbound generic belongs to the impl, not the method's own
+        // parameter list: `has_type_generics` alone would miss it, so the
+        // container fact must decline the shape too (review thread on #8191;
+        // parity with `ripr agent stub`'s owner_generic_impl refusal).
+        let source = "pub struct Bag<T>(T);\nimpl<T: Copy> Bag<T> {\n    pub fn get(&self, value: T, flag: bool) -> T {\n        if !flag { value } else { self.0 }\n    }\n}\n";
+        let offset = source.find("if !flag").ok_or("fixture has a body")?;
+        let signature = owner_signature_at(source, offset).ok_or("signature parses")?;
+        assert_eq!(
+            signature.container,
+            OwnerContainer::GenericImpl("owner impl declares type or const generics")
+        );
+        assert_eq!(signature.call_shape(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn owner_signature_at_line_finds_the_innermost_covering_function() -> Result<(), String> {
+        let source = "pub fn outer() -> u8 {\n    fn inner(flag: bool) -> u8 {\n        if flag { 1 } else { 2 }\n    }\n    inner(true)\n}\n";
+        let signature = owner_signature_at_line(source, 3).ok_or("line 3 sits inside `inner`")?;
+        assert_eq!(signature.name, "inner");
+        // A nested `fn` cannot be named and called from a test surface, so
+        // the call shape declines even though the signature resolves.
+        assert_eq!(signature.call_shape(), None);
+        let outer = owner_signature_at_line(source, 5).ok_or("line 5 sits inside `outer`")?;
+        assert_eq!(outer.name, "outer");
+        assert_eq!(outer.call_shape().as_deref(), Some("outer() -> u8"));
+        Ok(())
+    }
+
+    #[test]
+    fn owner_signature_at_line_declines_outside_any_function() {
+        let source = "const ANSWER: u8 = 42;\n";
+        assert_eq!(owner_signature_at_line(source, 1), None);
+    }
+
+    #[test]
+    fn owner_signature_at_line_declines_sibling_functions_sharing_a_line() {
+        // A line-only lookup cannot tell which sibling owns the changed
+        // expression, so the shape declines instead of naming the wrong one.
+        let source = "fn first() -> u8 { 1 } fn second() -> u8 { 2 }\n";
+        assert_eq!(owner_signature_at_line(source, 1), None);
     }
 
     #[test]

@@ -1142,6 +1142,17 @@ fn run_pipeline_for_diff_text_with_language_config(
     let preview_paths: Vec<&diff::ChangedFile> = analysis_changed_files
         .iter()
         .filter(|changed| {
+            // Source-adapter advisories describe the selected partition
+            // (#8210). Disabled languages retain enablement guidance; Perl
+            // keeps its caller-supplied packet scope (#5421).
+            if let Some(scope) = &partial_scope
+                && route(&changed.path).is_some_and(|language| {
+                    language != LanguageId::Perl && languages.contains(&language)
+                })
+                && !scope.selects(&changed.path)
+            {
+                return false;
+            }
             !absent_changed_paths.contains(super::workspace::normalize_path(&changed.path).as_str())
         })
         .collect();

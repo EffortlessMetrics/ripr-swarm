@@ -217,8 +217,9 @@ pub(super) fn print_workflow(name: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn print_check_help() {
-    println!("{CHECK_HELP}");
+/// `ripr check --help` is one screen; `--all` selects the exhaustive reference.
+pub(super) fn print_check_help(all: bool) {
+    println!("{}", if all { CHECK_HELP } else { CHECK_HELP_SHORT });
 }
 
 pub(super) fn print_config_help() {
@@ -503,6 +504,37 @@ mod tests {
             "the default help screen is {lines} lines; keep it under one screen and put \
              reference material in HELP_ALL (ripr help --all)"
         );
+    }
+
+    /// #8164: HELP, README, and Quickstart must lead with one analysis command.
+    /// `Try this first:` is the live help owner; doctor stays a setup task and
+    /// must not reappear as a co-first command or a hardcoded `--base`.
+    #[test]
+    fn help_overview_has_one_canonical_first_run() -> Result<(), String> {
+        let Some((_, after)) = HELP.split_once("Try this first:\n") else {
+            return Err("default help lost its first-run section".to_string());
+        };
+        let section = after.split("\n\n").next().unwrap_or_default();
+        let commands: Vec<_> = section
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("ripr "))
+            .collect();
+        let [line] = commands.as_slice() else {
+            return Err(format!(
+                "first run must name exactly one command, got:\n{section}"
+            ));
+        };
+        let command = line.split_once("  ").map(|(part, _)| part).unwrap_or(line);
+        if command != "ripr check" {
+            return Err(format!(
+                "first run must be `ripr check` without a fixed base, got `{command}`"
+            ));
+        }
+        if section.contains("--base") {
+            return Err("first-run command must not hardcode --base".to_string());
+        }
+        Ok(())
     }
 
     /// The first screen has to answer "what do I run?" without the reader
@@ -888,6 +920,8 @@ mod tests {
         assert!(DOCTOR_HELP.contains("Cargo.toml"));
         assert!(DOCTOR_HELP.contains("nested Cargo.toml in this tree"));
         assert!(DOCTOR_HELP.contains("https://rustup.rs"));
+        assert!(DOCTOR_HELP.contains("fits one 80x24 screen"));
+        assert!(DOCTOR_HELP.contains("`-v`/`--verbose`"));
         assert!(DOCTOR_HELP.contains("Printed for every profile."));
         assert!(
             DOCTOR_HELP
@@ -1003,6 +1037,34 @@ mod tests {
         }
     }
 
+    /// The artifact-input group is disclosed as a one-of requirement, both
+    /// in the Usage synopsis and in a paragraph, so the shipped example
+    /// cannot be read as "every flag is optional" (#7746).
+    #[test]
+    fn pr_ledger_help_discloses_required_artifact_input() {
+        let usage = PR_LEDGER_HELP
+            .lines()
+            .find(|line| line.starts_with("Usage: ripr pr-ledger record"))
+            .unwrap_or_default();
+        for flag in [
+            "--gate",
+            "--baseline-delta",
+            "--zero-status",
+            "--pr-guidance",
+            "--gap-ledger",
+        ] {
+            assert!(
+                usage.contains(&format!("({flag} PATH|"))
+                    || usage.contains(&format!("|{flag} PATH")),
+                "Usage line must mark {flag} as one of the required artifact inputs: {usage}"
+            );
+        }
+        assert!(
+            PR_LEDGER_HELP.contains("At least one artifact input is required"),
+            "help must disclose the one-of artifact-input gate that exits 2"
+        );
+    }
+
     #[test]
     fn every_help_printer_executes_without_panic() {
         // Each wrapper is a `println!("{CONST}")` over the help-text
@@ -1043,7 +1105,7 @@ mod tests {
         print_swarm_queue_help();
         print_swarm_ingest_help();
         print_diff_help();
-        print_check_help();
+        print_check_help(true);
         print_explain_help();
         print_context_help();
         print_doctor_help();

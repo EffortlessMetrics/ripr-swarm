@@ -25,6 +25,7 @@ pub(crate) mod feedback;
 pub(crate) mod file_write;
 pub(crate) mod first_pr;
 pub(crate) mod first_useful_action;
+pub(crate) mod flow_sink_line;
 pub(crate) mod format;
 pub(crate) mod gap_decision_ledger;
 pub(crate) mod gap_decision_ledger_live;
