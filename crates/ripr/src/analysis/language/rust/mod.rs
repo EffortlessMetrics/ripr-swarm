@@ -375,20 +375,33 @@ fn drop_unreached_test_files(
 /// Test-holding files that a declared `[[test]]` target keeps out of
 /// `cargo test` (#8016): `test = false`, unmet default-feature
 /// `required-features` (both established by cargo metadata), or `harness =
-/// false` when no custom harness is registered, so nothing but libtest could
-/// have run the file's `#[test]` functions. Only packages whose manifest
-/// spells `[[test]]` are asked, because only a declaration can switch these
-/// keys; unavailable metadata is not a skip, so the file keeps its credit.
+/// false` when no registration names the file as a custom harness, so
+/// nothing but libtest could have run its `#[test]` functions. Only packages
+/// whose manifest spells `[[test]]` are asked, because only a declaration can
+/// switch these keys. Unavailable metadata is not a skip, and the pass stands
+/// down entirely while a `Cargo.toml` is dirty in a committed-history check:
+/// the metadata probe reads the working tree, not the `HEAD` bytes the files
+/// were loaded from. A crate root or a file another file declares as a module
+/// is shared with a live target, so it keeps its tests.
 fn cargo_skipped_test_files(
     root: &Path,
     test_harnesses: &[crate::config::TestHarnessRegistration],
     loaded_files: &[(PathBuf, Vec<u8>)],
     holds_tests: &dyn Fn(&[u8]) -> bool,
 ) -> BTreeSet<String> {
+    let mut skipped = BTreeSet::new();
+    if committed_source::current_overlay().is_some_and(|overlay| {
+        overlay
+            .dirty_paths()
+            .any(|path| path.rsplit('/').next() == Some("Cargo.toml"))
+    }) {
+        return skipped;
+    }
     let mut manifests = BTreeMap::new();
     let mut declares_tests: BTreeMap<PathBuf, bool> = BTreeMap::new();
     let mut inventory = workspace::ManifestInventory::default();
-    let mut skipped = BTreeSet::new();
+    let mut mentioned = None;
+    let mut package_manifests = BTreeMap::new();
     for (path, bytes) in loaded_files {
         if !holds_tests(bytes) {
             continue;
@@ -403,13 +416,32 @@ fn cargo_skipped_test_files(
         if !declares {
             continue;
         }
-        let harness_off = test_harnesses.is_empty()
-            && matches!(
-                inventory.verdict(root, path),
-                workspace::CargoHarnessVerdict::HarnessDisabled
-            );
-        if harness_off || inventory.cargo_test_collection_skipped(root, path) {
-            skipped.insert(workspace::normalize_path(path));
+        let normalized = workspace::normalize_path(path);
+        let harness_off = !test_harnesses.iter().any(|harness| {
+            harness.file_wide_harness_evidence()
+                && workspace::normalize_path(&harness.target) == normalized
+        }) && matches!(
+            inventory.verdict(root, path),
+            workspace::CargoHarnessVerdict::HarnessDisabled
+        );
+        if !(harness_off || inventory.cargo_test_collection_skipped(root, path)) {
+            continue;
+        }
+        let relative = path.strip_prefix(&package).unwrap_or(path);
+        let crate_root = matches!(
+            relative.to_str(),
+            Some("src/lib.rs" | "src/main.rs" | "build.rs")
+        ) || relative.starts_with("src/bin");
+        let stem = path.file_stem().and_then(|stem| stem.to_str());
+        let declared_module = stem.is_some_and(|stem| {
+            mentioned
+                .get_or_insert_with(|| {
+                    mentioned_module_names(root, loaded_files, &mut package_manifests)
+                })
+                .mentions(&Some(package.clone()), stem)
+        });
+        if !crate_root && !declared_module {
+            skipped.insert(normalized);
         }
     }
     skipped
@@ -7269,6 +7301,111 @@ fn absent_delimiter_boundary_returns_head() {
             );
             fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         }
+        Ok(())
+    }
+
+    fn skipped_target_fixture(name: &str, key: &str, test_path: &str) -> Result<PathBuf, String> {
+        let root = temp_root(name)?;
+        write(
+            &root.join("Cargo.toml"),
+            &format!(
+                "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n\n[[test]]\nname = \"old\"\npath = \"{test_path}\"\n{key}"
+            ),
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub mod used;\n\n#[cfg(test)]\nmod unit {\n    #[test]\n    fn lib_test() {}\n}\n",
+        )?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        write(
+            &root.join("tests/old.rs"),
+            "#[test]\nfn old_test() {}\n\nfn main() {}\n",
+        )?;
+        Ok(root)
+    }
+
+    use super::{cargo_skipped_test_files, contains_bytes};
+    use std::collections::BTreeSet;
+
+    fn skipped_files(
+        root: &Path,
+        harnesses: &[crate::config::TestHarnessRegistration],
+    ) -> Result<BTreeSet<String>, String> {
+        let loaded = ["src/lib.rs", "tests/old.rs"]
+            .iter()
+            .map(|file| {
+                fs::read(root.join(file))
+                    .map(|bytes| (PathBuf::from(file), bytes))
+                    .map_err(|err| err.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(cargo_skipped_test_files(
+            root,
+            harnesses,
+            &loaded,
+            &|bytes| contains_bytes(bytes, b"test"),
+        ))
+    }
+
+    #[test]
+    fn skipped_target_sharing_a_live_library_source_keeps_the_library_tests() -> Result<(), String>
+    {
+        // #8016 review: `[[test]] path = "src/lib.rs"; test = false` is
+        // skipped, but `cargo test --lib` still runs the library's tests.
+        let root =
+            skipped_target_fixture("skipped-target-shares-lib", "test = false\n", "src/lib.rs")?;
+        assert!(skipped_files(&root, &[])?.is_empty());
+        let own =
+            skipped_target_fixture("skipped-target-own-file", "test = false\n", "tests/old.rs")?;
+        assert_eq!(
+            skipped_files(&own, &[])?,
+            BTreeSet::from(["tests/old.rs".to_string()])
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        fs::remove_dir_all(own).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn an_unrelated_harness_registration_does_not_spare_a_harness_off_target() -> Result<(), String>
+    {
+        use crate::config::{TestHarnessAdapter, TestHarnessKind, TestHarnessRegistration};
+        let root = skipped_target_fixture(
+            "skipped-target-registration",
+            "harness = false\n",
+            "tests/old.rs",
+        )?;
+        let registration = |target: &str| TestHarnessRegistration {
+            registration_id: "mimic".to_string(),
+            target: PathBuf::from(target),
+            kind: TestHarnessKind::CustomHarnessTarget,
+            adapter: TestHarnessAdapter::LibtestMimicV1,
+            marker: "trial".to_string(),
+        };
+        let skipped = BTreeSet::from(["tests/old.rs".to_string()]);
+        assert_eq!(
+            skipped_files(&root, &[registration("tests/mimic.rs")])?,
+            skipped
+        );
+        assert!(skipped_files(&root, &[registration("tests/old.rs")])?.is_empty());
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_dirty_manifest_stands_the_skip_pass_down() -> Result<(), String> {
+        use crate::analysis::committed_source::{CommittedSourceOverlay, with_overlay};
+        use std::sync::Arc;
+        let root =
+            skipped_target_fixture("skipped-target-dirty", "test = false\n", "tests/old.rs")?;
+        let overlay = CommittedSourceOverlay::from_entries(
+            &root,
+            [("Cargo.toml", Some(&b"[package]\nname='shop'\n"[..]))],
+        );
+        let stood_down = with_overlay(Some(Arc::new(overlay)), || skipped_files(&root, &[]))?;
+        assert!(stood_down.is_empty(), "{stood_down:?}");
+        assert_eq!(skipped_files(&root, &[])?.len(), 1);
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
 
