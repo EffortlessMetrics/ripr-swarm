@@ -3,9 +3,29 @@ use super::*;
 use crate::lsp::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE;
 use tower_lsp_server::ls_types::PreviousResultId;
 
-const ANALYSIS_PENDING_RESULT_ID: &str = "ripr:analysis-pending";
+const ANALYSIS_PENDING_RESULT_ID: &str = "ripr:analysis-pending:save_or_refresh";
+
+/// A fresh `Backend` starts with the root authority awaiting
+/// initialization, which is a blocked state. Tests pinning the ordinary
+/// cold-start route select a root first, mirroring a completed
+/// `initialize` with a workspace root.
+fn select_root(harness: &ParityHarness) {
+    harness
+        .runtime
+        .block_on(harness.service.inner().apply_workspace_root_authority(
+            WorkspaceRootAuthority::selected(PathBuf::from("/workspace")),
+        ));
+}
 
 fn assert_pending_marker(items: &serde_json::Value) -> Result<(), String> {
+    assert_pending_marker_with_recovery(items, "save_or_refresh", "Save a file")
+}
+
+fn assert_pending_marker_with_recovery(
+    items: &serde_json::Value,
+    recovery: &str,
+    route_hint: &str,
+) -> Result<(), String> {
     let items = items
         .as_array()
         .ok_or_else(|| format!("items missing: {items}"))?;
@@ -33,7 +53,7 @@ fn assert_pending_marker(items: &serde_json::Value) -> Result<(), String> {
     if marker["data"]["state"] != "no_snapshot" {
         return Err(format!("wrong marker state: {marker}"));
     }
-    if marker["data"]["recovery"] != "save_or_refresh" {
+    if marker["data"]["recovery"] != recovery {
         return Err(format!("wrong marker recovery: {marker}"));
     }
     if marker["data"]["diagnostic_id"].is_string() {
@@ -54,8 +74,20 @@ fn assert_pending_marker(items: &serde_json::Value) -> Result<(), String> {
             "marker must refuse the clean-workspace claim: {message}"
         ));
     }
-    if !message.contains("ripr.refresh") {
-        return Err(format!("marker must name the recovery route: {message}"));
+    if !message.contains(route_hint) {
+        return Err(format!(
+            "marker must name the actual recovery route: {message}"
+        ));
+    }
+    if recovery == "save_or_refresh" && !message.contains("ripr.refresh") {
+        return Err(format!(
+            "unblocked route must name `ripr.refresh`: {message}"
+        ));
+    }
+    if recovery != "save_or_refresh" && message.contains("ripr.refresh") {
+        return Err(format!(
+            "blocked state must not advertise save/refresh, which returns before analysis: {message}"
+        ));
     }
     Ok(())
 }
@@ -64,6 +96,7 @@ fn assert_pending_marker(items: &serde_json::Value) -> Result<(), String> {
 fn analysis_pending_document_pull_serves_typed_marker_instead_of_empty_report() -> Result<(), String>
 {
     let harness = drained_parity_backend()?;
+    select_root(&harness);
     let uri = parity_uri("pending.rs")?;
     let report = document_report(&harness, &uri, None)?;
     assert_eq!(result_id(&report)?, ANALYSIS_PENDING_RESULT_ID);
@@ -74,6 +107,7 @@ fn analysis_pending_document_pull_serves_typed_marker_instead_of_empty_report() 
 fn analysis_pending_document_pull_answers_unchanged_for_the_cached_pending_id() -> Result<(), String>
 {
     let harness = drained_parity_backend()?;
+    select_root(&harness);
     let uri = parity_uri("pending.rs")?;
     let first = document_report(&harness, &uri, None)?;
     let pending_id = result_id(&first)?;
@@ -90,6 +124,7 @@ fn analysis_pending_document_pull_answers_unchanged_for_the_cached_pending_id() 
 #[test]
 fn analysis_pending_workspace_pull_serves_marker_per_tracked_uri() -> Result<(), String> {
     let harness = drained_parity_backend()?;
+    select_root(&harness);
     let uri = parity_uri("pending.rs")?;
     let cold = workspace_report(&harness, Vec::new())?;
     assert_eq!(
@@ -144,6 +179,7 @@ fn analysis_pending_workspace_pull_serves_marker_per_tracked_uri() -> Result<(),
 #[test]
 fn analysis_pending_marker_retracts_when_the_first_snapshot_commits() -> Result<(), String> {
     let harness = drained_parity_backend()?;
+    select_root(&harness);
     let uri = parity_uri("pending.rs")?;
     let pending = document_report(&harness, &uri, None)?;
     assert_pending_marker(&pending["items"])?;
@@ -175,4 +211,47 @@ fn analysis_pending_marker_retracts_when_the_first_snapshot_commits() -> Result<
     assert_eq!(transitioned["kind"], "full");
     assert_eq!(result_id(&transitioned)?, served_id);
     Ok(())
+}
+
+#[test]
+fn analysis_pending_blocked_root_names_its_own_recovery_route() -> Result<(), String> {
+    // #7774 review: `refresh_diagnostics` returns before analysis while the
+    // root authority blocks it, so the pending marker must not advertise
+    // save/refresh in that state — it names the authority's own recovery
+    // route, and the result identity folds the route so a later unblock
+    // cannot hide behind `unchanged`.
+    let harness = drained_parity_backend()?;
+    let uri = parity_uri("pending.rs")?;
+    harness
+        .runtime
+        .block_on(harness.service.inner().apply_workspace_root_authority(
+            WorkspaceRootAuthority::unavailable("test root unavailable"),
+        ));
+    let report = document_report(&harness, &uri, None)?;
+    assert_eq!(
+        result_id(&report)?,
+        "ripr:analysis-pending:select_root_and_restart"
+    );
+    assert_pending_marker_with_recovery(
+        &report["items"],
+        "select_root_and_restart",
+        "Select a single workspace root",
+    )?;
+
+    // Restoring the root re-opens the ordinary save/refresh route under a
+    // fresh identity, so a client holding the blocked-state report sees the
+    // transition instead of a stale route.
+    harness
+        .runtime
+        .block_on(harness.service.inner().apply_workspace_root_authority(
+            WorkspaceRootAuthority::selected(PathBuf::from("/workspace")),
+        ));
+    let restored = document_report(
+        &harness,
+        &uri,
+        Some("ripr:analysis-pending:select_root_and_restart".to_string()),
+    )?;
+    assert_eq!(restored["kind"], "full");
+    assert_eq!(result_id(&restored)?, ANALYSIS_PENDING_RESULT_ID);
+    assert_pending_marker(&restored["items"])
 }

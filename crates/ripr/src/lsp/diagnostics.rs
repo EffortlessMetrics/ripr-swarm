@@ -740,35 +740,77 @@ pub(super) fn withdrawn_quarantine_diagnostics(reason: DocumentStalenessReason) 
     vec![quarantine_withdrawal_diagnostic(reason)]
 }
 
+/// The recovery route the pre-analysis marker may promise (#7774). Refresh
+/// only starts analysis when configuration is valid and the workspace root
+/// authority admits analysis, so a blocked state must not advertise
+/// save/refresh — a wrong actionable route is worse than none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AnalysisPendingRecovery {
+    /// Configuration valid, root admitted: the ordinary cold-start state.
+    SaveOrRefresh,
+    /// Configuration invalid: `refresh_diagnostics` returns before
+    /// analysis until the configuration is repaired.
+    FixConfiguration,
+    /// The root authority blocks analysis; carries the authority's own
+    /// recovery route (`refresh` or `select_root_and_restart`).
+    RootBlocked(&'static str),
+}
+
+impl AnalysisPendingRecovery {
+    pub(super) fn recovery_id(&self) -> &'static str {
+        match self {
+            Self::SaveOrRefresh => "save_or_refresh",
+            Self::FixConfiguration => "fix_configuration",
+            Self::RootBlocked(route) => route,
+        }
+    }
+
+    fn route_text(&self) -> &'static str {
+        match self {
+            Self::SaveOrRefresh => "Save a file or run `ripr.refresh` to start analysis.",
+            Self::FixConfiguration => {
+                "Fix the workspace configuration and reload it; analysis cannot start until the configuration is valid."
+            }
+            Self::RootBlocked("refresh") => "Run `ripr.refresh` to analyze the workspace.",
+            Self::RootBlocked(_) => {
+                "Select a single workspace root and restart the language server."
+            }
+        }
+    }
+}
+
 /// One visible summary of the pre-analysis state (#7774). Served on both
 /// pull paths while `latest_pull_snapshot()` is `None`: before the first
 /// analysis commit an empty report is byte-for-byte indistinguishable from
 /// "analysis ran and found nothing", which is a completeness claim the
 /// server cannot support. This is a delivery limitation, never a source
 /// finding or action; the first real snapshot commit retracts it because
-/// normal serving resumes automatically.
-pub(super) fn analysis_pending_diagnostic() -> Diagnostic {
+/// normal serving resumes automatically. The recovery route is the one the
+/// current blocking state actually honors.
+pub(super) fn analysis_pending_diagnostic(recovery: AnalysisPendingRecovery) -> Diagnostic {
+    let message = format!(
+        "ripr has not analyzed this workspace yet, so no findings are reported — \
+         this is not evidence of a clean workspace. {}",
+        recovery.route_text()
+    );
     Diagnostic {
         severity: Some(DiagnosticSeverity::INFORMATION),
         code: Some(NumberOrString::String(
             super::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE.to_string(),
         )),
         source: Some("ripr".to_string()),
-        message: "ripr has not analyzed this workspace yet, so no findings are reported — \
-                  this is not evidence of a clean workspace. Save a file or run `ripr.refresh` \
-                  to start analysis."
-            .to_string(),
+        message,
         data: Some(serde_json::json!({
             "kind": "delivery_limitation",
             "state": "no_snapshot",
-            "recovery": "save_or_refresh",
+            "recovery": recovery.recovery_id(),
         })),
         ..Default::default()
     }
 }
 
-pub(super) fn analysis_pending_diagnostics() -> Vec<Diagnostic> {
-    vec![analysis_pending_diagnostic()]
+pub(super) fn analysis_pending_diagnostics(recovery: AnalysisPendingRecovery) -> Vec<Diagnostic> {
+    vec![analysis_pending_diagnostic(recovery)]
 }
 
 /// The identity fragment the document result IDs bind to. For a committed

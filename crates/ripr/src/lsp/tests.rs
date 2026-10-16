@@ -712,7 +712,7 @@ fn pull_diagnostics_before_first_snapshot_disclose_analysis_pending() -> Result<
         || document_json
             .get("resultId")
             .and_then(serde_json::Value::as_str)
-            != Some("ripr:analysis-pending")
+            .is_none_or(|id| !id.starts_with("ripr:analysis-pending"))
     {
         return Err(format!(
             "expected a full pending report under the stable pending identity: {document_json}"
