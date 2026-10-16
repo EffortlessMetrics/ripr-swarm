@@ -1,0 +1,65 @@
+{
+  "argv": [
+    "cargo",
+    "build",
+    "--locked",
+    "-p",
+    "ripr",
+    "--bin",
+    "ripr",
+    "--message-format=json"
+  ],
+  "exit": 0,
+  "elapsed_s": 225.35174986299535,
+  "head": "55b159437a75f3f9403a8845f040473ba97c85a0",
+  "tree": "6d89ec29e639ce15ecfbdf5812a9b5ae08b31173",
+  "environment": {
+    "PATH": "/workspace/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+    "CARGO_HOME": "/workspace/.cargo",
+    "RUSTUP_HOME": "/workspace/.rustup",
+    "RUSTUP_TOOLCHAIN": "1.95.0",
+    "CARGO_TARGET_DIR": "/workspace/ripr-swarm/target",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "2"
+  },
+  "artifact": {
+    "reason": "compiler-artifact",
+    "package_id": "path+file:///workspace/8262-frozen-replay/crates/ripr#0.11.0",
+    "manifest_path": "/workspace/8262-frozen-replay/crates/ripr/Cargo.toml",
+    "target": {
+      "kind": [
+        "bin"
+      ],
+      "crate_types": [
+        "bin"
+      ],
+      "name": "ripr",
+      "src_path": "/workspace/8262-frozen-replay/crates/ripr/src/main.rs",
+      "edition": "2024",
+      "doc": true,
+      "doctest": false,
+      "test": true
+    },
+    "profile": {
+      "opt_level": "0",
+      "debuginfo": "line-tables-only",
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": false
+    },
+    "features": [
+      "default",
+      "lang-python",
+      "lang-rust",
+      "lang-typescript"
+    ],
+    "filenames": [
+      "/workspace/ripr-swarm/target/debug/ripr"
+    ],
+    "executable": "/workspace/ripr-swarm/target/debug/ripr",
+    "fresh": false
+  },
+  "binary_sha256": "b34e6e710bc1550e932cb6461df352a8091432f5d9f2c16875962276eaab1976",
+  "binary_bytes": 217741840,
+  "version": "ripr 0.11.0 (55b159437a75f3f9403a8845f040473ba97c85a0)"
+}

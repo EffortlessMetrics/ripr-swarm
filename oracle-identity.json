@@ -1,0 +1,6 @@
+{
+  "identical": true,
+  "normalization": "whole function up to next fn; surrounding cfg attribute excluded",
+  "base_sha256": "8a3ee0e78b17a3674de2f7249299ee52dbf6362be3e8c11e724fc59531334d0f",
+  "candidate_sha256": "8a3ee0e78b17a3674de2f7249299ee52dbf6362be3e8c11e724fc59531334d0f"
+}

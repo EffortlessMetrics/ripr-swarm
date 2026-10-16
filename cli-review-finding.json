@@ -1,0 +1,38 @@
+{
+  "candidate_head": "55b159437a75f3f9403a8845f040473ba97c85a0",
+  "candidate_tree": "6d89ec29e639ce15ecfbdf5812a9b5ae08b31173",
+  "base": "3477bf95a9ead7f35ec099a4e6cf17af96708003",
+  "baseline_binary_sha256": "6af070bb0f6152b5d61cf232e980e725dd2e58f7eea47bba295730d7fba49424",
+  "candidate_binary_sha256": "b34e6e710bc1550e932cb6461df352a8091432f5d9f2c16875962276eaab1976",
+  "platform": "Linux x86_64, Rust1.95, devopt0/default Rust/Python/TypeScript features, checked arithmetic, Rayon4",
+  "all_eight_controls_native0": true,
+  "confirmed": "trusted-subset changes the selected disclosure from MacroArgument(stringify) at src/a.rs:1 to ForeignGlob(std::fmt) at src/z.rs:1; both outputs contain2static_unknown findings and typed completion",
+  "other_cases": "initial CLI scoped-rest and same-path-rank cases byte-equal; direct retained-oracle matrix pending and no clearance inferred",
+  "full_failing_input_timing": "not started; semantic parity prioritized",
+  "controls": [
+    {
+      "case": "clean",
+      "raw_byte_equal": true,
+      "baseline_bytes": 14821,
+      "candidate_bytes": 14821
+    },
+    {
+      "case": "scoped-rest",
+      "raw_byte_equal": true,
+      "baseline_bytes": 19417,
+      "candidate_bytes": 19417
+    },
+    {
+      "case": "trusted-subset",
+      "raw_byte_equal": false,
+      "baseline_bytes": 19481,
+      "candidate_bytes": 19531
+    },
+    {
+      "case": "same-path-rank",
+      "raw_byte_equal": true,
+      "baseline_bytes": 19535,
+      "candidate_bytes": 19535
+    }
+  ]
+}
