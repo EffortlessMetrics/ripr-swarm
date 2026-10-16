@@ -280,18 +280,90 @@ fn hierarchy_feedback_record_row_matches_the_c2_example() -> Result<(), String> 
     Ok(())
 }
 
+/// Live default-help dispatch, not the HELP constant: `ripr`, `--help`, `-h`,
+/// and `help` must share one unqualified first-run command.
+fn canonical_first_run_command(help: &str) -> Result<String, String> {
+    let lf = help.replace("\r\n", "\n");
+    let Some((_, after)) = lf.split_once("Try this first:\n") else {
+        return Err("default help lost its first-run section".to_string());
+    };
+    let section = after.split("\n\n").next().unwrap_or_default();
+    let commands: Vec<_> = section
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("ripr "))
+        .collect();
+    let [line] = commands.as_slice() else {
+        return Err(format!(
+            "first run must name exactly one command, got:\n{section}"
+        ));
+    };
+    let command = line.split_once("  ").map(|(part, _)| part).unwrap_or(line);
+    if normalized(command) != "ripr check" {
+        return Err(format!(
+            "first run must be `ripr check` without a fixed base, got `{command}`"
+        ));
+    }
+    if section.contains("--base") {
+        return Err("first-run command must not hardcode --base".to_string());
+    }
+    Ok(command.to_string())
+}
+
+#[test]
+fn rendered_default_help_routes_share_one_canonical_first_run() -> Result<(), String> {
+    for args in [
+        [].as_slice(),
+        ["--help"].as_slice(),
+        ["-h"].as_slice(),
+        ["help"].as_slice(),
+    ] {
+        let stdout = rendered_help(args)?;
+        if stdout.replace("\r\n", "\n").lines().count() > 40 {
+            return Err(format!(
+                "default help {args:?} exceeded the 40-line screen budget"
+            ));
+        }
+        canonical_first_run_command(&stdout)?;
+    }
+    Ok(())
+}
+
 #[test]
 fn first_run_guard_does_not_credit_a_later_correct_example() -> Result<(), String> {
     let changed = "```bash\nripr pilot\n```\nLater:\n```bash\nripr check\n```\n";
     if first_bash_block(changed)? == "ripr check" {
         return Err("a later command must not hide a wrong first-run route".to_string());
     }
-    let cli = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
-    let wrong = cli.replacen("ripr check", "ripr pilot", 1);
-    if first_bash_block(&wrong)? == "ripr check" {
-        return Err(
-            "the CLI section credited a later check instead of its first command".to_string(),
-        );
+    for (surface, section, expected) in [
+        (
+            "README",
+            doc_section(ROOT_README, "## The first useful run")?,
+            "cargo install ripr ripr check",
+        ),
+        (
+            "Quickstart CLI",
+            doc_section(QUICKSTART_DOC, "## CLI First Hour")?,
+            "ripr check",
+        ),
+    ] {
+        for command in [
+            "ripr doctor",
+            "ripr pilot --root .",
+            "ripr check --base origin/main",
+        ] {
+            let wrong = section.replacen("\nripr check\n", &format!("\n{command}\n"), 1);
+            if wrong == section {
+                return Err(format!(
+                    "{surface} negative control did not change a command"
+                ));
+            }
+            if first_bash_block(&wrong)? == expected {
+                return Err(format!(
+                    "{surface} first-run guard accepted `{command}` before a later correct example"
+                ));
+            }
+        }
     }
     Ok(())
 }
