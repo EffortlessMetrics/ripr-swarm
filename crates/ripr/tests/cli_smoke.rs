@@ -1779,6 +1779,17 @@ fn help_leads_with_a_bounded_first_screen_that_routes_onward() {
         stdout.contains("ripr doctor"),
         "the first screen should name a runnable first action, got:\n{stdout}"
     );
+    // README and QUICKSTART open with `ripr check`; help must not lead with
+    // a different first command (#8158 claim 3).
+    let first_run = stdout
+        .lines()
+        .skip_while(|line| *line != "Try this first:")
+        .nth(1)
+        .unwrap_or_default();
+    assert!(
+        first_run.trim_start().starts_with("ripr check"),
+        "the first command on the first screen must be `ripr check`, got:\n{stdout}"
+    );
     assert!(
         stdout.contains("does not run mutants"),
         "the advisory boundary must not be behind --all, got:\n{stdout}"

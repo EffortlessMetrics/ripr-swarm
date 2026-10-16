@@ -87,7 +87,8 @@ new version and `cargo binstall ripr` downloads the archive. If the asset is not
 available, `cargo binstall` compiles from source, like `cargo install`.
 
 Read the changed behavior, the related tests, and the recommended next test.
-No configuration file is required. `ripr check` is advisory: it exits 0 whether
+No configuration file is required. If `ripr check` cannot run, `ripr doctor`
+names the setup problem. `ripr check` is advisory: it exits 0 whether
 or not it finds a gap, and exit 2 means the analysis could not complete. On the
 base branch itself there are no changed files, and ripr says so. A result with
 no findings or limited evidence is not a clean bill of health.

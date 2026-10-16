@@ -72,7 +72,8 @@ From a Rust repository on a branch with committed changes:
 ripr check
 ```
 
-No `ripr.toml` is required. The development CLI prints a summary and a bounded
+No `ripr.toml` is required. If `ripr check` cannot run, `ripr doctor` names
+the setup problem; it is not a step before the first run. The development CLI prints a summary and a bounded
 `Start here:` section with a finding, a no-action result, or the limitation
 preventing useful guidance. Read the changed behavior, related test, and
 suggested next test. No findings does not mean the tests are complete.
