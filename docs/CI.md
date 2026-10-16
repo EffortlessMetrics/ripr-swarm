@@ -629,6 +629,18 @@ retain current server enforcement, without a native merge queue or added setting
 The known required mapping remains `Ripr Rust Small Result`, app15368; complete
 classic strictness is unreadable, not assumed absent and not a new settings gate.
 
+UB Review prepares the locked `owner_return_pin_fallible_literal/input` fixture
+before invoking the action, matching required Rust CI. Its offline identity
+probe needs `anyhow = 1.0.100` in the runner's default Cargo home. The pinned
+action sanitizes sensor environments and drops `HOME` and `CARGO_HOME`; this
+workflow therefore must not redirect those homes. A custom sensor-home route
+needs separate preparation and verification. Fetch failures remain failures;
+a green advisory wrapper does not make failed or missing sensor evidence pass.
+Historical run `38859874238` retains its `cargo-test` exit 101 and separate
+invalid command/timeout evidence. Adding preparation does not reclassify that
+run or establish recovery of every sensor; the repaired hosted producer still
+needs its own evidence.
+
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and
 has both the host label (`CX43`, `CPX42`, or `CX53`) and the `em-ci-rust-1.95`

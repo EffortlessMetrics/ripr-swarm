@@ -1163,3 +1163,75 @@ fn staged_self_hosted_conditions_reject_missing_status_and_header_decoys() -> Re
     );
     Ok(())
 }
+
+#[test]
+fn advisory_review_prepares_locked_fixture_before_sensors() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text = fs::read_to_string(root.join(".github/workflows/ub-review.yml"))
+        .map_err(|error| error.to_string())?;
+    let header = "name: Prepare locked owner-return fixture dependencies";
+    let fetch = "        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml";
+    let preparation = format!("      - {header}\n{fetch}\n");
+    let prepared = |source: &str| {
+        let steps = source.split("\n      - ").collect::<Vec<_>>();
+        let preparations = steps
+            .iter()
+            .enumerate()
+            .filter(|(_, step)| step.lines().next() == Some(header))
+            .collect::<Vec<_>>();
+        let [(index, step)] = preparations.as_slice() else {
+            return false;
+        };
+        // The action sanitizes sensor environments. Both commands must use
+        // the runner default Cargo home, with no workflow override.
+        let lines = step
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .collect::<Vec<_>>();
+        !source.lines().any(|line| {
+            let line = line.trim();
+            line.starts_with("CARGO_HOME:") || line.starts_with("HOME:")
+        }) && lines == [header, fetch]
+            && steps[..*index]
+                .iter()
+                .any(|step| step.starts_with("uses: dtolnay/rust-toolchain@"))
+            && steps[*index + 1..].iter().any(|step| {
+                step.lines().any(|line| {
+                    line.trim()
+                        .starts_with("uses: EffortlessMetrics/ub-review@")
+                })
+            })
+    };
+    assert!(
+        prepared(&text),
+        "advisory sensors require locked fixture preparation"
+    );
+    for wrong in [
+        text.replace(&preparation, ""),
+        text.replace(
+            "cargo fetch --locked --manifest-path",
+            "cargo fetch --manifest-path",
+        ),
+        text.replace(fetch, &format!("        if: false\n{fetch}")),
+        text.replace(fetch, &format!("        continue-on-error: true\n{fetch}")),
+        text.replace(fetch, &format!("{fetch} || true")),
+        text.replace(
+            "--manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml",
+            "--manifest-path Cargo.toml",
+        ),
+        format!("env:\n  CARGO_HOME: other\n{text}"),
+        format!("env:\n  HOME: other\n{text}"),
+        text.replace(
+            fetch,
+            &format!("{fetch}\n        env:\n          CARGO_HOME: other"),
+        ),
+        format!("{}\n{preparation}", text.replace(&preparation, "")),
+        text.replace(&preparation, &format!("{preparation}\n{preparation}")),
+    ] {
+        assert!(
+            !prepared(&wrong),
+            "invalid fixture preparation must be rejected"
+        );
+    }
+    Ok(())
+}
