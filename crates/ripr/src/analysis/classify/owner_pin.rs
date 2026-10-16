@@ -60,10 +60,10 @@ use crate::analysis::extract::{
     mask_comments_and_strings, outer_assertion_condition, test_body_defines_callee_fn,
     test_body_let_shadow_line,
 };
+#[cfg(test)]
+use crate::analysis::facts::FileFactsView;
 use crate::analysis::facts::drop_in::DropInManifests;
-use crate::analysis::facts::{
-    FileFactsView, FunctionContainer, ModulePathTarget, SourceRoleProvenanceEdgeKind,
-};
+use crate::analysis::facts::{FunctionContainer, ModulePathTarget, SourceRoleProvenanceEdgeKind};
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::{
     AssertionContextRefusal, GeneratedTestPins, HelperLoan, MacroBindingCandidates,
@@ -171,9 +171,13 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// Crate-local sites keyed by the recognized target root that holds
     /// them: they make a name ambiguous only for tests in that crate.
     crate_macro_bindings: RefCell<Option<CrateMacroBindings>>,
-    /// Disclosure memo: the first workspace-wide site per refused name, so
-    /// naming a refusal does not rescan every file once per finding.
-    workspace_macro_sites: RefCell<WorkspaceMacroSites>,
+    /// #8255: the workspace-wide sites the single trusted-macro ambiguity
+    /// pass retained, completed on demand, so naming a refusal never
+    /// rescans the workspace per (name, test root).
+    workspace_site_scan: RefCell<Option<WorkspaceMacroSiteIndex>>,
+    /// #8255 test witness: full-index macro-site passes this run paid.
+    #[cfg(test)]
+    workspace_scan_passes: std::cell::Cell<u32>,
     /// Disclosure memo: each test file's sites per refused name. A file's
     /// sites depend only on the name and the index, and parsing the file
     /// once per (probe, test, assertion) made a diff with many related tests
@@ -552,32 +556,23 @@ impl OwnerPinSyntax {
                     resolved_modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
                 };
                 let test_root = self.target_roots(index).root(&test.file, index);
-                let workspace =
-                    self.workspace_macro_sites
-                        .borrow_mut()
-                        .entry((name.clone(), test_root.clone()))
-                        .or_insert_with(|| {
-                            workspace_macro_binding_site(
-                                &name,
-                                test_root.as_deref(),
-                                index,
-                                self.target_roots(index),
-                                &resolved,
-                            )
-                            .or_else(|| self.withheld.sites.get(&name).cloned())
-                            .or_else(|| {
-                                self.withheld.root_sites.iter().find_map(
-                                    |((site_name, root), site)| {
-                                        (*site_name == name
-                                            && test_root
-                                                .as_ref()
-                                                .is_none_or(|test_root| test_root == root))
-                                        .then(|| site.clone())
-                                    },
-                                )
+                // #8255: the single ambiguity pass retained the earliest
+                // sites; a lookup completes that pass once when it stopped
+                // early, instead of rescanning the workspace per
+                // (name, test root).
+                let workspace = self
+                    .workspace_macro_site(&name, test_root.as_deref(), index)
+                    .or_else(|| self.withheld.sites.get(&name).cloned())
+                    .or_else(|| {
+                        self.withheld
+                            .root_sites
+                            .iter()
+                            .find_map(|((site_name, root), site)| {
+                                (*site_name == name
+                                    && test_root.as_ref().is_none_or(|test_root| test_root == root))
+                                .then(|| site.clone())
                             })
-                        })
-                        .clone();
+                    });
                 // A definition or `use` covering the test is a real
                 // rebinding; it outranks a workspace site that only may
                 // rebind the name, or the refusal would read as an analyzer
@@ -785,9 +780,12 @@ impl OwnerPinSyntax {
         let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
         ambiguous
             .get_or_insert_with(|| {
-                let (mut global, scoped, by_root) =
+                let (mut global, scoped, by_root, retained) =
                     trusted_macro_sites_in(index, self.target_roots(index), &module_resolved);
                 *self.scoped_macro_bindings.borrow_mut() = Some(scoped);
+                #[cfg(test)]
+                self.workspace_scan_passes
+                    .set(self.workspace_scan_passes.get() + 1);
                 let mut by_root = by_root;
                 for (root, names) in &self.withheld.by_root {
                     by_root
@@ -796,12 +794,128 @@ impl OwnerPinSyntax {
                         .extend(names.iter().cloned());
                 }
                 *self.crate_macro_bindings.borrow_mut() = Some(by_root);
+                *self.workspace_site_scan.borrow_mut() = Some(retained);
                 // Withheld crate-root files' crate-local sites are routed by
                 // root below; every other withheld site is workspace-wide.
                 global.extend(self.withheld.trusted.iter().cloned());
                 global
             })
             .clone()
+    }
+
+    /// The workspace-wide site that makes `name` ambiguous for a test
+    /// rooted at `test_root`: the earliest rebinding site in path order,
+    /// else the earliest site that only may rebind it, each over the sites
+    /// that reach the test — the same selection the replaced per-(name,
+    /// test root) scan made, served from the single ambiguity pass (#8255).
+    /// `None` when no retained site reaches the test.
+    fn workspace_macro_site(
+        &self,
+        name: &str,
+        test_root: Option<&Path>,
+        index: &RustIndex,
+    ) -> Option<(PathBuf, MacroBindingSite)> {
+        if !assertion_context_macros().contains(&name) {
+            return None;
+        }
+        self.complete_workspace_site_scan(index);
+        let scan = self.workspace_site_scan.borrow();
+        let retained = scan.as_ref()?;
+        let mut rebinding: Option<&(PathBuf, MacroBindingSite)> = None;
+        let mut may_rebind: Option<&(PathBuf, MacroBindingSite)> = None;
+        if let Some(rank) = retained.global.get(name) {
+            merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
+        }
+        match test_root {
+            Some(root) => {
+                if let Some(rank) = retained.by_root.get(root).and_then(|names| names.get(name)) {
+                    merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
+                }
+            }
+            // A test with no recognized root is reached by every
+            // crate-local site, exactly as the reach rule read it.
+            None => {
+                for names in retained.by_root.values() {
+                    if let Some(rank) = names.get(name) {
+                        merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
+                    }
+                }
+            }
+        }
+        rebinding.cloned().or_else(|| may_rebind.cloned())
+    }
+
+    /// #8255: finish the retained-site scan the ambiguity pass skipped. It
+    /// stops once every trusted name is already ambiguous — later files
+    /// cannot change an admission — but an earlier file's site can still be
+    /// the one a refusal names, so the first site lookup completes the pass
+    /// once. At most one full-index completion runs, however many (name,
+    /// test root) lookups follow.
+    fn complete_workspace_site_scan(&self, index: &RustIndex) {
+        if self
+            .workspace_site_scan
+            .borrow()
+            .as_ref()
+            .is_some_and(|scan| scan.complete)
+        {
+            return;
+        }
+        // Runs the single pass when a refusal lookup is its first consumer.
+        self.trusted_macro_ambiguities(index);
+        {
+            let scan = self.workspace_site_scan.borrow();
+            if scan.as_ref().is_none_or(|scan| scan.complete) {
+                return;
+            }
+        }
+        let resolved_modules = self.resolved_module_declarations(index);
+        let module_resolved = |file: &Path, line: usize, declaration: &str| {
+            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+        };
+        let (_, rest) = partition_macro_scan_files(index);
+        let sites = scan_macro_sites(&rest, index, &module_resolved);
+        let mut scan = self.workspace_site_scan.borrow_mut();
+        let Some(retained) = scan.as_mut() else {
+            return;
+        };
+        if retained.complete {
+            return;
+        }
+        let roots = self.target_roots(index);
+        for (path, name, site) in sites {
+            match site.crate_local.then(|| roots.root(&path, index)).flatten() {
+                Some(root) => {
+                    retained
+                        .by_root
+                        .entry(root)
+                        .or_default()
+                        .entry(name)
+                        .or_default()
+                        .absorb(&path, &site);
+                }
+                // A site whose file has no recognized root reaches tests of
+                // every root, exactly as the reach rule reads it.
+                None => {
+                    retained
+                        .global
+                        .entry(name)
+                        .or_default()
+                        .absorb(&path, &site);
+                }
+            }
+        }
+        retained.complete = true;
+        #[cfg(test)]
+        self.workspace_scan_passes
+            .set(self.workspace_scan_passes.get() + 1);
+    }
+
+    /// #8255 test witness: how many full-index macro-site passes this run
+    /// paid, bounded at two (the ambiguity pass plus at most one
+    /// completion) however many (name, test root) refusals follow.
+    #[cfg(test)]
+    fn workspace_scan_passes(&self) -> u32 {
+        self.workspace_scan_passes.get()
     }
 
     /// File composition authority shared by assertion admission and targeted
@@ -1084,8 +1198,77 @@ impl OwnerPinSyntax {
 type ScopedMacroBindings = BTreeMap<PathBuf, Vec<(String, MacroBindingSite)>>;
 type CrateMacroBindings = BTreeMap<PathBuf, BTreeSet<String>>;
 /// Keyed by trusted name and the test's recognized root.
-type WorkspaceMacroSites = BTreeMap<(String, Option<PathBuf>), Option<(PathBuf, MacroBindingSite)>>;
 type TestFileMacroSites = BTreeMap<(String, PathBuf), Vec<(String, MacroBindingSite)>>;
+
+/// The earliest unscoped workspace-wide binding sites per trusted name,
+/// retained by the single ambiguity pass (`trusted_macro_sites_in`) so a
+/// refusal names its site without rescanning the workspace (#8255). A
+/// crate-local site reaches only tests whose recognized root matches the
+/// site's; every other retained site reaches all of them, exactly the
+/// reach rule the replaced per-(name, root) scan applied.
+#[derive(Clone, Debug, Default)]
+struct WorkspaceMacroSiteIndex {
+    /// Per name: the earliest sites over the files that reach every test.
+    global: BTreeMap<String, MacroSiteRank>,
+    /// Per recognized root: the same retention over that root's
+    /// crate-local sites; a test consults only its own root.
+    by_root: BTreeMap<PathBuf, BTreeMap<String, MacroSiteRank>>,
+    /// Whether every indexed file contributed. The ambiguity pass stops
+    /// after the likely files once every trusted name is already ambiguous
+    /// — later files cannot change an admission, but an earlier file's
+    /// site can still be the one a refusal names — so the first site
+    /// lookup completes the pass once, bounded by the index (#8255).
+    complete: bool,
+}
+
+/// The earliest rebinding site, else the earliest site that only may
+/// rebind the name: the replaced per-(name, root) scan answered the first
+/// rebinding in path order, wherever it sits, else the first may-rebind
+/// site.
+#[derive(Clone, Debug, Default)]
+struct MacroSiteRank {
+    rebinding: Option<(PathBuf, MacroBindingSite)>,
+    may_rebind: Option<(PathBuf, MacroBindingSite)>,
+}
+
+impl MacroSiteRank {
+    /// Keep the earlier of the retained and a fresh site. Sites arrive in
+    /// path order within one scan pass, so equal paths keep the
+    /// first-in-source-order site.
+    fn absorb(&mut self, path: &Path, site: &MacroBindingSite) {
+        let slot = if rebinds(site) {
+            &mut self.rebinding
+        } else {
+            &mut self.may_rebind
+        };
+        if slot.as_ref().is_none_or(|(kept, _)| path < kept) {
+            *slot = Some((path.to_path_buf(), site.clone()));
+        }
+    }
+}
+
+/// Keep the earlier of a retained site reference and a candidate, by path.
+fn keep_earliest_site<'a>(
+    slot: &mut Option<&'a (PathBuf, MacroBindingSite)>,
+    candidate: Option<&'a (PathBuf, MacroBindingSite)>,
+) {
+    if let Some(candidate) = candidate
+        && slot.as_ref().is_none_or(|(kept, _)| candidate.0 < *kept)
+    {
+        *slot = Some(candidate);
+    }
+}
+
+/// Fold one name's retained sites into the running earliest rebinding and
+/// may-rebind candidates of a lookup.
+fn merge_macro_site_rank<'a>(
+    rebinding: &mut Option<&'a (PathBuf, MacroBindingSite)>,
+    may_rebind: &mut Option<&'a (PathBuf, MacroBindingSite)>,
+    rank: &'a MacroSiteRank,
+) {
+    keep_earliest_site(rebinding, rank.rebinding.as_ref());
+    keep_earliest_site(may_rebind, rank.may_rebind.as_ref());
+}
 
 /// The crate root whose module tree holds `file`, when that root is one of
 /// Cargo's autodiscovered targets (`src/lib.rs`, `src/main.rs`,
@@ -1470,6 +1653,11 @@ impl AssertionRefusal {
 /// whether the refusal is an analyzer limit (RIPR-SPEC-0240). A definition or
 /// `use` of the name is a real rebinding, so it outranks a site that only may
 /// rebind the name, wherever each sits.
+///
+/// #8255 reference oracle: production answers come from the single-pass
+/// retention ([`OwnerPinSyntax::workspace_macro_site`]); this scan stays as
+/// the test-side authority that the retention answers identically.
+#[cfg(test)]
 fn workspace_macro_binding_site(
     name: &str,
     test_root: Option<&Path>,
@@ -1614,76 +1802,158 @@ fn macro_binding_sites(
 /// this scan dominated wall time (37% on ripr-swarm). Files are independent,
 /// so the scan runs on the rayon pool; the ordered collect keeps each file's
 /// scoped sites in source order.
+///
+/// #8255: the pass also retains, per trusted name, the earliest unscoped
+/// rebinding and may-rebind sites (workspace-wide and per crate-local
+/// root), so a refused assertion names its site from this pass instead of
+/// rescanning the workspace per (name, test root).
 fn trusted_macro_sites_in(
     index: &RustIndex,
     roots: &TargetRoots,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
-) -> (BTreeSet<String>, ScopedMacroBindings, CrateMacroBindings) {
-    let context_macros = assertion_context_macros();
-    type ScanFile<'a> = (&'a PathBuf, &'a str, Option<&'a MacroBindingCandidates>);
-    let scan = |files: &[ScanFile<'_>]| -> Vec<(PathBuf, String, MacroBindingSite)> {
-        files
-            .par_iter()
-            // A file whose stored candidates rule out every trusted name
-            // reports no site, so it is not parsed.
-            .filter(|(_, _, candidates)| {
-                candidates.is_none_or(MacroBindingCandidates::may_bind_any_trusted)
-            })
-            .flat_map_iter(|(path, source, _)| {
-                trusted_macro_binding_sites(
-                    source,
-                    index.macro_scope_crates(),
-                    &context_macros,
-                    &|line, declaration| module_resolved(path, line, declaration),
-                    &|krate| {
-                        if krate == "serde_json" {
-                            index.drop_in_manifests.verified_literal_json(path)
-                        } else {
-                            index.drop_in_manifests.verified(path, krate)
-                        }
-                    },
-                )
-                .into_iter()
-                .map(|(name, site)| ((*path).clone(), name, site))
-            })
-            .collect()
-    };
+) -> (
+    BTreeSet<String>,
+    ScopedMacroBindings,
+    CrateMacroBindings,
+    WorkspaceMacroSiteIndex,
+) {
     let mut global = BTreeSet::new();
     let mut scoped = ScopedMacroBindings::new();
     // A crate-local site in a recognized target root other than the test's
     // (a bench's `#[macro_use] extern crate bencher;`) is kept per root.
     let mut by_root = CrateMacroBindings::new();
-    let mut absorb = |sites: Vec<(PathBuf, String, MacroBindingSite)>,
-                      global: &mut BTreeSet<String>| {
-        for (path, name, site) in sites {
-            if site.scope.is_some() {
-                scoped.entry(path).or_default().push((name, site));
-            } else if let Some(root) = site.crate_local.then(|| roots.root(&path, index)).flatten()
-            {
-                by_root.entry(root).or_default().insert(name);
-            } else {
-                global.insert(name);
-            }
-        }
-    };
+    let mut retained = WorkspaceMacroSiteIndex::default();
     // One foreign glob import, `#[macro_use]` or unparsable file makes
     // every trusted name ambiguous, and most workspaces have one. Scan
     // the files that can do that first; once every name is ambiguous for
     // every test, no later file (scoped sites included) changes an answer,
-    // so the rest are skipped.
-    let (likely, rest): (Vec<_>, Vec<_>) = index
+    // so the rest are skipped. A refusal that needs a site completes the
+    // retained scan once instead (#8255).
+    let (likely, rest) = partition_macro_scan_files(index);
+    absorb_macro_sites(
+        scan_macro_sites(&likely, index, module_resolved),
+        &mut global,
+        &mut scoped,
+        &mut by_root,
+        &mut retained,
+        roots,
+        index,
+    );
+    if global.len() < assertion_context_macros().len() {
+        absorb_macro_sites(
+            scan_macro_sites(&rest, index, module_resolved),
+            &mut global,
+            &mut scoped,
+            &mut by_root,
+            &mut retained,
+            roots,
+            index,
+        );
+        retained.complete = true;
+    }
+    (global, scoped, by_root, retained)
+}
+
+/// One indexed file ready for the trusted-macro site scan: its path, source
+/// and stored [`MacroBindingCandidates`].
+type MacroScanFile<'a> = (&'a PathBuf, &'a str, Option<&'a MacroBindingCandidates>);
+
+/// The scan-order partition behind [`trusted_macro_sites_in`]: files that
+/// may saturate the ambiguity on their own, then the rest, each in path
+/// order. #8255 recomputes it for the one on-demand completion of the
+/// retained sites; the partition reads no file contents beyond cheap
+/// substring checks.
+fn partition_macro_scan_files(
+    index: &RustIndex,
+) -> (Vec<MacroScanFile<'_>>, Vec<MacroScanFile<'_>>) {
+    index
         .files()
         .iter()
         .map(|(path, facts)| {
             let data = facts.data();
             (path, data.source.as_ref(), data.macro_candidates.as_deref())
         })
-        .partition(|(_, source, _)| may_saturate_macro_ambiguity(source));
-    absorb(scan(&likely), &mut global);
-    if global.len() < context_macros.len() {
-        absorb(scan(&rest), &mut global);
+        .partition(|(_, source, _)| may_saturate_macro_ambiguity(source))
+}
+
+/// Every trusted name's sites in `files`, in path then source order. Files
+/// whose stored candidates rule out every trusted name are not parsed.
+fn scan_macro_sites(
+    files: &[MacroScanFile<'_>],
+    index: &RustIndex,
+    module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
+) -> Vec<(PathBuf, String, MacroBindingSite)> {
+    let context_macros = assertion_context_macros();
+    files
+        .par_iter()
+        // A file whose stored candidates rule out every trusted name
+        // reports no site, so it is not parsed.
+        .filter(|(_, _, candidates)| {
+            candidates.is_none_or(MacroBindingCandidates::may_bind_any_trusted)
+        })
+        .flat_map_iter(|(path, source, _)| {
+            trusted_macro_binding_sites(
+                source,
+                index.macro_scope_crates(),
+                &context_macros,
+                &|line, declaration| module_resolved(path, line, declaration),
+                &|krate| {
+                    if krate == "serde_json" {
+                        index.drop_in_manifests.verified_literal_json(path)
+                    } else {
+                        index.drop_in_manifests.verified(path, krate)
+                    }
+                },
+            )
+            .into_iter()
+            .map(|(name, site)| ((*path).clone(), name, site))
+        })
+        .collect()
+}
+
+/// Route scanned sites into the ambiguity name sets, the scoped-site map,
+/// the per-root name sets and #8255's retained earliest sites. Sites arrive
+/// in path then source order; scoped sites never reach the retained index,
+/// exactly as the replaced per-(name, test root) scan skipped them.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one ordered fold over four run-scoped ambiguity outputs and the retention index"
+)]
+fn absorb_macro_sites(
+    sites: Vec<(PathBuf, String, MacroBindingSite)>,
+    global: &mut BTreeSet<String>,
+    scoped: &mut ScopedMacroBindings,
+    by_root: &mut CrateMacroBindings,
+    retained: &mut WorkspaceMacroSiteIndex,
+    roots: &TargetRoots,
+    index: &RustIndex,
+) {
+    for (path, name, site) in sites {
+        if site.scope.is_some() {
+            scoped.entry(path).or_default().push((name, site));
+            continue;
+        }
+        match site.crate_local.then(|| roots.root(&path, index)).flatten() {
+            Some(root) => {
+                retained
+                    .by_root
+                    .entry(root.clone())
+                    .or_default()
+                    .entry(name.clone())
+                    .or_default()
+                    .absorb(&path, &site);
+                by_root.entry(root).or_default().insert(name);
+            }
+            None => {
+                retained
+                    .global
+                    .entry(name.clone())
+                    .or_default()
+                    .absorb(&path, &site);
+                global.insert(name);
+            }
+        }
     }
-    (global, scoped, by_root)
 }
 
 /// Scan-order hint for the trusted-macro ambiguity scan, never its answer:
