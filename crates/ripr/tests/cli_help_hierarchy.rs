@@ -74,22 +74,10 @@ fn in_help_workspace(
 #[test]
 fn bare_groups_display_their_documented_help() -> Result<(), String> {
     in_help_workspace(|root| {
-        let discovery = run_ripr_in(&["help", "--json"], Some(root))?;
-        if !discovery.status.success() || !discovery.stderr.is_empty() {
-            return Err(format!("machine discovery failed: {discovery:?}"));
-        }
-        let discovery_text = String::from_utf8_lossy(&discovery.stdout);
+        // Machine discovery rows are parsed in the dependency-enabled
+        // cli_smoke test. Keep this extracted-package test std-only.
         let mut failures = Vec::new();
         for &group in BARE_HELP_GROUPS {
-            let has_path = discovery_text.contains(&format!("\"path\":\"{group}\""))
-                || discovery_text.contains(&format!("\"path\": \"{group}\""));
-            let has_example = discovery_text.contains(&format!("\"example\":\"ripr {group}\""))
-                || discovery_text.contains(&format!("\"example\": \"ripr {group}\""));
-            if !has_path || !has_example {
-                return Err(format!(
-                    "missing {group} discovery row in machine discovery output"
-                ));
-            }
             let help = run_ripr_in(&["help", group], Some(root))?;
             if !help.status.success()
                 || !help.stderr.is_empty()

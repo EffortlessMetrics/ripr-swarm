@@ -11832,6 +11832,11 @@ tests = [
   "crates/ripr/src/cli/help.rs::tests::help_all_documents_every_public_command",
   "crates/ripr/tests/cli_help_hierarchy.rs::default_help_keeps_the_task_roles_distinct",
   "crates/ripr/tests/cli_help_hierarchy.rs::bare_groups_display_their_documented_help",
+  "crates/ripr/tests/cli_smoke.rs::help_json_is_deterministic_across_roots_env_and_side_effect_free",
+  "crates/ripr/tests/cli_smoke/help_discovery_rows.rs::reordered_rows_and_fields_keep_their_own_examples",
+  "crates/ripr/tests/cli_smoke/help_discovery_rows.rs::swapped_examples_are_rejected_even_when_both_global_needles_remain",
+  "crates/ripr/tests/cli_smoke/help_discovery_rows.rs::discovery_rows_reject_wrong_identity_duplicates_missing_and_decoys",
+  "crates/ripr/tests/cli_smoke/help_discovery_rows.rs::discovery_rows_reject_invalid_documents",
   "crates/ripr/tests/cli_help_hierarchy.rs::group_help_preserves_explicit_errors_and_gate_flag_alias",
 ]
 fixtures = []
