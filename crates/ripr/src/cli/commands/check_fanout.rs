@@ -119,10 +119,20 @@ impl Custody {
         let suppression = self.root.join(config.suppressions().path());
         self.extras.push(suppression);
         let with_auxiliary = self.observe()?;
+        self.extend_auxiliary(with_auxiliary)
+    }
+
+    fn extend_auxiliary(
+        &mut self,
+        with_auxiliary: BTreeMap<PathBuf, Option<Observation>>,
+    ) -> Result<(), String> {
         if self
             .files
             .iter()
             .any(|(path, before)| with_auxiliary.get(path) != Some(before))
+            || with_auxiliary
+                .keys()
+                .any(|path| !self.files.contains_key(path) && !self.extras.contains(path))
         {
             return Err("--output-dir input drift while binding presentation inputs".into());
         }
@@ -538,6 +548,22 @@ mod tests {
             "manifest-size partial output control"
         );
         assert!(!destination.join("manifest.json").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn fanout_auxiliary_binding_does_not_hide_new_workspace_inputs() -> Result<(), String> {
+        let (_fixture, input, destination) = custody_fixture("fanout-binding-membership")?;
+        let mut custody = Custody::capture(&input, &destination)?;
+        custody.verify()?;
+        std::fs::write(input.root.join("new_source.rs"), "pub fn newly_added() {}")
+            .map_err(|e| e.to_string())?;
+        let observed = custody.observe()?;
+        assert!(custody.extend_auxiliary(observed).is_err());
+        assert!(
+            custody.verify().is_err(),
+            "failed extension must retain the original custody"
+        );
         Ok(())
     }
 
