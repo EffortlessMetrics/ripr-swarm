@@ -681,6 +681,40 @@ pub(crate) struct DoctorCacheStatus {
     pub(crate) size_bytes: u64,
     /// The human display of `size_bytes` (`B`, `KB`, `MB`, or `GB`).
     pub(crate) size_display: String,
+    /// Whether git ignore rules cover ripr's own artifact root
+    /// (`target/ripr`) under this root (#7663). The human screen prints the
+    /// same evidence; the typed field keeps `doctor --json` as complete as
+    /// the human report (#8257 review).
+    pub(crate) artifact_ignore: DoctorArtifactIgnore,
+}
+
+/// Whether git ignore rules cover ripr's own artifact root (`target/ripr`)
+/// under the doctor root (#7663).
+///
+/// Standard Python `.gitignore` templates never list Rust-conventional
+/// `target/`, so `git add -A` can commit ripr's reports into the user's
+/// history; doctor names that before it happens. The verdict is decided by
+/// `git check-ignore` (the full ignore semantics, not a line-by-line
+/// reimplementation) and is fail-closed: only a positive "not ignored"
+/// answer produces the warning.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DoctorArtifactIgnore {
+    /// `target/ripr` does not exist under the root: there is nothing to
+    /// cover yet.
+    NoArtifacts,
+    /// Git ignore rules cover the artifact root.
+    Ignored,
+    /// The artifact root exists and git positively reports it as not
+    /// ignored. `warning` is the exact line the human screen prints.
+    Unignored {
+        /// The actionable warning, including the exact `.gitignore` entry.
+        warning: String,
+    },
+    /// Coverage could not be established: the root is not a git repository,
+    /// git is unavailable, or the probe hit its deadline. Doctor stays quiet
+    /// rather than claiming a checked fact it could not establish.
+    NotChecked,
 }
 
 /// The test surface detected for one language.
@@ -4167,6 +4201,7 @@ mod tests {
                 relocated_by_env: false,
                 size_bytes: 0,
                 size_display: "0 B".to_string(),
+                artifact_ignore: DoctorArtifactIgnore::NoArtifacts,
             },
             test_surfaces: Vec::new(),
             perl_preview: None,
@@ -4225,6 +4260,7 @@ mod tests {
                 relocated_by_env: true,
                 size_bytes: 1024,
                 size_display: "1.00 KB".to_string(),
+                artifact_ignore: DoctorArtifactIgnore::Ignored,
             },
             test_surfaces: vec![DoctorTestSurface {
                 language: "python".to_string(),
@@ -4257,6 +4293,7 @@ mod tests {
             serde_json::Value::Null
         );
         assert_eq!(parsed["cache"]["relocated_by_env"], true);
+        assert_eq!(parsed["cache"]["artifact_ignore"], "ignored");
         assert_eq!(parsed["test_surfaces"][0]["framework"], "pytest");
         assert_eq!(parsed["test_surfaces"][0]["evidence"], "python: pytest");
         Ok(())

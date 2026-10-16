@@ -399,9 +399,75 @@ where
     u8::try_from(value).unwrap_or(0)
 }
 
+/// Whether a repository-relative diff path names one of ripr's own artifact
+/// roots — `target/ripr/...` (#7663). Python `.gitignore` templates do not
+/// cover `target/`, so a routine `git add -A` can commit ripr's reports and
+/// caches; once committed, the next analysis would count ripr's own output
+/// as changed user scope. Tool artifacts are not user source at any position
+/// of the diff, so the pipeline excludes them from changed-scope accounting
+/// even when tracked. Matching anchors at the repository-relative start: a
+/// hand-written `target/ripr` directory at any other depth is not an
+/// artifact path. Separator handling is the platform's own (`components()`):
+/// on Windows both `/` and `\` forms match; on Unix only the `/` form does,
+/// because a backslash there is an ordinary filename character.
+pub(crate) fn is_ripr_artifact_path(path: &Path) -> bool {
+    // Platform-native component semantics decide the separator family:
+    // Windows `components()` splits on both `/` and `\`, so a native
+    // backslash spelling matches there; Unix `components()` splits on `/`
+    // only, so a Unix path whose directory literally contains a backslash
+    // (`target\ripr/user.rs`) stays one component and is NOT an artifact
+    // path — the two spellings name different directories on that family.
+    // Git always spells diff paths with `/`, so no cross-family input
+    // reaches the predicate on Unix.
+    let mut components = path.components();
+    let head = components.next().and_then(|part| match part {
+        Component::Normal(name) => name.to_str(),
+        _ => None,
+    });
+    let second = components.next().and_then(|part| match part {
+        Component::Normal(name) => name.to_str(),
+        _ => None,
+    });
+    matches!(head, Some("target")) && matches!(second, Some("ripr"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_ripr_artifact_path_matches_the_artifact_root_only() {
+        assert!(is_ripr_artifact_path(Path::new("target/ripr/cache/x.json")));
+        assert!(is_ripr_artifact_path(Path::new(
+            "target/ripr/pilot/pilot-summary.md"
+        )));
+        assert!(is_ripr_artifact_path(Path::new("target/ripr")));
+        assert!(!is_ripr_artifact_path(Path::new("target/other/x.json")));
+        assert!(!is_ripr_artifact_path(Path::new("src/target/ripr/x.json")));
+        assert!(!is_ripr_artifact_path(Path::new("target.rs")));
+        assert!(!is_ripr_artifact_path(Path::new("targeted/ripr/x.json")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn is_ripr_artifact_path_matches_the_native_backslash_form() {
+        // Windows components() splits on both separator families, so a
+        // native backslash spelling from platform APIs matches there.
+        assert!(is_ripr_artifact_path(Path::new(
+            "target\\ripr\\reports\\gap.json"
+        )));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn is_ripr_artifact_path_keeps_a_literal_backslash_directory_name() {
+        // Unix treats backslash as an ordinary filename character: a
+        // directory literally named `target\ripr` is NOT ripr's artifact
+        // root, and a hand-written file under it must not be classified as
+        // a tool artifact (#8257 review).
+        assert!(!is_ripr_artifact_path(Path::new("target\\ripr/user.rs")));
+        assert!(!is_ripr_artifact_path(Path::new("target\\ripr")));
+    }
 
     #[test]
     fn named_c_control_escapes_keep_native_path_identity() {

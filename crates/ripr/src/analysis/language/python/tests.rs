@@ -422,6 +422,86 @@ fn detect_python_test_frameworks_reports_both_when_one_file_imports_both() -> Re
 }
 
 #[test]
+fn detect_python_test_frameworks_admits_django_tests_py_modules() -> Result<(), String> {
+    // #7706: `is_test_file` already indexes Django-conventional `tests.py` /
+    // `test.py` (#7385); the framework detector must read the same paths on
+    // the same terms, including one level into app directories.
+    let root = unique_test_root("django-app-tests-py");
+    let blog = root.join("blog");
+    std::fs::create_dir_all(&blog).map_err(|err| format!("create blog dir: {err}"))?;
+    std::fs::write(
+        blog.join("tests.py"),
+        "import unittest\n\nclass PostTests(unittest.TestCase):\n    pass\n",
+    )
+    .map_err(|err| format!("write tests.py: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    assert_eq!(super::detect_python_test_framework(&root), Some("unittest"));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // `test.py` at the root on the same terms.
+    let root = unique_test_root("django-root-test-py");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test.py"),
+        "from unittest import TestCase\n\nclass PricingTests(TestCase):\n    pass\n",
+    )
+    .map_err(|err| format!("write test.py: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // A Django app directory can carry pytest-style test files too.
+    let root = unique_test_root("django-app-pytest");
+    let shop = root.join("shop");
+    std::fs::create_dir_all(&shop).map_err(|err| format!("create shop dir: {err}"))?;
+    std::fs::write(shop.join("test_pricing.py"), "import pytest\n")
+        .map_err(|err| format!("write test_pricing.py: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // A `*_test.py` sibling at the root is admitted as well.
+    let root = unique_test_root("sibling-test-suffix");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pricing_test.py"), "import pytest\n")
+        .map_err(|err| format!("write pricing_test.py: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_rejects_lookalike_imports_in_tests_py() -> Result<(), String> {
+    // #7706 negative controls: the Django-conventional names must keep the
+    // same token-boundary discipline as the `test_*.py` scan.
+    let root = unique_test_root("django-lookalike");
+    let blog = root.join("blog");
+    std::fs::create_dir_all(&blog).map_err(|err| format!("create blog dir: {err}"))?;
+    std::fs::write(blog.join("tests.py"), "import unittesting\n")
+        .map_err(|err| format!("write tests.py: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        Vec::<&str>::new()
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("django-commented");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("tests.py"), "# import unittest\n")
+        .map_err(|err| format!("write tests.py: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        Vec::<&str>::new()
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
 fn detect_python_test_framework_detects_unittest_from_code_evidence() -> Result<(), String> {
     let root = unique_test_root("unittest");
     let tests_dir = root.join("tests");
