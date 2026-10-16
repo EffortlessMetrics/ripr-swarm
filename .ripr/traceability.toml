@@ -309,7 +309,8 @@ fixtures = [
   "fixtures/weak_error_oracle_assert_matches"
 ]
 code = [
-  "xtask/src/main.rs"
+  "xtask/src/main.rs",
+  "xtask/src/reports/fixtures.rs"
 ]
 outputs = [
   "fixtures/boundary_gap/expected/check.json",

@@ -883,6 +883,9 @@ fn ripr_fixture_binary_built_by(
 /// pass `None` — they analyze real repositories whose workspace cache is
 /// content-keyed on sources that change with the edit under test, so relocating
 /// it would buy nothing and cost every dogfood run a cold analysis.
+///
+/// Corpus children use one Rayon worker because the parent already runs cases
+/// in parallel. This bounds nested worker pools; helper/I/O threads remain.
 pub(crate) fn run_fixture_check(
     root: &str,
     diff_file: &str,
@@ -916,6 +919,7 @@ pub(crate) fn run_fixture_check(
         Some(dir) => {
             let value = dir.to_string_lossy().into_owned();
             envs.push((FIXTURE_CACHE_DIR_ENV, &value));
+            envs.push(("RAYON_NUM_THREADS", "1"));
             run_output_owned_with_envs(&binary, &args, &envs)
         }
         None => run_output_owned_with_envs(&binary, &args, &envs),
