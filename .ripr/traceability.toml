@@ -808,6 +808,7 @@ name = "mutation calibration reports"
 spec = "docs/specs/RIPR-SPEC-0006-mutation-calibration.md"
 tests = [
   "crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_summarizes_static_runtime_agreement",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::agreement_buckets_disclose_counting_units_and_unmatched_overlap",
   "crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_joins_by_seam_id_then_file_line_and_keeps_ambiguous",
   "crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_parses_repo_exposure_and_cargo_mutants_json",
   "crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_merges_mutants_and_outcomes_by_id",
