@@ -5,6 +5,8 @@ use ra_ap_syntax::{
     AstNode, SourceFile, TextSize,
     ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasName},
 };
+#[cfg(test)]
+mod module_scope_walk_tests;
 mod property_macros;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -475,6 +477,14 @@ impl RustSyntaxAdapter for RaRustSyntaxAdapter {
 }
 
 pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, String> {
+    summarize_file_with_item_scopes(path, text, module_item_scopes_in)
+}
+
+fn summarize_file_with_item_scopes(
+    path: &Path,
+    text: &str,
+    collect_scopes: impl FnOnce(&ast::SourceFile, &LineIndex) -> ModuleItemScopes,
+) -> Result<FileFacts, String> {
     if let Some(reason) = rust_nesting_refusal(text) {
         return Err(reason);
     }
@@ -623,7 +633,7 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
             && a.text == b.text
     });
 
-    let mut item_scopes = module_item_scopes_in(&source, &line_index);
+    let mut item_scopes = collect_scopes(&source, &line_index);
     let keep: std::collections::BTreeSet<&str> = functions
         .iter()
         .flat_map(|function: &FunctionFact| {
