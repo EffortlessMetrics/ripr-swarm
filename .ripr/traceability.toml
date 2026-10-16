@@ -9,6 +9,9 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/src/analysis/input_boundary.rs::fanout_boundary_failure_is_scoped_to_active_root_lifecycle",
+  "crates/ripr/src/analysis/input_boundary.rs::fanout_boundary_resolves_root_alias_and_absent_probes",
+  "crates/ripr/tests/cli_smoke/native_fanout.rs::fanout_root_alias_preserves_native_parity_and_symlink_refusal",
   "crates/ripr/src/cli/commands/check_fanout.rs::fanout_auxiliary_binding_does_not_hide_new_workspace_inputs",
   "crates/ripr/src/cli/commands/check_fanout.rs::fanout_output_caps_cover_members_and_manifest",
   "crates/ripr/src/analysis/input_boundary.rs::fanout_boundary_matches_windows_exclusion_aliases",

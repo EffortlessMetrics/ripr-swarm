@@ -6,11 +6,11 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 static ACTIVE: AtomicUsize = AtomicUsize::new(0);
-static FAILED: AtomicBool = AtomicBool::new(false);
 static GUARDS: Mutex<Vec<Weak<State>>> = Mutex::new(Vec::new());
 
 struct State {
     root: PathBuf,
+    requested_root: PathBuf,
     escaped: AtomicBool,
 }
 
@@ -20,6 +20,7 @@ impl Boundary {
     pub(crate) fn new(root: &Path) -> Result<Self, String> {
         let state = Arc::new(State {
             root: root.canonicalize().map_err(|e| e.to_string())?,
+            requested_root: std::path::absolute(root).map_err(|e| e.to_string())?,
             escaped: AtomicBool::new(false),
         });
         let mut guards = GUARDS
@@ -32,7 +33,7 @@ impl Boundary {
     }
 
     pub(crate) fn verify(&self) -> Result<(), String> {
-        if FAILED.load(Ordering::SeqCst) || self.0.escaped.load(Ordering::SeqCst) {
+        if self.0.escaped.load(Ordering::SeqCst) {
             Err("--output-dir cannot bind module reads outside the root or under Git metadata/Cargo target directories; use standalone formats for this input".into())
         } else {
             Ok(())
@@ -52,45 +53,79 @@ pub(crate) fn observe_module_read(root: &Path, file: &Path, outside: bool) {
     if ACTIVE.load(Ordering::SeqCst) == 0 {
         return;
     }
-    let canonical_root = match root.canonicalize() {
-        Ok(root) => root,
-        Err(_) => {
-            FAILED.store(true, Ordering::SeqCst);
+    let mut guards = match GUARDS.lock() {
+        Ok(guards) => guards,
+        Err(poisoned) => {
+            for state in poisoned.into_inner().iter().filter_map(Weak::upgrade) {
+                state.escaped.store(true, Ordering::SeqCst);
+            }
             return;
         }
     };
-    let absolute_file = match std::path::absolute(file) {
-        Ok(file) => file,
-        Err(_) => {
-            FAILED.store(true, Ordering::SeqCst);
-            return;
+    guards.retain(|guard| guard.strong_count() > 0);
+    let requested_root = std::path::absolute(root);
+    let canonical_root = root.canonicalize();
+    let observed_file = resolved_probe_path(file);
+    for state in guards.iter().filter_map(Weak::upgrade) {
+        let matches = requested_root
+            .as_ref()
+            .is_ok_and(|path| path == &state.requested_root || path == &state.root)
+            || canonical_root
+                .as_ref()
+                .is_ok_and(|path| path == &state.root);
+        // An unavailable current directory prevents attributing a relative
+        // observation. Refuse active runs, without retaining process-wide state.
+        if !matches && requested_root.is_ok() {
+            continue;
         }
-    };
-    let excluded = match absolute_file.strip_prefix(&canonical_root) {
-        Ok(relative) => {
-            let mut parent = canonical_root.clone();
-            relative.components().any(|component| {
-                let skipped = component_is_named(component.as_os_str(), ".git", cfg!(windows))
-                    || (component_is_named(component.as_os_str(), "target", cfg!(windows))
-                        && parent.join("Cargo.toml").is_file());
-                parent.push(component);
-                skipped
-            })
+        let escaped = outside
+            || canonical_root
+                .as_ref()
+                .map_or(true, |path| path != &state.root)
+            || observed_file.as_ref().map_or(true, |path| {
+                let Ok(relative) = path.strip_prefix(&state.root) else {
+                    return true;
+                };
+                let mut parent = state.root.clone();
+                relative.components().any(|component| {
+                    let skipped = matches!(component, std::path::Component::ParentDir)
+                        || component_is_named(component.as_os_str(), ".git", cfg!(windows))
+                        || (component_is_named(component.as_os_str(), "target", cfg!(windows))
+                            && parent.join("Cargo.toml").is_file());
+                    parent.push(component);
+                    skipped
+                })
+            });
+        if escaped {
+            state.escaped.store(true, Ordering::SeqCst);
         }
-        Err(_) => true,
-    };
-    if !outside && !excluded {
-        return;
     }
-    match GUARDS.lock() {
-        Ok(guards) => {
-            for state in guards.iter().filter_map(Weak::upgrade) {
-                if state.root == canonical_root {
-                    state.escaped.store(true, Ordering::SeqCst);
+}
+
+/// Resolve aliases in the existing prefix while retaining absent module probes.
+/// Other resolution failures remain failures; no unreadable prefix is admitted.
+fn resolved_probe_path(file: &Path) -> std::io::Result<PathBuf> {
+    let mut prefix = std::path::absolute(file)?;
+    let mut absent = Vec::new();
+    loop {
+        match prefix.canonicalize() {
+            Ok(mut resolved) => {
+                for component in absent.iter().rev() {
+                    resolved.push(component);
+                }
+                return Ok(resolved);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let Some(name) = prefix.file_name() else {
+                    return Err(error);
+                };
+                absent.push(name.to_os_string());
+                if !prefix.pop() {
+                    return Err(error);
                 }
             }
+            Err(error) => return Err(error),
         }
-        Err(_) => FAILED.store(true, Ordering::SeqCst),
     }
 }
 
@@ -189,6 +224,46 @@ mod tests {
                 "{excluded} must be outside custody"
             );
         }
+        Ok(())
+    }
+    #[test]
+    fn fanout_boundary_failure_is_scoped_to_active_root_lifecycle() -> Result<(), String> {
+        let broken = fixture("broken-lifecycle")?;
+        let stable = fixture("stable-lifecycle")?;
+        let boundary = Boundary::new(&broken.0)?;
+        let concurrent = Boundary::new(&stable.0)?;
+        std::fs::remove_dir(&broken.0).map_err(|e| e.to_string())?;
+        observe_module_read(&broken.0, &broken.0.join("missing.rs"), false);
+        assert!(
+            boundary.verify().is_err(),
+            "failed observation must refuse its run"
+        );
+        let concurrent_result = concurrent.verify();
+        drop(boundary);
+        drop(concurrent);
+        let fresh = Boundary::new(&stable.0)?;
+        fresh.verify()?;
+        concurrent_result?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fanout_boundary_resolves_root_alias_and_absent_probes() -> Result<(), String> {
+        let physical = fixture("physical")?;
+        let aliases = fixture("aliases")?;
+        let alias = aliases.0.join("root");
+        std::os::unix::fs::symlink(&physical.0, &alias).map_err(|e| e.to_string())?;
+        std::fs::write(physical.0.join("lib.rs"), "").map_err(|e| e.to_string())?;
+        let boundary = Boundary::new(&alias)?;
+        observe_module_read(&alias, &alias.join("lib.rs"), false);
+        observe_module_read(&alias, &alias.join("absent/module.rs"), false);
+        boundary.verify()?;
+        observe_module_read(&alias, &alias.join(".git/absent.rs"), false);
+        assert!(
+            boundary.verify().is_err(),
+            "alias must retain excluded-directory refusal"
+        );
         Ok(())
     }
 }

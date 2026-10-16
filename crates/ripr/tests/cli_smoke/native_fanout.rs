@@ -1,7 +1,7 @@
 //! Byte-level native equivalence and refusal/exit controls for #8169.
 use super::{ignore_remove_dir_all, run_command_with_env, unique_external_workspace};
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -47,7 +47,16 @@ impl Fixture {
         extra: &[&str],
         env: &[(&str, &str)],
     ) -> Result<std::process::Output, std::io::Error> {
-        let root = self.0.to_string_lossy();
+        self.run_at(&self.0, extra, env)
+    }
+
+    fn run_at(
+        &self,
+        selected_root: &Path,
+        extra: &[&str],
+        env: &[(&str, &str)],
+    ) -> Result<std::process::Output, std::io::Error> {
+        let root = selected_root.to_string_lossy();
         let mut args = vec!["check", "--root", &root, "--diff", "input.diff", "--quiet"];
         args.extend_from_slice(extra);
         run_command_with_env(env!("CARGO_BIN_EXE_ripr"), &self.0, &args, env)
@@ -454,5 +463,68 @@ fn fanout_typescript_native_projections_match() -> TestResult {
             }));
         }
     }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn fanout_root_alias_preserves_native_parity_and_symlink_refusal() -> TestResult {
+    let physical = Fixture::new()?;
+    let holder = Fixture::new()?;
+    let alias = holder.0.join("root-alias");
+    std::os::unix::fs::symlink(&physical.0, &alias)?;
+    for (label, root) in [("physical", &physical.0), ("alias", &alias)] {
+        let destination = holder.0.join(label);
+        let destination_arg = destination.to_string_lossy();
+        let combined = physical.run_at(root, &["--output-dir", &destination_arg], &[])?;
+        assert!(
+            combined.status.success(),
+            "{label}: {}",
+            String::from_utf8_lossy(&combined.stderr)
+        );
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(destination.join("manifest.json"))?)?;
+        assert_eq!(manifest["complete_set"], true);
+        assert_eq!(manifest["command_success"], true);
+        for (format, file) in [
+            ("badge-json", "badge.json"),
+            ("json", "detail.json"),
+            ("human", "human.txt"),
+        ] {
+            let standalone = physical.run_at(root, &["--format", format], &[])?;
+            assert!(
+                standalone.status.success(),
+                "{label}/{format}: {}",
+                String::from_utf8_lossy(&standalone.stderr)
+            );
+            let bytes = std::fs::read(destination.join(file))?;
+            assert_eq!(bytes, standalone.stdout, "{label}/{format} native parity");
+            if format == "json" {
+                let detail: serde_json::Value = serde_json::from_slice(&bytes)?;
+                assert!(
+                    detail["findings"]
+                        .as_array()
+                        .is_some_and(|findings| !findings.is_empty())
+                );
+            }
+        }
+    }
+    // A selected-root alias is valid; symlinks *inside* the captured tree
+    // still refuse before admitting an output set, even to regular files.
+    let external = holder.0.join("external.rs");
+    std::fs::write(&external, "pub fn escaped() {}")?;
+    std::os::unix::fs::symlink(&external, physical.0.join("src/escape.rs"))?;
+    let destination = holder.0.join("refused");
+    let refused = physical.run_at(
+        &alias,
+        &["--output-dir", &destination.to_string_lossy()],
+        &[],
+    )?;
+    assert_eq!(refused.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("requires regular input files"));
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(destination.join("manifest.json"))?)?;
+    assert_eq!(manifest["complete_set"], false);
+    assert_eq!(manifest["command_success"], false);
     Ok(())
 }
