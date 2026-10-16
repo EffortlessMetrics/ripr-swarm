@@ -7,17 +7,18 @@ design_reference = "RIPR-SPEC-0228#collection-writes-on-a-field-path"
 change_class = "behavior_change"
 
 claim_boundary = """
-When the owner may exit before its push, an assertion whose expected
-side is a non-empty vec![...] literal containing none of the pushed
-values only restates the pre-push seeded state, so it no longer
-confirms that push in the classify owner; the skipped push leaves the
-seeded state untouched and the finding stays weakly_exposed, pinned
-by push-after-early-return-seeded-assert in
+When the owner may exit before its push, an assertion that expects
+exactly the collection state the test seeded before the owner call no
+longer confirms that push in the classify owner, because the skipped
+push leaves the seeded state untouched; the finding stays
+weakly_exposed, pinned by push-after-early-return-seeded-assert in
 fixtures/rust-verdict-corpus and the honesty-corpus pin
 rust_seeded_expectation_cannot_confirm_guarded_push. An expectation
-that includes the pushed element (push-seeded-unguarded-assert) or an
-owner that cannot exit early still confirms and stays exposed. This
-extends the #8051 empty-expectation cap. No new classification
+that differs from the seeded state (including the seeded state plus
+the pushed element) or an owner that cannot exit early still confirms
+and stays exposed. The seeded state is read only from the binding's
+own construction (a struct-literal field entry or a bare assignment).
+This extends the #8051 empty-expectation cap. No new classification
 vocabulary, probe family, schema, or runtime execution.
 """
 
@@ -25,7 +26,7 @@ non_goals = [
   "weakening the #8051 empty-collection behavior",
   "new classification vocabulary or probe families",
   "runtime execution, coverage, or mutation-score framing",
-  "seeded-state evidence from helper calls, constructors, bindings, or computed expectations the test does not spell out as a vec literal",
+  "seeded-state evidence from helper calls or constructors whose bodies are not spelled out in the test",
 ]
 
 return_conditions = [

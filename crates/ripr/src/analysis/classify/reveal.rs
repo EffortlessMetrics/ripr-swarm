@@ -1872,13 +1872,40 @@ fn analyze_related_assertions(
                 && is_effect_family(&probe.family)
                 && (field_write.is_some()
                     || direct_collection_mutation_receiver(&probe.expression).is_some())
-                && (super::propagation_witness::assertion_expects_empty_collection(
-                    &assertion.text,
-                ) || super::propagation_witness::assertion_expects_seeded_collection(
-                    &assertion.text,
-                    probe,
-                ));
-            let self_computed = self_computed || empty_after_skipped_push;
+                && super::propagation_witness::assertion_expects_empty_collection(&assertion.text);
+            // #8205: the same cap applies when the assertion expects
+            // exactly the state the test seeded before the call. The
+            // skipped push never ran, so restating the pre-call state
+            // passes whether or not the push exists or is correct. An
+            // expectation that differs from the seeded state (including
+            // the seeded state plus the pushed element) keeps its credit.
+            let seeded_after_skipped_push = matched
+                && return_admission.owner_may_exit_before_probe
+                && is_effect_family(&probe.family)
+                && match (
+                    field_write,
+                    direct_collection_mutation_receiver(&probe.expression),
+                ) {
+                    (Some(path), _) => {
+                        super::propagation_witness::assertion_restates_seeded_collection(
+                            &assertion.text,
+                            &test.body,
+                            path,
+                            Some(path),
+                        )
+                    }
+                    (None, Some(receiver)) => {
+                        super::propagation_witness::assertion_restates_seeded_collection(
+                            &assertion.text,
+                            &test.body,
+                            receiver,
+                            None,
+                        )
+                    }
+                    (None, None) => false,
+                };
+            let self_computed =
+                self_computed || empty_after_skipped_push || seeded_after_skipped_push;
             // #6692: the owner pin is credited only through an assertion
             // that matched, from a test that may supply the oracle, with the
             // pin surviving the reveal-side defeats. The missing-field
@@ -9748,8 +9775,9 @@ return Err(\"typed pin\".into());
     fn seeded_collection_expectations_cap_effect_families_only_after_an_early_exit() {
         for family in [ProbeFamily::SideEffect, ProbeFamily::CallDeletion] {
             let probe = probe(family.clone(), "items.push(5)");
-            let seeded = test_with_assertions(
+            let seeded = test_with_body_assertions(
                 "keeps_seeded_items",
+                "let mut items = vec![9];\n    record(&mut items);",
                 vec![oracle(
                     "assert_eq!(items, vec![9]);",
                     OracleKind::WholeObjectEquality,
@@ -9792,6 +9820,41 @@ return Err(\"typed pin\".into());
                 discriminate.state,
                 StageState::Yes,
                 "an expectation holding the pushed value against {family:?} must stay exposed"
+            );
+            assert_eq!(strength, OracleStrength::Strong, "{family:?}");
+            // An expectation that differs from the seeded state
+            // discriminates the push: the skipped push leaves vec![8].
+            let differing = test_with_body_assertions(
+                "expects_more_than_the_seed",
+                "let mut items = vec![8];\n    record(&mut items);",
+                vec![oracle(
+                    "assert_eq!(items, vec![9]);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            let (discriminate, strength) = reveal_evidence_with_exit(&probe, &differing, true);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "an expectation differing from the seed against {family:?} must stay exposed"
+            );
+            assert_eq!(strength, OracleStrength::Strong, "{family:?}");
+            // Without a spelled-out seed construction, an expectation
+            // that merely looks seeded keeps its credit.
+            let unseeded = test_with_assertions(
+                "expects_the_pushed_value",
+                vec![oracle(
+                    "assert_eq!(items, vec![9]);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            let (discriminate, strength) = reveal_evidence_with_exit(&probe, &unseeded, true);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "an expectation with no seeded construction against {family:?} must stay exposed"
             );
             assert_eq!(strength, OracleStrength::Strong, "{family:?}");
         }

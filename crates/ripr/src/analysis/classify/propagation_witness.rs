@@ -1439,75 +1439,131 @@ pub(in crate::analysis) fn assertion_expects_empty_collection(assertion: &str) -
         })
 }
 
-/// #8205: whether an `assert_eq!` expects a non-empty `vec![...]` literal
-/// that does not contain the value the changed push adds (comparing the
-/// probe's expression and, when present, its before/after texts). Such an
-/// expectation only restates what the collection already held before the
-/// push — for example a seeded `vec![9]` — so a test that passes with it
-/// after the owner call took a path where the push never ran, and deleting
-/// or changing the push leaves the test passing.
-pub(in crate::analysis) fn assertion_expects_seeded_collection(
+/// #8205: whether `assertion` expects exactly the collection state the
+/// test seeded before the owner call, so an owner that may exit before
+/// its push leaves the assertion passing without the push ever running.
+/// `collection` names the written collection as the assertion reads it:
+/// the field path (`log` for `p.log`) or the bare receiver (`items`).
+/// The seeded state comes from the binding's own construction in `body`
+/// (a struct-literal field or a direct assignment); anything else is not
+/// evidence, and a different expectation (including the seeded state
+/// plus the pushed element) keeps its credit.
+pub(in crate::analysis) fn assertion_restates_seeded_collection(
     assertion: &str,
-    probe: &Probe,
+    body: &str,
+    collection: &str,
+    field_path: Option<&str>,
 ) -> bool {
     let text = assertion.trim().trim_end_matches(';').trim_end();
     let Some(at) = text.find("assert_eq!") else {
         return false;
     };
     let operands = super::reveal::macro_arguments(&text[at + "assert_eq!".len()..]);
-    let Some(elements) = operands
-        .iter()
-        .find_map(|operand| vec_literal_elements(operand))
-    else {
+    let [left, right, ..] = operands.as_slice() else {
         return false;
     };
-    if elements.is_empty() {
+    let plain = |side: &str| side.trim().trim_start_matches('&').trim().to_string();
+    let names_collection = |side: &str| {
+        let side = plain(side);
+        match field_path {
+            Some(path) => side
+                .rsplit_once('.')
+                .is_some_and(|(_, last)| last.trim() == path),
+            None => side == collection,
+        }
+    };
+    let (receiver, expected) = if names_collection(left) {
+        (plain(left), plain(right))
+    } else if names_collection(right) {
+        (plain(right), plain(left))
+    } else {
         return false;
+    };
+    let Some(binding) = receiver.split('.').next().map(str::trim) else {
+        return false;
+    };
+    let Some(seeded) = seeded_collection_state(body, binding, field_path) else {
+        return false;
+    };
+    let normalize = |expr: &str| -> String {
+        expr.chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect::<String>()
+            .trim_end_matches(',')
+            .to_string()
+    };
+    !expected.is_empty() && normalize(&expected) == normalize(&seeded)
+}
+
+/// The collection state `body` gives `binding` at construction: for a
+/// field path, the `<path>: <expr>` entry of the struct literal the
+/// binding is assigned; for a bare receiver, the assignment right-hand
+/// side itself. `None` when no such construction is spelled out.
+fn seeded_collection_state(body: &str, binding: &str, field_path: Option<&str>) -> Option<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    for (at, _) in masked.match_indices(binding) {
+        let bound = masked[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|before| !(ident(before) || before == '.'));
+        let ends = masked[at + binding.len()..]
+            .chars()
+            .next()
+            .is_none_or(|next| !ident(next));
+        if !bound || !ends {
+            continue;
+        }
+        let rest = masked[at + binding.len()..].trim_start();
+        let Some(rhs) = rest
+            .strip_prefix('=')
+            .filter(|after| !after.starts_with('=') && !after.starts_with('>'))
+        else {
+            continue;
+        };
+        let rhs_start = masked.len() - rhs.len();
+        let statement = top_level_slice(rhs, ';');
+        let Some(path) = field_path else {
+            return Some(
+                body.get(rhs_start..rhs_start + statement.len())
+                    .unwrap_or(statement)
+                    .trim()
+                    .to_string(),
+            );
+        };
+        // Find `<path>:` inside the construction and take its value up to
+        // the entry's top-level comma or the literal's closing brace.
+        // The masked text fixes the span; the value itself is read from
+        // the unmasked body at the same offsets.
+        let needle = format!("{path}:");
+        if let Some(field_at) = statement.find(&needle) {
+            let value = &statement[field_at + needle.len()..];
+            let value = top_level_slice(value, ',');
+            let value = value.trim_end().trim_end_matches('}').trim_end();
+            let start = rhs_start + field_at + needle.len();
+            return Some(
+                body.get(start..start + value.len())
+                    .unwrap_or(value)
+                    .trim()
+                    .to_string(),
+            );
+        }
     }
-    let pushed: Vec<String> = std::iter::once(probe.expression.as_str())
-        .chain(probe.before.as_deref())
-        .chain(probe.after.as_deref())
-        .filter_map(pushed_argument)
-        .map(compact_text)
-        .collect();
-    !pushed.is_empty()
-        && elements
-            .iter()
-            .all(|element| !pushed.contains(&compact_text(element)))
+    None
 }
 
-/// The elements of a `vec![...]` operand, or `None` for any other shape.
-fn vec_literal_elements(operand: &str) -> Option<Vec<String>> {
-    let operand = operand.trim().trim_start_matches('&').trim();
-    let inner = operand
-        .strip_prefix("vec!")?
-        .trim()
-        .strip_prefix('[')?
-        .strip_suffix(']')?;
-    let wrapped = format!("({inner})");
-    Some(
-        super::reveal::macro_arguments(&wrapped)
-            .iter()
-            .map(|element| element.trim().to_string())
-            .collect(),
-    )
-}
-
-/// The argument of the first `.push(...)` call in `expression`.
-fn pushed_argument(expression: &str) -> Option<&str> {
-    let at = expression.find(".push(")? + ".push(".len();
-    let rest = &expression[at..];
-    let end = crate::analysis::extract::group_end(&format!("({rest}"), 0)?;
-    // `group_end` indexes the wrapped text; shift back by the added paren.
-    rest.get(..end - 1)
-        .map(str::trim)
-        .filter(|arg| !arg.is_empty())
-}
-
-/// Text with every whitespace character removed, so `Beat { n: 1 }` and
-/// `Beat{n:1}` compare equal.
-fn compact_text(text: &str) -> String {
-    text.chars().filter(|ch| !ch.is_whitespace()).collect()
+/// `text` up to the first `separator` at bracket depth zero.
+fn top_level_slice(text: &str, separator: char) -> &str {
+    let mut depth = 0i32;
+    for (at, ch) in text.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ if ch == separator && depth == 0 => return &text[..at],
+            _ => {}
+        }
+    }
+    text
 }
 
 /// An empty `Vec` or slice literal: `vec![]`, `Vec::new()`,
@@ -3510,51 +3566,66 @@ mod tests {
     }
 
     #[test]
-    fn seeded_collection_expectations_cannot_confirm_a_push() {
-        let push = probe(ProbeFamily::SideEffect, "self.log.push(1)");
-        for assertion in [
-            "assert_eq!(p.log, vec![9]);",
-            "assert_eq!(vec![9], p.log);",
-            "assert_eq!(&p.log, &vec![9, 8]);",
-        ] {
-            assert!(
-                assertion_expects_seeded_collection(assertion, &push),
-                "{assertion}"
-            );
-        }
-        for assertion in [
-            // The pushed value is expected: the push is discriminated.
-            "assert_eq!(p.log, vec![9, 1]);",
-            "assert_eq!(p.log, vec![1]);",
-            // No literal expectation to restate the seeded state.
-            "assert_eq!(p.log, expected);",
-            "assert_eq!(p.log.len(), 1);",
-            "assert!(p.log.contains(&9));",
-            "assert_ne!(p.log, vec![9]);",
-        ] {
-            assert!(
-                !assertion_expects_seeded_collection(assertion, &push),
-                "{assertion}"
-            );
-        }
-        // A struct-literal push compares by compacted text.
-        let beat = probe(
-            ProbeFamily::SideEffect,
-            "self.log.push(Entry::Beat { n: 1 })",
-        );
-        assert!(assertion_expects_seeded_collection(
-            "assert_eq!(p.log, vec![Entry::Beat{n:9}]);",
-            &beat
+    fn seeded_collection_expectations_restate_the_pre_call_state() {
+        let seeded_body = "fn case() {\n    let mut p = Pulse { log: vec![Entry::Beat { n: 9 }], locked: true };\n    p.beat();\n    assert_eq!(p.log, vec![Entry::Beat { n: 9 }]);\n}";
+        assert!(assertion_restates_seeded_collection(
+            "assert_eq!(p.log, vec![Entry::Beat { n: 9 }]);",
+            seeded_body,
+            "log",
+            Some("log"),
         ));
-        assert!(!assertion_expects_seeded_collection(
+        // The seeded state plus the pushed element is a real discriminator.
+        assert!(!assertion_restates_seeded_collection(
             "assert_eq!(p.log, vec![Entry::Beat { n: 9 }, Entry::Beat { n: 1 }]);",
-            &beat
+            seeded_body,
+            "log",
+            Some("log"),
         ));
-        // A non-push probe has no pushed value to be absent.
-        let other = probe(ProbeFamily::SideEffect, "self.log.clear()");
-        assert!(!assertion_expects_seeded_collection(
+        // An expectation that differs from the seeded state discriminates:
+        // the skipped push leaves vec![8], not the asserted vec![9].
+        assert!(!assertion_restates_seeded_collection(
             "assert_eq!(p.log, vec![9]);",
-            &other
+            "fn case() {\n    let mut p = Pulse { log: vec![8], locked: true };\n    p.beat();\n    assert_eq!(p.log, vec![9]);\n}",
+            "log",
+            Some("log"),
+        ));
+        // A start-empty test expecting the pushed element is not a restate.
+        let empty_body = "fn case() {\n    let mut p = Pulse { log: vec![], locked: true };\n    p.beat();\n    assert_eq!(p.log, vec![Entry::Beat { n: 1 }]);\n}";
+        assert!(!assertion_restates_seeded_collection(
+            "assert_eq!(p.log, vec![Entry::Beat { n: 1 }]);",
+            empty_body,
+            "log",
+            Some("log"),
+        ));
+        // The pushed value may duplicate a seeded element: restating the
+        // seed still passes when the push is skipped or deleted.
+        assert!(assertion_restates_seeded_collection(
+            "assert_eq!(p.log, vec![9]);",
+            "fn case() {\n    let mut p = Pulse { log: vec![9], locked: true };\n    p.beat();\n    assert_eq!(p.log, vec![9]);\n}",
+            "log",
+            Some("log"),
+        ));
+        // Bare receiver: the assignment itself is the seeded state.
+        let bare_body = "fn case() {\n    let mut items = vec![9];\n    record(&mut items, 1);\n    assert_eq!(items, vec![9]);\n}";
+        assert!(assertion_restates_seeded_collection(
+            "assert_eq!(items, vec![9]);",
+            bare_body,
+            "items",
+            None,
+        ));
+        assert!(!assertion_restates_seeded_collection(
+            "assert_eq!(items, vec![9, 1]);",
+            bare_body,
+            "items",
+            None,
+        ));
+        // No spelled-out construction, no evidence: an expectation that
+        // merely looks seeded keeps its credit.
+        assert!(!assertion_restates_seeded_collection(
+            "assert_eq!(items, vec![9]);",
+            "fn case() {\n    record(&mut items, 1);\n}",
+            "items",
+            None,
         ));
     }
 
