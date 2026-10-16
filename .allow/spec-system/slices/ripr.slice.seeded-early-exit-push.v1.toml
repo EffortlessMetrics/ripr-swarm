@@ -1,0 +1,62 @@
+schema_version = "2.0"
+id = "ripr.slice.seeded-early-exit-push.v1"
+generation = 1
+
+source_issue = "issue:8205"
+design_reference = "RIPR-SPEC-0228#collection-writes-on-a-field-path"
+change_class = "behavior_change"
+
+claim_boundary = """
+When the owner may exit before its push, an assertion whose expected
+side is a non-empty vec![...] literal containing none of the pushed
+values only restates the pre-push seeded state, so it no longer
+confirms that push in the classify owner; the skipped push leaves the
+seeded state untouched and the finding stays weakly_exposed, pinned
+by push-after-early-return-seeded-assert in
+fixtures/rust-verdict-corpus and the honesty-corpus pin
+rust_seeded_expectation_cannot_confirm_guarded_push. An expectation
+that includes the pushed element (push-seeded-unguarded-assert) or an
+owner that cannot exit early still confirms and stays exposed. This
+extends the #8051 empty-expectation cap. No new classification
+vocabulary, probe family, schema, or runtime execution.
+"""
+
+non_goals = [
+  "weakening the #8051 empty-collection behavior",
+  "new classification vocabulary or probe families",
+  "runtime execution, coverage, or mutation-score framing",
+  "seeded-state evidence from helper calls, constructors, bindings, or computed expectations the test does not spell out as a vec literal",
+]
+
+return_conditions = [
+  "Return to root if an expectation differing from the seeded state loses credit because of this rule.",
+  "Return to root if the #8051 empty-expectation cases change class because of this rule.",
+]
+
+owned_seams = [
+  "seam:ripr:analysis:seeded-collection-expectation",
+  "seam:ripr:fixtures:push-after-early-return-seeded",
+]
+
+shared_seams = [
+  "seam:ripr:fixtures:rust-verdict-corpus",
+  "seam:ripr:xtask:verdict-corpus",
+]
+
+forbidden_seams = [
+  "seam:ripr:domain:classification-vocabulary",
+  "seam:ripr:output:schema",
+]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0228#collection-writes-on-a-field-path"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"
