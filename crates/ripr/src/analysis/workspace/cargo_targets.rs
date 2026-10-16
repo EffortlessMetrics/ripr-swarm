@@ -758,20 +758,40 @@ pub(crate) fn unrun_test_target_roots(
                 .collect::<BTreeMap<_, _>>()
         })
         .unwrap_or_default();
-    let enabled = expand_default_features(&features);
+    let mut enabled = expand_default_features(&features);
+    // `dep:x`, `x/feat` and `x?/feat` in the default closure also switch on
+    // the optional dependency `x` (and its implicit feature): count the name.
+    let closure = enabled.clone();
+    for item in closure
+        .iter()
+        .filter_map(|name| features.get(name))
+        .flatten()
+    {
+        let item = item.trim();
+        let name = item.strip_prefix("dep:").unwrap_or(item);
+        if let Some((dep, _)) = name.split_once('/') {
+            enabled.insert(dep.trim_end_matches('?').to_string());
+        } else if item.starts_with("dep:") {
+            enabled.insert(name.to_string());
+        }
+    }
+    // First `[[test]]` entry per path that cargo still runs: a shared path
+    // stays live through it.
+    let mut live = BTreeSet::new();
     for entry in entries {
         let flag_off = |key: &str| entry.get(key).and_then(toml::Value::as_bool) == Some(false);
         let unmet = entry
             .get("required-features")
             .and_then(toml::Value::as_array)
             .is_some_and(|items| {
-                items
-                    .iter()
-                    .any(|item| item.as_str().is_some_and(|name| !enabled.contains(name)))
+                // `dep/feat` forms are not judged: a skip needs a plain name
+                // cargo's default set provably lacks.
+                items.iter().any(|item| {
+                    item.as_str()
+                        .is_some_and(|name| !name.contains('/') && !enabled.contains(name))
+                })
             });
-        if !(flag_off("test") || flag_off("harness") || unmet) {
-            continue;
-        }
+        let skipped = flag_off("test") || flag_off("harness") || unmet;
         let declared = entry
             .get("path")
             .and_then(toml::Value::as_str)
@@ -790,8 +810,14 @@ pub(crate) fn unrun_test_target_roots(
             spellings.push(dir.join(format!("{name}.rs")));
             spellings.push(dir.join(name).join("main.rs"));
         }
-        roots.extend(spellings.iter().map(|path| lexical(&normalize(path))));
+        let spellings = spellings.iter().map(|path| lexical(&normalize(path)));
+        if skipped {
+            roots.extend(spellings);
+        } else {
+            live.extend(spellings);
+        }
     }
+    roots.retain(|root| !live.contains(root));
     roots
 }
 
@@ -1148,6 +1174,30 @@ pub(super) fn lexical(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod extraction {
     use super::*;
+
+    /// #8016: roots of `[[test]]` targets cargo test never runs. A shared
+    /// path stays live through a running entry, and `dep/feat` or `dep:`
+    /// enables in the default set count the optional dependency.
+    #[test]
+    fn unrun_test_roots_keep_shared_live_paths_and_dependency_features() -> Result<(), String> {
+        let manifest = "[package]\nname='p'\n\
+            [dependencies]\nfoo={version='1',optional=true}\nbar={version='1',optional=true}\n\
+            [features]\ndefault=['foo/x','dep:bar']\nasync=[]\n\
+            [[test]]\nname='sync'\npath='tests/x.rs'\n\
+            [[test]]\nname='gated'\npath='tests/x.rs'\nrequired-features=['async']\n\
+            [[test]]\nname='off'\ntest=false\n\
+            [[test]]\nname='dep_foo'\nrequired-features=['foo']\n\
+            [[test]]\nname='dep_bar'\nrequired-features=['bar']\n\
+            [[test]]\nname='slash'\nrequired-features=['foo/x']\n";
+        let value = toml::from_str::<toml::Value>(manifest).map_err(|error| error.to_string())?;
+        let roots = unrun_test_target_roots(&value, Path::new("pkg"));
+        let expected = BTreeSet::from([
+            PathBuf::from("pkg/tests/off.rs"),
+            PathBuf::from("pkg/tests/off/main.rs"),
+        ]);
+        assert_eq!(roots, expected);
+        Ok(())
+    }
 
     /// Crate-root identity extraction (#3533 review): `[lib]` tables and
     /// `[[bin]]`/`[[test]]`/`[[bench]]`/`[[example]]` arrays contribute
