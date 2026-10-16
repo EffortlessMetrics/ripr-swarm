@@ -187,6 +187,12 @@ an agent-focused before/after summary. Snapshot paths must resolve under
 mutation testing, generate tests, edit files, change cache behavior, or touch
 LSP/MCP surfaces.
 
+Refusal contract: a typed verify refusal — drifted analysis inputs
+(`analysis input identities differ`) or no repository movement between the
+artifacts — names the cause on stderr, exits `3`, and leaves stdout empty
+(RIPR-SPEC-0134). Other rejections (unreadable or invalid artifacts, lineage
+or metadata mismatches) exit `2`.
+
 Movement vocabulary (#2648): the JSON output uses two related fields:
   - `change` (per-item): improved | changed | regressed | unchanged | new | resolved
   - `gap_movement` (per-item): closed | persisted | new
