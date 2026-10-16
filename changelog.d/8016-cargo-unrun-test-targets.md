@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Tests in an explicit `[[test]]` target that `cargo test` never runs (`test = false`, `required-features` unmet under cargo defaults, or `harness = false` without a configured harness marker) are no longer credited as evidence, so a pin there no longer reads `exposed`. The decision uses cargo's own metadata inventory and keeps the file when the probe is unavailable (#8016).
