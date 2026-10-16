@@ -1390,6 +1390,7 @@ mod tests {
             &artifacts.repo_exposure_md,
             &artifacts.agent_seam_packets_json,
             &artifacts.pilot_summary_json,
+            &artifacts.pilot_summary_md,
         ] {
             std::fs::write(path, stale)
                 .map_err(|err| format!("write stale {}: {err}", path.display()))?;
@@ -1427,6 +1428,16 @@ mod tests {
         assert!(
             !summary.contains(stale),
             "the partial summary must not carry the previous run's bytes:\n{summary}"
+        );
+        let summary_md = std::fs::read_to_string(&artifacts.pilot_summary_md)
+            .map_err(|err| format!("read timeout summary md: {err}"))?;
+        assert!(
+            summary_md.contains("- Status: `partial`"),
+            "the timeout path must rewrite the markdown summary; got:\n{summary_md}"
+        );
+        assert!(
+            !summary_md.contains(stale),
+            "the markdown summary must not carry the previous run's bytes:\n{summary_md}"
         );
         for name in [
             "repo-exposure.json",
