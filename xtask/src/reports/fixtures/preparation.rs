@@ -1,4 +1,6 @@
 //! Explicit dependency preparation; golden checks remain offline and never bless.
+//! Network boundary: only `goldens prepare` runs Cargo's locked registry fetch;
+//! ordinary fixture readiness uses offline metadata in the same environment.
 use crate::run::run_output_owned_with_envs;
 use std::path::Path;
 use std::sync::OnceLock;
@@ -174,7 +176,7 @@ mod tests {
     }
 
     #[test]
-    fn preparation_rejects_unknown_arguments_before_fetch() {
+    fn preparation_rejects_unknown_arguments() {
         assert!(prepare(&["--force".into()]).is_err());
     }
 
