@@ -606,3 +606,49 @@ fn lookup_table_entry_stays_weak_without_a_changed_key_lookup() -> Result<(), St
     }
     Ok(())
 }
+
+/// A test-body `const ns = ...` shadows the `import * as ns` owner namespace:
+/// a changed-key pin through `ns.fetchUnitPrice(...)` reads the local, not the
+/// owner, so it does not witness the lookup-table change.
+#[test]
+fn lookup_table_pin_through_a_shadowed_namespace_import_is_not_credited() -> Result<(), String> {
+    let imports = "import { fetchUnitPrice } from \"../src/cart\";\nimport * as ns from \"../src/cart\";";
+    let ret = "  return table[sku] ?? 0;";
+    let genuine = unit_price_finding(
+        "lookup-ns-genuine",
+        &vitest(
+            imports,
+            "  await fetchUnitPrice(\"apple\");\n  await expect(ns.fetchUnitPrice(\"pear\")).resolves.toBe(95);",
+        ),
+        ret,
+    )?;
+    assert_eq!(
+        genuine.class,
+        ExposureClass::Exposed,
+        "unshadowed namespace pin: {:?}",
+        genuine.missing
+    );
+    let shadowed = unit_price_finding(
+        "lookup-ns-shadowed",
+        &vitest(
+            imports,
+            "  await fetchUnitPrice(\"apple\");\n  const ns = fakeCart();\n  await expect(ns.fetchUnitPrice(\"pear\")).resolves.toBe(95);",
+        ),
+        ret,
+    )?;
+    assert_eq!(
+        shadowed.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        shadowed.missing
+    );
+    assert!(
+        shadowed
+            .missing
+            .iter()
+            .any(|line| line.contains("lookup-table value for `pear`")),
+        "{:?}",
+        shadowed.missing
+    );
+    Ok(())
+}

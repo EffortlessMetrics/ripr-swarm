@@ -1078,3 +1078,30 @@ fn recursive_owner_is_unresolved_not_missed() -> Result<(), String> {
     assert_eq!(evaluated.activation("recursive")?, A::Unresolved);
     Ok(())
 }
+
+/// A test-body `const ns = ...` shadows the `import * as ns` owner namespace:
+/// a boundary-literal `ns.applyDiscount(100)` activates the local, not the
+/// owner, so it must not witness the boundary. A real off-boundary owner call
+/// keeps the test related.
+#[test]
+fn shadowed_namespace_import_call_is_not_owner_activation() -> Result<(), String> {
+    let imports = "import { applyDiscount } from '../src/pricing';\nimport * as ns from '../src/pricing';";
+    let genuine = one_test(
+        "genuine ns",
+        imports,
+        "  expect(applyDiscount(150)).toBe(135);\n  expect(ns.applyDiscount(100)).toBe(90);",
+    );
+    let evaluated = evaluate(&DISCOUNT, &genuine, true)?;
+    assert_eq!(evaluated.activation("genuine ns")?, A::Witnessed);
+    assert!(evaluated.witnessed);
+    let shadowed = one_test(
+        "shadowed ns",
+        imports,
+        "  expect(applyDiscount(150)).toBe(135);\n  const ns = fakePricing();\n  expect(ns.applyDiscount(100)).toBe(90);",
+    );
+    let evaluated = evaluate(&DISCOUNT, &shadowed, true)?;
+    assert_eq!(evaluated.row("shadowed ns")?.1, R::DirectOwnerCall);
+    assert_ne!(evaluated.activation("shadowed ns")?, A::Witnessed);
+    assert!(!evaluated.witnessed);
+    Ok(())
+}

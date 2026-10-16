@@ -463,3 +463,31 @@ fn loose_number_facts_bind_the_observed_call_to_the_owner_import() -> Result<(),
     assert_eq!(foreign.2, 0, "foreign bare");
     Ok(())
 }
+
+/// A test-body `const ns = ...` shadows the `import * as ns` owner namespace:
+/// a pin through `ns.lineCount(...)` reads the local, not the owner, so it
+/// earns no credit although the test relates through a real owner call.
+#[test]
+fn loose_number_facts_refuse_a_pin_through_a_shadowed_namespace_import() -> Result<(), String> {
+    let test = |body: &str| {
+        format!(
+            "import test from \"node:test\";\nimport assert from \"node:assert\";\nimport {{ lineCount }} from \"../src/linecount\";\nimport * as ns from \"../src/linecount\";\n\ntest(\"counts\", () => {{\n{body}\n}});\n"
+        )
+    };
+    // Control: the same pin through the unshadowed namespace is credited.
+    let genuine = line_count_facts(
+        "typed-ns-genuine",
+        &test("  lineCount([\"a\"]);\n  assert.equal(ns.lineCount([\"a\"]), 1);"),
+    )?;
+    assert_eq!(genuine, (1, 1, 1), "unshadowed namespace pin");
+    let shadowed = line_count_facts(
+        "typed-ns-shadowed",
+        &test(
+            "  lineCount([\"a\"]);\n  const ns = fakeCounts();\n  assert.equal(ns.lineCount([\"a\"]), 1);",
+        ),
+    )?;
+    assert_eq!(shadowed.0, 1, "shadowed ns: the real owner call relates");
+    assert_eq!(shadowed.1, 1, "shadowed ns: the pin is marked");
+    assert_eq!(shadowed.2, 0, "shadowed ns: the pin must not be credited");
+    Ok(())
+}

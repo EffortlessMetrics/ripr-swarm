@@ -488,3 +488,50 @@ fn dropped_term_reads_a_renamed_default_import() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// A test-body `const ns = ...` shadows the `import * as ns` owner namespace:
+/// a non-zero `ns.price(...)` pin reads the local, not the owner, so it cannot
+/// supply the non-zero input the dropped term needs. The real owner call only
+/// tests a zero input.
+#[test]
+fn dropped_term_ignores_a_pin_through_a_shadowed_namespace_import() -> Result<(), String> {
+    let dropped = "  return subtotal + shipping(subtotal) + FLAT;";
+    let test = |body: &str| {
+        format!(
+            "import {{ price }} from \"../src/price\";\nimport * as ns from \"../src/price\";\ntest(\"price\", () => {{\n{body}\n}});\n"
+        )
+    };
+    let genuine = price_finding(
+        "dropped-term-ns-genuine",
+        &test("  expect(price(6000, 0)).toBe(6499);\n  expect(ns.price(6000, 5)).toBe(6504);"),
+        dropped,
+    )?;
+    assert_eq!(
+        genuine.class,
+        ExposureClass::Exposed,
+        "unshadowed namespace pin: {:?}",
+        genuine.missing
+    );
+    let shadowed = price_finding(
+        "dropped-term-ns-shadowed",
+        &test(
+            "  expect(price(6000, 0)).toBe(6499);\n  const ns = fakePrice();\n  expect(ns.price(6000, 5)).toBe(6504);",
+        ),
+        dropped,
+    )?;
+    assert_eq!(
+        shadowed.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        shadowed.missing
+    );
+    assert!(
+        shadowed
+            .missing
+            .iter()
+            .any(|line| line.contains("`fee`, which is 0 for every tested input")),
+        "{:?}",
+        shadowed.missing
+    );
+    Ok(())
+}

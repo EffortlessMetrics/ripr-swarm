@@ -677,3 +677,57 @@ fn issue7507_loop_condition_call_is_not_a_shadow() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// A test-body `const ns = ...` shadows the `import * as ns` owner namespace:
+/// `ns.price(150)` reads the local, so it does not observe the owner even
+/// though a real `price(150)` call keeps the test related.
+#[test]
+fn issue7507_body_local_namespace_shadow_does_not_observe_owner() -> Result<(), String> {
+    let assert_pins = |tests: &[TypeScriptTest]| -> Result<(), String> {
+        let observed: Vec<_> = tests
+            .iter()
+            .flat_map(|test| &test.assertions)
+            .filter(|assertion| {
+                assertion.oracle_kind == OracleKind::ExactValue
+                    && assertion.oracle_strength == OracleStrength::Strong
+            })
+            .filter_map(|assertion| assertion.observed_expression.as_deref())
+            .collect();
+        if observed.contains(&"ns.price(150)") {
+            Ok(())
+        } else {
+            Err(format!("unexpected strong pins: {observed:?}"))
+        }
+    };
+    let owners = owners_of_lib(&named_lib());
+    let owner = price_owner_named(&owners)?.clone();
+    let imports = "import { price } from '../src/lib';\nimport * as ns from '../src/lib';\n";
+    let genuine = format!(
+        "{imports}test('p', () => {{\n  price(150);\n  expect(ns.price(150)).toBe(140);\n}});\n"
+    );
+    let tests = tests_of(&genuine);
+    assert_pins(&tests)?;
+    let finding = classify_at_changed(&owners, &tests)?;
+    if !matches!(finding.class, ExposureClass::Exposed) {
+        return Err(format!(
+            "unshadowed namespace pin must read exposed, got {:?}",
+            finding.class
+        ));
+    }
+    let shadowed = format!(
+        "{imports}test('p', () => {{\n  price(150);\n  const ns = fakeLib();\n  expect(ns.price(150)).toBe(140);\n}});\n"
+    );
+    let tests = tests_of(&shadowed);
+    assert_pins(&tests)?;
+    if !relations_of(&owner, &tests)
+        .iter()
+        .any(|relation| relation.uses_oracle())
+    {
+        return Err("the real owner call must keep the test related".to_string());
+    }
+    let finding = classify_at_changed(&owners, &tests)?;
+    if matches!(finding.class, ExposureClass::Exposed) {
+        return Err("a pin through a shadowed namespace must not read exposed".to_string());
+    }
+    Ok(())
+}

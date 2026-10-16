@@ -742,3 +742,38 @@ fn identity_copy_subject_reads_both_directions() {
         );
     }
 }
+
+/// A test-body `const ns = ...` shadows the `import * as ns` owner namespace:
+/// an `ns.ready(...)` input that lacks the field belongs to the local, not the
+/// owner, so it cannot show the spread override is noticed.
+#[test]
+fn spread_override_ignores_an_input_through_a_shadowed_namespace_import() -> Result<(), String> {
+    let test = |body: &str| {
+        format!(
+            "import {{ ready }} from \"../src/settings\";\nimport * as ns from \"../src/settings\";\ntest(\"ready\", () => {{\n  {body}\n}});\n"
+        )
+    };
+    let removed = "  return { ...cfg, ok: true };";
+    let genuine = settings_finding(
+        "spread-ns-genuine",
+        &test(
+            "expect(ready({ ok: true })).toEqual({ ok: true });\n  expect(ns.ready({ name: \"bo\" })).toEqual({ name: \"bo\", ok: true });",
+        ),
+        removed,
+    )?;
+    assert_eq!(genuine.class, ExposureClass::Exposed, "{:?}", genuine.missing);
+    let shadowed = settings_finding(
+        "spread-ns-shadowed",
+        &test(
+            "expect(ready({ ok: true })).toEqual({ ok: true });\n  const ns = fakeSettings();\n  expect(ns.ready({ name: \"bo\" })).toEqual({ name: \"bo\", ok: true });",
+        ),
+        removed,
+    )?;
+    assert_eq!(
+        shadowed.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        shadowed.missing
+    );
+    Ok(())
+}
