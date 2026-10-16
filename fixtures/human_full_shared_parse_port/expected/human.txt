@@ -31,11 +31,11 @@ Write a test for it:
 
 Hidden:
   4 lower-priority finding(s) omitted; 2 base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:3 (weakly_exposed)
-    - ./src/lib.rs:3 (weakly_exposed)
-    - ./src/lib.rs:3 (weakly_exposed)
-    - ./src/lib.rs:3 (weakly_exposed)
-    - ./src/lib.rs:4 (weakly_exposed)
-    - ./src/lib.rs:4 (weakly_exposed)
+    - ./src/lib.rs:3 (weakly_exposed, base-side)
+    - ./src/lib.rs:3 (weakly_exposed, lower-priority candidate)
+    - ./src/lib.rs:3 (weakly_exposed, lower-priority candidate)
+    - ./src/lib.rs:3 (weakly_exposed, base-side)
+    - ./src/lib.rs:4 (weakly_exposed, lower-priority candidate)
+    - ./src/lib.rs:4 (weakly_exposed, lower-priority candidate)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
