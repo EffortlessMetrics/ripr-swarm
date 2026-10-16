@@ -659,6 +659,8 @@ fn check_help_default_is_one_screen_and_all_is_exhaustive() -> Result<(), String
         "exit 0 regardless of findings",
         "`ripr gate evaluate` owns blocking decisions",
         "ripr check --help --all",
+        "never a percentage or ETA",
+        "walks up to a Cargo.toml containing [workspace]",
     ] {
         assert_contains("check help (`ripr check --help`)", &short_n, needle)?;
     }

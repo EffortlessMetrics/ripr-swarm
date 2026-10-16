@@ -145,13 +145,19 @@ Common options:
   --mode MODE       instant (changed files only, cheapest), draft (the
                     default), deep and ready (whole workspace, slowest).
   --root PATH       Workspace root. Defaults to the current directory, then
-                    walks up to the nearest Cargo.toml.
+                    walks up to a Cargo.toml containing [workspace]; without
+                    one, to the nearest Cargo.toml or the git top level.
   --quiet           Suppress progress on stderr.
   --help --all      Show every option, format, and environment variable.
 
 Exit status: complete and partial_with_limitations reports exit 0
 regardless of findings; unsupported_input and usage errors exit 2. Do not
 use `check` as a CI gate; `ripr gate evaluate` owns blocking decisions.
+
+Progress: long runs write `ripr progress: <stage>` lines to stderr. Totals
+are unknown, so there is never a percentage or ETA, and progress makes no
+claim about speed or success. Machine stdout stays byte-clean; `--quiet`
+turns the stream off.
 
 Examples:
   ripr check
