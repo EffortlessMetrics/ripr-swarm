@@ -50,8 +50,8 @@ use std::path::{Path, PathBuf};
 use rayon::prelude::*;
 
 use super::cargo_targets::{
-    collect_explicit_paths, declared_targets_from_manifest, lexical, nearest_manifest_dir,
-    normalize, owning_package_dir,
+    collect_explicit_paths, declared_targets_from_manifest, inert_test_roots_from_value, lexical,
+    nearest_manifest_dir, normalize, owning_package_dir,
 };
 use super::source_role::SourceRoleContext;
 use crate::analysis::syntax::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
@@ -698,9 +698,14 @@ fn evidence_roots(
             roots.extend(named_default_roots(manifest.get(section), &dir));
         }
     }
+    // A `[[test]]` that `cargo test` never runs as libtest (`test = false`,
+    // `harness = false`, unmet `required-features`) is declared and may be
+    // autodiscovered, but its `#[test]` functions are no evidence (#8016).
+    let inert = inert_test_roots_from_value(manifest, package_dir);
     roots
         .into_iter()
         .map(|root| lexical(&normalize(&root)))
+        .filter(|root| !inert.contains(root))
         .collect()
 }
 

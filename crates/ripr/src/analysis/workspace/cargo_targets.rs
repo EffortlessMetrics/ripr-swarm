@@ -138,6 +138,83 @@ pub(super) fn collect_explicit_paths(
     }
 }
 
+/// Roots of `[[test]]` entries that `cargo test` builds but never runs as
+/// libtest tests (#8016): `test = false`, `harness = false` (the target is
+/// a plain `main`, so its `#[test]` functions are never collected) or a
+/// `required-features` list that cargo's default feature set does not
+/// satisfy (#7266). An entry with a `path` names that file; a name-only
+/// entry names both default layouts, `tests/<name>.rs` and
+/// `tests/<name>/main.rs`. Only a boolean `false` or a string-array
+/// `required-features` is read, so a malformed key skips nothing.
+pub(crate) fn inert_test_roots_from_value(
+    manifest: &toml::Value,
+    manifest_dir: &Path,
+) -> BTreeSet<PathBuf> {
+    let mut roots = BTreeSet::new();
+    let Some(entries) = manifest.get("test").and_then(toml::Value::as_array) else {
+        return roots;
+    };
+    let features = manifest
+        .get("features")
+        .and_then(toml::Value::as_table)
+        .map(|table| {
+            table
+                .iter()
+                .filter_map(|(name, enables)| {
+                    let items = enables.as_array()?;
+                    Some((
+                        name.clone(),
+                        items
+                            .iter()
+                            .filter_map(toml::Value::as_str)
+                            .map(str::to_string)
+                            .collect::<Vec<_>>(),
+                    ))
+                })
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let mut enabled = None;
+    for entry in entries {
+        let flag_off = |key: &str| entry.get(key).and_then(toml::Value::as_bool) == Some(false);
+        let unmet_features = entry
+            .get("required-features")
+            .and_then(toml::Value::as_array)
+            .is_some_and(|required| {
+                let enabled = enabled.get_or_insert_with(|| expand_default_features(&features));
+                required.iter().any(|item| {
+                    item.as_str()
+                        .is_none_or(|name| !enabled.contains(name.trim()))
+                })
+            });
+        if !(flag_off("test") || flag_off("harness") || unmet_features) {
+            continue;
+        }
+        let path = entry
+            .get("path")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty());
+        let name = entry
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty());
+        match (path, name) {
+            (Some(path), _) => {
+                roots.insert(lexical(&normalize(&manifest_dir.join(path))));
+            }
+            (None, Some(name)) => {
+                let tests = manifest_dir.join("tests");
+                roots.insert(lexical(&normalize(&tests.join(format!("{name}.rs")))));
+                roots.insert(lexical(&normalize(&tests.join(name).join("main.rs"))));
+            }
+            (None, None) => {}
+        }
+    }
+    roots
+}
+
 /// One declared Cargo test target with its effective `harness` flag
 /// (#3608): the parsed Cargo target metadata the harness-registry
 /// validation consumes. `harness` carries Cargo's default (`true`) when
