@@ -11831,11 +11831,18 @@ tests = [
   "crates/ripr/src/cli/command.rs::tests::known_commands_covers_every_parser_spelling",
   "crates/ripr/src/cli/help.rs::tests::help_all_documents_every_public_command",
   "crates/ripr/tests/cli_help_hierarchy.rs::default_help_keeps_the_task_roles_distinct",
+  "crates/ripr/tests/cli_help_hierarchy.rs::bare_groups_display_their_documented_help",
+  "crates/ripr/tests/cli_help_hierarchy.rs::group_help_preserves_explicit_errors_and_gate_flag_alias",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/cli/command_catalog.rs",
   "crates/ripr/src/cli/command.rs",
+  "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/baseline.rs",
+  "crates/ripr/src/cli/commands/cache.rs",
+  "crates/ripr/src/cli/commands/config.rs",
+  "crates/ripr/src/cli/commands/gate.rs",
   "crates/ripr/src/cli/help.rs",
 ]
 outputs = [
@@ -13455,8 +13462,10 @@ tests = [
   "crates/ripr/tests/mcp_stdio.rs::refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation",
   "crates/ripr/tests/mcp_stdio.rs::empty_gap_pages_keep_structured_outcomes_at_the_response_bound",
   "crates/ripr/tests/mcp_stdio.rs::long_request_ids_refuse_typed_before_the_wire_cap",
+  "crates/ripr/tests/mcp_stdio.rs::window_sized_envelope_refuses_typed_instead_of_dropping_structured_content",
   "crates/ripr/src/mcp/protocol.rs::tests::tool_result_fits_and_refuses_at_the_id_aware_envelope_budget",
   "crates/ripr/src/mcp/server_tests.rs::long_request_id_refuses_typed_at_the_id_aware_boundary",
+  "crates/ripr/src/mcp/server_tests.rs::window_sized_gap_item_refuses_typed_instead_of_dropping_structured_content",
   "crates/ripr/src/mcp/server_tests.rs::outer_envelope_budget_reserves_the_escaped_request_id",
   "crates/ripr/src/mcp/workspace.rs::tests::list_gaps_honors_the_id_aware_envelope_budget",
   "crates/ripr/src/mcp/writer.rs::tests::pinned_sdk_wraps_the_measured_envelope_within_the_outer_reserve",
