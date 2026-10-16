@@ -1,0 +1,68 @@
+{
+  "inputs": {
+    "scoped-public-only": {
+      "Cargo.lock": "b6571892f4fff50e388fe0b97de5fc87609c679f50afbdbab1e4d0c0d071cbc0",
+      "change.diff": "f7451522dad108db66b9eaa7df604673a26cdeb08c46fb94dd493014496ebd4a",
+      "Cargo.toml": "5199022a4d609b34ab891450ef9612231999b0c9c801e0fdfa9901afd1000df3",
+      "src/lib.rs": "2266a035b2a871048f37b904c53705881474a503f430526060455d54bd101eaf",
+      "src/globs.rs": "2ae43589c43bc1f8cfdad5c01b90af94f4cdc474deb4618d35cfe3fd3c242fc2",
+      "tests/buf_tests.rs": "93fdb11f88c9c81d9263cb41e7d7b8063d3bb3c0d5ddcdb95cd1149441abb244"
+    }
+  },
+  "records": [
+    {
+      "case": "scoped-public-only",
+      "variant": "baseline",
+      "argv": [
+        "/workspace/scratch/module-scope-walk/baseline-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/8262-frozen-replay/controls/scoped-public-only",
+        "--diff",
+        "/workspace/scratch/8262-frozen-replay/controls/scoped-public-only/change.diff",
+        "--format",
+        "json",
+        "--mode",
+        "ready"
+      ],
+      "cwd": "/workspace/scratch/8262-frozen-replay/controls/scoped-public-only",
+      "elapsed_s": 0.4686830260034185,
+      "exit": 0,
+      "censored": false,
+      "root_cpu_s": 0.5020929999999999,
+      "root_maxrss_kib": 52264,
+      "stdout_bytes": 15533,
+      "stdout_sha256": "acddc380ad22dc1b12186e8112790fe3f51b449a3673392a63bc4cd385ae155b",
+      "binary_sha256": "6af070bb0f6152b5d61cf232e980e725dd2e58f7eea47bba295730d7fba49424",
+      "cache": "/workspace/scratch/8262-frozen-replay/cache-control-scoped-public-only-baseline",
+      "remaining_owned": {}
+    },
+    {
+      "case": "scoped-public-only",
+      "variant": "candidate",
+      "argv": [
+        "/workspace/scratch/8262-frozen-replay/candidate-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/8262-frozen-replay/controls/scoped-public-only",
+        "--diff",
+        "/workspace/scratch/8262-frozen-replay/controls/scoped-public-only/change.diff",
+        "--format",
+        "json",
+        "--mode",
+        "ready"
+      ],
+      "cwd": "/workspace/scratch/8262-frozen-replay/controls/scoped-public-only",
+      "elapsed_s": 0.1246181640017312,
+      "exit": 0,
+      "censored": false,
+      "root_cpu_s": 0.129302,
+      "root_maxrss_kib": 52724,
+      "stdout_bytes": 14228,
+      "stdout_sha256": "18a9132dee3254b14cfd1811fbbee45cbe5828b687bf077a2512fbf6e5dca29e",
+      "binary_sha256": "b34e6e710bc1550e932cb6461df352a8091432f5d9f2c16875962276eaab1976",
+      "cache": "/workspace/scratch/8262-frozen-replay/cache-control-scoped-public-only-candidate",
+      "remaining_owned": {}
+    }
+  ]
+}

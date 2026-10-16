@@ -1,0 +1,226 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "ready",
+  "root": "/workspace/scratch/8262-frozen-replay/controls/scoped-public-only",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":2,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:f7451522dad108db66b9eaa7df604673a26cdeb08c46fb94dd493014496ebd4a","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:d545be08",
+      "canonical_gap_id": "gap:rust:src/lib.rs:gate:predicate_boundary:predicate:10==value",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:gate:predicate_boundary:predicate:10==value",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "gate",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "10==value"
+
+      },
+      "classification": "reachable_unrevealed",
+      "severity": "warning",
+      "confidence": 0.79,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:d545be08",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 3,
+        "expression": "10 <= value"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach gate: pins"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: 10 <= value"},
+        "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach gate: pins", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: 10 <= value", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: 10 <= value (line 3)", "related test tests/buf_tests.rs:10 pins uses none unknown oracle", "source assertion argument value true at line 11", "source function argument value value = 10 at line 11", "source function argument value value == 10 at line 11"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"10 <= value","line":3}
+      ],
+      "evidence": ["Changed behavior appears to influence returned value: 10 <= value", "Detected related test input at the changed boundary", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Related tests appear to reach gate: pins", "assertion not credited: `assert_eq!` in pins at tests/buf_tests.rs:11: tests/buf_tests.rs:2 defines a macro named `assert_eq`"],
+      "missing": ["No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "11": "assert_eq!(gate(10), true);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 11,
+            "value": "true",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 11,
+            "value": "value = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 11,
+            "value": "value == 10",
+            "context": "function_argument",
+            "provenance": "assert_eq!(gate(10), true); | exact input value = 10; literal operand 10 = 10"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 11,
+          "value": "true",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 11,
+          "value": "value = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 11,
+          "value": "value == 10",
+          "context": "function_argument",
+          "provenance": "assert_eq!(gate(10), true); | exact input value = 10; literal operand 10 = 10"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "pins",
+          "file": "tests/buf_tests.rs",
+          "line": 10,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "ripr did not credit the `assert_eq!` in pins at tests/buf_tests.rs:11; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "suggested_next_action": "ripr did not credit the `assert_eq!` in pins at tests/buf_tests.rs:11; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:a3aaa801",
+      "canonical_gap_id": "gap:rust:src/lib.rs:gate:return_value:return_value:10<=value",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:gate:return_value:return_value:10<=value",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "gate",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "10<=value"
+
+      },
+      "classification": "reachable_unrevealed",
+      "severity": "warning",
+      "confidence": 0.79,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:a3aaa801",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 3,
+        "expression": "10 <= value"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach gate: pins"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: 10 <= value"},
+        "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach gate: pins", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: 10 <= value", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: 10 <= value (line 3)", "related test tests/buf_tests.rs:10 pins uses none unknown oracle", "source assertion argument value true at line 11", "source function argument value value = 10 at line 11", "source function argument value value == 10 at line 11"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"10 <= value","line":3}
+      ],
+      "evidence": ["Complete propagation witness reaches returned value: 10 <= value", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach gate: pins", "assertion not credited: `assert_eq!` in pins at tests/buf_tests.rs:11: tests/buf_tests.rs:2 defines a macro named `assert_eq`"],
+      "missing": ["No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "11": "assert_eq!(gate(10), true);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 11,
+            "value": "true",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 11,
+            "value": "value = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 11,
+            "value": "value == 10",
+            "context": "function_argument",
+            "provenance": "assert_eq!(gate(10), true); | exact input value = 10; literal operand 10 = 10"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 11,
+          "value": "true",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 11,
+          "value": "value = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 11,
+          "value": "value == 10",
+          "context": "function_argument",
+          "provenance": "assert_eq!(gate(10), true); | exact input value = 10; literal operand 10 = 10"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "pins",
+          "file": "tests/buf_tests.rs",
+          "line": 10,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "ripr did not credit the `assert_eq!` in pins at tests/buf_tests.rs:11; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "suggested_next_action": "ripr did not credit the `assert_eq!` in pins at tests/buf_tests.rs:11; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "canonical_next_action": {"schema_version":"canonical_next_action.v1","producer":"check_top_result","subject":{"root":"/workspace/scratch/8262-frozen-replay/controls/scoped-public-only","diff_source":{"committed":{"base":null,"head":null}},"item":"probe:src_lib.rs:predicate:d545be08"},"currentness":{"head_expected":null,"head_observed":null,"config_expected":null,"config_observed":null},"action_class":"inspect_details","stop":{"kind":"check_triage","case":"top_gap","detail_route":"ripr explain --root /workspace/scratch/8262-frozen-replay/controls/scoped-public-only --diff /workspace/scratch/8262-frozen-replay/controls/scoped-public-only/change.diff --mode ready probe:src_lib.rs:predicate:d545be08"},"alternatives":[{"label":"considered finding probe:src_lib.rs:return_value:a3aaa801","route":"ripr explain --root /workspace/scratch/8262-frozen-replay/controls/scoped-public-only --diff /workspace/scratch/8262-frozen-replay/controls/scoped-public-only/change.diff --mode ready probe:src_lib.rs:return_value:a3aaa801"}],"non_claim":"Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."}
+}

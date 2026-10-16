@@ -1,0 +1,24 @@
+
+running 1 test
+test analysis::classify::owner_pin::tests::reviewer_exact8262_three_oracle_cases ... ORACLE_CASE=positive-global-only ROOT=None INITIAL_COMPLETE=false OLD=Some(("src/globs.rs", MacroBindingSite { line: 1, kind: ForeignGlob("use std::io::prelude::*;"), scope: None, crate_local: true })) RETAINED=Some(("src/globs.rs", MacroBindingSite { line: 1, kind: ForeignGlob("use std::io::prelude::*;"), scope: None, crate_local: true }))
+ORACLE_CASE=positive-global-only ROOT=Some("src/lib.rs") INITIAL_COMPLETE=false OLD=Some(("src/globs.rs", MacroBindingSite { line: 1, kind: ForeignGlob("use std::io::prelude::*;"), scope: None, crate_local: true })) RETAINED=Some(("src/globs.rs", MacroBindingSite { line: 1, kind: ForeignGlob("use std::io::prelude::*;"), scope: None, crate_local: true }))
+ORACLE_CASE=positive-global-only ROOT=Some("tests/buf_tests.rs") INITIAL_COMPLETE=false OLD=Some(("src/globs.rs", MacroBindingSite { line: 1, kind: ForeignGlob("use std::io::prelude::*;"), scope: None, crate_local: true })) RETAINED=Some(("src/globs.rs", MacroBindingSite { line: 1, kind: ForeignGlob("use std::io::prelude::*;"), scope: None, crate_local: true }))
+ORACLE_CASE=scoped-rest-definition ROOT=None INITIAL_COMPLETE=false OLD=Some(("src/globs.rs", MacroBindingSite { line: 1, kind: ForeignGlob("use std::io::prelude::*;"), scope: None, crate_local: true })) RETAINED=Some(("tests/buf_tests.rs", MacroBindingSite { line: 2, kind: Definition, scope: Some((1, 5)), crate_local: true }))
+ORACLE_CASE=scoped-rest-definition ROOT=Some("src/lib.rs") INITIAL_COMPLETE=false OLD=Some(("src/globs.rs", MacroBindingSite { line: 1, kind: ForeignGlob("use std::io::prelude::*;"), scope: None, crate_local: true })) RETAINED=Some(("src/globs.rs", MacroBindingSite { line: 1, kind: ForeignGlob("use std::io::prelude::*;"), scope: None, crate_local: true }))
+ORACLE_CASE=scoped-rest-definition ROOT=Some("tests/buf_tests.rs") INITIAL_COMPLETE=false OLD=Some(("src/globs.rs", MacroBindingSite { line: 1, kind: ForeignGlob("use std::io::prelude::*;"), scope: None, crate_local: true })) RETAINED=Some(("tests/buf_tests.rs", MacroBindingSite { line: 2, kind: Definition, scope: Some((1, 5)), crate_local: true }))
+PRODUCTION_REFUSAL=Some(MacroBinding { name: "assert_eq", site: Some(("tests/buf_tests.rs", MacroBindingSite { line: 2, kind: Definition, scope: Some((1, 5)), crate_local: true })) }) ACTUAL_IS_ANALYZER_LIMIT=Some(false) OLD_ORACLE_IS_ANALYZER_LIMIT=true
+ORACLE_CASE=trusted-subset ROOT=None INITIAL_COMPLETE=false OLD=Some(("src/a.rs", MacroBindingSite { line: 1, kind: MacroArgument("stringify"), scope: None, crate_local: false })) RETAINED=Some(("src/z.rs", MacroBindingSite { line: 1, kind: ForeignGlob("pub use std::fmt::*;"), scope: None, crate_local: false }))
+ORACLE_CASE=trusted-subset ROOT=Some("src/lib.rs") INITIAL_COMPLETE=false OLD=Some(("src/a.rs", MacroBindingSite { line: 1, kind: MacroArgument("stringify"), scope: None, crate_local: false })) RETAINED=Some(("src/z.rs", MacroBindingSite { line: 1, kind: ForeignGlob("pub use std::fmt::*;"), scope: None, crate_local: false }))
+ORACLE_CASE=trusted-subset ROOT=Some("tests/buf_tests.rs") INITIAL_COMPLETE=false OLD=Some(("src/a.rs", MacroBindingSite { line: 1, kind: MacroArgument("stringify"), scope: None, crate_local: false })) RETAINED=Some(("src/z.rs", MacroBindingSite { line: 1, kind: ForeignGlob("pub use std::fmt::*;"), scope: None, crate_local: false }))
+ORACLE_CASE=same-path-rank ROOT=None INITIAL_COMPLETE=false OLD=Some(("src/lib.rs", MacroBindingSite { line: 1, kind: ForeignGlob("use std::io::prelude::*;"), scope: None, crate_local: true })) RETAINED=Some(("src/lib.rs", MacroBindingSite { line: 2, kind: ForeignGlob("pub use std::fmt::*;"), scope: None, crate_local: false }))
+ORACLE_CASE=same-path-rank ROOT=Some("src/lib.rs") INITIAL_COMPLETE=false OLD=Some(("src/lib.rs", MacroBindingSite { line: 1, kind: ForeignGlob("use std::io::prelude::*;"), scope: None, crate_local: true })) RETAINED=Some(("src/lib.rs", MacroBindingSite { line: 2, kind: ForeignGlob("pub use std::fmt::*;"), scope: None, crate_local: false }))
+ORACLE_CASE=same-path-rank ROOT=Some("tests/buf_tests.rs") INITIAL_COMPLETE=false OLD=Some(("src/lib.rs", MacroBindingSite { line: 2, kind: ForeignGlob("pub use std::fmt::*;"), scope: None, crate_local: false })) RETAINED=Some(("src/lib.rs", MacroBindingSite { line: 2, kind: ForeignGlob("pub use std::fmt::*;"), scope: None, crate_local: false }))
+FAILED
+
+failures:
+
+failures:
+    analysis::classify::owner_pin::tests::reviewer_exact8262_three_oracle_cases
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 9369 filtered out; finished in 0.05s
+

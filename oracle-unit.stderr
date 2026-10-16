@@ -1,0 +1,270 @@
+   Compiling syn v3.0.6
+   Compiling syn v2.0.119
+   Compiling futures-macro v0.3.34
+   Compiling tracing-attributes v0.1.31
+   Compiling futures-util v0.3.34
+   Compiling ref-cast-impl v1.0.27
+   Compiling serde_derive v1.0.229
+   Compiling num-traits v0.2.19
+   Compiling tracing v0.1.44
+   Compiling ref-cast v1.0.27
+   Compiling tokio-macros v2.7.2
+   Compiling tokio v1.53.2
+   Compiling serde v1.0.229
+   Compiling futures-executor v0.3.34
+   Compiling serde_derive_internals v0.29.1
+   Compiling fluent-uri v0.4.1
+   Compiling schemars_derive v1.2.1
+   Compiling tokio-util v0.7.20
+   Compiling futures v0.3.34
+   Compiling chrono v0.4.45
+   Compiling thiserror-impl v2.0.20
+   Compiling hashbrown v0.17.1
+   Compiling schemars v1.2.1
+   Compiling thiserror v2.0.20
+   Compiling ra_ap_parser v0.0.349
+   Compiling ra_ap_stdx v0.0.349
+   Compiling indexmap v2.14.2
+   Compiling tower v0.5.3
+   Compiling ls-types v0.0.6
+   Compiling tokio-stream v0.1.19
+   Compiling serial_test_derive v4.0.1
+   Compiling ripr v0.11.0 (/workspace/8262-frozen-replay/crates/ripr)
+   Compiling ra_ap_syntax v0.0.349
+   Compiling proptest v1.11.0
+   Compiling tower-lsp-server v0.23.0
+   Compiling rmcp v3.5.1
+   Compiling serial_test v4.0.1
+warning: unused import: `model::lines_look_alike`
+  --> crates/ripr/src/analysis/diff/mod.rs:24:16
+   |
+24 | pub(crate) use model::lines_look_alike;
+   |                ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `LanguageAdapter`
+ --> crates/ripr/src/analysis/pipeline.rs:8:5
+  |
+8 |     LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PartialDiffScope,
+  |     ^^^^^^^^^^^^^^^
+
+warning: unused imports: `expected_sinks` and `required_oracles`
+  --> crates/ripr/src/analysis/probes/mod.rs:25:31
+   |
+25 | pub(crate) use expectations::{expected_sinks, required_oracles};
+   |                               ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^
+
+warning: unused imports: `fingerprint_probe_id` and `normalize_expression`
+  --> crates/ripr/src/analysis/mod.rs:85:5
+   |
+85 |     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
+   |     ^^^^^^^^^^^^^^^^^^^^                                   ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `HashMap`
+   --> crates/ripr/src/analysis/mod.rs:476:34
+    |
+476 | use std::collections::{BTreeSet, HashMap};
+    |                                  ^^^^^^^
+
+warning: unused imports: `declared_python_handwritten_under` and `is_python_dir_pruned_from_repo_discovery`
+  --> crates/ripr/src/config.rs:40:56
+   |
+40 |     PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, declared_python_handwritten_under,
+   |                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+43 |     is_python_dir_pruned_from_repo_discovery, is_python_excluded_dir_everywhere,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `PYTEST_VERIFY_PROGRAM`
+  --> crates/ripr/src/domain/mod.rs:92:27
+   |
+92 | pub(crate) use language::{PYTEST_VERIFY_PROGRAM, is_pytest_verify_command};
+   |                           ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `disable_retained_analysis_actions`
+ --> crates/ripr/src/lsp/tests.rs:2:53
+  |
+2 |     SERVER_EXECUTED_COMMANDS, code_action_response, disable_retained_analysis_actions,
+  |                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ADVERTISED_CODE_ACTION_KINDS`
+  --> crates/ripr/src/lsp/tests.rs:10:5
+   |
+10 |     ADVERTISED_CODE_ACTION_KINDS, WorkspaceRootResolution, initialize_result,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `AnalysisHealth`
+  --> crates/ripr/src/lsp/tests.rs:40:48
+   |
+40 |     AnalysisAttemptState, AnalysisFailureKind, AnalysisHealth, AnalysisSnapshot,
+   |                                                ^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> crates/ripr/src/app/repair_attempt/mod.rs:3882:13
+     |
+3882 |         let mut targets = vec!["tests/pricing.rs", "tests/helpers/mod.rs", "test/smoke.py"];
+     |             ----^^^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `fixture_diff_input` is never used
+   --> crates/ripr/src/app/explain.rs:234:8
+    |
+234 |     fn fixture_diff_input(name: &str) -> CheckInput {
+    |        ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `require_contains` is never used
+   --> crates/ripr/src/app/explain.rs:247:8
+    |
+247 |     fn require_contains(rendered: &str, needle: &str) -> Result<(), String> {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `require_not_contains` is never used
+   --> crates/ripr/src/app/explain.rs:257:8
+    |
+257 |     fn require_not_contains(rendered: &str, needle: &str) -> Result<(), String> {
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `explain_fixture` is never used
+   --> crates/ripr/src/app/explain.rs:267:8
+    |
+267 |     fn explain_fixture(name: &str, selector: &str) -> Result<String, String> {
+    |        ^^^^^^^^^^^^^^^
+
+warning: function `preview_entry` is never used
+ --> crates/ripr/src/app/tests/preview_analyzed_outcome.rs:5:4
+  |
+5 | fn preview_entry(rendered: &str, context: &str) -> Result<Value, String> {
+  |    ^^^^^^^^^^^^^
+
+warning: function `write` is never used
+  --> crates/ripr/src/app/tests/preview_analyzed_outcome.rs:16:4
+   |
+16 | fn write(path: &Path, contents: &str) -> Result<(), String> {
+   |    ^^^^^
+
+warning: function `temp_root` is never used
+  --> crates/ripr/src/app/tests/preview_analyzed_outcome.rs:20:4
+   |
+20 | fn temp_root(name: &str) -> Result<std::path::PathBuf, String> {
+   |    ^^^^^^^^^
+
+warning: function `assert_renderer_agreement` is never used
+  --> crates/ripr/src/app/tests/preview_analyzed_outcome.rs:30:4
+   |
+30 | fn assert_renderer_agreement(
+   |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `language_runtime_probes` is never used
+   --> crates/ripr/src/cli/commands/doctor.rs:788:4
+    |
+788 | fn language_runtime_probes(root: &Path) -> Vec<(&'static str, &'static str, &'static str)> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `posix_words` is never used
+    --> crates/ripr/src/cli/commands.rs:6697:8
+     |
+6697 |     fn posix_words(command: &str) -> Result<Vec<String>, String> {
+     |        ^^^^^^^^^^^
+
+warning: function `declared_python_handwritten_under` is never used
+   --> crates/ripr/src/config/python.rs:118:15
+    |
+118 | pub(crate) fn declared_python_handwritten_under(declared: &[String], dir: &Path) -> bool {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_gap_action_specs_omitted` is never used
+    --> crates/ripr/src/lsp/tests.rs:4319:4
+     |
+4319 | fn assert_gap_action_specs_omitted(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_gap_actions_refresh_only` is never used
+    --> crates/ripr/src/lsp/tests.rs:4339:4
+     |
+4339 | fn assert_gap_actions_refresh_only(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `gap_action_commands_for_artifact` is never used
+    --> crates/ripr/src/lsp/tests.rs:4355:4
+     |
+4355 | fn gap_action_commands_for_artifact(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `PushPullParityProfile` is never used
+    --> crates/ripr/src/lsp/tests.rs:7319:6
+     |
+7319 | enum PushPullParityProfile {
+     |      ^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `label` is never used
+    --> crates/ripr/src/lsp/tests.rs:7331:8
+     |
+7330 | impl PushPullParityProfile {
+     | -------------------------- method in this implementation
+7331 |     fn label(self) -> &'static str {
+     |        ^^^^^
+
+warning: function `push_pull_parity_initialize_params` is never used
+    --> crates/ripr/src/lsp/tests.rs:7344:4
+     |
+7344 | fn push_pull_parity_initialize_params(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `commit_push_pull_parity_fixture` is never used
+    --> crates/ripr/src/lsp/tests.rs:7399:4
+     |
+7399 | fn commit_push_pull_parity_fixture(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `action_availability_signature` is never used
+    --> crates/ripr/src/lsp/tests.rs:7460:4
+     |
+7460 | fn action_availability_signature(actions: &[CodeActionOrCommand]) -> Result<Vec<String>, String> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_parity_snapshot_admitted` is never used
+    --> crates/ripr/src/lsp/tests.rs:7499:4
+     |
+7499 | fn assert_parity_snapshot_admitted(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_gap_actions_present` is never used
+    --> crates/ripr/src/lsp/tests.rs:7534:4
+     |
+7534 | fn assert_gap_actions_present(actions: &[CodeActionOrCommand], leg: &str) -> Result<(), String> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `run_push_pull_parity_leg` is never used
+    --> crates/ripr/src/lsp/tests.rs:7559:10
+     |
+7559 | async fn run_push_pull_parity_leg(profile: PushPullParityProfile) -> Result<(), String> {
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_rust_toolchain_skipped` is never used
+    --> crates/ripr/src/output/doctor.rs:3111:8
+     |
+3111 |     fn assert_rust_toolchain_skipped(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `ripr` (lib test) generated 34 warnings (run `cargo fix --lib -p ripr --tests` to apply 11 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8m 39s
+     Running unittests src/lib.rs (/workspace/ripr-swarm/target/debug/deps/ripr-962439b520a82ea5)
+
+thread 'analysis::classify::owner_pin::tests::reviewer_exact8262_three_oracle_cases' (28255) panicked at crates/ripr/src/analysis/classify/owner_pin/tests.rs:10185:5:
+retained-site oracle parity failures: [
+    "scoped-rest-definition at None: old=Some((\"src/globs.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"use std::io::prelude::*;\"), scope: None, crate_local: true })); retained=Some((\"tests/buf_tests.rs\", MacroBindingSite { line: 2, kind: Definition, scope: Some((1, 5)), crate_local: true }))",
+    "scoped-rest-definition at Some(\"tests/buf_tests.rs\"): old=Some((\"src/globs.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"use std::io::prelude::*;\"), scope: None, crate_local: true })); retained=Some((\"tests/buf_tests.rs\", MacroBindingSite { line: 2, kind: Definition, scope: Some((1, 5)), crate_local: true }))",
+    "trusted-subset at None: old=Some((\"src/a.rs\", MacroBindingSite { line: 1, kind: MacroArgument(\"stringify\"), scope: None, crate_local: false })); retained=Some((\"src/z.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"pub use std::fmt::*;\"), scope: None, crate_local: false }))",
+    "trusted-subset at Some(\"src/lib.rs\"): old=Some((\"src/a.rs\", MacroBindingSite { line: 1, kind: MacroArgument(\"stringify\"), scope: None, crate_local: false })); retained=Some((\"src/z.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"pub use std::fmt::*;\"), scope: None, crate_local: false }))",
+    "trusted-subset at Some(\"tests/buf_tests.rs\"): old=Some((\"src/a.rs\", MacroBindingSite { line: 1, kind: MacroArgument(\"stringify\"), scope: None, crate_local: false })); retained=Some((\"src/z.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"pub use std::fmt::*;\"), scope: None, crate_local: false }))",
+    "same-path-rank at None: old=Some((\"src/lib.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"use std::io::prelude::*;\"), scope: None, crate_local: true })); retained=Some((\"src/lib.rs\", MacroBindingSite { line: 2, kind: ForeignGlob(\"pub use std::fmt::*;\"), scope: None, crate_local: false }))",
+    "same-path-rank at Some(\"src/lib.rs\"): old=Some((\"src/lib.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"use std::io::prelude::*;\"), scope: None, crate_local: true })); retained=Some((\"src/lib.rs\", MacroBindingSite { line: 2, kind: ForeignGlob(\"pub use std::fmt::*;\"), scope: None, crate_local: false }))",
+]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p ripr --lib`

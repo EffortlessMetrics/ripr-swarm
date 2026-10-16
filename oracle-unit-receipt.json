@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--no-default-features",
+    "--features",
+    "lang-rust",
+    "--lib",
+    "reviewer_exact8262_three_oracle_cases",
+    "--",
+    "--nocapture"
+  ],
+  "exit": 101,
+  "elapsed_s": 523.8140386119994,
+  "head": "55b159437a75f3f9403a8845f040473ba97c85a0",
+  "executed_reviewer_tree": "6fad18990c3c7286fd488c90ee0335c0f649cc95",
+  "only_source_delta": "reviewer test appended to owner_pin/tests.rs; production exact55b1594",
+  "environment": {
+    "CARGO_HOME": "/workspace/.cargo",
+    "RUSTUP_HOME": "/workspace/.rustup",
+    "RUSTUP_TOOLCHAIN": "1.95.0",
+    "CARGO_TARGET_DIR": "/workspace/ripr-swarm/target",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "2",
+    "RUST_TEST_THREADS": "1"
+  },
+  "binary_sha256": "c72336f71dcc2211560cfc0aaf599f375f2a9c09dc00a6151579f0e1054286ac",
+  "binary_bytes": 365402264
+}

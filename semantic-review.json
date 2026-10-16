@@ -1,0 +1,68 @@
+{
+  "head": "55b159437a75f3f9403a8845f040473ba97c85a0",
+  "base": "3477bf95a9ead7f35ec099a4e6cf17af96708003",
+  "case1_scoped_rest": {
+    "direct_oracle_mismatches": 2,
+    "of": 3,
+    "production_refusal_is_analyzer_limit": false,
+    "old_oracle_refusal_is_analyzer_limit": true,
+    "default_cli_baseline": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 0,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 2,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    },
+    "default_cli_candidate": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 0,
+      "reachable_unrevealed": 2,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    },
+    "effect": "2static_unknown findings become2reachable_unrevealed; canonical gaps appear, static-limit disclosure and stop reason removed"
+  },
+  "case2_trusted_subset": {
+    "direct_oracle_mismatches": 3,
+    "of": 3,
+    "default_cli": "oldMacroArgument stringify/src/a.rs:1 becomesForeignGlob/src/z.rs:1; classifications static_unknown remain"
+  },
+  "case3_same_path_rank": {
+    "direct_oracle_mismatches": 2,
+    "of": 3,
+    "old": "src/lib.rs private glob line1 forNone/SomeLIB",
+    "retained": "src/lib.rs public glob line2 forNone/SomeLIB",
+    "integration_root": "bothline2"
+  },
+  "positive_direct_control": {
+    "matched": 3,
+    "queries": 3
+  },
+  "review_checkout_restored_clean": true,
+  "submitted_source_unchanged": true,
+  "performance_clearance": false,
+  "full_failing_input_pair": "held: semantic parity gate fails on requested55; no full-input or hosted timing claim",
+  "successor": "99ddc596b81787a30c0ed438fe40e3f1cd3ef328 observed, not yet replayed"
+}

@@ -1,0 +1,130 @@
+{
+  "head": "55b159437a75f3f9403a8845f040473ba97c85a0",
+  "executed_reviewer_tree": "6fad18990c3c7286fd488c90ee0335c0f649cc95",
+  "native_exit": 101,
+  "positive_control_matches": 3,
+  "compared": 12,
+  "mismatches": 7,
+  "cases": {
+    "positive-global-only": {
+      "queries": 3,
+      "mismatches": 0
+    },
+    "same-path-rank": {
+      "queries": 3,
+      "mismatches": 2
+    },
+    "scoped-rest-definition": {
+      "queries": 3,
+      "mismatches": 2
+    },
+    "trusted-subset": {
+      "queries": 3,
+      "mismatches": 3
+    }
+  },
+  "production_refusal_observation": "PRODUCTION_REFUSAL=Some(MacroBinding { name: \"assert_eq\", site: Some((\"tests/buf_tests.rs\", MacroBindingSite { line: 2, kind: Definition, scope: Some((1, 5)), crate_local: true })) }) ACTUAL_IS_ANALYZER_LIMIT=Some(false) OLD_ORACLE_IS_ANALYZER_LIMIT=true",
+  "rows": [
+    {
+      "case": "positive-global-only",
+      "root": "None",
+      "initial_complete": false,
+      "old": "Some((\"src/globs.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"use std::io::prelude::*;\"), scope: None, crate_local: true }))",
+      "retained": "Some((\"src/globs.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"use std::io::prelude::*;\"), scope: None, crate_local: true }))",
+      "equal": true
+    },
+    {
+      "case": "positive-global-only",
+      "root": "Some(\"src/lib.rs\")",
+      "initial_complete": false,
+      "old": "Some((\"src/globs.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"use std::io::prelude::*;\"), scope: None, crate_local: true }))",
+      "retained": "Some((\"src/globs.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"use std::io::prelude::*;\"), scope: None, crate_local: true }))",
+      "equal": true
+    },
+    {
+      "case": "positive-global-only",
+      "root": "Some(\"tests/buf_tests.rs\")",
+      "initial_complete": false,
+      "old": "Some((\"src/globs.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"use std::io::prelude::*;\"), scope: None, crate_local: true }))",
+      "retained": "Some((\"src/globs.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"use std::io::prelude::*;\"), scope: None, crate_local: true }))",
+      "equal": true
+    },
+    {
+      "case": "scoped-rest-definition",
+      "root": "None",
+      "initial_complete": false,
+      "old": "Some((\"src/globs.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"use std::io::prelude::*;\"), scope: None, crate_local: true }))",
+      "retained": "Some((\"tests/buf_tests.rs\", MacroBindingSite { line: 2, kind: Definition, scope: Some((1, 5)), crate_local: true }))",
+      "equal": false
+    },
+    {
+      "case": "scoped-rest-definition",
+      "root": "Some(\"src/lib.rs\")",
+      "initial_complete": false,
+      "old": "Some((\"src/globs.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"use std::io::prelude::*;\"), scope: None, crate_local: true }))",
+      "retained": "Some((\"src/globs.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"use std::io::prelude::*;\"), scope: None, crate_local: true }))",
+      "equal": true
+    },
+    {
+      "case": "scoped-rest-definition",
+      "root": "Some(\"tests/buf_tests.rs\")",
+      "initial_complete": false,
+      "old": "Some((\"src/globs.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"use std::io::prelude::*;\"), scope: None, crate_local: true }))",
+      "retained": "Some((\"tests/buf_tests.rs\", MacroBindingSite { line: 2, kind: Definition, scope: Some((1, 5)), crate_local: true }))",
+      "equal": false
+    },
+    {
+      "case": "trusted-subset",
+      "root": "None",
+      "initial_complete": false,
+      "old": "Some((\"src/a.rs\", MacroBindingSite { line: 1, kind: MacroArgument(\"stringify\"), scope: None, crate_local: false }))",
+      "retained": "Some((\"src/z.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"pub use std::fmt::*;\"), scope: None, crate_local: false }))",
+      "equal": false
+    },
+    {
+      "case": "trusted-subset",
+      "root": "Some(\"src/lib.rs\")",
+      "initial_complete": false,
+      "old": "Some((\"src/a.rs\", MacroBindingSite { line: 1, kind: MacroArgument(\"stringify\"), scope: None, crate_local: false }))",
+      "retained": "Some((\"src/z.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"pub use std::fmt::*;\"), scope: None, crate_local: false }))",
+      "equal": false
+    },
+    {
+      "case": "trusted-subset",
+      "root": "Some(\"tests/buf_tests.rs\")",
+      "initial_complete": false,
+      "old": "Some((\"src/a.rs\", MacroBindingSite { line: 1, kind: MacroArgument(\"stringify\"), scope: None, crate_local: false }))",
+      "retained": "Some((\"src/z.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"pub use std::fmt::*;\"), scope: None, crate_local: false }))",
+      "equal": false
+    },
+    {
+      "case": "same-path-rank",
+      "root": "None",
+      "initial_complete": false,
+      "old": "Some((\"src/lib.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"use std::io::prelude::*;\"), scope: None, crate_local: true }))",
+      "retained": "Some((\"src/lib.rs\", MacroBindingSite { line: 2, kind: ForeignGlob(\"pub use std::fmt::*;\"), scope: None, crate_local: false }))",
+      "equal": false
+    },
+    {
+      "case": "same-path-rank",
+      "root": "Some(\"src/lib.rs\")",
+      "initial_complete": false,
+      "old": "Some((\"src/lib.rs\", MacroBindingSite { line: 1, kind: ForeignGlob(\"use std::io::prelude::*;\"), scope: None, crate_local: true }))",
+      "retained": "Some((\"src/lib.rs\", MacroBindingSite { line: 2, kind: ForeignGlob(\"pub use std::fmt::*;\"), scope: None, crate_local: false }))",
+      "equal": false
+    },
+    {
+      "case": "same-path-rank",
+      "root": "Some(\"tests/buf_tests.rs\")",
+      "initial_complete": false,
+      "old": "Some((\"src/lib.rs\", MacroBindingSite { line: 2, kind: ForeignGlob(\"pub use std::fmt::*;\"), scope: None, crate_local: false }))",
+      "retained": "Some((\"src/lib.rs\", MacroBindingSite { line: 2, kind: ForeignGlob(\"pub use std::fmt::*;\"), scope: None, crate_local: false }))",
+      "equal": true
+    }
+  ],
+  "limits": [
+    "Rust-only native unit probe; no default-feature/hosted/source-wide clearance.",
+    "Production code unchanged; only reviewer test appended, then checkout restored clean.",
+    "Initial public CLI same-path-rank and scoped-rest fixtures were equal; direct lookup differences may be masked by preferred refusal/target choice."
+  ]
+}
