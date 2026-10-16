@@ -4,7 +4,7 @@ Status: proposed
 
 Owner: product-analysis
 
-Linked issues: #5015 (builds on #3237 / #3277 / #3548)
+Linked issues: #5015, #8216 (builds on #3237 / #3277 / #3548)
 
 ## Problem
 
@@ -34,8 +34,13 @@ hanging git. Each call also buffered up to 512 MiB in memory per blob.
   absolute deadline, so a stream dribbling fragments just under each
   individual wait cannot outlive the budget. Deadline expiry classifies as
   the shared named `git_invocation_timeout` error with the same repair
-  route as every other git invocation; cooperative cancellation is checked
-  per request and per chunk. One residual limitation, unchanged from the
+  route as every other git invocation. Cooperative cancellation is checked
+  per request, before consuming buffered header/body/delimiter bytes, and
+  during a stalled chunk wait at the shared subprocess polling cadence.
+  Cancellation remains typed and terminates/reaps the owned child before
+  returning; failed cleanup retains its existing explicit failure outcome.
+  This does not add a CLI signal handler or preempt operating-system I/O.
+  One residual limitation, unchanged from the
   per-blob path and disclosed in code: a single stalled OS-level file
   write is outside the deadline's reach.
 - Fail-closed behavior is preserved exactly: unsupported entry modes,
@@ -74,6 +79,11 @@ hanging git. Each call also buffered up to 512 MiB in memory per blob.
   spent-budget timeout classification.
 - Zero-budget session control: a blocking wait classifies as the named
   `git_invocation_timeout` with the raw prefix intact.
+- Live owned batch-child controls: stalled header/body/delimiter reads
+  observe an analysis budget before the independent Git timeout and reap
+  before returning typed cancellation. A superseded buffered delimiter
+  cannot succeed. The controlled transport producer remains open so EOF
+  cannot satisfy the stall controls.
 - Scale fixture: a 300-file nested tree plus a >1 MiB binary blob and an
   empty file materialize byte-identically to the `git show` oracle through
   the batched path.
@@ -99,6 +109,10 @@ hanging git. Each call also buffered up to 512 MiB in memory per blob.
 - `crates/ripr/src/git.rs::tests::cat_file_batch_stream_rejects_ready_bytes_past_the_deadline`
 - `crates/ripr/src/git.rs::tests::cat_file_batch_session_round_trips_blobs_and_reports_missing`
 - `crates/ripr/src/git.rs::tests::cat_file_batch_session_enforces_the_overall_budget`
+- `crates/ripr/src/git.rs::tests::cat_file_batch_cancellation_interrupts_a_stalled_header`
+- `crates/ripr/src/git.rs::tests::cat_file_batch_cancellation_interrupts_a_stalled_body`
+- `crates/ripr/src/git.rs::tests::cat_file_batch_cancellation_interrupts_a_stalled_delimiter`
+- `crates/ripr/src/git.rs::tests::cat_file_batch_cancellation_rejects_a_buffered_delimiter`
 - `crates/ripr/src/analysis/git_candidate_execution.rs::tests::batched_materialization_preserves_bytes_at_scale`
 - Existing `git_candidate_execution.rs` byte-parity, attribute, long-path,
   worktree-isolation, and pipeline tests (unchanged, exercising the new
@@ -129,5 +143,7 @@ hanging git. Each call also buffered up to 512 MiB in memory per blob.
   whole subject fails closed.
 - Deadline expiry mid-materialization: named `git_invocation_timeout`; the
   partial tree is removed by the temp-root guard.
+- Cooperative cancellation while a batch read waits or has buffered bytes:
+  typed analysis cancellation; the session aborts and reaps its owned child.
 - Corrupt or truncated batch stream: named framing/truncation error; the
   owned process tree is terminated.

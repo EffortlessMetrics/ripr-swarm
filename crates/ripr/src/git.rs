@@ -795,6 +795,7 @@ impl CatFileBatch {
     /// Other stream failures keep their existing Display message.
     fn classify_read_error(&mut self, error: CatFileBatchReadError) -> CoreError {
         match error {
+            CatFileBatchReadError::Cancelled(cancelled) => self.abort("cancellation", cancelled),
             CatFileBatchReadError::TimedOut => {
                 let message = CoreError::git_invocation_timeout(
                     &self.describe,
@@ -949,6 +950,7 @@ impl CatFileBatch {
 /// stream errors through unchanged.
 #[derive(Debug)]
 enum CatFileBatchReadError {
+    Cancelled(crate::analysis::cancellation::AnalysisCancellation),
     TimedOut,
     Failed(String),
 }
@@ -972,30 +974,49 @@ impl CatFileBatchStream {
         }
     }
 
+    fn checkpoint(deadline: Instant) -> Result<(), CatFileBatchReadError> {
+        crate::analysis::cancellation::checkpoint_typed()
+            .map_err(CatFileBatchReadError::Cancelled)?;
+        if Instant::now() >= deadline {
+            return Err(CatFileBatchReadError::TimedOut);
+        }
+        Ok(())
+    }
+
     /// Pull the next chunk when the current one is exhausted.
     /// `Ok(false)` is end of stream. The wait allowance is recomputed from
     /// the absolute `deadline` on every chunk so a stream dribbling
     /// fragments just under each wait can never outlive the overall budget.
     /// Bytes buffered or queued before the deadline are still rejected once
     /// it has passed: consumption after the budget is a timeout, not
-    /// success.
+    /// success. Silent producers are polled at the shared subprocess cadence
+    /// so cooperative cancellation can abort and reap without waiting for
+    /// the independent Git deadline.
     fn next_chunk(&mut self, deadline: Instant) -> Result<bool, CatFileBatchReadError> {
-        if Instant::now() >= deadline {
-            return Err(CatFileBatchReadError::TimedOut);
-        }
-        if self.offset < self.current.len() {
-            return Ok(true);
-        }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        match self.receiver.recv_timeout(remaining) {
-            Ok(Ok(chunk)) => {
-                self.current = chunk;
-                self.offset = 0;
-                Ok(true)
+        loop {
+            Self::checkpoint(deadline)?;
+            if self.offset < self.current.len() {
+                return Ok(true);
             }
-            Ok(Err(read_error)) => Err(CatFileBatchReadError::Failed(read_error)),
-            Err(mpsc::RecvTimeoutError::Timeout) => Err(CatFileBatchReadError::TimedOut),
-            Err(mpsc::RecvTimeoutError::Disconnected) => Ok(false),
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let wait = remaining.min(crate::process_owner::POLL_BACKOFF_CEILING);
+            match self.receiver.recv_timeout(wait) {
+                Ok(Ok(chunk)) => {
+                    self.current = chunk;
+                    self.offset = 0;
+                    // Recheck after receiving: cancellation or the absolute
+                    // deadline can arrive while the channel is blocked.
+                }
+                Ok(Err(read_error)) => {
+                    Self::checkpoint(deadline)?;
+                    return Err(CatFileBatchReadError::Failed(read_error));
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    Self::checkpoint(deadline)?;
+                    return Ok(false);
+                }
+            }
         }
     }
 
@@ -1003,9 +1024,7 @@ impl CatFileBatchStream {
     fn read_line(&mut self, deadline: Instant) -> Result<Vec<u8>, CatFileBatchReadError> {
         let mut line = Vec::new();
         loop {
-            if Instant::now() >= deadline {
-                return Err(CatFileBatchReadError::TimedOut);
-            }
+            Self::checkpoint(deadline)?;
             if let Some(position) = self.current[self.offset..]
                 .iter()
                 .position(|byte| *byte == b'\n')
@@ -1039,9 +1058,7 @@ impl CatFileBatchStream {
     ) -> Result<(), CatFileBatchReadError> {
         let mut filled = 0;
         while filled < buf.len() {
-            if Instant::now() >= deadline {
-                return Err(CatFileBatchReadError::TimedOut);
-            }
+            Self::checkpoint(deadline)?;
             if self.offset >= self.current.len() && !self.next_chunk(deadline)? {
                 return Err(CatFileBatchReadError::Failed(
                     "git cat-file --batch stream ended in the middle of a blob".to_string(),
