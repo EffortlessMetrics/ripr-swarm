@@ -483,7 +483,7 @@ pub(crate) fn render_pilot_summary_md(
             vec![&commands.after_snapshot, &commands.outcome]
         }
     };
-    out.push_str(super::COMMAND_SHELL_DISCLOSURE);
+    out.push_str(super::command_shell_disclosure());
     out.push_str("```bash\n");
     for command in &next_commands {
         out.push_str(command);

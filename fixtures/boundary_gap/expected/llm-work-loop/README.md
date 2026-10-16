@@ -15,7 +15,10 @@ Cases:
 - `stale-artifact`: complete artifacts with stale-looking verify/receipt
   timestamps.
 - `configured-off`: policy-hidden seam rejection text for agent handoff.
-- `path-with-spaces`: missing-artifact recovery commands quote a spaced root.
+- `path-with-spaces`: missing-artifact recovery commands quote a spaced root
+  with bash single quotes (non-Windows hosts).
+- `path-with-spaces-windows`: the same case on Windows, where recovery
+  commands are double-quoted for the Windows console (#7729).
 - `windows-separators`: native Windows recovery commands normalize separators.
 - `unix-literal-backslash`: Unix commands retain literal filename backslashes
   in roots and redirect targets; report-only root display keeps its presentation.

@@ -238,17 +238,31 @@ check` reads committed history only. When the repo-exposure seam limit cuts
 the inventory, pilot classifies the seams on the change's lines on their own,
 within what is left of its deadline, and adds the ones the cut dropped, so they
 still rank change-first and count as analyzed; the inventory seam-limit caveat
-about the change then no longer applies. A successful supplement also retains
-the producer's existing `changed_file_absent_from_worktree` limitations for
-requested changed files absent from the working tree. The terminal and Markdown
-name each path and its recovery action under "Inspected", even when a present
-changed seam is the top recommendation. `current_change.absent_changed_files`
-in the JSON summary records those portable paths; it is omitted if the
-supplement did not run or failed, and is an empty array only after a successful
-supplement found no absent requested files. Neither an empty classification nor
-an empty absence array establishes that every changed seam was classified.
-Restoring a regular source file at the same HEAD makes the next supplement
-inspect it and replaces the absence list, without stale cache disclosures.
+about the change then no longer applies. When Rust is enabled and the loaded
+change names Rust source files, pilot records the shared source-admission
+observation regardless of whether the inventory cap fired or supplemental
+classification succeeded. It retains the producer's existing
+`changed_file_absent_from_worktree` limitations for absent requested files.
+The fallback and successful supplement apply the shared diff-aware
+generated-source policy before admission, including handwritten opt-ins,
+stronger explicit patterns and changed vendor checksum markers, so source known
+to be excluded gains no restoration warning under either inventory cap. The
+supplement retains all changed paths as policy context, including missing
+markers, while its classification scope stays Rust-only. Its absence observation
+precedes classification and is carried on success. Header-only exclusions still depend on available
+worktree bytes or an active committed-source overlay; pilot creates no new
+overlay to determine the header of a sparse missing file.
+The terminal and Markdown name each path and its recovery action under
+"Inspected", even when a present changed seam is the top recommendation.
+`current_change.absent_changed_files` in the JSON summary records those portable
+paths (or a null entry for a bounded path-less disclosure when a name is
+refused). The field is omitted when no source-admission observation was
+requested, including Rust-disabled scope; an empty array means that observation
+found no absent requested files. Intentionally deleted files are excluded by
+the shared diff parser. Neither an empty classification nor an empty absence
+array establishes that every changed seam was classified. Restoring a regular
+source file at the same HEAD replaces the absence list on the next run,
+without stale cache disclosures.
 If that classification fails or runs out of time, pilot says so on stderr,
 keeps the inventory caveat and still completes. When
 pilot added any such seam, its `repo-exposure.json` is written without the
@@ -532,6 +546,16 @@ when a user runs ripr pilot with either a warm or isolated cold cache,
 then the restored changed predicate ranks, absent_changed_files is empty, and
 the missing-file disclosure clears. The supplement does not alter ordinary
 repo-exposure results stored in the diff-independent classified cache.
+
+Given sparse changed handwritten, convention-generated, explicitly excluded and
+vendored files, with the changed vendor checksum marker also absent,
+when pilot runs with an uncapped inventory or a cap that triggers a successful
+supplement,
+then all three summaries name the same analyzable absent paths. Exact handwritten
+opt-ins admit convention-only paths; explicit exclusion and the changed vendor
+marker still win. A missing file whose generated header is unavailable remains
+named. Same-HEAD restoration clears absence and retains a nonempty changed
+ranking without admitting excluded source or polluting the ordinary inventory.
 ```
 
 ### Pilot says whether its top recommendation is part of the current change
@@ -646,6 +670,7 @@ Current tests and reports that support the contract:
 
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_sparse_missing_changed_file_and_recovers_same_head`
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_mixed_missing_changed_file_even_with_changed_recommendation`
+- `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_capped_absence_matches_uncapped_generated_policy_and_recovers`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_current_change_preserves_absent_file_coverage_through_empty_and_mixed_supplements`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_renderers_disclose_absent_changed_files_independently_of_top_recommendation`
 

@@ -434,7 +434,7 @@ fn persist_before_repair_attempt(
         "{}",
         crate::output::human::terminal_safe(format!(
             "ripr: attempt manifest: {}",
-            result.manifest_path.display()
+            crate::output::path::human_path(&result.manifest_path)
         ))
     );
     // Human next-step lines teach `ripr continue` for ordinary attempts

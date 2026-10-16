@@ -786,8 +786,12 @@ mod tests {
             crate::agent::loop_commands::shell_arg(&output::path::human_path(&workspace));
         let quoted_member =
             crate::agent::loop_commands::shell_arg(&output::path::human_path(&member));
-        assert!(quoted_workspace.starts_with('\''), "{quoted_workspace}");
-        assert!(quoted_member.starts_with('\''), "{quoted_member}");
+        // Host-aware quote character (#7729): POSIX single quotes off
+        // Windows, the Windows console double-quote form on it. The
+        // assertion's point is that the spaced path is quoted at all.
+        let quote = if cfg!(windows) { '"' } else { '\'' };
+        assert!(quoted_workspace.starts_with(quote), "{quoted_workspace}");
+        assert!(quoted_member.starts_with(quote), "{quoted_member}");
         assert!(
             warning.contains(&format!("ripr init --root {quoted_workspace}`")),
             "{warning}"

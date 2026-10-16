@@ -153,6 +153,17 @@ type change, and resumes normal parsing at the next file boundary (#4577).
 no-merge-base cause and, in a shallow clone, offers `git fetch --unshallow`
 as its next command.
 
+The shared Git diff byte owner pins `--ignore-submodules=none` for committed,
+worktree, range and PR-evidence loads (#8209). Ambient `diff.ignoreSubmodules`
+and `submodule.<name>.ignore` settings cannot hide a changed gitlink before
+the existing skipped-submodule disclosure sees it. Submodule contents are
+still not analyzed; no source probes are invented for the pointer.
+The existing default-source and tracked-edit status probes pin the same option,
+so an ignored unstaged pointer cannot select committed history or clean-tree
+doctor guidance before the diff loader runs.
+The existing PR-evidence path inventory uses the same inclusion option, keeping
+its changed-file count aligned with retained gitlinks in the packet diff.
+
 ### Honesty bar
 
 - A resolved base MUST genuinely exist (`git rev-parse --verify` must
@@ -263,6 +274,7 @@ differ, and whenever the scope is explicit (`--base`, `--diff`,
 
 ## Test Mapping
 
+- `crates/ripr/tests/hostile_repos.rs::submodule_ignore_settings_cannot_hide_pointer_changes`
 - `crates/ripr/src/analysis/diff/load.rs::tests::resolve_default_base_uses_origin_master_when_symbolic_ref_points_there`
 - `crates/ripr/src/analysis/diff/load.rs::tests::resolve_default_base_uses_local_main_when_no_remote`
 - `crates/ripr/src/analysis/diff/load.rs::tests::resolve_default_base_returns_named_error_when_nothing_resolves`

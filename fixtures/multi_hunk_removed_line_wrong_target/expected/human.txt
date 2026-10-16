@@ -31,10 +31,10 @@ Next: drill into the top finding:
 
 Hidden:
   3 lower-priority finding(s) omitted; 1 base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:2 (no_static_path)
-    - ./src/lib.rs:3 (no_static_path)
-    - ./src/lib.rs:4 (no_static_path)
-    - ./src/lib.rs:8 (no_static_path)
+    - ./src/lib.rs:2 (no_static_path, base-side)
+    - ./src/lib.rs:3 (no_static_path, lower-priority candidate)
+    - ./src/lib.rs:4 (no_static_path, lower-priority candidate)
+    - ./src/lib.rs:8 (no_static_path, lower-priority candidate)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

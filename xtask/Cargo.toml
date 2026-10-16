@@ -7,6 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+home = "=0.5.12"
 num-bigint = "0.4"
 repo-policy = { path = "../tools/repo-policy" }
 ripr = { path = "../crates/ripr" }

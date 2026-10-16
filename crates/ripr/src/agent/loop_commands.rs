@@ -479,27 +479,58 @@ pub(crate) fn shell_path(path: &Path) -> String {
     shell_arg(&display_path(path))
 }
 
-/// Render `value` as a single bash argv token for an advisory command string.
+/// Render `value` as one argv token for an advisory command string, quoted
+/// for the shell family of the host ripr runs on (#7729).
 ///
 /// These strings are published for a human or an agent to copy into a shell, so
 /// every value must survive the copy as exactly one argument with exactly its
 /// original bytes (#2347).
 ///
-/// Values made only of unambiguous characters pass through unquoted. Everything
-/// else is single-quoted, with an embedded `'` rendered as `'\''` (close, escaped
-/// quote, reopen). Single quotes are the only bash quoting form with no interior
-/// interpretation at all: `$`, backtick, `!`, `\`, newline, and redirect
-/// characters are all literal inside them. That makes one rule total over every
-/// possible value, which double quotes cannot be:
+/// Values made only of unambiguous characters pass through unquoted on every
+/// host. Everything else follows the host's quoting form:
 ///
-/// - inside double quotes bash still expands `$VAR`, `$(cmd)`, and `` `cmd` ``;
-/// - `\!` inside double quotes is literally backslash-bang in a non-interactive
-///   shell, so escaping `!` that way corrupts the value instead of protecting it;
-/// - a bare `\` cannot be left unquoted, because bash consumes it as an escape.
+/// - non-Windows: single-quoted, with an embedded `'` rendered as `'\''`
+///   (close, escaped quote, reopen). Single quotes are the only bash quoting
+///   form with no interior interpretation at all: `$`, backtick, `!`, `\`,
+///   newline, and redirect characters are all literal inside them. That makes
+///   one rule total over every possible value, which double quotes cannot be:
+///   inside double quotes bash still expands `$VAR`, `$(cmd)`, and `` `cmd` ``;
+///   `\!` inside double quotes is literally backslash-bang in a non-interactive
+///   shell, so escaping `!` that way corrupts the value instead of protecting
+///   it; and a bare `\` cannot be left unquoted, because bash consumes it as an
+///   escape.
+/// - Windows: double-quoted, with an embedded `"` doubled (`""`) and a
+///   trailing backslash run doubled before the closing quote
+///   (`windows_console_quote`). Double quotes are the only quoting form
+///   honored by every Windows console shell: cmd.exe, PowerShell, and Git
+///   Bash all keep a double-quoted spaced path as one argument. Values
+///   carrying `$` or backtick keep the single-quote form instead: Git Bash
+///   expands `$VAR`, `$(cmd)`, and `` `cmd` `` inside double quotes, and so
+///   does PowerShell — pasting `"$(...)"` into either executes the embedded
+///   expression (#8152 review, security), while single quotes stay literal
+///   in both. cmd.exe passes single quotes through as literal characters
+///   (the argument arrives quoted and fails closed), so those values paste
+///   in Git Bash or PowerShell, not cmd.exe. PowerShell would escape an
+///   interior quote with a backtick instead of doubling, and Git Bash drops
+///   an interior quote in the `""` form; an interior `"` cannot occur in a
+///   Windows filename, so the `""` doubling is the conservative choice for
+///   the paths this form exists to quote.
 ///
-/// The empty string must be quoted as `''`, or the argument disappears from the
-/// command line entirely.
+/// The empty string must be quoted (`''` or `""`), or the argument disappears
+/// from the command line entirely.
+///
+/// Values carrying control or bidi characters keep the explicit
+/// `"$(printf '\ooo')"` escape form on both hosts: terminal safety owns that
+/// policy, and the escape is bash source even when emitted on Windows (no
+/// Windows console shell can rebuild those bytes), which
+/// `output::markdown::powershell_command` already lifts and rebuilds.
 pub(crate) fn shell_arg(value: &str) -> String {
+    shell_arg_for(value, cfg!(windows))
+}
+
+/// Pure host-parameterised core of [`shell_arg`], so both hosts' quoting forms
+/// are testable on any machine (the `human_path_text` pattern, #4378).
+pub(crate) fn shell_arg_for(value: &str, windows: bool) -> String {
     if !value.is_empty()
         && value
             .chars()
@@ -510,7 +541,37 @@ pub(crate) fn shell_arg(value: &str) -> String {
     if value.chars().any(needs_terminal_escape) {
         return ansi_c_quote(value);
     }
+    if windows && !value.chars().any(|ch| matches!(ch, '$' | '`')) {
+        return windows_console_quote(value);
+    }
     format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// Quote one argument in the Windows console form: double quotes, interior
+/// `"` doubled (`""`), and a trailing backslash run doubled before the
+/// closing quote. Verified against the native argv parser, cmd.exe, Git
+/// Bash, and Windows PowerShell (#8152 review):
+///
+/// - Interior doubling: `"a""b"` parses as `a"b` in cmd (native argv), in
+///   PowerShell, and — losing the quote — in Git Bash; `\"` would be the
+///   argv/Git Bash form but closes the string early in PowerShell, so `""`
+///   is the conservative choice. Interior `"` cannot occur in a Windows
+///   filename, so this diverges only for exotic non-path arguments.
+/// - Trailing separator: a root ending in a separator corrupts under the
+///   native argv rules (`\"` escapes the closing quote, swallowing the rest
+///   of the line), in Git Bash, and in PowerShell 5.1; doubling the run
+///   before the closing quote round-trips in all four. A path ending in a
+///   separator is routine, so this is encoder policy, not a documented
+///   limitation.
+///
+/// Values containing `$` or backtick never reach this form: both PowerShell
+/// and Git Bash expand them inside double quotes, so they keep the
+/// single-quote form (`shell_arg_for`).
+fn windows_console_quote(value: &str) -> String {
+    let mut body = value.replace('"', "\"\"");
+    let trailing_backslashes = value.chars().rev().take_while(|ch| *ch == '\\').count();
+    body.push_str(&"\\".repeat(trailing_backslashes));
+    format!("\"{body}\"")
 }
 
 /// Which characters must not reach a terminal raw: every control character
@@ -667,7 +728,8 @@ mod tests {
             "draft",
             out,
         );
-        if !selected.contains(" --base 'origin/trunk with space' --mode draft ") {
+        let quoted_base = shell_arg("origin/trunk with space");
+        if !selected.contains(&format!(" --base {quoted_base} --mode draft ")) {
             return Err(format!("selected base was not shell-quoted: {selected}"));
         }
         let expected = format!(
@@ -996,7 +1058,15 @@ mod tests {
     #[test]
     fn command_args_quote_spaces_without_touching_plain_tokens() {
         let _cwd_guard = hold_cwd_read_guard();
-        assert_eq!(shell_arg("repo root"), "'repo root'");
+        // The quoting form is host-dependent (#7729); the builder
+        // expectations below interpolate `shell_arg` itself so the same
+        // assertion holds on both hosts.
+        assert_eq!(shell_arg_for("repo root", false), "'repo root'");
+        assert_eq!(shell_arg_for("repo root", true), "\"repo root\"");
+        assert_eq!(
+            shell_arg("repo root"),
+            shell_arg_for("repo root", cfg!(windows))
+        );
         assert_eq!(shell_arg("target/ripr/workflow"), "target/ripr/workflow");
         assert_eq!(
             workflow_artifact_path(Path::new("target/ripr/workflow"), "workflow.json"),
@@ -1005,20 +1075,27 @@ mod tests {
         assert_eq!(
             agent_seam_packets_command(".", "draft mode", "target/ripr/workflow/packets.json"),
             format!(
-                "ripr check --root . --mode 'draft mode' --format agent-seam-packets-json > {}",
+                "ripr check --root . --mode {} --format agent-seam-packets-json > {}",
+                shell_arg("draft mode"),
                 anchored_expectation("target/ripr/workflow/packets.json")
             )
         );
         assert_eq!(
             agent_start_command("repo root", "seam a", "target/ripr/work flow"),
-            "ripr agent start --root 'repo root' --seam-id 'seam a' --out 'target/ripr/work flow'"
+            format!(
+                "ripr agent start --root {} --seam-id {} --out {}",
+                shell_arg("repo root"),
+                shell_arg("seam a"),
+                shell_arg("target/ripr/work flow")
+            )
         );
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let rooted = |tail: &str| shell_arg(&display_path(&cwd.join("repo root").join(tail)));
         assert_eq!(
             check_repo_exposure_command("repo root", "draft", "target/ripr/work flow/before.json"),
             format!(
-                "ripr check --root 'repo root' --mode draft --format repo-exposure-json > {}",
+                "ripr check --root {} --mode draft --format repo-exposure-json > {}",
+                shell_arg("repo root"),
                 rooted("target/ripr/work flow/before.json")
             )
         );
@@ -1030,7 +1107,9 @@ mod tests {
                 "target/ripr/work flow/before.json",
             ),
             format!(
-                "ripr check --root 'repo root' --base 'origin/main with space' --mode draft --format repo-exposure-json > {}",
+                "ripr check --root {} --base {} --mode draft --format repo-exposure-json > {}",
+                shell_arg("repo root"),
+                shell_arg("origin/main with space"),
                 rooted("target/ripr/work flow/before.json")
             )
         );
@@ -1042,7 +1121,10 @@ mod tests {
                 Some("target/ripr/work flow/verify.json"),
             ),
             format!(
-                "ripr agent verify --root 'repo root' --before 'target/ripr/work flow/before.json' --after 'target/ripr/work flow/after.json' --json > {}",
+                "ripr agent verify --root {} --before {} --after {} --json > {}",
+                shell_arg("repo root"),
+                shell_arg("target/ripr/work flow/before.json"),
+                shell_arg("target/ripr/work flow/after.json"),
                 rooted("target/ripr/work flow/verify.json")
             )
         );
@@ -1053,13 +1135,20 @@ mod tests {
                 "seam a",
                 Some("target/ripr/work flow/receipt.json"),
             ),
-            "ripr agent receipt --root 'repo root' --verify-json 'target/ripr/work flow/verify.json' --seam-id 'seam a' --json --out 'target/ripr/work flow/receipt.json'"
+            format!(
+                "ripr agent receipt --root {} --verify-json {} --seam-id {} --json --out {}",
+                shell_arg("repo root"),
+                shell_arg("target/ripr/work flow/verify.json"),
+                shell_arg("seam a"),
+                shell_arg("target/ripr/work flow/receipt.json")
+            )
         );
     }
 
     /// Values that must round-trip through bash as exactly one argument with
     /// exactly these bytes. Each is a way the previous double-quote encoder
     /// could leak (#2347).
+    #[cfg(not(windows))]
     fn hostile_values() -> Vec<(&'static str, &'static str)> {
         vec![
             ("empty", ""),
@@ -1095,8 +1184,11 @@ mod tests {
             r#"'a'"$(printf '\033')"'[2Jb'\''c\d'"$(printf '\342\200\256')""#
         );
         assert!(!quoted.chars().any(needs_terminal_escape), "{quoted:?}");
-        // Plain hostile text without control characters keeps `'...'` quoting.
-        assert_eq!(shell_arg("it's"), r"'it'\''s'");
+        // Plain hostile text without control characters keeps the host's
+        // quoting: bash single quotes off Windows, cmd/PowerShell double
+        // quotes on it (#7729).
+        assert_eq!(shell_arg_for("it's", false), r"'it'\''s'");
+        assert_eq!(shell_arg_for("it's", true), "\"it's\"");
     }
 
     /// The control-character form must be POSIX, not bash-only: a pasted line
@@ -1136,18 +1228,92 @@ mod tests {
         assert_eq!(shell_arg("seam:a-b_c.d:1"), "seam:a-b_c.d:1");
     }
 
+    /// #7729: on Windows the emitted token must paste into cmd.exe — the
+    /// shell the issue reproduced the failure in — and PowerShell as one
+    /// argument. Double quotes with the interior quote doubled are the only
+    /// form both consoles honor. This pins the quoting form per host; the
+    /// byte-exact recovery round-trip of the same form lives in
+    /// `agent::command_specs::windows_double_quoted_tokens_round_trip_through_recovery`.
+    #[test]
+    fn shell_arg_windows_form_is_paste_ready_for_cmd_and_powershell() {
+        // The drill-in route from the issue: a spaced drive-letter root and a
+        // spaced base revision must each arrive as one argument.
+        let root = format!("C:{}tmp{}probe win space", '\\', '\\');
+        assert_eq!(shell_arg_for(&root, true), format!("\"{root}\""));
+        assert_eq!(
+            shell_arg_for("HEAD~1 with space", true),
+            "\"HEAD~1 with space\""
+        );
+        // The unambiguous token set stays bare on both hosts, so a plain
+        // selector like `probe:src_lib.rs:return_value:f2a5173e` never
+        // changes shape.
+        assert_eq!(
+            shell_arg_for("probe:src_lib.rs:return_value:f2a5173e", true),
+            "probe:src_lib.rs:return_value:f2a5173e"
+        );
+        // The host binding follows the running host.
+        assert_eq!(shell_arg(&root), shell_arg_for(&root, cfg!(windows)));
+    }
+
     #[test]
     fn shell_arg_quotes_every_hostile_value() {
         // A bare backslash must never pass through unquoted: bash would consume
-        // it as an escape. The empty string must become '' or the argument
-        // vanishes from the command line.
-        assert_eq!(shell_arg(""), "''");
-        assert_eq!(shell_arg("a\\b"), "'a\\b'");
-        assert_eq!(shell_arg("$(whoami)"), "'$(whoami)'");
-        assert_eq!(shell_arg("it's"), r"'it'\''s'");
+        // it as an escape. The empty string must be quoted or the argument
+        // vanishes from the command line. Both hosts' forms are pinned through
+        // the pure core (#7729: Windows double quotes, interior quote doubled).
+        assert_eq!(shell_arg_for("", false), "''");
+        assert_eq!(shell_arg_for("", true), "\"\"");
+        assert_eq!(shell_arg_for("a\\b", false), "'a\\b'");
+        assert_eq!(shell_arg_for("a\\b", true), "\"a\\b\"");
+        assert_eq!(shell_arg_for("$(whoami)", false), "'$(whoami)'");
+        // #8152 review (security): PowerShell evaluates `$(...)` and `$var`
+        // inside double quotes, and Git Bash expands them too, so a value
+        // carrying `$` keeps the single-quote form on Windows — literal in
+        // both shells (cmd.exe passes the quotes through and fails closed).
+        assert_eq!(shell_arg_for("$(whoami)", true), "'$(whoami)'");
+        assert_eq!(shell_arg_for("price `$100", false), "'price `$100'");
+        assert_eq!(shell_arg_for("price `$100", true), "'price `$100'");
+        assert_eq!(shell_arg_for("it's", false), r"'it'\''s'");
+        assert_eq!(shell_arg_for("it's", true), "\"it's\"");
+        assert_eq!(shell_arg_for("a\"b", false), r#"'a"b'"#);
+        assert_eq!(shell_arg_for("a\"b", true), "\"a\"\"b\"");
         assert_eq!(
-            shell_arg("gap > /tmp/ripr-clobbered"),
+            shell_arg_for("gap > /tmp/ripr-clobbered", false),
             "'gap > /tmp/ripr-clobbered'"
+        );
+        assert_eq!(
+            shell_arg_for("gap > /tmp/ripr-clobbered", true),
+            "\"gap > /tmp/ripr-clobbered\""
+        );
+    }
+
+    /// #8152 review: a trailing backslash run inside the closing double quote
+    /// is read by the native argv parser as escaping that quote — the rest of
+    /// the line is swallowed — in Git Bash, and in PowerShell 5.1. Doubling
+    /// the run before the closing quote round-trips in all four consoles;
+    /// interior separators stay single.
+    #[test]
+    fn shell_arg_windows_form_doubles_trailing_backslash_before_closing_quote() {
+        let drive_root = format!("C:{}repo{}", '\\', '\\');
+        assert_eq!(
+            shell_arg_for(&drive_root, true),
+            format!("\"C:{}repo{}{}\"", '\\', '\\', '\\')
+        );
+        assert_eq!(
+            shell_arg_for("folder space\\", true),
+            "\"folder space\\\\\""
+        );
+        let spaced_root = format!("C:{}tmp{}probe win space", '\\', '\\');
+        assert_eq!(
+            shell_arg_for(&spaced_root, true),
+            format!("\"{spaced_root}\"")
+        );
+        assert_eq!(shell_arg_for("a\\b\\", true), "\"a\\b\\\\\"");
+        // A value ending in a quote is not a backslash case: quote doubling
+        // owns the final position and the closing quote still follows.
+        assert_eq!(
+            shell_arg_for("ends with quote\"", true),
+            "\"ends with quote\"\"\""
         );
     }
 
@@ -1158,6 +1324,12 @@ mod tests {
     /// with the bytes that went in. This is the check that would have caught the
     /// `\!`-inside-double-quotes and bare-backslash defects, both of which look
     /// correct as string assertions.
+    ///
+    /// Non-Windows only: this proves the bash single-quote contract, which is
+    /// the encoding `shell_arg` emits off Windows. On Windows the renderer
+    /// emits the cmd.exe/PowerShell double-quote form (#7729), which this test
+    /// would mis-measure through Git Bash's `$` expansion.
+    #[cfg(not(windows))]
     #[test]
     fn shell_arg_round_trips_through_real_bash() -> Result<(), String> {
         let dir = RoundTripDir::new("argv")?;
@@ -1227,6 +1399,12 @@ mod tests {
     /// in `> out.json`, so an unquoted id containing `>` supplies a second
     /// redirect, writing to a file the operator never named and changing the id
     /// the command actually receives.
+    ///
+    /// Non-Windows only: the redirect-containing values are quoted with the
+    /// bash single-quote form off Windows; the Windows renderer emits the
+    /// double-quote form (#7729), which Git Bash would mis-measure through `$`
+    /// expansion.
+    #[cfg(not(windows))]
     #[test]
     fn redirect_shaped_gap_id_cannot_open_a_second_redirect() -> Result<(), String> {
         let dir = RoundTripDir::new("redirect")?;
@@ -1285,6 +1463,7 @@ mod tests {
     /// processing, so the directory separators are eaten and the remaining
     /// segments run together into one meaningless name. Forward slashes survive
     /// on both platforms.
+    #[cfg(not(windows))]
     fn bash_path(path: &std::path::Path) -> String {
         path.display().to_string().replace('\\', "/")
     }
@@ -1295,10 +1474,12 @@ mod tests {
     /// loop, so cleanup has to run on scope exit rather than at the end of the
     /// happy path — otherwise every run leaves another `ripr-shell-arg-*`
     /// directory behind in the system temp dir.
+    #[cfg(not(windows))]
     struct RoundTripDir {
         path: std::path::PathBuf,
     }
 
+    #[cfg(not(windows))]
     impl RoundTripDir {
         fn new(label: &str) -> Result<Self, String> {
             let path =
@@ -1312,6 +1493,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(windows))]
     impl Drop for RoundTripDir {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.path);
@@ -1326,6 +1508,7 @@ mod tests {
     /// drive-letter host path, so every case would fail for a reason that has
     /// nothing to do with the encoder. Git Bash is preferred and the candidate
     /// is confirmed by running a probe script from the real directory.
+    #[cfg(not(windows))]
     fn bash_for_round_trip(dir: &RoundTripDir) -> Option<std::path::PathBuf> {
         // Git Bash is preferred over a bare `bash.exe`, which on Windows is
         // frequently WSL. The Git install prefix is read from the environment
