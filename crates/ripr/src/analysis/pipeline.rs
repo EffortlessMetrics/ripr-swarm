@@ -1122,6 +1122,15 @@ fn run_pipeline_for_diff_text_with_language_config(
     let preview_paths: Vec<&diff::ChangedFile> = analysis_changed_files
         .iter()
         .filter(|changed| {
+            // Enabled advisories describe analyzed files, so honor the same
+            // partition handed to the adapters above (#8210). Disabled
+            // languages retain routed presence for enablement guidance.
+            if let Some(scope) = &partial_scope
+                && route(&changed.path).is_some_and(|language| languages.contains(&language))
+                && !scope.selects(&changed.path)
+            {
+                return false;
+            }
             !absent_changed_paths.contains(super::workspace::normalize_path(&changed.path).as_str())
         })
         .collect();

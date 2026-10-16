@@ -6673,6 +6673,8 @@ id = "RIPR-SPEC-0082"
 name = "preview-language disclosure"
 spec = "docs/specs/RIPR-SPEC-0082-preview-language-disclosure.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/partial_preview_disclosure.rs::python_partial_preview_claims_follow_selected_files",
+  "crates/ripr/tests/cli_smoke/partial_preview_disclosure.rs::typescript_partial_preview_claims_follow_selected_files",
   "crates/ripr/tests/cli_smoke/python_source_admission.rs::missing_changed_python_source_is_incomplete_and_restorable",
   "crates/ripr/tests/cli_smoke/python_source_admission.rs::changed_python_symlink_source_is_incomplete_across_root_routes",
   "crates/ripr/src/analysis/workspace/discover.rs::tests::source_admission_refuses_links_below_root_and_preserves_root_alias",
