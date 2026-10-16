@@ -106,6 +106,9 @@ mod typescript_effect_aliases;
 #[path = "cli_smoke/unknown_explain.rs"]
 mod unknown_explain;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/unsupported_artifact.rs"]
+mod unsupported_artifact;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unsupported_check_exit.rs"]
 mod unsupported_check_exit;
 #[cfg(feature = "lang-rust")]

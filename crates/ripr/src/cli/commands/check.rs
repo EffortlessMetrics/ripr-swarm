@@ -1168,7 +1168,12 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // RIPR-SPEC-0140: persist the full-fidelity finding set plus the input
     // identity for a later `explain --from` / `context --from`. A failed
     // write fails the command: the user explicitly requested the artifact.
-    if let Some(path) = write_artifact.as_deref() {
+    // Unsupported input retains its advisory report, but the artifact has
+    // no outcome field and would lose that refusal on reuse (#8212). Use
+    // the existing exit decision for publication and drill-in navigation.
+    let outcome_exit = analysis_outcome_exit_result("check", output.analysis_outcome.as_ref());
+    let reusable_artifact = write_artifact.as_deref().filter(|_| outcome_exit.is_ok());
+    if let Some(path) = reusable_artifact {
         app::check_artifact::write_check_artifact(
             path,
             &limited_check_input,
@@ -1269,7 +1274,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // an artifact to stay executable (#4321).
     let navigation = app::finding_navigation_with_worktree(
         &limited_check_input,
-        write_artifact.as_deref(),
+        reusable_artifact,
         explicit.mode,
         worktree_run,
     );
@@ -1317,7 +1322,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // refusal here would corrupt machine output. Genuine partial reports
     // remain advisory, so completeness or zero findings cannot own this exit.
     if !format.is_repo_scope() {
-        analysis_outcome_exit_result("check", output.analysis_outcome.as_ref())?;
+        outcome_exit?;
     }
     if let Some(sink) = &progress {
         sink.commit_success();

@@ -1100,6 +1100,12 @@ projection and is not a reuse source. The artifact is a local, disposable
 derivative of one check run — it must never feed a support-tier row, gate,
 badge, or proof route, and it is not portable between machines.
 
+An `unsupported_input` outcome exits `2` with its ordinary incomplete report
+and direct-input navigation, without creating or replacing the artifact.
+Existing valid and advisory `partial_with_limitations` artifact behavior is
+unchanged. Older v1 artifacts do not record the producing outcome; regenerate
+an artifact if it may have come from an unsupported-input run.
+
 Envelope (`schema_version = "ripr-check-artifact-v1"`):
 
 ```json
