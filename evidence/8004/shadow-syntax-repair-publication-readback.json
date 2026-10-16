@@ -55,5 +55,15 @@
     "checksums": true,
     "full_bytes_sizes_modes": true
   },
-  "claim": "All six published packet file bytes and every archive member byte/size/mode independently read back via new network-only bare consumer; no archive timestamp precision claim. This sibling receipt is outside the immutable packet to avoid self-reference."
+  "claim": "All six published packet file bytes and every archive member byte/size/mode independently read back via new network-only bare consumer; no archive timestamp precision claim. This sibling receipt is outside the immutable packet to avoid self-reference.",
+  "sibling_receipt_child_readback": {
+    "child": "328e4d22437935f46748205e6b06131b0adb5338",
+    "parents": [
+      "31c295d2f05eb3cb89e4b5cd8191d33f86267df8"
+    ],
+    "bytes": 2190,
+    "sha256": "36f0b51c5bc1ff192f287cf7cbad59afa8e54cce8bd59b8681b19ac42ada5af5",
+    "network_readback_verified": true,
+    "prior_verification_failure": "Used git show %P on depth1 shallow fetch; traversal projection hid parent and assertion failed. Corrected verifier reads immutable raw commit header with git cat-file; published bytes were already equal. No remote mutation retried or altered."
+  }
 }
