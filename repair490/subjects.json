@@ -1,0 +1,39 @@
+{
+  "observed_utc": "2026-10-16T07:26:07.096626+00:00",
+  "head": "490963fbff4bde6f425a667dda21d7d85205568d d1b2b13342877504ccd100ae271fcf2c4919cfd4 0ffd94561c92c6dbfbcc7efcfee59d6c15cc729e",
+  "merge": "c70847dc374dad04e93738b430a9ad4f6cb68ff7 f17ace60df7f3ebb8b2ecd47a8c21345d6cc3670 1a572a6e9d1b931b472dc9cc9af40f8e30260571 490963fbff4bde6f425a667dda21d7d85205568d",
+  "recomputed_merge_tree": "f17ace60df7f3ebb8b2ecd47a8c21345d6cc3670",
+  "tested_base": "27b74d26f0b7e35a08c614b29bb7e369e7b146fd",
+  "current_main": "895e4a47db94a618504875debbd1b76e4ed951f7",
+  "main_after_advertised_parent_paths": [
+    "crates/ripr/tests/cli_smoke.rs"
+  ],
+  "repair_paths": [
+    ".ripr/traceability.toml",
+    "changelog.d/8169-native-diff-output-set.md",
+    "crates/ripr/src/analysis/input_boundary.rs",
+    "crates/ripr/tests/cli_smoke/native_fanout.rs"
+  ],
+  "native_subtrees": {
+    "crates/ripr/src/analysis": {
+      "candidate": "5152894841e23d9adee53933d016f9b7ba3ca8e3",
+      "merge": "5152894841e23d9adee53933d016f9b7ba3ca8e3"
+    },
+    "crates/ripr/src/output": {
+      "candidate": "b6d12fafc6220d4379a43b38e5f81ad2b62d2cb2",
+      "merge": "b6d12fafc6220d4379a43b38e5f81ad2b62d2cb2"
+    },
+    "crates/ripr/src/cli/commands/check.rs": {
+      "candidate": "74b6c782257d9896bb434104a67350742d8e33ae",
+      "merge": "74b6c782257d9896bb434104a67350742d8e33ae"
+    },
+    "crates/ripr/src/cli/commands/check_fanout.rs": {
+      "candidate": "d462b6835e43b6cddefe251a95e9d4237ef2afd7",
+      "merge": "d462b6835e43b6cddefe251a95e9d4237ef2afd7"
+    },
+    "crates/ripr/tests/cli_smoke/native_fanout.rs": {
+      "candidate": "5b7f4a69882dcb2c2cd14248b5abb2a01d35972c",
+      "merge": "5b7f4a69882dcb2c2cd14248b5abb2a01d35972c"
+    }
+  }
+}

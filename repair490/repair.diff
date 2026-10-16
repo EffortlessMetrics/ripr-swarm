@@ -1,0 +1,311 @@
+diff --git a/.ripr/traceability.toml b/.ripr/traceability.toml
+index 0c4042684..41c8d753e 100644
+--- a/.ripr/traceability.toml
++++ b/.ripr/traceability.toml
+@@ -9,6 +9,9 @@ id = "RIPR-SPEC-0001"
+ name = "static exposure loop"
+ spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
+ tests = [
++  "crates/ripr/src/analysis/input_boundary.rs::fanout_boundary_failure_is_scoped_to_active_root_lifecycle",
++  "crates/ripr/src/analysis/input_boundary.rs::fanout_boundary_resolves_root_alias_and_absent_probes",
++  "crates/ripr/tests/cli_smoke/native_fanout.rs::fanout_root_alias_preserves_native_parity_and_symlink_refusal",
+   "crates/ripr/src/cli/commands/check_fanout.rs::fanout_auxiliary_binding_does_not_hide_new_workspace_inputs",
+   "crates/ripr/src/cli/commands/check_fanout.rs::fanout_output_caps_cover_members_and_manifest",
+   "crates/ripr/src/analysis/input_boundary.rs::fanout_boundary_matches_windows_exclusion_aliases",
+diff --git a/changelog.d/8169-native-diff-output-set.md b/changelog.d/8169-native-diff-output-set.md
+index 67d72f171..62501b0f9 100644
+--- a/changelog.d/8169-native-diff-output-set.md
++++ b/changelog.d/8169-native-diff-output-set.md
+@@ -2,3 +2,5 @@
+ - `ripr check --diff FILE --output-dir NEW_DIRECTORY` writes native diff badge,
+   detail JSON and human reports from one analysis, with input drift checks and
+   a final output-set manifest (#8169).
++- Selected roots spelled through directory symlinks retain native output parity;
++  input-read failures are scoped to their active root boundary (#8169).
+diff --git a/crates/ripr/src/analysis/input_boundary.rs b/crates/ripr/src/analysis/input_boundary.rs
+index d19100bbe..41b77a64c 100644
+--- a/crates/ripr/src/analysis/input_boundary.rs
++++ b/crates/ripr/src/analysis/input_boundary.rs
+@@ -6,11 +6,11 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+ use std::sync::{Arc, Mutex, Weak};
+ 
+ static ACTIVE: AtomicUsize = AtomicUsize::new(0);
+-static FAILED: AtomicBool = AtomicBool::new(false);
+ static GUARDS: Mutex<Vec<Weak<State>>> = Mutex::new(Vec::new());
+ 
+ struct State {
+     root: PathBuf,
++    requested_root: PathBuf,
+     escaped: AtomicBool,
+ }
+ 
+@@ -20,6 +20,7 @@ impl Boundary {
+     pub(crate) fn new(root: &Path) -> Result<Self, String> {
+         let state = Arc::new(State {
+             root: root.canonicalize().map_err(|e| e.to_string())?,
++            requested_root: std::path::absolute(root).map_err(|e| e.to_string())?,
+             escaped: AtomicBool::new(false),
+         });
+         let mut guards = GUARDS
+@@ -32,7 +33,7 @@ impl Boundary {
+     }
+ 
+     pub(crate) fn verify(&self) -> Result<(), String> {
+-        if FAILED.load(Ordering::SeqCst) || self.0.escaped.load(Ordering::SeqCst) {
++        if self.0.escaped.load(Ordering::SeqCst) {
+             Err("--output-dir cannot bind module reads outside the root or under Git metadata/Cargo target directories; use standalone formats for this input".into())
+         } else {
+             Ok(())
+@@ -52,45 +53,79 @@ pub(crate) fn observe_module_read(root: &Path, file: &Path, outside: bool) {
+     if ACTIVE.load(Ordering::SeqCst) == 0 {
+         return;
+     }
+-    let canonical_root = match root.canonicalize() {
+-        Ok(root) => root,
+-        Err(_) => {
+-            FAILED.store(true, Ordering::SeqCst);
++    let mut guards = match GUARDS.lock() {
++        Ok(guards) => guards,
++        Err(poisoned) => {
++            for state in poisoned.into_inner().iter().filter_map(Weak::upgrade) {
++                state.escaped.store(true, Ordering::SeqCst);
++            }
+             return;
+         }
+     };
+-    let absolute_file = match std::path::absolute(file) {
+-        Ok(file) => file,
+-        Err(_) => {
+-            FAILED.store(true, Ordering::SeqCst);
+-            return;
++    guards.retain(|guard| guard.strong_count() > 0);
++    let requested_root = std::path::absolute(root);
++    let canonical_root = root.canonicalize();
++    let observed_file = resolved_probe_path(file);
++    for state in guards.iter().filter_map(Weak::upgrade) {
++        let matches = requested_root
++            .as_ref()
++            .is_ok_and(|path| path == &state.requested_root || path == &state.root)
++            || canonical_root
++                .as_ref()
++                .is_ok_and(|path| path == &state.root);
++        // An unavailable current directory prevents attributing a relative
++        // observation. Refuse active runs, without retaining process-wide state.
++        if !matches && requested_root.is_ok() {
++            continue;
+         }
+-    };
+-    let excluded = match absolute_file.strip_prefix(&canonical_root) {
+-        Ok(relative) => {
+-            let mut parent = canonical_root.clone();
+-            relative.components().any(|component| {
+-                let skipped = component_is_named(component.as_os_str(), ".git", cfg!(windows))
+-                    || (component_is_named(component.as_os_str(), "target", cfg!(windows))
+-                        && parent.join("Cargo.toml").is_file());
+-                parent.push(component);
+-                skipped
+-            })
++        let escaped = outside
++            || canonical_root
++                .as_ref()
++                .map_or(true, |path| path != &state.root)
++            || observed_file.as_ref().map_or(true, |path| {
++                let Ok(relative) = path.strip_prefix(&state.root) else {
++                    return true;
++                };
++                let mut parent = state.root.clone();
++                relative.components().any(|component| {
++                    let skipped = matches!(component, std::path::Component::ParentDir)
++                        || component_is_named(component.as_os_str(), ".git", cfg!(windows))
++                        || (component_is_named(component.as_os_str(), "target", cfg!(windows))
++                            && parent.join("Cargo.toml").is_file());
++                    parent.push(component);
++                    skipped
++                })
++            });
++        if escaped {
++            state.escaped.store(true, Ordering::SeqCst);
+         }
+-        Err(_) => true,
+-    };
+-    if !outside && !excluded {
+-        return;
+     }
+-    match GUARDS.lock() {
+-        Ok(guards) => {
+-            for state in guards.iter().filter_map(Weak::upgrade) {
+-                if state.root == canonical_root {
+-                    state.escaped.store(true, Ordering::SeqCst);
++}
++
++/// Resolve aliases in the existing prefix while retaining absent module probes.
++/// Other resolution failures remain failures; no unreadable prefix is admitted.
++fn resolved_probe_path(file: &Path) -> std::io::Result<PathBuf> {
++    let mut prefix = std::path::absolute(file)?;
++    let mut absent = Vec::new();
++    loop {
++        match prefix.canonicalize() {
++            Ok(mut resolved) => {
++                for component in absent.iter().rev() {
++                    resolved.push(component);
++                }
++                return Ok(resolved);
++            }
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
++                let Some(name) = prefix.file_name() else {
++                    return Err(error);
++                };
++                absent.push(name.to_os_string());
++                if !prefix.pop() {
++                    return Err(error);
+                 }
+             }
++            Err(error) => return Err(error),
+         }
+-        Err(_) => FAILED.store(true, Ordering::SeqCst),
+     }
+ }
+ 
+@@ -191,4 +226,44 @@ mod tests {
+         }
+         Ok(())
+     }
++    #[test]
++    fn fanout_boundary_failure_is_scoped_to_active_root_lifecycle() -> Result<(), String> {
++        let broken = fixture("broken-lifecycle")?;
++        let stable = fixture("stable-lifecycle")?;
++        let boundary = Boundary::new(&broken.0)?;
++        let concurrent = Boundary::new(&stable.0)?;
++        std::fs::remove_dir(&broken.0).map_err(|e| e.to_string())?;
++        observe_module_read(&broken.0, &broken.0.join("missing.rs"), false);
++        assert!(
++            boundary.verify().is_err(),
++            "failed observation must refuse its run"
++        );
++        let concurrent_result = concurrent.verify();
++        drop(boundary);
++        drop(concurrent);
++        let fresh = Boundary::new(&stable.0)?;
++        fresh.verify()?;
++        concurrent_result?;
++        Ok(())
++    }
++
++    #[cfg(unix)]
++    #[test]
++    fn fanout_boundary_resolves_root_alias_and_absent_probes() -> Result<(), String> {
++        let physical = fixture("physical")?;
++        let aliases = fixture("aliases")?;
++        let alias = aliases.0.join("root");
++        std::os::unix::fs::symlink(&physical.0, &alias).map_err(|e| e.to_string())?;
++        std::fs::write(physical.0.join("lib.rs"), "").map_err(|e| e.to_string())?;
++        let boundary = Boundary::new(&alias)?;
++        observe_module_read(&alias, &alias.join("lib.rs"), false);
++        observe_module_read(&alias, &alias.join("absent/module.rs"), false);
++        boundary.verify()?;
++        observe_module_read(&alias, &alias.join(".git/absent.rs"), false);
++        assert!(
++            boundary.verify().is_err(),
++            "alias must retain excluded-directory refusal"
++        );
++        Ok(())
++    }
+ }
+diff --git a/crates/ripr/tests/cli_smoke/native_fanout.rs b/crates/ripr/tests/cli_smoke/native_fanout.rs
+index 426e6c558..5b7f4a698 100644
+--- a/crates/ripr/tests/cli_smoke/native_fanout.rs
++++ b/crates/ripr/tests/cli_smoke/native_fanout.rs
+@@ -1,7 +1,7 @@
+ //! Byte-level native equivalence and refusal/exit controls for #8169.
+ use super::{ignore_remove_dir_all, run_command_with_env, unique_external_workspace};
+ use sha2::{Digest, Sha256};
+-use std::path::PathBuf;
++use std::path::{Path, PathBuf};
+ 
+ type TestResult = Result<(), Box<dyn std::error::Error>>;
+ 
+@@ -47,7 +47,16 @@ impl Fixture {
+         extra: &[&str],
+         env: &[(&str, &str)],
+     ) -> Result<std::process::Output, std::io::Error> {
+-        let root = self.0.to_string_lossy();
++        self.run_at(&self.0, extra, env)
++    }
++
++    fn run_at(
++        &self,
++        selected_root: &Path,
++        extra: &[&str],
++        env: &[(&str, &str)],
++    ) -> Result<std::process::Output, std::io::Error> {
++        let root = selected_root.to_string_lossy();
+         let mut args = vec!["check", "--root", &root, "--diff", "input.diff", "--quiet"];
+         args.extend_from_slice(extra);
+         run_command_with_env(env!("CARGO_BIN_EXE_ripr"), &self.0, &args, env)
+@@ -456,3 +465,66 @@ fn fanout_typescript_native_projections_match() -> TestResult {
+     }
+     Ok(())
+ }
++
++#[cfg(unix)]
++#[test]
++fn fanout_root_alias_preserves_native_parity_and_symlink_refusal() -> TestResult {
++    let physical = Fixture::new()?;
++    let holder = Fixture::new()?;
++    let alias = holder.0.join("root-alias");
++    std::os::unix::fs::symlink(&physical.0, &alias)?;
++    for (label, root) in [("physical", &physical.0), ("alias", &alias)] {
++        let destination = holder.0.join(label);
++        let destination_arg = destination.to_string_lossy();
++        let combined = physical.run_at(root, &["--output-dir", &destination_arg], &[])?;
++        assert!(
++            combined.status.success(),
++            "{label}: {}",
++            String::from_utf8_lossy(&combined.stderr)
++        );
++        let manifest: serde_json::Value =
++            serde_json::from_slice(&std::fs::read(destination.join("manifest.json"))?)?;
++        assert_eq!(manifest["complete_set"], true);
++        assert_eq!(manifest["command_success"], true);
++        for (format, file) in [
++            ("badge-json", "badge.json"),
++            ("json", "detail.json"),
++            ("human", "human.txt"),
++        ] {
++            let standalone = physical.run_at(root, &["--format", format], &[])?;
++            assert!(
++                standalone.status.success(),
++                "{label}/{format}: {}",
++                String::from_utf8_lossy(&standalone.stderr)
++            );
++            let bytes = std::fs::read(destination.join(file))?;
++            assert_eq!(bytes, standalone.stdout, "{label}/{format} native parity");
++            if format == "json" {
++                let detail: serde_json::Value = serde_json::from_slice(&bytes)?;
++                assert!(
++                    detail["findings"]
++                        .as_array()
++                        .is_some_and(|findings| !findings.is_empty())
++                );
++            }
++        }
++    }
++    // A selected-root alias is valid; symlinks *inside* the captured tree
++    // still refuse before admitting an output set, even to regular files.
++    let external = holder.0.join("external.rs");
++    std::fs::write(&external, "pub fn escaped() {}")?;
++    std::os::unix::fs::symlink(&external, physical.0.join("src/escape.rs"))?;
++    let destination = holder.0.join("refused");
++    let refused = physical.run_at(
++        &alias,
++        &["--output-dir", &destination.to_string_lossy()],
++        &[],
++    )?;
++    assert_eq!(refused.status.code(), Some(2));
++    assert!(String::from_utf8_lossy(&refused.stderr).contains("requires regular input files"));
++    let manifest: serde_json::Value =
++        serde_json::from_slice(&std::fs::read(destination.join("manifest.json"))?)?;
++    assert_eq!(manifest["complete_set"], false);
++    assert_eq!(manifest["command_success"], false);
++    Ok(())
++}

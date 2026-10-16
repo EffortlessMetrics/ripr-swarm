@@ -1,0 +1,25 @@
+{
+  "file_fact_cache_schema_version": "1.41",
+  "analyzer_version": "0.11.0+6a47f5bf094e5b010845b544f9464333a8b90d7d",
+  "file_path": "src/lib.rs",
+  "content_hash": "c1209701a5af3abe",
+  "file_facts": {
+    "path": "src/lib.rs",
+    "functions": [],
+    "tests": [],
+    "returns": [],
+    "literals": [],
+    "probe_shapes": [],
+    "used_lexical_fallback": false,
+    "module_declarations": [],
+    "unresolved_property_macros": [],
+    "source": "include!(\"../.git/linked.rs\");\n",
+    "item_scopes": {
+      "fns": []
+    },
+    "macro_candidates": {
+      "Names": []
+    }
+  },
+  "payload_digest": "sha256:837e7c312e9420bf1eb50a46bac7f95093106acac64bbf0932e7c8e1fa82e115"
+}

@@ -1,0 +1,5 @@
+--- a/src/impl.rs
++++ b/src/impl.rs
+@@ -1 +1 @@
+-pub fn positive(v:i32)->bool { v >= 0 }
++pub fn positive(v:i32)->bool { v > 0 }

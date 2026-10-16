@@ -1,0 +1,22 @@
+{
+  "root-alias/alias": {
+    "kind": "symlink",
+    "target": "/workspace/8201-evidence/repair490/root-alias/physical"
+  },
+  "root-alias/physical/src/link.rs": {
+    "kind": "symlink",
+    "target": "/workspace/8201-evidence/repair490/root-alias/outside.rs"
+  },
+  "module-fixture/.git/private.rs": {
+    "kind": "symlink",
+    "target": "/workspace/8201-evidence/repair490/module-fixture/source.rs"
+  },
+  "excluded-native-git/root/.git/linked.rs": {
+    "kind": "symlink",
+    "target": "/workspace/8201-evidence/repair490/excluded-native-git/root/src/impl.rs"
+  },
+  "excluded-native-target/root/target/linked.rs": {
+    "kind": "symlink",
+    "target": "/workspace/8201-evidence/repair490/excluded-native-target/root/src/impl.rs"
+  }
+}

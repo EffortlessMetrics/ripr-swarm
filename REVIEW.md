@@ -1,5 +1,7 @@
 # Independent review of Draft PR #8201
 
+**Latest head 490963fb:** [independent repair re-review](repair490/REVIEW.md). Earlier root-alias/lifecycle findings repaired; a new excluded-alias admission regression retains REPAIR_REQUIRED. Earlier head-specific records remain historical.
+
 **Current-head review:** [independent review at 0ffd9456](final0ffd/REVIEW.md) supersedes prior head/integration status. **Current disposition: REPAIR_REQUIRED.** A late independent root-alias counterexample withdraws the earlier pre-Ready assessment; see the current-head findings.
 
 **Post-landing supplement:** [#8180 integration followup](POST8180.md) supersedes the earlier unlanded-prerequisite status. Original observations below remain bound to their original subjects.

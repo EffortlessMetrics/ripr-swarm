@@ -1,0 +1,18 @@
+{
+  "label": "repair490-cli",
+  "args": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "cli_smoke",
+    "native_fanout"
+  ],
+  "cwd": "/workspace/review-8201-repair",
+  "started": 1792135396.0639718,
+  "elapsed": 71.44262146949768,
+  "exit": 0,
+  "head": "490963fbff4bde6f425a667dda21d7d85205568d"
+}

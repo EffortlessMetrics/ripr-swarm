@@ -1,0 +1,42 @@
+[
+  {
+    "label": "original6a",
+    "binary_sha256": "17ce729bd5016c1e9edba48fdc514ee160af626a8f933d0ead870f8a3f899d57",
+    "version": "ripr 0.11.0 (6a47f5bf094e5b010845b544f9464333a8b90d7d)",
+    "args": [
+      "/workspace/8201-evidence/ripr",
+      "check",
+      "--root",
+      "/workspace/8201-evidence/repair490/excluded-native-target/root",
+      "--diff",
+      "/workspace/8201-evidence/repair490/excluded-native-target/input.diff",
+      "--quiet",
+      "--output-dir",
+      "/workspace/8201-evidence/repair490/excluded-native-target/original6a"
+    ],
+    "exit": 2,
+    "stderr": "ripr: 1 Rust include boundary limitation(s): src/lib.rs:1:rust_include_target_not_indexed; affected compilation-unit relations remain fail-closed. This is an analysis-limit note about indexed context, not a finding: no action is needed unless evidence you expected from a listed file is missing.\nripr: --output-dir cannot bind module reads outside the root or under Git metadata/Cargo target directories; use standalone formats for this input\n",
+    "complete_set": false,
+    "command_success": false
+  },
+  {
+    "label": "repair490",
+    "binary_sha256": "b9fac7f82935ff7c1fda8530e8a69d83565bf9c9d8c44edc2e77f94f91cdfb91",
+    "version": "ripr 0.11.0 (490963fbff4bde6f425a667dda21d7d85205568d)",
+    "args": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/8201-evidence/repair490/excluded-native-target/root",
+      "--diff",
+      "/workspace/8201-evidence/repair490/excluded-native-target/input.diff",
+      "--quiet",
+      "--output-dir",
+      "/workspace/8201-evidence/repair490/excluded-native-target/repair490"
+    ],
+    "exit": 0,
+    "stderr": "ripr: 1 Rust include boundary limitation(s): src/lib.rs:1:rust_include_target_not_indexed; affected compilation-unit relations remain fail-closed. This is an analysis-limit note about indexed context, not a finding: no action is needed unless evidence you expected from a listed file is missing.\n",
+    "complete_set": true,
+    "command_success": true
+  }
+]

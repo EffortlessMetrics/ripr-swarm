@@ -1,0 +1,2 @@
+ripr: 1 Rust include boundary limitation(s): src/lib.rs:1:rust_include_target_not_indexed; affected compilation-unit relations remain fail-closed. This is an analysis-limit note about indexed context, not a finding: no action is needed unless evidence you expected from a listed file is missing.
+ripr: --output-dir cannot bind module reads outside the root or under Git metadata/Cargo target directories; use standalone formats for this input

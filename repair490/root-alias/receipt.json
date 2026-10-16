@@ -1,0 +1,103 @@
+{
+  "status": "passed",
+  "binary_sha256": "b9fac7f82935ff7c1fda8530e8a69d83565bf9c9d8c44edc2e77f94f91cdfb91",
+  "version": "ripr 0.11.0 (490963fbff4bde6f425a667dda21d7d85205568d)",
+  "records": [
+    {
+      "label": "physical",
+      "args": [
+        "/workspace/ripr-swarm/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/repair490/root-alias/physical",
+        "--diff",
+        "/workspace/8201-evidence/repair490/root-alias/input.diff",
+        "--quiet",
+        "--output-dir",
+        "/workspace/8201-evidence/repair490/root-alias/physical-output"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "alias",
+      "args": [
+        "/workspace/ripr-swarm/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/repair490/root-alias/alias",
+        "--diff",
+        "/workspace/8201-evidence/repair490/root-alias/input.diff",
+        "--quiet",
+        "--output-dir",
+        "/workspace/8201-evidence/repair490/root-alias/alias-output"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "native-badge-json",
+      "args": [
+        "/workspace/ripr-swarm/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/repair490/root-alias/alias",
+        "--diff",
+        "/workspace/8201-evidence/repair490/root-alias/input.diff",
+        "--quiet",
+        "--format",
+        "badge-json"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "native-json",
+      "args": [
+        "/workspace/ripr-swarm/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/repair490/root-alias/alias",
+        "--diff",
+        "/workspace/8201-evidence/repair490/root-alias/input.diff",
+        "--quiet",
+        "--format",
+        "json"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "native-human",
+      "args": [
+        "/workspace/ripr-swarm/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/repair490/root-alias/alias",
+        "--diff",
+        "/workspace/8201-evidence/repair490/root-alias/input.diff",
+        "--quiet",
+        "--format",
+        "human"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "inroot-symlink",
+      "args": [
+        "/workspace/ripr-swarm/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/8201-evidence/repair490/root-alias/alias",
+        "--diff",
+        "/workspace/8201-evidence/repair490/root-alias/input.diff",
+        "--quiet",
+        "--output-dir",
+        "/workspace/8201-evidence/repair490/root-alias/inroot-symlink-output"
+      ],
+      "exit": 2,
+      "stderr": "ripr: --output-dir requires regular input files: /workspace/8201-evidence/repair490/root-alias/physical/src/link.rs\n"
+    }
+  ]
+}

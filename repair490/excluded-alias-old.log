@@ -1,0 +1,1 @@
+observed lexical .git read via symlink to captured root source: Err("--output-dir cannot bind module reads outside the root or under Git metadata/Cargo target directories; use standalone formats for this input")

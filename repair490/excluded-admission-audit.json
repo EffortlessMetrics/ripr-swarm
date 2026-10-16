@@ -1,0 +1,18 @@
+{
+  "git": {
+    "command_exit": 0,
+    "complete_set": true,
+    "command_success": true,
+    "findings": 2,
+    "native_member_hashes_verified": true,
+    "alias_in_observed_inputs": false
+  },
+  "target": {
+    "command_exit": 0,
+    "complete_set": true,
+    "command_success": true,
+    "findings": 2,
+    "native_member_hashes_verified": true,
+    "alias_in_observed_inputs": false
+  }
+}

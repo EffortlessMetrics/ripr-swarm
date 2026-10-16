@@ -1,0 +1,29 @@
+{
+  "excluded-alias-module": {
+    "bytes": 4446512,
+    "sha256": "648d18e5fa49d412ff9e4478cd98906fe434a80a94687a90c35c2f44a0102ece",
+    "scope": "scratch exact-module experiment; executable omitted from remote packet"
+  },
+  "excluded-alias-old": {
+    "bytes": 4431984,
+    "sha256": "6700d57f567de3d0a5a9f4444612c6c0cf06b8065dd14e712a1de6416a80809a",
+    "scope": "scratch exact-module experiment; executable omitted from remote packet"
+  },
+  "lifecycle-confirm": {
+    "bytes": 4446096,
+    "sha256": "f575f6625412446b5e8bbc525767dd5996219599d7f72a19dccbe6e764aa43d8",
+    "scope": "scratch exact-module experiment; executable omitted from remote packet"
+  },
+  "current_native": {
+    "path": "/workspace/ripr-swarm/target/debug/ripr",
+    "sha256": "b9fac7f82935ff7c1fda8530e8a69d83565bf9c9d8c44edc2e77f94f91cdfb91",
+    "bytes": 219340176,
+    "version": "ripr 0.11.0 (490963fbff4bde6f425a667dda21d7d85205568d)"
+  },
+  "negative_witness": {
+    "path": "/workspace/8201-evidence/repair490/ripr-490963fb",
+    "bytes": 219340176,
+    "sha256": "b9fac7f82935ff7c1fda8530e8a69d83565bf9c9d8c44edc2e77f94f91cdfb91",
+    "reason": "distinct repaired-head CLI that admits excluded aliases; retained for source-owner reproduction; not a release artifact"
+  }
+}
