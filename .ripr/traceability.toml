@@ -351,6 +351,18 @@ name = "agent context packet"
 spec = "docs/specs/RIPR-SPEC-0003-agent-context.md"
 tests = [
   "crates/ripr/src/app/selector.rs::tests::malformed_location_misses_get_syntax_guidance_without_classifying_ids",
+  "crates/ripr/src/app/selector.rs::tests::unique_probe_and_gap_and_location_selectors_resolve_one_finding",
+  "crates/ripr/src/app/selector.rs::tests::unmatched_selector_is_no_match",
+  "crates/ripr/src/app/selector.rs::tests::shared_location_and_shared_gap_are_ambiguous_never_first",
+  "crates/ripr/src/app/selector.rs::tests::ambiguous_message_bounds_the_candidate_list",
+  "crates/ripr/src/app/explain.rs::tests::explain_shared_location_refuses_as_ambiguous_naming_candidates",
+  "crates/ripr/src/app/explain.rs::tests::explain_gap_identity_resolves_its_unique_finding",
+  "crates/ripr/src/app/explain.rs::tests::explain_unmatched_and_seam_shaped_selectors_refuse_as_no_match",
+  "crates/ripr/src/app/context.rs::tests::context_shared_location_refuses_as_ambiguous_naming_candidates",
+  "crates/ripr/src/app/context.rs::tests::context_ambiguous_selector_is_typed_as_selector_miss",
+  "crates/ripr/src/app/context.rs::tests::context_gap_identity_resolves_its_unique_finding",
+  "crates/ripr/src/app/context.rs::tests::context_unmatched_and_seam_shaped_selectors_refuse_as_no_match",
+  "crates/ripr/tests/cli_smoke.rs::selector_ambiguity_and_gap_identity_route_through_explain_and_context",
   "crates/ripr/tests/cli_smoke.rs::selector_location_misses_explain_syntax_and_preserve_retry_scope",
   "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_real_reasons_have_supported_actions_in_every_mode",
   "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_repair_preserves_decidable_recipes"

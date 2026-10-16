@@ -2392,6 +2392,98 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
     Ok(())
 }
 
+/// #8166 Slice B: a selector naming several findings (two findings share
+/// `src/lib.rs:3` in `collection_argument_plain`) refuses as ambiguous
+/// through both `explain` and `context` — usage-class exit 2, empty stdout,
+/// bounded candidate ids on stderr — while a unique probe or canonical gap
+/// identity resolves exactly one finding through both commands, and an
+/// unmatched (including 16-hex seam-shaped) selector keeps the no-match
+/// refusal.
+#[test]
+fn selector_ambiguity_and_gap_identity_route_through_explain_and_context()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/collection_argument_plain");
+    let root = fixture.join("input");
+    let diff = fixture.join("diff.patch");
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    let root_arg = root.display().to_string();
+    let diff_arg = diff.display().to_string();
+    let first_id = "probe:src_lib.rs:call_deletion:1f64eda5";
+    let second_id = "probe:src_lib.rs:side_effect:3ceb2918";
+    let gap_id = "gap:rust:src/lib.rs:add:call_deletion:call_deletion:v.push_x*1";
+
+    for command in ["explain", "context"] {
+        for (selector, success_id) in [
+            ("src/lib.rs:3", None),
+            (gap_id, Some(first_id)),
+            (first_id, Some(first_id)),
+            ("0123456789abcdef", None),
+            ("probe:not-a-real-id", None),
+        ] {
+            let mut args = vec![
+                command, "--root", &root_arg, "--diff", &diff_arg, "--mode", "draft",
+            ];
+            if command == "context" {
+                args.push("--at");
+            }
+            args.push(selector);
+            let output = run_command(bin, None, &args)?;
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            match success_id {
+                Some(expected_id) => {
+                    if !output.status.success() {
+                        return Err(format!(
+                            "unique {command} selector {selector:?} failed: {stderr}"
+                        )
+                        .into());
+                    }
+                    if command == "context" {
+                        let packet: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+                        if packet["probe"]["id"].as_str() != Some(expected_id) {
+                            return Err(format!(
+                                "gap/probe selector resolved another finding: {packet}"
+                            )
+                            .into());
+                        }
+                    } else if !stdout.contains(expected_id) {
+                        return Err(format!(
+                            "{command} did not render the selected finding {expected_id}: {stdout}"
+                        )
+                        .into());
+                    }
+                }
+                None => {
+                    if output.status.code() != Some(2) || !output.stdout.is_empty() {
+                        return Err(format!(
+                            "selector refusal changed the CLI failure contract for {command} {selector:?}: {output:?}"
+                        )
+                        .into());
+                    }
+                    if selector == "src/lib.rs:3" {
+                        if !stderr.contains("matched 2 findings")
+                            || !stderr.contains(first_id)
+                            || !stderr.contains(second_id)
+                        {
+                            return Err(format!(
+                                "ambiguous {command} refusal must name the bounded candidates: {stderr}"
+                            )
+                            .into());
+                        }
+                    } else if !stderr.contains("no finding matched") {
+                        return Err(format!(
+                            "unmatched {command} selector must keep the no-match refusal: {stderr}"
+                        )
+                        .into());
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// These navigation/artifact contracts need the sample's real findings, not
 /// the unrelated source/test inventory of this repository. The workspace
 /// boundary also keeps `ready` a CLI-only override when Cargo puts temp files
