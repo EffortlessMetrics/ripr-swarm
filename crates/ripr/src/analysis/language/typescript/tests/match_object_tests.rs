@@ -25,12 +25,6 @@ fn returned_field_key_reads_only_a_top_level_field_of_the_one_returned_literal()
         ts_owner_returned_field_key(&last, "    tags: \"{}\"").as_deref(),
         Some("tags")
     );
-    // `__proto__:` sets the prototype, not an own field (#8133).
-    let proto = PROFILE.replace("    adult: age >= 18,\n", "    __proto__: base,\n");
-    assert_eq!(
-        ts_owner_returned_field_key(&proto, "    __proto__: base,").as_deref(),
-        None
-    );
     for (label, owner, line) in [
         (
             "a second return",

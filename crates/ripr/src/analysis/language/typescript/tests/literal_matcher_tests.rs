@@ -386,9 +386,12 @@ fn mock_payload_binding_must_be_exactly_a_fresh_mock() {
         "const db = { write: jest.fn(function (v) { this.write(2); }) }; save(db, 1);",
         // A call or a conditional wrapping an arrow can evaluate to a named
         // implementation (#8148 review); the arrow token inside it is not
-        // the implementation.
+        // the implementation. A comma expression or a helper call that
+        // receives an arrow and returns a named function behaves the same.
         "const db = { write: jest.fn((() => recordTwo)()) }; save(db, 1);",
         "const db = { write: jest.fn(ready ? (v) => v : recordTwo) }; save(db, 1);",
+        "const db = { write: jest.fn((() => 0, recordTwo)) }; save(db, 1);",
+        "const db = { write: jest.fn(choose(() => 0)) }; save(db, 1);",
         "const db = { write: jest.fn(), inner: pre }.inner; save(db, 1);",
         "const db = { write: jest.fn() }\n  && pre;\nsave(db, 1);",
         "const db = { write: jest.fn().mockName(\"w\") }; save(db, 1);",

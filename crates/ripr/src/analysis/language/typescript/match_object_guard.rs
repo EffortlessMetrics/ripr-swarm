@@ -202,11 +202,6 @@ pub(crate) fn ts_owner_returned_field_key(owner_source: &str, line_text: &str) -
     let target = blank(line_text);
     let target = target.trim();
     let key = leading_identifier(target)?;
-    // A `__proto__:` entry sets the returned object's prototype, not an own
-    // field a match-object pin could list (#8133).
-    if key == "__proto__" {
-        return None;
-    }
     let value = target[key.len()..].trim_start().strip_prefix(':')?;
     // Colon `__proto__: v` sets the prototype. Computed `["__proto__"]` and
     // shorthand `__proto__,` never reach this colon read.
