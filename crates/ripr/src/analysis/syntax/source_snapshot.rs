@@ -358,8 +358,8 @@ mod tests {
         let first = memos.parse_fragment(text).ok_or("first parse")?.tree();
         let second = memos.parse_fragment(text).ok_or("shared parse")?.tree();
         assert!(std::ptr::eq(
-            first.syntax().green().as_ref(),
-            second.syntax().green().as_ref()
+            first.syntax().green(),
+            second.syntax().green()
         ));
         let asynchronous = "async fn subject() { assert!(Widget.read()); }";
         let other = memos
@@ -367,8 +367,8 @@ mod tests {
             .ok_or("async parse")?
             .tree();
         assert!(!std::ptr::eq(
-            first.syntax().green().as_ref(),
-            other.syntax().green().as_ref()
+            first.syntax().green(),
+            other.syntax().green()
         ));
         assert!(memos.parse_fragment("fn broken( {").is_none());
         assert!(memos.parse_fragment("fn broken( {").is_none());
