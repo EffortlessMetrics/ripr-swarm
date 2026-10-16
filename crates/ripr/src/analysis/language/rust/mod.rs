@@ -357,6 +357,15 @@ fn drop_unreached_test_files(
                 .map(|path| workspace::normalize_path(path)),
         );
     }
+    // A `[[test]]` target Cargo builds but `cargo test` never runs (#8016).
+    orphans.extend(cargo_skipped_test_files(
+        root,
+        test_harnesses,
+        loaded_files
+            .iter()
+            .filter(|(_, bytes)| holds_tests(bytes))
+            .map(|(path, _)| path.as_path()),
+    ));
     if orphans.is_empty() {
         return loaded_files;
     }
@@ -364,6 +373,79 @@ fn drop_unreached_test_files(
         .into_iter()
         .filter(|(path, _)| !orphans.contains(&workspace::normalize_path(path)))
         .collect()
+}
+
+/// The test-holding files Cargo's own target inventory establishes as built
+/// but not run by `cargo test`: a `[[test]]` with `test = false`, unmet
+/// `required-features` under cargo defaults, or `harness = false` (its
+/// `#[test]` items never run under libtest). Unlike the #6965 drop, the file
+/// is a real Cargo target, so the verdict comes from `cargo metadata`
+/// (`ManifestInventory`) rather than the module walk, and an unavailable
+/// probe establishes nothing: the file keeps its credit. A `harness = false`
+/// target registered as a custom harness is harness-driven end to end and is
+/// kept. The probe runs only for packages whose manifest declares a `[[test]]`
+/// entry that could be skipped, because autodiscovered targets have no such
+/// switch.
+fn cargo_skipped_test_files<'a>(
+    root: &Path,
+    test_harnesses: &[crate::config::TestHarnessRegistration],
+    files: impl Iterator<Item = &'a Path>,
+) -> BTreeSet<String> {
+    let mut manifest_dirs = BTreeMap::new();
+    let mut declares_skippable = BTreeMap::new();
+    let mut inventory = workspace::ManifestInventory::default();
+    let mut skipped = BTreeSet::new();
+    for path in files {
+        let Some(manifest_dir) = owning_manifest_dir(root, path, &mut manifest_dirs) else {
+            continue;
+        };
+        let skippable = *declares_skippable
+            .entry(manifest_dir.clone())
+            .or_insert_with(|| manifest_declares_skippable_test_target(root, &manifest_dir));
+        if !skippable {
+            continue;
+        }
+        let harness_driven = test_harnesses.iter().any(|harness| {
+            harness.file_wide_harness_evidence()
+                && workspace::normalize_path(&harness.target) == workspace::normalize_path(path)
+        });
+        if harness_driven {
+            continue;
+        }
+        if inventory.cargo_test_collection_skipped(root, path)
+            || matches!(
+                inventory.verdict(root, path),
+                workspace::CargoHarnessVerdict::HarnessDisabled
+            )
+        {
+            skipped.insert(workspace::normalize_path(path));
+        }
+    }
+    skipped
+}
+
+/// Whether the manifest in `manifest_dir` declares a `[[test]]` entry with
+/// `test = false`, `harness = false` or `required-features`: the only
+/// switches that make a Cargo test target not run under `cargo test`.
+fn manifest_declares_skippable_test_target(root: &Path, manifest_dir: &Path) -> bool {
+    committed_source::read_source_bytes(root, &manifest_dir.join("Cargo.toml"))
+        .ok()
+        .flatten()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+        .and_then(|manifest| {
+            manifest
+                .get("test")
+                .and_then(toml::Value::as_array)
+                .map(|entries| {
+                    entries.iter().any(|entry| {
+                        entry.get("test").and_then(toml::Value::as_bool) == Some(false)
+                            || entry.get("harness").and_then(toml::Value::as_bool) == Some(false)
+                            || entry.get("required-features").is_some()
+                    })
+                })
+        })
+        .unwrap_or(false)
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
@@ -7359,6 +7441,80 @@ fn absent_delimiter_boundary_returns_head() {
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    /// #8016: one package with `tests/live.rs` and `tests/x.rs`, where `x`
+    /// carries `target_entry`, as its own workspace root (the fixture sits under
+    /// the repository's `target/`). Returns whether each related-test name is seen.
+    fn skipped_target_relations(
+        tag: &str,
+        features: &str,
+        target_entry: &str,
+    ) -> Result<(bool, bool), String> {
+        let root = temp_root(tag)?;
+        write(
+            &root.join("Cargo.toml"),
+            &format!(
+                "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n{features}\n\
+                 [[test]]\nname='live'\n\n[[test]]\nname='x'\n{target_entry}\n"
+            ),
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        let test = |name: &str| {
+            format!(
+                "use shop::used::discount;\n\n#[test]\nfn {name}() {{\n    assert_eq!(discount(150), 140);\n}}\n"
+            )
+        };
+        write(&root.join("tests/live.rs"), &test("discount_live"))?;
+        write(&root.join("tests/x.rs"), &test("discount_skipped"))?;
+        let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+        let related = related_test_names(&root, &result, "src/used.rs");
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok((
+            related.iter().any(|name| name == "discount_live"),
+            related.iter().any(|name| name == "discount_skipped"),
+        ))
+    }
+
+    #[test]
+    fn diff_analysis_ignores_tests_in_a_target_cargo_test_skips() -> Result<(), String> {
+        // `cargo test` builds but never runs a `[[test]]` with `test = false`,
+        // `harness = false` (its `#[test]` items are inert), or required
+        // features outside the defaults. The sibling `live` target proves the
+        // fixture relates tests at all.
+        for (tag, features, entry) in [
+            ("skip-test-false", "", "test = false"),
+            ("skip-harness-false", "", "harness = false"),
+            (
+                "skip-unmet-feature",
+                "[features]\nnever = []\n",
+                "required-features = ['never']",
+            ),
+        ] {
+            let (live, skipped) = skipped_target_relations(tag, features, entry)?;
+            assert!(live, "{tag}: the live target must relate");
+            assert!(!skipped, "{tag}: a target cargo test skips must not relate");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_keeps_tests_in_a_target_cargo_test_runs() -> Result<(), String> {
+        // Controls: the same declarations that do not skip the target.
+        for (tag, features, entry) in [
+            ("run-test-true", "", "test = true"),
+            ("run-harness-true", "", "harness = true"),
+            (
+                "run-default-feature",
+                "[features]\ndefault = ['on']\non = []\n",
+                "required-features = ['on']",
+            ),
+        ] {
+            let (live, ran) = skipped_target_relations(tag, features, entry)?;
+            assert!(live && ran, "{tag}: live={live} ran={ran}");
+        }
         Ok(())
     }
 
