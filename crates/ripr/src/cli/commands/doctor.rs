@@ -356,23 +356,38 @@ fn display_path(path: &Path) -> String {
 fn failure_block(evidence: &str) -> Vec<String> {
     let (state, fix) = split_state_and_fix(evidence);
     let mut lines = vec![format!("! {}", display_text(state))];
-    if let Some(fix) = fix.or_else(|| tool_probe_nonzero_exit_fix(state)) {
+    if let Some(fix) = fix.or_else(|| tool_probe_renderer_fix(state)) {
         lines.push(format!("  Fix: {}", display_text(fix)));
     }
     lines
 }
 
-/// A probe that spawned and then exited nonzero is not a missing-tool
-/// install case. Name a repair of the binary on PATH so the bang line
-/// still has a `Fix:` without changing JSON evidence.
-fn tool_probe_nonzero_exit_fix(evidence: &str) -> Option<&'static str> {
+/// Renderer-only repair for tool-probe Fail evidence that has no `; ` clause.
+/// JSON evidence stays the producer string; these are not missing-tool
+/// install cases.
+fn tool_probe_renderer_fix(evidence: &str) -> Option<&'static str> {
     output::doctor::DOCTOR_TOOLS.iter().find_map(|tool| {
-        evidence
-            .starts_with(&format!("{tool} --version failed"))
-            .then_some(
+        let rest = evidence.strip_prefix(tool)?;
+        if rest.starts_with(" --version failed") {
+            Some(
                 "the binary on PATH ran but `--version` failed; repair or replace it so the probe can succeed",
             )
+        } else if rest.starts_with(" timed out after") {
+            Some(
+                "retry after reducing load, or repair the binary on PATH so `--version` answers in time",
+            )
+        } else if rest.starts_with(" could not be launched") {
+            Some("repair permissions or replace the binary on PATH so doctor can spawn it")
+        } else if rest.starts_with(" could not be waited on") {
+            Some("retry the probe; doctor could not confirm the process ended")
+        } else {
+            None
+        }
     })
+}
+
+fn compact_tilde_line(text: &str) -> String {
+    format!("~ {}", display_text(text))
 }
 
 fn runtime_failure_block(probe: &output::doctor::DoctorRuntimeProbe) -> Vec<String> {
@@ -465,15 +480,17 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     // substitution.
     if let Some(check) = check_named(report, "git_head") {
         let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
-        lines.push(format!("~ {}", display_text(evidence)));
+        lines.push(compact_tilde_line(evidence));
     }
     if let Some(advisory) = generated_workflow_advisory(root) {
-        lines.push(format!("~ Generated workflow: {advisory}"));
+        lines.push(compact_tilde_line(&format!(
+            "Generated workflow: {advisory}"
+        )));
     }
     if profile == output::doctor::DoctorProfile::SourceBuild
         && let Some(advisory) = linker_temp_redirect_advisory(root)
     {
-        lines.push(format!("~ {advisory}"));
+        lines.push(compact_tilde_line(&advisory));
     }
     for warning in &binary.warnings {
         lines.push(format!("- warning: {}", display_text(warning)));
@@ -1398,7 +1415,7 @@ fn preview_language_enable_suggestions(enablement: Option<&PreviewEnablement>) -
         ""
     };
     vec![format!(
-        "- Tip: {names} files detected but not enabled, so `ripr check` does not analyze them. Set in ripr.toml{javascript_note}: [languages] {enabled_line}"
+        "- Tip: {names} files detected but not enabled, so `ripr check` does not analyze them. Set `{enabled_line}` under `[languages]` in ripr.toml{javascript_note}"
     )]
 }
 
@@ -2972,6 +2989,32 @@ mod tests {
             "{rustc:?}"
         );
         version_failed_fix_is_not_install(&rustc);
+        let timeout = failure_block("cargo timed out after 5s");
+        assert_eq!(timeout[0], "! cargo timed out after 5s");
+        assert!(
+            timeout
+                .get(1)
+                .is_some_and(|line| line.starts_with("  Fix:") && line.contains("retry")),
+            "timeout evidence has no `; ` clause: {timeout:?}"
+        );
+        let lower = timeout[1].to_ascii_lowercase();
+        assert!(
+            !lower.contains("install") && !lower.contains("rustup"),
+            "timeout is not a missing-tool install: {timeout:?}"
+        );
+    }
+
+    #[test]
+    fn compact_tilde_line_spells_newlines() {
+        let line = compact_tilde_line("target/\n! doctor checks passed");
+        assert!(
+            !line.contains('\n') && !line.contains('\r') && line.contains("\\u{0a}"),
+            "{line}"
+        );
+        assert!(
+            !line.contains("! doctor checks passed") || line.contains("\\u{0a}! doctor"),
+            "a newline in advisory text must not forge a bang line: {line}"
+        );
     }
 
     #[test]
@@ -3528,8 +3571,9 @@ mod tests {
             tip.starts_with("- Tip:")
                 && !tip.contains('\n')
                 && tip.contains("[languages]")
-                && tip.contains("enabled ="),
-            "enablement tip must be one physical line:\n{text}"
+                && tip.contains("enabled =")
+                && !tip.contains("[languages] enabled"),
+            "enablement tip must be one physical line of valid TOML instructions:\n{text}"
         );
         assert!(
             tip.contains("the `typescript` entry also analyzes JavaScript"),
@@ -5472,8 +5516,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(suggestions.len(), 1, "one tip: {suggestions:?}");
         assert!(
-            !suggestions[0].contains('\n') && !suggestions[0].contains('\r'),
-            "compact tip must stay one physical line:\n{}",
+            !suggestions[0].contains('\n')
+                && !suggestions[0].contains('\r')
+                && !suggestions[0].contains("[languages] enabled"),
+            "compact tip must stay one physical line of valid TOML instructions:\n{}",
             suggestions[0]
         );
         assert!(
@@ -5507,8 +5553,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(suggestions.len(), 1, "one combined tip: {suggestions:?}");
         assert!(
-            !suggestions[0].contains('\n') && suggestions[0].contains("[languages]"),
-            "compact tip must stay one physical line:\n{}",
+            !suggestions[0].contains('\n')
+                && suggestions[0].contains("[languages]")
+                && !suggestions[0].contains("[languages] enabled"),
+            "compact tip must stay one physical line of valid TOML instructions:\n{}",
             suggestions[0]
         );
         assert!(

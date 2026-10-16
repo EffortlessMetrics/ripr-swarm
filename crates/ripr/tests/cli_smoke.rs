@@ -12974,8 +12974,12 @@ fn doctor_combined_ordinary_path_with_enablement_tip_fits_one_screen() -> Result
     );
     let tip = stdout.lines().find(|line| line.contains("- Tip:"));
     assert!(
-        tip.is_some_and(|line| line.contains("[languages]") && line.contains("enabled =")),
-        "enablement tip must stay on one physical line:\n{stdout}"
+        tip.is_some_and(|line| {
+            line.contains("[languages]")
+                && line.contains("enabled =")
+                && !line.contains("[languages] enabled")
+        }),
+        "enablement tip must stay one physical line of valid TOML instructions:\n{stdout}"
     );
     assert!(
         !stdout.contains("To analyze them, set in ripr.toml:"),

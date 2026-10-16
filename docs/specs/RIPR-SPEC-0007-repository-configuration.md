@@ -304,9 +304,11 @@ detail dump. `ripr doctor --json` remains the complete typed report. Compact
 advisory lines; optional extra tools stay behind verbose. Compact still
 discloses a refused `[perl].executable` (not run). A failing `cargo_toml`
 or required runtime does not recommend `ripr check`. The compact enablement
-tip is one physical line. A tool probe that ran and then exited nonzero
-(`git --version failed`) gets a `Fix:` that names repair of the binary
-on PATH, not a missing-tool install; JSON evidence is unchanged. Human path
+tip is one physical line and names `enabled = [...]` under `[languages]`,
+not as same-line TOML. A tool probe that ran and then exited nonzero
+(`git --version failed`) or timed out gets a `Fix:` that names repair of
+the binary on PATH, not a missing-tool install; JSON evidence is
+unchanged. Compact advisory lines spell control characters. Human path
 and evidence text spell control characters so a newline-bearing root stays
 within the line budget; JSON keeps the raw path. Verbose config failures
 keep source-free parser reasons and the allowlisted misplaced-key hint.
