@@ -1,0 +1,48 @@
+# Independent integration-only review of #8004 at 36db
+
+Reviewed head `36dbb87430ef858aa143b5fc3205b376b0caee11`, tree `024d04e46de6ac531ca7485d9b7b6b4e7dafc2e4`, integration basis `d08c77d144c016078364fcc1fcf2fa593d21cefc`. Controlling claim #7415; existing Rook ownership retained. This review refreshes head, integration, dependency and affected runtime dimensions of [independent review 5543295375](https://github.com/EffortlessMetrics/ripr-swarm/pull/8004#pullrequestreview-5543295375), rather than repeating broad source/performance qualification.
+
+**No new blocking source or oracle defect identified. Independent pre-Ready integration review is complete, subject to the frozen-head readback. `REVIEW_INCOMPLETE` for merge: required hosted qualification/protection convergence remains separate.** This is not a Ready or merge action. The delivery owner can consume this judgment for the separately authorized Ready decision under `docs/PR_AUTOMATION.md:44`; absent Ready-triggered proof does not itself require another source repair or prevent requesting qualification.
+
+## Exact integration and dependency judgment
+
+Local Git independently verifies parents exactly old reviewed `8e0444b1a62ead18584d40b18278c6e8716dc56c` and landed main d08. `git merge-tree --write-tree 8e d08` recomputes exactly tree024d: no conflict-resolution/manual delta. Complete native Git inventories contain 1,315 imported paths and the same 173-path PR delta against current main as the prior delta against f2ba9522. Capped connector commit/compare inventories are not used as completeness evidence.
+
+The core receiver, helper-entry/last-hop, executable-scope and source-snapshot implementations are blob-identical to reviewed8e. Imported `OwnerPinSyntax` changes are additive iteration/macro-type/field-integer memos and their independent returned-element-field authority; reviewed receiver/snapshot gates remain. The fresh affected tests include both sides of that overlap, main's CLI help behavior and source invalidation. No additional API/schema/fixture-truth rewrite or rebless is introduced beyond the already-landed main delta.
+
+Actual GitHub merge4232b0459b58eb3283c9f9d1ee42faf690679446 has parents d08/36db and the same tree024d. All five canonical zip9 repair blobs (`Cargo.lock`, xtask manifest, main, release_server, tests) equal landed main. Manifest requires zip9; lock selects9.0.3; migrated member name/metadata APIs are included. This is inclusion/compatibility review, not dependency ownership takeover.
+
+[Security job116835091002](https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38858454779/job/116835091002) logs `git log -1` at literal4232b045… and terminal `advisories ok, bans ok, licenses ok, sources ok`. Its checker is cargo-deny0.20.2 on hosted stable1.99.1; fresh local controls use pinned1.95.0. Current cargo-deny and dependency-review checks are successful. **The old086e/zip8 actual-subject hold is cleared**. Its original failure is retained historical evidence, not a live pre-Ready blocker. Named security checkout proof does not establish the Rust-small/product matrix checkout or full required-check qualification.
+
+## Fresh bounded observations
+
+Exact clean36db, Rust1.95.0, locked/default features, dev/test debug0, incremental off, jobs4, Linux four-CPU quota/16GiB:
+
+- 71 distinct product tests pass:24 inherent units,5 source snapshots,3 module-shadow snapshots,9 receiver integrations,20 CLI-help integrations,10 returned-element-field integrations. Zero failures/ignored; nonempty denominators. These are fresh independent builds/executions, not relabeled author logs.
+- Bounded xtask zip-archive roundtrip and strict non-UTF8 selector tests are recorded with their terminal denominators in receipt.json. Test compilation exercises the integrated zip9 API. A preceding zero-test invented filter is an instrument selection miss, excluded from proof.
+- Four native processes challenge the owner-arm mutation: both originals pass; async-entry mutant survives; named synchronous-chain mutant fails101. Four real CLI reports (full repository and compact badge for each source) retain four owner seams each. The positive has four helper/high/yes relations; the async negative has four same_test_file relations and no execution credit. Badge and full seam counts agree; badge `analysis_complete` is null on this surface and is not presented as true. Full run_status is complete. Existing library/integration tests separately compare full/compact relation rows and exercise diff output.
+- Independently restored maintenance archive:all25 member bytes/sizes/modes/inventory match MANIFEST; SHA25695c7565f108cc006b9df5c09cb488e616389fd8ff04523f8d8b3a6466ec2a6ae. Its six product logs account for71 passes. Those retained checks remain author executions, separate from this review's new runs.
+
+The complete claims/commands/exits, environment, raw reports, native sources and audit scripts are retained. Failed audit/setup attempts remain in `attempts.md`. Executables are excluded from this compact packet; hashes and compiler logs bind the locally retained witnesses. No broad benchmark, full888-unit replay, full golden/corpus pass or full-workspace matrix was rerun.
+
+## Substantive findings and residuals
+
+All13 returned threads (12 unresolved/1 already resolved),22 reviews and15 issue comments were read, including the late review discussed below. `raw/thread-dispositions.md` records each concern and source/control basis; none resolved or individually replied to. The thread connector exposes no pagination/completeness token, so its coverage is described as the returned inventory. Prior correctness concerns remain repaired by preserved identity/execution gates and fresh bounded controls. The two performance suggestions are partially addressed, not literally fulfilled by run-scoped OwnerPinSyntax threading: fresh defaults and per-query traversal remain.
+
+Review5543012062's claimed operand-cache bypass and missing exact positive relation assertions are refuted against current source. Its declaration and clone questions have explicit split-declaration/wrapper and RustIndex clone/replacement tests, also rerun here. The sparse sync-chain documentation concern is addressed in async fixture SPEC.md.
+
+One existing **nonblocking documentation issue** is confirmed: `fixtures/inherent_receiver_free_helper_identity/BOUNDARIES.md:3` says34 entries although the matrix and assertions contain50; its 'unbenchmarked' sentence is stale relative to frozen measured performance evidence. This is conservative documentation drift, not a changed truth row or lost executable denominator. The source owner can correct it later. The original34-controls-plus16-additions distinction elsewhere remains meaningful.
+
+Frozen8e correctness/material recovery remains established by prior independent review5543295375 and its packet, not freshly remeasured on36db. Approximately15.225s compact sync64 residual, per-query AST/owner work, unique-key memo storage, two predecessor120s censored samples and two unrun dependent warms remain explicit. No uncensored predecessor compact median/paired ratio, base98 equivalence, general no-regression, all-workspace scan clearance, or global latency/memory bound follows. A bounded later optimization remains reasonable.
+
+## Transition and evidence limits
+
+Ready requires completed independent review, affected local proof and a credible current subject without a known material blocker. Those reviewed integration/dependency dimensions are now satisfied at36db; final live-head/check state is in the packet. Ready requests hosted proof. Merge separately requires current REVIEW_READY, required hosted checks, actual product checkout verification, substantive finding dispositions and current protections. Protection reader via connector rejected the rules endpoint as unsupported; no absence of rules or merge clearance is inferred. Native Windows, broader runtime/feature checks, full-workspace qualification and installed/released-bundle acceptance remain unestablished by this review. In-progress/advisory checks are not called passes.
+
+No issue8005 read/retry, source change/push, Ready/merge, release/deploy, security change, bot contact or thread resolution. Evidence-only publication uses its own branch; candidate ownership/ref remain unchanged.
+
+Task resources:review-owned detached `/workspace/review36db`, target `/workspace/review36db-target`, inputs `/workspace/review36db-inputs`, and raw evidence `/workspace/review36db-evidence`; inherited `/workspace/ripr-swarm` and target preserved. Worktree cleanup/resource closeout is recorded in publication readback. Retain the bounded target/inputs as local witness/replay material for parent follow-through; this is not an arranged background task.
+
+## Late review refresh
+
+Final readback returned25/25 terminal check records:15 successful and10 skipped, no failure/in-progress result. Draft-dependent skips and absent Ready-triggered product qualification do not establish that qualification. Thread inventory is unchanged13; a new automated review5543715849 was inspected before publication. Its nested-function/impl receiver-binding allegation is refuted by direct-child lookup/function-stop source and four new exact-head CLI cases/eight native processes. Three dormant decoys withhold owner execution credit and survive mutation; the genuine outer positive retains four direct/high relations and detects mutation. The raw packet retains every source, output, exit and binary identity. Across both review waves there are eight fresh CLI reports and twelve native processes; these are separate from73 distinct product/xtask tests. No new blocking finding follows from that review.

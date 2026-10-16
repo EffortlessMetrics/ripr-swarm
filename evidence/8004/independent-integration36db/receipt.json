@@ -1,0 +1,53 @@
+{
+  "observed_at": "2026-10-16T06:16:47.485525+00:00",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "pr": 8004,
+  "reviewed_head": "36dbb87430ef858aa143b5fc3205b376b0caee11",
+  "basis": "d08c77d144c016078364fcc1fcf2fa593d21cefc",
+  "tree": "024d04e46de6ac531ca7485d9b7b6b4e7dafc2e4",
+  "actual_merge": "4232b0459b58eb3283c9f9d1ee42faf690679446",
+  "disposition": "REVIEW_INCOMPLETE for merge; independent pre-Ready technical review complete, no blocking source/oracle/integration finding",
+  "stale_material_subject_hold": "cleared",
+  "local_distinct_tests": 73,
+  "local_native_processes": 12,
+  "local_cli_reports": 8,
+  "zero_test_selection_misses": 1,
+  "maintenance_archive_members_verified": 25,
+  "final_checks": {
+    "total": 25,
+    "success": 15,
+    "skipped": 10
+  },
+  "threads": {
+    "returned": 13,
+    "unresolved": 12,
+    "changed": 0,
+    "pagination_metadata": "unexposed"
+  },
+  "review_inventory": 22,
+  "nonblocking_findings": [
+    "BOUNDARIES.md:3 says 34 entries; actual/test denominator 50; unbenchmarked wording stale"
+  ],
+  "remaining_merge_proof": [
+    "required hosted product qualification and actual product checkout",
+    "current required protections/convergence",
+    "broader platform/full-workspace/runtime qualification as applicable"
+  ],
+  "residuals": [
+    "frozen8e ~15.225s compact sync64 residual",
+    "per-query AST/owner work and unique-key memo storage",
+    "two censored predecessor samples/two dependent warms not run",
+    "no new-head benchmark/general no-regression/base98 equivalence"
+  ],
+  "resources": {
+    "review_worktree": "/workspace/review36db (remove after completed publication)",
+    "target": "/workspace/review36db-target retained for parent replay",
+    "inputs": "/workspace/review36db-inputs retained for parent replay",
+    "raw": "/workspace/review36db-evidence retained",
+    "inherited": "/workspace/ripr-swarm unchanged"
+  },
+  "mutations": [
+    "evidence branch only",
+    "COMMENT review; no Ready/merge/thread resolution/source update"
+  ]
+}

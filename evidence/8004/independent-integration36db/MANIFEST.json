@@ -1,0 +1,545 @@
+{
+  "members": [
+    {
+      "path": "attempts.md",
+      "bytes": 1829,
+      "mode": 420,
+      "sha256": "f242a440fe85004a61377031b68dafca00561be1aa82a67a4467dc19f1f00879"
+    },
+    {
+      "path": "audit.py",
+      "bytes": 2683,
+      "mode": 420,
+      "sha256": "bf7fcbbd4d38eaa16da971807d0e6d7fcce46c390ed25cb4cd3ec130e4726f35"
+    },
+    {
+      "path": "author-maintenance.tar.xz",
+      "bytes": 43688,
+      "mode": 420,
+      "sha256": "95c7565f108cc006b9df5c09cb488e616389fd8ff04523f8d8b3a6466ec2a6ae"
+    },
+    {
+      "path": "candidate-delta.txt",
+      "bytes": 17832,
+      "mode": 420,
+      "sha256": "c13ef96bba4bc22e9201922a3ed775372b2247c736bf80d2d85380a8bb607e3d"
+    },
+    {
+      "path": "check-0.log",
+      "bytes": 10975,
+      "mode": 420,
+      "sha256": "e9a4ee56c5fd07ed30982bd0dac51d0e7f0810c7b65916f55d394def336c6ebd"
+    },
+    {
+      "path": "check-1.log",
+      "bytes": 889,
+      "mode": 420,
+      "sha256": "6bc8afb54038efc73338ce8e19eb6f7ab1892334fdeaed41cfd0ad1328b5caf3"
+    },
+    {
+      "path": "check-2.log",
+      "bytes": 629,
+      "mode": 420,
+      "sha256": "37b96a8d21b2186676e827c76f077be7c70a1c2a6aa61360e8b2e4c40246ae96"
+    },
+    {
+      "path": "check-3.log",
+      "bytes": 1048,
+      "mode": 420,
+      "sha256": "802fd56f86e1bd16084f95ca877da156e22aa83366000d8c781610576e7e3cd2"
+    },
+    {
+      "path": "check-4.log",
+      "bytes": 1677,
+      "mode": 420,
+      "sha256": "eda5524c17c0dbe34f48c93d321e94dfb02ac6427e9f58b5219521dad2e60d87"
+    },
+    {
+      "path": "check-5.log",
+      "bytes": 1054,
+      "mode": 420,
+      "sha256": "49ff95f6967175f33dfe33a930dc6f769fb227907c68d504ef898e9fd08a9fa5"
+    },
+    {
+      "path": "check-6.log",
+      "bytes": 1039,
+      "mode": 420,
+      "sha256": "e10bf620f6d68ad5eba5b5fcb2f9d09a02e847ae81ed0f2889d211a3bc1f36ee"
+    },
+    {
+      "path": "check-7.log",
+      "bytes": 358,
+      "mode": 420,
+      "sha256": "d6d8c77ca15752f88f303cc8a7a1c60bb2b8a9dd56f795cab32a6541c8aa17e9"
+    },
+    {
+      "path": "check-8.log",
+      "bytes": 343,
+      "mode": 420,
+      "sha256": "6e52359bf94c3071701c5ae1de7fb232ca2e55ad14925c759875790238ff9fe4"
+    },
+    {
+      "path": "cli-audit-initial.py",
+      "bytes": 1137,
+      "mode": 420,
+      "sha256": "23883d5eb890d7022cfe958a48d65023d856555f5a14a1a4f7fbb3147e1a01ad"
+    },
+    {
+      "path": "cli-audit.json",
+      "bytes": 603,
+      "mode": 420,
+      "sha256": "11d760b457e17f92254f5a810a71cd9542c17231e111d46c158f6c3185f79b3f"
+    },
+    {
+      "path": "cli-audit.py",
+      "bytes": 1230,
+      "mode": 420,
+      "sha256": "412929a0e6c16205af6682d75b8a9996016e236c8f721c20319a79c1e59509b0"
+    },
+    {
+      "path": "cli-entry-repo-badge-json.json",
+      "bytes": 1559,
+      "mode": 420,
+      "sha256": "090620a9e3fb9d40e87e3c52597a47a2a6fb59b8cf6f15fa529c81be732cc542"
+    },
+    {
+      "path": "cli-entry-repo-badge-json.stderr",
+      "bytes": 341,
+      "mode": 420,
+      "sha256": "3d42bc9c54a721238bb446a99af5acb9481e783b7ae295822842fcaa99c053e7"
+    },
+    {
+      "path": "cli-entry-repo-exposure-json.json",
+      "bytes": 28902,
+      "mode": 420,
+      "sha256": "cec215aca1d4f3c75ecff67cb6784ee6f7e0b386211c332e6782060fbe6f5d7c"
+    },
+    {
+      "path": "cli-entry-repo-exposure-json.stderr",
+      "bytes": 344,
+      "mode": 420,
+      "sha256": "25ae0f264b36eb3f3dd892d830965682cfbc32a60c0bb7dd95e85cd4f3e79fea"
+    },
+    {
+      "path": "cli-named-sync-chain-repo-badge-json.json",
+      "bytes": 1559,
+      "mode": 420,
+      "sha256": "a843322186e4c51862070087b527a7c567dc6d98327ee60a8e42e5baff2db1ba"
+    },
+    {
+      "path": "cli-named-sync-chain-repo-badge-json.stderr",
+      "bytes": 341,
+      "mode": 420,
+      "sha256": "3d42bc9c54a721238bb446a99af5acb9481e783b7ae295822842fcaa99c053e7"
+    },
+    {
+      "path": "cli-named-sync-chain-repo-exposure-json.json",
+      "bytes": 34131,
+      "mode": 420,
+      "sha256": "2ffd6fb2d48ed396c6969a47193ae1983db51bc79e99233aaf8c299331e9c70c"
+    },
+    {
+      "path": "cli-named-sync-chain-repo-exposure-json.stderr",
+      "bytes": 344,
+      "mode": 420,
+      "sha256": "25ae0f264b36eb3f3dd892d830965682cfbc32a60c0bb7dd95e85cd4f3e79fea"
+    },
+    {
+      "path": "cli-results.json",
+      "bytes": 2549,
+      "mode": 420,
+      "sha256": "593a6e98b8b5829b915a49e57cd20e3beb3a9f98299c71caa405546d31931304"
+    },
+    {
+      "path": "cli.py",
+      "bytes": 1152,
+      "mode": 420,
+      "sha256": "a147c433b33d6c90c045774a190060783c14271612fb47d9e35931183509367b"
+    },
+    {
+      "path": "commit-object.txt",
+      "bytes": 449,
+      "mode": 420,
+      "sha256": "f32450d9945548efd7a29b4c8a451c8d1cfcfcb2296aada7e6fb63e23af1efdf"
+    },
+    {
+      "path": "current-delta.txt",
+      "bytes": 11431,
+      "mode": 420,
+      "sha256": "84855869f3a220ea8764bad53009c68eaeb6bee05eacb76133a9e1f0390cd9ce"
+    },
+    {
+      "path": "environment.json",
+      "bytes": 2908,
+      "mode": 420,
+      "sha256": "c64f65135789f28eeb00a2cecc1141fed7c51dffc6799287bc0bad8e19d3d503"
+    },
+    {
+      "path": "final-state.json",
+      "bytes": 592155,
+      "mode": 420,
+      "sha256": "8d446a46dc29994ba5939008831212cb8f34b776da780e318a9e4eb5449e098a"
+    },
+    {
+      "path": "fresh-checks.json",
+      "bytes": 2554,
+      "mode": 420,
+      "sha256": "d52aaf74dd68c269c0c3de5626e17d0fa0fde59fd7ec3d427a7f562486ebe7d5"
+    },
+    {
+      "path": "github-observations.json",
+      "bytes": 205780,
+      "mode": 420,
+      "sha256": "61fd688c47192da5785a984b435b4a9ecd6b49527e3b67aa4db1b719e75bafcd"
+    },
+    {
+      "path": "imported-delta.txt",
+      "bytes": 88833,
+      "mode": 420,
+      "sha256": "9c8cb0144ab01425f70634b0bad5ffdc8833d39d709becb47bcc842a52063628"
+    },
+    {
+      "path": "imported-main.patch",
+      "bytes": 2720855,
+      "mode": 420,
+      "sha256": "de460a7ac3d3fea031ce134e471673d6200866015c182e65c8dea3820e13d0e9"
+    },
+    {
+      "path": "integration-audit.json",
+      "bytes": 1599,
+      "mode": 420,
+      "sha256": "1e64b470212253c23b6a22c0a88707dce3077627a94ed3ae6a0b07926cc9d444"
+    },
+    {
+      "path": "live-state.json",
+      "bytes": 777574,
+      "mode": 420,
+      "sha256": "eb96dbb855f49e11f21dbc944944c60df0a9dd4484057edf720385caf2aa3d42"
+    },
+    {
+      "path": "local-executable-identities.json",
+      "bytes": 2535,
+      "mode": 420,
+      "sha256": "1a63e453bf24792f00d1bddc703cef5a10158cd92ec91a88ebce750bdde909fe"
+    },
+    {
+      "path": "main-delta.txt",
+      "bytes": 83038,
+      "mode": 420,
+      "sha256": "d4fb05a56f3cdbf4ce5a6803891ef915a27212bc0de36c7f0d5d4e827daa54a8"
+    },
+    {
+      "path": "native/entry-mutant.compile.log",
+      "bytes": 853,
+      "mode": 420,
+      "sha256": "b608022f680560f62f539ed72df77cc1ab5be926f8ca9b16738d906226342247"
+    },
+    {
+      "path": "native/entry-mutant.rs",
+      "bytes": 431,
+      "mode": 420,
+      "sha256": "698da2c56526693c71fd1142a378c5f44068b623d10702b38eabc2b645cb3b6f"
+    },
+    {
+      "path": "native/entry-mutant.run.log",
+      "bytes": 139,
+      "mode": 420,
+      "sha256": "4e065ca8be04a3de324c629b2dbdde3472631d15dbf6d7abe614aca98f783151"
+    },
+    {
+      "path": "native/entry-original.compile.log",
+      "bytes": 514,
+      "mode": 420,
+      "sha256": "e7d206f4c2ce96d079c463f9432b2b92a3753186c86293ab457db0d4cc0f86d6"
+    },
+    {
+      "path": "native/entry-original.rs",
+      "bytes": 439,
+      "mode": 420,
+      "sha256": "4315f0d21e8802f4585e6b6262395553960da984e471a043981a1eb5a6a735d7"
+    },
+    {
+      "path": "native/entry-original.run.log",
+      "bytes": 139,
+      "mode": 420,
+      "sha256": "4e065ca8be04a3de324c629b2dbdde3472631d15dbf6d7abe614aca98f783151"
+    },
+    {
+      "path": "native/named-sync-chain-mutant.compile.log",
+      "bytes": 875,
+      "mode": 420,
+      "sha256": "1c44bd5f569dec84a0845537b4633a317448e383a54f232eb1f74c88a0fbe5a8"
+    },
+    {
+      "path": "native/named-sync-chain-mutant.rs",
+      "bytes": 562,
+      "mode": 420,
+      "sha256": "5bd6b6653a877fb804483ed995b949bccc3d27b36b108869b790f11821a95f7b"
+    },
+    {
+      "path": "native/named-sync-chain-mutant.run.log",
+      "bytes": 482,
+      "mode": 420,
+      "sha256": "0b454a334dfb2b5c44178b2b5ce9c7f0c557390d49b5812ee4995c9685622b0d"
+    },
+    {
+      "path": "native/named-sync-chain-original.compile.log",
+      "bytes": 525,
+      "mode": 420,
+      "sha256": "1cb51084000b6251a1ec48b86daf261f13306a2cf2156c550c188ddcb9dc8453"
+    },
+    {
+      "path": "native/named-sync-chain-original.rs",
+      "bytes": 570,
+      "mode": 420,
+      "sha256": "24638f1229a09ec1e165ace764f1796b3b4d137ccf3db73c142b5b51bb2d3e59"
+    },
+    {
+      "path": "native/named-sync-chain-original.run.log",
+      "bytes": 139,
+      "mode": 420,
+      "sha256": "4e065ca8be04a3de324c629b2dbdde3472631d15dbf6d7abe614aca98f783151"
+    },
+    {
+      "path": "native-results.json",
+      "bytes": 2128,
+      "mode": 420,
+      "sha256": "4d1bf131eea338848d09d37c5aa8b152620c8c459c489321ddaff5078c0d838d"
+    },
+    {
+      "path": "native.py",
+      "bytes": 1420,
+      "mode": 420,
+      "sha256": "de4cae7d9c601b2d2bea0dea08a176c378e2b1120ae8ad00839562af9a254815"
+    },
+    {
+      "path": "new-review-controls/genuine-outer-mutant.compile.log",
+      "bytes": 1719,
+      "mode": 420,
+      "sha256": "d400acdca81042c111f0383f089f76643e5a68ff8c55c1de4a0fc49af88b3e05"
+    },
+    {
+      "path": "new-review-controls/genuine-outer-mutant.rs",
+      "bytes": 487,
+      "mode": 420,
+      "sha256": "f7bd83bccad73383f4f0f2dadb785b6f70cd3f4da601276a8a6651723ea89717"
+    },
+    {
+      "path": "new-review-controls/genuine-outer-mutant.run.log",
+      "bytes": 493,
+      "mode": 420,
+      "sha256": "b36e1e77841a68216df6ef32597c940871c6f3a156e279b6682393bd8f481d7d"
+    },
+    {
+      "path": "new-review-controls/genuine-outer-original.compile.log",
+      "bytes": 1348,
+      "mode": 420,
+      "sha256": "af1320e61758c6c650ca27665ed6e61774b4bd6fdf28e5b6a1e078dcc0f83aef"
+    },
+    {
+      "path": "new-review-controls/genuine-outer-original.rs",
+      "bytes": 495,
+      "mode": 420,
+      "sha256": "030da364cb210a8a870692c9d7f6267333924ddca82a6bda6bfcaf89e79c2b4b"
+    },
+    {
+      "path": "new-review-controls/genuine-outer-original.run.log",
+      "bytes": 139,
+      "mode": 420,
+      "sha256": "4e065ca8be04a3de324c629b2dbdde3472631d15dbf6d7abe614aca98f783151"
+    },
+    {
+      "path": "new-review-controls/genuine-outer.json",
+      "bytes": 25047,
+      "mode": 420,
+      "sha256": "d874989556160349cbf60a12dca316fb36e2f39f34f307e3145d98db0325f2cf"
+    },
+    {
+      "path": "new-review-controls/inner-fn-mutant.compile.log",
+      "bytes": 1307,
+      "mode": 420,
+      "sha256": "5446cf341849c6c16e37210959e76d9e6577b989bd49825b466ee315dc576933"
+    },
+    {
+      "path": "new-review-controls/inner-fn-mutant.rs",
+      "bytes": 487,
+      "mode": 420,
+      "sha256": "091c430d0d1ca83037331b7bbc94b837152f55552dd0a5a7ca63c39959352f9e"
+    },
+    {
+      "path": "new-review-controls/inner-fn-mutant.run.log",
+      "bytes": 139,
+      "mode": 420,
+      "sha256": "4e065ca8be04a3de324c629b2dbdde3472631d15dbf6d7abe614aca98f783151"
+    },
+    {
+      "path": "new-review-controls/inner-fn-original.compile.log",
+      "bytes": 939,
+      "mode": 420,
+      "sha256": "cd14a60e1c31a024d77ccd100535319316c69baceccf04bf53b471d8dda88527"
+    },
+    {
+      "path": "new-review-controls/inner-fn-original.rs",
+      "bytes": 495,
+      "mode": 420,
+      "sha256": "51544b65f5b8ba87aba2d09db2034fe4900f60687befa60325cf51dff88c2757"
+    },
+    {
+      "path": "new-review-controls/inner-fn-original.run.log",
+      "bytes": 139,
+      "mode": 420,
+      "sha256": "4e065ca8be04a3de324c629b2dbdde3472631d15dbf6d7abe614aca98f783151"
+    },
+    {
+      "path": "new-review-controls/inner-fn.json",
+      "bytes": 26296,
+      "mode": 420,
+      "sha256": "1002878ba077c0dc508c2f3b72f44a6459a92e39cb3758b528356eeace5ee87b"
+    },
+    {
+      "path": "new-review-controls/inner-impl-mutant.compile.log",
+      "bytes": 1859,
+      "mode": 420,
+      "sha256": "3e200214ada7a10101772a377ae45418b06b14cda7ce7c72b3265f9f0724a000"
+    },
+    {
+      "path": "new-review-controls/inner-impl-mutant.rs",
+      "bytes": 514,
+      "mode": 420,
+      "sha256": "2fd8f516873faadb3a466f4b0c909f1f41e7c23f2c0e5050dff9618fdc94e31d"
+    },
+    {
+      "path": "new-review-controls/inner-impl-mutant.run.log",
+      "bytes": 139,
+      "mode": 420,
+      "sha256": "4e065ca8be04a3de324c629b2dbdde3472631d15dbf6d7abe614aca98f783151"
+    },
+    {
+      "path": "new-review-controls/inner-impl-original.compile.log",
+      "bytes": 1491,
+      "mode": 420,
+      "sha256": "fe30abcfc5d0d01886309a75392f7642dc427f754e3cb41ea049d81aabd6566d"
+    },
+    {
+      "path": "new-review-controls/inner-impl-original.rs",
+      "bytes": 522,
+      "mode": 420,
+      "sha256": "4ae25f8215d8a471bd810cf180690eebe0e89b71bfb74b60c60f100eb7c02931"
+    },
+    {
+      "path": "new-review-controls/inner-impl-original.run.log",
+      "bytes": 139,
+      "mode": 420,
+      "sha256": "4e065ca8be04a3de324c629b2dbdde3472631d15dbf6d7abe614aca98f783151"
+    },
+    {
+      "path": "new-review-controls/inner-impl.json",
+      "bytes": 26298,
+      "mode": 420,
+      "sha256": "869064e6eb5d435e55bd33746a4bc2e250898fb736100c97c4f000805457ec51"
+    },
+    {
+      "path": "new-review-controls/operand-fn-mutant.compile.log",
+      "bytes": 1327,
+      "mode": 420,
+      "sha256": "03cb7eff8ba11bce0b1236d006a5ef5410deaf16dc5bdc7f178bed05abeb5805"
+    },
+    {
+      "path": "new-review-controls/operand-fn-mutant.rs",
+      "bytes": 489,
+      "mode": 420,
+      "sha256": "6edb8fa10b9e31a33d5e4c0f906d918884119f6dad611d853d7f936098c1ec46"
+    },
+    {
+      "path": "new-review-controls/operand-fn-mutant.run.log",
+      "bytes": 139,
+      "mode": 420,
+      "sha256": "4e065ca8be04a3de324c629b2dbdde3472631d15dbf6d7abe614aca98f783151"
+    },
+    {
+      "path": "new-review-controls/operand-fn-original.compile.log",
+      "bytes": 957,
+      "mode": 420,
+      "sha256": "10639fe85792e92dcc7cc685098ab1d1db615550cf7e9e0554e0abf90ff2b82f"
+    },
+    {
+      "path": "new-review-controls/operand-fn-original.rs",
+      "bytes": 497,
+      "mode": 420,
+      "sha256": "7227f2f3b976009712c9688a15f66108829418b5e25cec7f098a6edcbb207203"
+    },
+    {
+      "path": "new-review-controls/operand-fn-original.run.log",
+      "bytes": 139,
+      "mode": 420,
+      "sha256": "4e065ca8be04a3de324c629b2dbdde3472631d15dbf6d7abe614aca98f783151"
+    },
+    {
+      "path": "new-review-controls/operand-fn.json",
+      "bytes": 26848,
+      "mode": 420,
+      "sha256": "ea138e3904e24bd6877eebd458127c8b92fd206ecd31d4887e2db8eb4c47b20d"
+    },
+    {
+      "path": "new-review-controls/results.json",
+      "bytes": 4149,
+      "mode": 420,
+      "sha256": "d7856714bbd0a69ffacfca7eadb58c7ac19d5a5294f8354e5ed9690f623ce278"
+    },
+    {
+      "path": "new-review-controls.py",
+      "bytes": 3521,
+      "mode": 420,
+      "sha256": "7ca75ef927d65d143fc7123e8b5697ba57107860ae0a5d5e4f2b0e1857bb0b0d"
+    },
+    {
+      "path": "package.py",
+      "bytes": 5107,
+      "mode": 420,
+      "sha256": "e1ff376d7ef402f7e13c2220d041858bce405d3d06be56eaab5676497a234f1f"
+    },
+    {
+      "path": "pr-delta.patch",
+      "bytes": 1118181,
+      "mode": 420,
+      "sha256": "3a422687480ee156c96eb4f5e9105ebf026f28814aa1320c25a7a57fcefafa61"
+    },
+    {
+      "path": "prior-candidate-delta.txt",
+      "bytes": 17832,
+      "mode": 420,
+      "sha256": "479e9cf7c07f7b5b00edacff1288c96b3f3baf6ce4ccad26f31135b4a3cb868f"
+    },
+    {
+      "path": "prior-delta.txt",
+      "bytes": 11431,
+      "mode": 420,
+      "sha256": "84855869f3a220ea8764bad53009c68eaeb6bee05eacb76133a9e1f0390cd9ce"
+    },
+    {
+      "path": "prior-review.json",
+      "bytes": 51352,
+      "mode": 420,
+      "sha256": "cfea7bf0f96a91b00ea7c6e442814c7254804dc957df48648c7ece91390d6613"
+    },
+    {
+      "path": "prior-review.tar.xz",
+      "bytes": 350280,
+      "mode": 420,
+      "sha256": "3fed0f5b8f217a0af52b6d2a8899b93abd51ae9e8cfc2096ca99ce3da7e8291c"
+    },
+    {
+      "path": "run.py",
+      "bytes": 1316,
+      "mode": 420,
+      "sha256": "acbc504b15c3b56e51c998bbb4fa450061aa1338fdd833424cb35e557e452fd7"
+    },
+    {
+      "path": "thread-dispositions.md",
+      "bytes": 8161,
+      "mode": 420,
+      "sha256": "ab1169d3ce8731ec0b3bd71c92ddbf3bda531d93cd884b3c6eb39e3a650a2dd2"
+    }
+  ],
+  "excluded": "ELF executables retained locally with separate identities"
+}
