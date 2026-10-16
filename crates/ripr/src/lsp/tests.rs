@@ -6034,6 +6034,32 @@ fn code_action_response_emitted_kinds_stay_within_the_advertised_set() -> Result
     Ok(())
 }
 
+#[test]
+fn code_action_response_every_advertised_kind_is_emitted() -> Result<(), String> {
+    // Reverse kind parity invariant (#7773, RIPR-SPEC-0129): the advertised
+    // `CodeActionOptions.code_action_kinds` set must not promise a kind no
+    // emitter produces. The seam scenario alone exercises all three emitted
+    // families — per-diagnostic `quickfix.ripr.inspect` and
+    // `quickfix.ripr.navigate` actions plus the workspace-level
+    // `source.ripr.refresh` — so its emitted set must equal the advertised
+    // constant exactly. A future reserved kind that is advertised before
+    // its emitter lands fails here instead of silently starving clients
+    // that filter or keybind on the advertised set.
+    let vscode = vscode_client_features()?;
+    let (seam_params, seam_snapshot) = seam_code_action_request()?;
+    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
+    let mut emitted = code_action_kinds(&actions)?;
+    emitted.sort();
+    emitted.dedup();
+    let mut advertised = ADVERTISED_CODE_ACTION_KINDS.to_vec();
+    advertised.sort();
+    assert_eq!(
+        emitted, advertised,
+        "advertised code-action kinds must equal the emitted set (no reserved-only kinds)"
+    );
+    Ok(())
+}
+
 /// Collect the kind string of every action, failing when an action carries
 /// no kind (a kind-less action would fail closed under `context.only`).
 fn code_action_kinds(actions: &[CodeActionOrCommand]) -> Result<Vec<String>, String> {
