@@ -534,6 +534,33 @@ mod tests {
         assert!(HELP.contains("does not run mutants"));
     }
 
+    /// The first run is `ripr check`; README, QUICKSTART and `ripr doctor`'s own
+    /// "Recommended first command" all say so. `doctor` is the fallback for a
+    /// `check` that cannot run, so it must not be offered as the first step.
+    #[test]
+    fn help_overview_first_run_is_check_with_doctor_as_fallback() -> Result<(), String> {
+        let check = HELP
+            .find("  ripr check")
+            .ok_or("help should name `ripr check`")?;
+        let doctor = HELP
+            .find("  ripr doctor")
+            .ok_or("help should name `ripr doctor`")?;
+        assert!(
+            check < doctor,
+            "`ripr check` must be listed before `ripr doctor`"
+        );
+        let first = HELP
+            .lines()
+            .skip_while(|line| *line != "Try this first:")
+            .nth(2)
+            .ok_or("help should list a second first-run row")?;
+        assert!(
+            first.contains("Only if check cannot run"),
+            "doctor is the fallback, not a first step: {first}"
+        );
+        Ok(())
+    }
+
     /// #6305: short help is task-first — the repair task routes through the
     /// façade, and the internal phase route stays out of the first screen.
     #[test]
