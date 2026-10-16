@@ -67,6 +67,10 @@ pub(crate) enum DoctorFirstCommand {
     /// has no commit to diff against, so every diff-scoped first command
     /// fails; name the commit-first path and keep the repository-free scan.
     UnbornHead,
+    /// The `config` check failed: `ripr check` loads the same `ripr.toml`
+    /// and would hit the same error. Name the config correction, not a
+    /// check command (#8168).
+    InvalidConfig,
     SavedDiff,
     Worktree,
     DefaultCheck,
@@ -115,6 +119,12 @@ impl DoctorFirstCommand {
             // kept: it renders with the same explicit `--root`, which
             // `ensure_command_root` rejects before the diff is read.
             Self::MissingRoot
+        } else if report
+            .checks
+            .iter()
+            .any(|check| check.name == "config" && check.status == DoctorCheckStatus::Fail)
+        {
+            Self::InvalidConfig
         } else if !git_tool_can_run(report) {
             Self::SavedDiff
         } else if !passed("git_repository") {
@@ -140,7 +150,7 @@ impl DoctorFirstCommand {
             Self::SavedDiff => Some(Self::SAVED_DIFF_LINE),
             Self::Worktree => Some(Self::WORKTREE_LINE),
             Self::DefaultCheck => Some(Self::DEFAULT_LINE),
-            Self::MissingRoot | Self::OutsideGit | Self::UnbornHead => None,
+            Self::MissingRoot | Self::OutsideGit | Self::UnbornHead | Self::InvalidConfig => None,
         }
     }
 
@@ -183,6 +193,10 @@ impl DoctorFirstCommand {
                 let action = guidance.strip_prefix("- ").unwrap_or(guidance);
                 vec![format!("- Recommended first command: {action}")]
             }
+            Self::InvalidConfig => vec![
+                "- Recommended first command: correct `ripr.toml` so it loads, then rerun `ripr doctor`"
+                    .to_string(),
+            ],
             Self::OutsideGit => {
                 use crate::agent::loop_commands::shell_arg;
                 // The repository-free scan is a runnable command, so its root
@@ -4964,6 +4978,27 @@ mod tests {
             DoctorFirstCommand::resolve_for_report(&healthy, || false),
             DoctorFirstCommand::DefaultCheck
         );
+
+        let mut invalid = DoctorReport::new(".");
+        pass(&mut invalid, "root_directory");
+        pass(&mut invalid, "tool_git");
+        pass(&mut invalid, "git_repository");
+        invalid.add_check(
+            "config",
+            DoctorStatus::Fail,
+            Some("invalid ripr.toml".to_string()),
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&invalid, || false),
+            DoctorFirstCommand::InvalidConfig,
+            "a failing config check must not recommend ripr check"
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&invalid, || true),
+            DoctorFirstCommand::InvalidConfig,
+            "invalid config outranks a dirty worktree first command"
+        );
+        assert!(DoctorFirstCommand::InvalidConfig.command_line().is_none());
     }
 
     /// #5259: a repository with no commits passes `git_repository` (it is a

@@ -410,12 +410,14 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         }
     }
     if let Err(err) = config {
+        let path = output::path::human_path(&root.join(CONFIG_FILE_NAME));
         lines.push(format!("! Config: invalid {CONFIG_FILE_NAME}"));
         lines.push(format!(
-            "- Config path: {}",
-            output::path::human_path(&root.join(CONFIG_FILE_NAME))
+            "  Fix: correct {path} so it loads, then rerun `ripr doctor`"
         ));
-        lines.push(format!("  error: {err}"));
+        lines.push(format!("- Config path: {path}"));
+        let error = err.lines().next().unwrap_or(err.as_str());
+        lines.push(format!("  error: {error}"));
     }
     for tool in output::doctor::DOCTOR_TOOLS {
         let name = format!("tool_{tool}");
@@ -597,6 +599,12 @@ Point RIPR_CACHE_DIR at a writable directory."
             } else if !passed && matches!(first, output::doctor::DoctorFirstCommand::MissingRoot) {
                 lines.push(
                     "- Safe next action: fix the selected root first (see below); no check command can run until it exists"
+                        .to_string(),
+                );
+            } else if !passed && matches!(first, output::doctor::DoctorFirstCommand::InvalidConfig)
+            {
+                lines.push(
+                    "- Safe next action: correct `ripr.toml` so it loads; no check command can run until it does"
                         .to_string(),
                 );
             }
@@ -845,6 +853,11 @@ fn doctor_start_here_lines(
                         "- Safe next action: fix the selected root first (see below); no check command can run until it exists"
                             .to_string(),
                     );
+                } else if matches!(first, output::doctor::DoctorFirstCommand::InvalidConfig) {
+                    lines.push(
+                        "- Safe next action: correct `ripr.toml` so it loads; no check command can run until it does"
+                            .to_string(),
+                    );
                 } else {
                     lines.push(
                         "- Safe next action: run the recommended first command below; it produces the evidence the packet is composed from"
@@ -892,7 +905,8 @@ fn doctor_start_here_lines(
         }
         output::doctor::DoctorFirstCommand::SavedDiff => {}
         output::doctor::DoctorFirstCommand::MissingRoot
-        | output::doctor::DoctorFirstCommand::OutsideGit => {}
+        | output::doctor::DoctorFirstCommand::OutsideGit
+        | output::doctor::DoctorFirstCommand::InvalidConfig => {}
         // #5259: the recommended line above already names the commit-first
         // repair; the advisory `git_head` check line carries the same state.
         output::doctor::DoctorFirstCommand::UnbornHead => {}
@@ -2782,6 +2796,7 @@ mod tests {
             report,
             environment,
             output::doctor::DoctorProfile::Analysis,
+            &Ok(RiprConfig::default()),
             verbose,
             passed,
         )
@@ -2791,6 +2806,7 @@ mod tests {
         report: &output::doctor::DoctorReport,
         environment: &DoctorEnvironment,
         profile: output::doctor::DoctorProfile,
+        config: &Result<RiprConfig, String>,
         verbose: bool,
         passed: bool,
     ) -> Vec<String> {
@@ -2799,7 +2815,7 @@ mod tests {
             root: Path::new("."),
             profile,
             report,
-            config: &Ok(RiprConfig::default()),
+            config,
             environment,
             binary: &binary,
             verbose,
@@ -2963,6 +2979,7 @@ mod tests {
             &report,
             &environment,
             output::doctor::DoctorProfile::SourceBuild,
+            &Ok(RiprConfig::default()),
             false,
             true,
         );
@@ -3009,6 +3026,61 @@ mod tests {
         assert!(
             verbose.contains("pnpm not available"),
             "verbose must restore optional runtime probes:\n{verbose}"
+        );
+    }
+
+    #[test]
+    fn invalid_config_compact_names_a_fix_and_suppresses_check() {
+        let mut report = passing_report();
+        report.add_check(
+            "config",
+            output::doctor::DoctorStatus::Fail,
+            Some("invalid ripr.toml".to_string()),
+        );
+        report.status = output::doctor::DoctorStatus::Fail;
+        let environment = empty_environment();
+        let config = Err("TOML parse error at line 1".to_string());
+        let compact = render_screen_with_profile(
+            &report,
+            &environment,
+            output::doctor::DoctorProfile::Analysis,
+            &config,
+            false,
+            false,
+        );
+        assert!(
+            compact.len() <= DOCTOR_HUMAN_SCREEN_BUDGET,
+            "invalid-config compact must fit 80x24 ({} lines):\n{}",
+            compact.len(),
+            compact.join("\n")
+        );
+        let text = compact.join("\n");
+        assert!(text.contains("! Config: invalid ripr.toml"), "{text}");
+        assert!(
+            text.contains("  Fix: correct") && text.contains("ripr.toml"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("Recommended first command: ripr check"),
+            "invalid config must not recommend a check that will hit the same error:\n{text}"
+        );
+        assert!(text.contains("correct `ripr.toml` so it loads"), "{text}");
+        let verbose = render_screen_with_profile(
+            &report,
+            &environment,
+            output::doctor::DoctorProfile::Analysis,
+            &config,
+            true,
+            false,
+        )
+        .join("\n");
+        assert!(
+            !verbose.contains("Recommended first command: ripr check"),
+            "verbose invalid config must not recommend ripr check:\n{verbose}"
+        );
+        assert!(
+            verbose.contains("correct `ripr.toml` so it loads"),
+            "{verbose}"
         );
     }
 

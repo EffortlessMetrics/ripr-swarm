@@ -12963,6 +12963,87 @@ fn doctor_reports_malformed_config_error() -> Result<(), String> {
     Ok(())
 }
 
+/// #8168: an otherwise healthy committed Cargo repo with malformed `ripr.toml`
+/// must name a config correction, not `ripr check`.
+#[test]
+fn doctor_invalid_config_on_a_committed_repo_does_not_recommend_check() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    run_git(&workspace, &["init", "-q", "-b", "main"])
+        .map_err(|error| format!("git init: {error}"))?;
+    run_git(
+        &workspace,
+        &["config", "user.email", "ripr@example.invalid"],
+    )
+    .map_err(|error| format!("git email: {error}"))?;
+    run_git(&workspace, &["config", "user.name", "RIPR test"])
+        .map_err(|error| format!("git name: {error}"))?;
+    run_git(&workspace, &["add", "."]).map_err(|error| format!("git add: {error}"))?;
+    run_git(&workspace, &["commit", "-qm", "init"])
+        .map_err(|error| format!("git commit: {error}"))?;
+    std::fs::write(workspace.join("ripr.toml"), "[analysis]\nmode = \"slow\"\n")
+        .map_err(|error| format!("write ripr.toml: {error}"))?;
+    run_git(&workspace, &["add", "ripr.toml"])
+        .map_err(|error| format!("git add config: {error}"))?;
+    run_git(&workspace, &["commit", "-qm", "invalid config"])
+        .map_err(|error| format!("git commit config: {error}"))?;
+
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    assert!(
+        !output.status.success(),
+        "malformed config on a committed repo must fail doctor\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().count() <= 24,
+        "invalid-config compact must fit 80x24:\n{stdout}"
+    );
+    assert!(stdout.contains("! Config: invalid ripr.toml"), "{stdout}");
+    assert!(stdout.contains("  Fix:"), "{stdout}");
+    assert!(
+        stdout.contains("correct `ripr.toml` so it loads"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("Recommended first command: ripr check"),
+        "invalid config must not recommend a check that will hit the same error:\n{stdout}"
+    );
+
+    let verbose = run_ripr(&["--verbose", "doctor", "--root", &root]);
+    let verbose_out = String::from_utf8_lossy(&verbose.stdout);
+    assert!(
+        !verbose_out.contains("Recommended first command: ripr check"),
+        "verbose invalid config must not recommend ripr check:\n{verbose_out}"
+    );
+
+    let json = run_ripr(&["doctor", "--root", &root, "--json"]);
+    let document = String::from_utf8_lossy(&json.stdout);
+    assert!(!document.contains("mode = \"slow\""), "{document}");
+    let report: serde_json::Value = serde_json::from_str(&document)
+        .map_err(|err| format!("doctor JSON did not parse: {err}\n{document}"))?;
+    let config = report["checks"]
+        .as_array()
+        .and_then(|checks| checks.iter().find(|check| check["name"] == "config"))
+        .ok_or_else(|| format!("doctor JSON must report the config check: {report}"))?;
+    assert_eq!(config["status"], "fail");
+    assert!(report["config_defaults"].is_null(), "{report}");
+
+    std::fs::write(workspace.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")
+        .map_err(|error| format!("rewrite ripr.toml: {error}"))?;
+    let restored = run_ripr(&["doctor", "--root", &root]);
+    assert_success(&restored);
+    let restored_out = String::from_utf8_lossy(&restored.stdout);
+    assert!(
+        restored_out.contains("Recommended first command: ripr check"),
+        "correcting the config must restore the ordinary check next action:\n{restored_out}"
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
 #[test]
 fn doctor_reports_language_tiers_and_limitations() -> Result<(), String> {
     // A workspace with only Rust markers (Cargo.toml + src/lib.rs).
