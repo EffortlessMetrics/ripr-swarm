@@ -11,7 +11,7 @@ use super::builder_override::{
 use super::propagation_witness::{
     assertion_field_collection_reads, assertion_keyed_getter_reads,
     assertion_observes_direct_collection_in_test, direct_collection_mutation_receiver,
-    field_collection_insert_key, field_collection_write_path,
+    field_collection_insert_key, field_collection_write_appends, field_collection_write_path,
 };
 use super::reach::{invokes_opaque_macro, is_proximity_only};
 use super::rust_string_literals;
@@ -459,6 +459,7 @@ fn collection_observer_confirms(
 fn field_collection_observer_confirms(
     path: &str,
     count_reads: bool,
+    append_write: bool,
     owner: Option<OwnerCall<'_>>,
     test: &TestSummary,
     assertion: &OracleFact,
@@ -467,7 +468,7 @@ fn field_collection_observer_confirms(
     let Some(owner) = owner else {
         return false;
     };
-    assertion_field_collection_reads(&assertion.text, path, count_reads)
+    assertion_field_collection_reads(&assertion.text, path, count_reads, append_write)
         .into_iter()
         .any(|read| {
             owner_call_precedes_read(
@@ -1794,6 +1795,7 @@ fn analyze_related_assertions(
                     // Only a deleted write changes how many elements the
                     // collection holds; a changed argument does not.
                     matches!(probe.family, ProbeFamily::CallDeletion),
+                    field_collection_write_appends(&probe.expression),
                     override_owner,
                     test,
                     assertion,

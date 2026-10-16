@@ -1089,7 +1089,37 @@ fn reads_only_first_element(subject: &str, receiver: &str) -> bool {
         return false;
     };
     let compact: String = rest.chars().filter(|ch| !ch.is_whitespace()).collect();
-    matches!(compact.as_str(), ".first()" | ".get(0)" | "[0]")
+    if compact == ".first()" {
+        return true;
+    }
+    let zero = |inner: &str| {
+        inner == "0"
+            || inner.strip_prefix('0').is_some_and(|suffix| {
+                matches!(
+                    suffix,
+                    "usize"
+                        | "isize"
+                        | "u8"
+                        | "u16"
+                        | "u32"
+                        | "u64"
+                        | "u128"
+                        | "i8"
+                        | "i16"
+                        | "i32"
+                        | "i64"
+                        | "i128"
+                )
+            })
+    };
+    compact
+        .strip_prefix(".get(")
+        .and_then(|inner| inner.strip_suffix(')'))
+        .is_some_and(zero)
+        || compact
+            .strip_prefix('[')
+            .and_then(|inner| inner.strip_suffix(']'))
+            .is_some_and(zero)
 }
 
 /// The field path of a collection write on `self` (`log` for
@@ -1105,6 +1135,22 @@ pub(in crate::analysis) fn field_collection_write_path(expression: &str) -> Opti
     (matches!(method.trim(), "push" | "insert")
         && path.split('.').all(|segment| is_bare_ident(segment.trim())))
     .then_some(path)
+}
+
+/// Whether a field collection write (`self.<path>.<method>(..)`) appends:
+/// `push` does; `insert` places its element at its key or index, so a
+/// first-element read can observe the inserted element itself.
+pub(in crate::analysis) fn field_collection_write_appends(expression: &str) -> bool {
+    let trimmed = expression.trim().trim_end_matches([';', ',']).trim();
+    let Some(rest) = trimmed.strip_prefix("self.") else {
+        return false;
+    };
+    let Some((target, _)) = rest.split_once('(') else {
+        return false;
+    };
+    target
+        .rsplit_once('.')
+        .is_some_and(|(_, method)| method.trim() == "push")
 }
 
 /// How an assertion's primary subject reads the field collection `path`:
@@ -1130,6 +1176,7 @@ pub(in crate::analysis) fn assertion_field_collection_reads(
     assertion_text: &str,
     path: &str,
     count_reads: bool,
+    append_write: bool,
 ) -> Vec<FieldCollectionRead> {
     let subjects = compared_sides(assertion_text);
     subjects
@@ -1140,9 +1187,14 @@ pub(in crate::analysis) fn assertion_field_collection_reads(
             let read = subject_field_collection_read(subject, path)?;
             // #8203: a first-element read of the field collection does
             // not confirm an appending push (see `reads_only_first_element`).
-            if read.getter.is_none()
-                && reads_only_first_element(subject, &format!("{}.{path}", read.binding))
-            {
+            // An `insert` write is not an append, so it keeps prior credit.
+            // A getter that returns the field (`inv.history().first()`)
+            // reads the same element zero, so it is demoted the same way.
+            let receiver = match &read.getter {
+                Some(getter) => format!("{}.{getter}()", read.binding),
+                None => format!("{}.{path}", read.binding),
+            };
+            if append_write && reads_only_first_element(subject, &receiver) {
                 return None;
             }
             let other = subjects
@@ -3915,7 +3967,7 @@ mod tests {
                 getter: Some(getter.to_string()),
             }]
         };
-        let reads = |text: &str| assertion_field_collection_reads(text, "log", false);
+        let reads = |text: &str| assertion_field_collection_reads(text, "log", false, true);
         assert_eq!(reads("assert_eq!(inv.log, vec![1]);"), direct("inv"));
         assert_eq!(
             reads("assert_eq!(inv.log.last(), Some(&1));"),
@@ -3926,12 +3978,25 @@ mod tests {
         for first in [
             "assert_eq!(inv.log.first(), Some(&9));",
             "assert_eq!(inv.log.get(0), Some(&9));",
+            "assert_eq!(inv.log.get(0usize), Some(&9));",
             "assert_eq!(&inv.log[0], &9);",
+            "assert_eq!(&inv.log[0usize], &9);",
+            "assert_eq!(inv.history().first(), Some(&9));",
         ] {
             assert!(reads(first).is_empty(), "{first}");
         }
+        // An insert write is not an append: element zero can be the
+        // inserted element itself, so the read keeps its credit.
+        assert_eq!(
+            assertion_field_collection_reads("assert_eq!(&inv.log[0], &9);", "log", false, false),
+            direct("inv")
+        );
         assert_eq!(
             reads("assert_eq!(inv.history(), &[1]);"),
+            through("inv", "history")
+        );
+        assert_eq!(
+            reads("assert_eq!(inv.history().last(), Some(&1));"),
             through("inv", "history")
         );
         // Either side of an equality may hold the actual value.
@@ -3957,7 +4022,7 @@ mod tests {
         }
         // A deleted write changes the count, so a count reads it.
         assert_eq!(
-            assertion_field_collection_reads("assert_eq!(inv.log.len(), 1);", "log", true),
+            assertion_field_collection_reads("assert_eq!(inv.log.len(), 1);", "log", true, true),
             direct("inv")
         );
     }
