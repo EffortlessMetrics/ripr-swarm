@@ -357,6 +357,31 @@ fn drop_unreached_test_files(
                 .map(|path| workspace::normalize_path(path)),
         );
     }
+    // #8016: a declared `[[test]]` target `cargo test` never runs holds no
+    // evidence either. Cargo's own target inventory decides, and only for
+    // files in a package whose manifest carries a key that can skip a target.
+    let mut skip_keys = BTreeMap::new();
+    let mut inventory = workspace::ManifestInventory::default();
+    for (path, bytes) in &loaded_files {
+        if !holds_tests(bytes)
+            || !manifest_may_skip_test_targets(root, path, &mut manifests, &mut skip_keys)
+        {
+            continue;
+        }
+        // `harness = false` hands the target to its own `main`; a registered
+        // custom harness is the one thing that can still run tests there.
+        let skipped = inventory.cargo_test_collection_skipped(root, path)
+            || (test_harnesses.is_empty()
+                && inventory.verdict(root, path)
+                    == workspace::CargoHarnessVerdict::HarnessDisabled);
+        // The production-like opt-in still seeds probes for a changed file,
+        // and those probes need its owners in the index (#4586).
+        let seeds_probes = changed.contains(&workspace::normalize_path(path))
+            && workspace::seeds_diff_probes(path, source_role_context);
+        if skipped && !seeds_probes {
+            orphans.insert(workspace::normalize_path(path));
+        }
+    }
     if orphans.is_empty() {
         return loaded_files;
     }
@@ -364,6 +389,41 @@ fn drop_unreached_test_files(
         .into_iter()
         .filter(|(path, _)| !orphans.contains(&workspace::normalize_path(path)))
         .collect()
+}
+
+/// Whether the manifest owning `path` declares a `[[test]]` entry with
+/// `test = false`, `harness = false` or `required-features`: the only
+/// manifest shapes that keep a declared target out of `cargo test`. A cheap
+/// gate so ordinary packages never pay for the target inventory.
+fn manifest_may_skip_test_targets(
+    root: &Path,
+    path: &Path,
+    manifests: &mut BTreeMap<PathBuf, bool>,
+    skip_keys: &mut BTreeMap<PathBuf, bool>,
+) -> bool {
+    let Some(dir) = owning_manifest_dir(root, path, manifests) else {
+        return false;
+    };
+    *skip_keys.entry(dir.clone()).or_insert_with(|| {
+        committed_source::read_source_bytes(root, &dir.join("Cargo.toml"))
+            .ok()
+            .flatten()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+            .and_then(|manifest| {
+                manifest
+                    .get("test")
+                    .and_then(toml::Value::as_array)
+                    .cloned()
+            })
+            .is_some_and(|entries| {
+                entries.iter().any(|entry| {
+                    entry.get("test").and_then(toml::Value::as_bool) == Some(false)
+                        || entry.get("harness").and_then(toml::Value::as_bool) == Some(false)
+                        || entry.get("required-features").is_some()
+                })
+            })
+    })
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {

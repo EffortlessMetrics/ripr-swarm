@@ -615,6 +615,91 @@ fn required_features_default_enabled_integration_helper_exposes() -> Result<(), 
     Ok(())
 }
 
+/// A test written directly in the target (no helper) at the changed
+/// predicate's boundary: the strongest shape a live target could hold.
+fn direct_integration_source() -> String {
+    "use assertion_helper_credit::gate;\n\n#[test]\nfn boundary() {\n    assert_eq!(gate(10), true);\n    assert_eq!(gate(9), false);\n}\n"
+        .to_string()
+}
+
+fn direct_target_predicate(manifest_extra: &str, source: String) -> Result<Finding, String> {
+    TempRepo::create_files(&[
+        ("Cargo.toml", package_manifest(manifest_extra)),
+        ("src/lib.rs", GATE.to_string()),
+        ("tests/gate.rs", source),
+    ])?
+    .predicate()
+}
+
+#[test]
+fn direct_test_in_live_declared_target_exposes() -> Result<(), String> {
+    // Control (#8016): the same direct test under a plain `[[test]]` is run
+    // by `cargo test`, so the three skipped-target cases below are not
+    // refusals of every direct test.
+    let finding =
+        direct_target_predicate("\n[[test]]\nname = \"gate\"\n", direct_integration_source())?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a live declared target credits its direct test: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn direct_test_in_test_false_target_does_not_expose() -> Result<(), String> {
+    let finding = direct_target_predicate(
+        "\n[[test]]\nname = \"gate\"\ntest = false\n",
+        direct_integration_source(),
+    )?;
+    assert!(
+        finding.related_tests.is_empty(),
+        "a skipped target relates no test (#8016): {finding:?}"
+    );
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "`cargo test` never runs a test = false target (#8016): {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn direct_test_in_harness_false_target_does_not_expose() -> Result<(), String> {
+    let finding = direct_target_predicate(
+        "\n[[test]]\nname = \"gate\"\nharness = false\n",
+        format!("{}\nfn main() {{}}\n", direct_integration_source()),
+    )?;
+    assert!(
+        finding.related_tests.is_empty(),
+        "a skipped target relates no test (#8016): {finding:?}"
+    );
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "libtest never collects #[test] in a harness = false target (#8016): {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn direct_test_in_unmet_required_features_target_does_not_expose() -> Result<(), String> {
+    let finding = direct_target_predicate(
+        "\n[features]\ndefault = []\nspecial = []\n[[test]]\nname = \"gate\"\nrequired-features = [\"special\"]\n",
+        direct_integration_source(),
+    )?;
+    assert!(
+        finding.related_tests.is_empty(),
+        "a skipped target relates no test (#8016): {finding:?}"
+    );
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "`cargo test` skips a target whose required-features are unmet (#8016): {finding:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn declared_integration_helper_with_autotests_false_still_exposes() -> Result<(), String> {
     let finding = TempRepo::create_files(&[

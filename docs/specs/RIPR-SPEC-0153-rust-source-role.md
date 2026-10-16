@@ -318,6 +318,13 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
   or added by the diff) and a `tests/` file that `autotests = false`
   leaves undeclared relate to nothing, while the declared file and the
   name-only `[[test]]` target keep their relation.
+- Skipped declared targets (#8016): a test in a `[[test]]` target with
+  `test = false`, `harness = false` (absent a registered custom harness) or
+  `required-features` unmet under cargo defaults relates to nothing, from
+  cargo's own target inventory; an unavailable inventory keeps the file. The
+  lookup is by target root path, and `cargo test --test <name>` or
+  `--all-features` can still run such a target: static evidence stays
+  conservative.
 - Comment/string module mentions (#6979): an unchanged orphan named only
   inside a block comment, nested block comment, doc comment, plain string or
   raw string supplies no related test; real `cfg(test)` and renamed

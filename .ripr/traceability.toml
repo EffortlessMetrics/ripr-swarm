@@ -10507,6 +10507,10 @@ name = "Rust producer-owned source role"
 spec = "docs/specs/RIPR-SPEC-0153-rust-source-role.md"
 tests = [
   "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs::plain_test_gate_excludes_conditional_attribute_expansion",
+  "crates/ripr/tests/assertion_helper_credit.rs::direct_test_in_live_declared_target_exposes",
+  "crates/ripr/tests/assertion_helper_credit.rs::direct_test_in_test_false_target_does_not_expose",
+  "crates/ripr/tests/assertion_helper_credit.rs::direct_test_in_harness_false_target_does_not_expose",
+  "crates/ripr/tests/assertion_helper_credit.rs::direct_test_in_unmet_required_features_target_does_not_expose",
   "crates/ripr/tests/cache_clear_safety.rs::classified_cache_cargo_config_edit_revert_rename_delete_matches_cold",
   "crates/ripr/tests/cache_clear_safety.rs::classified_cache_saved_test_edit_revert_rename_delete_matches_cold",
   "crates/ripr/tests/cache_clear_safety.rs::compact_classified_cache_cargo_config_change_matches_cold_and_preserves_revert_hit",
