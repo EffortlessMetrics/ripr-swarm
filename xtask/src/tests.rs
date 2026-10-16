@@ -1471,6 +1471,7 @@ fn evidence_promotion_semantic_assertions_retain_related_test_identity() -> Resu
             kind: "relational_check".to_string(),
             strength: "weak".to_string(),
             relation_reason: None,
+            miss: None,
         },
     ];
     let original: serde_json::Value = serde_json::from_str(include_str!(
@@ -1534,6 +1535,7 @@ fn evidence_promotion_related_test_relation_pin_is_optional_and_exact() -> Resul
                 kind: "relational_check".to_string(),
                 strength: "weak".to_string(),
                 relation_reason: relation_reason.map(str::to_string),
+                miss: None,
             },
         ]
     };

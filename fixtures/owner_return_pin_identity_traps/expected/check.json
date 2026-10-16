@@ -238,7 +238,9 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(decode(8), 9);",
           "relation_reason": "weak_token_substring",
-          "relation_confidence": "low"
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by name only"
         },
         {
           "name": "negative_input_exits_early",
@@ -248,7 +250,9 @@
           "oracle_kind": "exact_error_variant",
           "oracle": "assert_eq!(checked_half(-4), Err(HalfError::Negative));",
           "relation_reason": "weak_token_substring",
-          "relation_confidence": "low"
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by name only"
         }
       ],
       "stop_reasons": ["static_probe_unknown"],
