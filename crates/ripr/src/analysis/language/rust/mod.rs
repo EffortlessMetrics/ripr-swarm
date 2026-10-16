@@ -357,6 +357,14 @@ fn drop_unreached_test_files(
                 .map(|path| workspace::normalize_path(path)),
         );
     }
+    orphans.extend(unrun_cargo_target_files(
+        root,
+        source_role_context,
+        test_harnesses,
+        &loaded_files,
+        &holds_tests,
+        &mut manifests,
+    ));
     if orphans.is_empty() {
         return loaded_files;
     }
@@ -364,6 +372,65 @@ fn drop_unreached_test_files(
         .into_iter()
         .filter(|(path, _)| !orphans.contains(&workspace::normalize_path(path)))
         .collect()
+}
+
+/// Test files of `[[test]]` targets that `cargo test` never runs (#8016):
+/// `test = false`, `required-features` unmet under cargo's defaults, or
+/// `harness = false` (libtest does not collect its `#[test]` items). Cargo's
+/// own metadata decides, through the inventory the helper-credit and
+/// harness-registry producers already use; the probe runs only for a
+/// package whose manifest declares such an entry, and an unavailable probe
+/// drops nothing. A `harness = false` file registered as a custom-harness
+/// target is kept: that registration is its own evidence route.
+fn unrun_cargo_target_files(
+    root: &Path,
+    source_role_context: &workspace::SourceRoleContext,
+    test_harnesses: &[crate::config::TestHarnessRegistration],
+    loaded_files: &[(PathBuf, Vec<u8>)],
+    holds_tests: &dyn Fn(&[u8]) -> bool,
+    manifests: &mut BTreeMap<PathBuf, bool>,
+) -> BTreeSet<String> {
+    let mut gated: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    let mut inventory = workspace::ManifestInventory::default();
+    let mut unrun = BTreeSet::new();
+    for (path, bytes) in loaded_files {
+        let in_target_dir = path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == "tests")
+            || path
+                .parent()
+                .and_then(Path::parent)
+                .and_then(Path::file_name)
+                .is_some_and(|name| name == "tests");
+        if !in_target_dir || !holds_tests(bytes) {
+            continue;
+        }
+        let Some(package) = owning_manifest_dir(root, path, manifests) else {
+            continue;
+        };
+        let declares = *gated.entry(package.clone()).or_insert_with(|| {
+            committed_source::read_source_bytes(root, &package.join("Cargo.toml"))
+                .ok()
+                .flatten()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .is_some_and(|text| workspace::manifest_may_skip_test_targets(&text))
+        });
+        if !declares
+            || workspace::seeds_diff_probes(path, source_role_context)
+            || test_harnesses.iter().any(|harness| {
+                workspace::normalize_path(&harness.target) == workspace::normalize_path(path)
+            })
+        {
+            continue;
+        }
+        if inventory.cargo_test_collection_skipped(root, path)
+            || inventory.verdict(root, path) == workspace::CargoHarnessVerdict::HarnessDisabled
+        {
+            unrun.insert(workspace::normalize_path(path));
+        }
+    }
+    unrun
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {

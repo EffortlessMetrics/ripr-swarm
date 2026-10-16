@@ -86,6 +86,16 @@ struct TempRepo {
 
 impl TempRepo {
     fn create(source: &str, test_source: &str, diff: &str) -> Result<Self, String> {
+        Self::create_with_manifest(source, test_source, diff, "")
+    }
+
+    /// `create` with `extra_manifest` appended to the package manifest.
+    fn create_with_manifest(
+        source: &str,
+        test_source: &str,
+        diff: &str,
+        extra_manifest: &str,
+    ) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
@@ -98,7 +108,9 @@ impl TempRepo {
             .map_err(|error| format!("create test directory failed: {error}"))?;
         std::fs::write(
             root.join("Cargo.toml"),
-            "[package]\nname = \"question-mark-side-flip\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+            format!(
+                "[package]\nname = \"question-mark-side-flip\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[features]\nnever = []\n\n[workspace]\n{extra_manifest}"
+            ),
         )
         .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
         std::fs::write(root.join("src/lib.rs"), source)
@@ -147,8 +159,19 @@ fn error_path_class_in(
     old_line: &str,
     test_source: &str,
 ) -> Result<ExposureClass, String> {
+    error_path_class_with_manifest(source, line, old_line, test_source, "")
+}
+
+/// `error_path_class_in` with `extra_manifest` appended to the manifest.
+fn error_path_class_with_manifest(
+    source: &str,
+    line: usize,
+    old_line: &str,
+    test_source: &str,
+    extra_manifest: &str,
+) -> Result<ExposureClass, String> {
     let diff = single_line_diff(source, line, old_line);
-    let repo = TempRepo::create(source, test_source, &diff)?;
+    let repo = TempRepo::create_with_manifest(source, test_source, &diff, extra_manifest)?;
     let output = repo.check()?;
     let mut matches = output.findings.iter().filter(|finding| {
         finding.probe.family == ProbeFamily::ErrorPath
@@ -391,5 +414,37 @@ fn ok_compared_with_some_keeps_the_gap() -> Result<(), String> {
         )?,
         ExposureClass::Exposed
     );
+    Ok(())
+}
+
+/// #8016: a `[[test]]` target `cargo test` never runs is not evidence. The
+/// declared-but-live target keeps the credit, so the fixture itself is
+/// shown to expose before each unrun spelling is refused.
+#[test]
+fn a_test_target_cargo_never_runs_is_not_evidence() -> Result<(), String> {
+    let body = "assert_eq!(total(\"x\").ok(), None);";
+    let live = test_file(body);
+    let custom_main = format!("{live}\nfn main() {{}}\n");
+    let cases = [
+        ("", live.as_str(), true),
+        ("test = false\n", live.as_str(), false),
+        ("harness = false\n", custom_main.as_str(), false),
+        ("required-features = [\"never\"]\n", live.as_str(), false),
+    ];
+    for (key, test_source, credited) in cases {
+        let manifest = format!("\n[[test]]\nname = \"refuse\"\n{key}");
+        let class = error_path_class_with_manifest(
+            SOLE_SOURCE,
+            SOLE_LINE,
+            OLD_LINE,
+            test_source,
+            &manifest,
+        )?;
+        assert_eq!(
+            class == ExposureClass::Exposed,
+            credited,
+            "[[test]] {key:?} read {class:?}"
+        );
+    }
     Ok(())
 }

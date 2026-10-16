@@ -138,6 +138,25 @@ pub(super) fn collect_explicit_paths(
     }
 }
 
+/// Whether a manifest declares a `[[test]]` entry that `cargo test` may not
+/// run: `test = false`, `harness = false` or any `required-features`
+/// (#8016). A cheap text-level gate so the `cargo metadata` probe that
+/// establishes the actual skip only runs for packages that could need it.
+/// A malformed manifest declares nothing.
+pub(crate) fn manifest_may_skip_test_targets(manifest_text: &str) -> bool {
+    let Ok(value) = toml::from_str::<toml::Value>(manifest_text) else {
+        return false;
+    };
+    let Some(entries) = value.get("test").and_then(|value| value.as_array()) else {
+        return false;
+    };
+    entries.iter().any(|entry| {
+        entry.get("test").and_then(|flag| flag.as_bool()) == Some(false)
+            || entry.get("harness").and_then(|flag| flag.as_bool()) == Some(false)
+            || entry.get("required-features").is_some()
+    })
+}
+
 /// One declared Cargo test target with its effective `harness` flag
 /// (#3608): the parsed Cargo target metadata the harness-registry
 /// validation consumes. `harness` carries Cargo's default (`true`) when
