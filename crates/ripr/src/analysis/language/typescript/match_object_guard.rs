@@ -52,7 +52,8 @@ fn flat_object_keys(object_text: &str) -> Option<Vec<String>> {
             .unwrap_or(raw_key);
         // `__proto__: x` (bare or quoted) sets the prototype instead of an
         // own field, so `toMatchObject` compares nothing for it (#8133).
-        if key.is_empty() || key == "__proto__" {
+        // Any escape sequence in the key (e.g. `\u005f_proto__`) fails closed (#8148).
+        if key.is_empty() || key == "__proto__" || key.contains('\\') {
             return None;
         }
         keys.push(key.to_string());
