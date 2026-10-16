@@ -12941,9 +12941,11 @@ fn doctor_reports_loaded_config_path() -> Result<(), String> {
 #[test]
 fn doctor_combined_ordinary_path_with_enablement_tip_fits_one_screen() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    // Enable only rust: the required hosted lane is `--features lang-rust`,
+    // and `enabled = ["python"]` is an invalid config on that binary.
     std::fs::write(
         workspace.join("ripr.toml"),
-        "[analysis]\nmode = \"deep\"\n\n[lsp]\nseam_diagnostics = true\n\n[languages]\nenabled = [\"rust\", \"python\"]\n",
+        "[analysis]\nmode = \"deep\"\n\n[lsp]\nseam_diagnostics = true\n\n[languages]\nenabled = [\"rust\"]\n",
     )
     .map_err(|e| format!("write ripr.toml: {e}"))?;
     std::fs::write(workspace.join("index.ts"), "export const x = 1;\n")
@@ -12972,15 +12974,25 @@ fn doctor_combined_ordinary_path_with_enablement_tip_fits_one_screen() -> Result
         "combined ordinary-path doctor must fit 80x24 ({} lines):\n{stdout}",
         stdout.lines().count()
     );
-    let tip = stdout.lines().find(|line| line.contains("- Tip:"));
-    assert!(
-        tip.is_some_and(|line| {
-            line.contains("[languages]")
-                && line.contains("enabled =")
-                && !line.contains("[languages] enabled")
-        }),
-        "enablement tip must stay one physical line of valid TOML instructions:\n{stdout}"
-    );
+    #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
+    {
+        let tip = stdout.lines().find(|line| line.contains("- Tip:"));
+        assert!(
+            tip.is_some_and(|line| {
+                line.contains("[languages]")
+                    && line.contains("enabled =")
+                    && !line.contains("[languages] enabled")
+            }),
+            "enablement tip must stay one physical line of valid TOML instructions:\n{stdout}"
+        );
+    }
+    #[cfg(not(any(feature = "lang-python", feature = "lang-typescript")))]
+    {
+        assert!(
+            !stdout.contains("- Tip:"),
+            "rust-only doctor has no compiled-in preview adapter to enable:\n{stdout}"
+        );
+    }
     assert!(
         !stdout.contains("To analyze them, set in ripr.toml:"),
         "the four-row TOML block must not return:\n{stdout}"
