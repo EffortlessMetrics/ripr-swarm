@@ -298,6 +298,9 @@ Options:
   --quiet                  Suppress analysis progress and heartbeats on
                            stderr. Does not change machine stdout, exit
                            codes, or error reporting.
+  --all                    With --help, print this exhaustive reference instead
+                           of the one-screen summary. Valid only with --help;
+                           otherwise it is a usage error.
 
 Exit status:
   Complete and partial_with_limitations reports exit 0, regardless of findings.
