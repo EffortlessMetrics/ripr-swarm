@@ -1028,9 +1028,35 @@ fn receiver_starts_empty_in_body(body: &str, receiver: &str) -> bool {
                     || after.starts_with('}')
             })
         };
+        // `Vec::with_capacity(..)` must likewise be the whole right-hand
+        // side: its closing paren must end the statement, not open a
+        // method chain that could seed the collection afterwards.
+        let with_capacity = expr
+            .strip_prefix("Vec::with_capacity(")
+            .is_some_and(|rest| {
+                let mut depth = 1i32;
+                for (at, ch) in rest.char_indices() {
+                    match ch {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                let after = rest[at + 1..].trim_start();
+                                return after.is_empty()
+                                    || after.starts_with(';')
+                                    || after.starts_with(',')
+                                    || after.starts_with(')')
+                                    || after.starts_with('}');
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                false
+            });
         whole("Vec::new()")
             || whole("vec![]")
-            || expr.starts_with("Vec::with_capacity(")
+            || with_capacity
             || whole("Vec::default()")
             || whole("VecDeque::new()")
     };
@@ -4236,6 +4262,7 @@ mod tests {
             "let mut items = Vec::new(); seed(&mut items); record(&mut items, 20);",
             "let mut items = Vec::new(); seed(&mut *items); record(&mut items, 20);",
             "let mut items = Vec::new().into_iter().chain([9]).collect(); record(&mut items, 20);",
+            "let mut items = Vec::with_capacity(1).into_iter().chain([9]).collect(); record(&mut items, 20);",
             "let mut items = other; record(&mut items, 20);",
             "record(&mut items, 20);",
         ] {
