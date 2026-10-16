@@ -1117,6 +1117,82 @@ pub fn resolve_base_commit(
     (!commit.is_empty()).then_some(commit)
 }
 
+/// Whether some branch other than the current one could serve as a
+/// `--base`: a local or remote-tracking branch (never a remote's `HEAD`
+/// pointer) for which `<branch>...HEAD` actually contains changed files.
+/// An alias at `HEAD`'s own commit (a fresh clone's `origin/<branch>` next
+/// to `<branch>`, or a `git branch` copy) is not a candidate, and neither
+/// is a branch whose resulting tree matches `HEAD`'s despite distinct
+/// commits: advising either would reproduce the empty result. Bounded like
+/// the default-base failure context; any Git failure answers `false`, so
+/// callers never advise a `--base` repair that this probe could not
+/// support (#7644).
+pub fn another_base_candidate_exists(root: &Path, git_timeout: Option<Duration>) -> bool {
+    let git_lines = |args: &[&str]| -> Vec<String> {
+        crate::git::run_git_output_with_deadline(root, args, git_timeout)
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let current = git_lines(&["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    let others = git_lines(&[
+        "for-each-ref",
+        "--format=%(refname)",
+        "refs/heads",
+        "refs/remotes",
+    ])
+    .into_iter()
+    .filter(|name| !name.ends_with("/HEAD"))
+    .filter_map(|name| {
+        name.strip_prefix("refs/heads/")
+            .or_else(|| name.strip_prefix("refs/remotes/"))
+            .map(str::to_string)
+    })
+    .filter(|name| !current.contains(name));
+    let Some(head_commit) = resolve_base_commit(root, Some("HEAD"), git_timeout) else {
+        return false;
+    };
+    const MERGE_BASE_PROBE_CAP: usize = 64;
+    others.take(MERGE_BASE_PROBE_CAP).any(|name| {
+        let merge_base_differs = crate::git::run_git_output_with_deadline(
+            root,
+            &["merge-base", name.as_str(), "HEAD"],
+            git_timeout,
+        )
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| {
+            String::from_utf8_lossy(&output.stdout).trim() != head_commit.as_str()
+        });
+        // A distinct historical range can still restore the merge-base
+        // tree; only a non-empty three-dot diff makes the advice useful.
+        // `--relative` scopes that diff to `root` like the analysis
+        // loader, so a branch differing only outside the analyzed root
+        // does not count.
+        merge_base_differs
+            && crate::git::run_git_output_with_deadline(
+                root,
+                &[
+                    "diff",
+                    "--relative",
+                    "--quiet",
+                    &format!("{name}...HEAD"),
+                    "--",
+                ],
+                git_timeout,
+            )
+            .is_ok_and(|output| output.status.code() == Some(1))
+    })
+}
+
 /// Load `<base>...<head>` for the commands that name both revisions (`diff`,
 /// `review-comments`). Callers verify `base` through
 /// [`resolve_effective_base`] first; this verifies `head` the same way, so an
@@ -2394,6 +2470,102 @@ mod tests {
         );
         assert_eq!(resolve_base_commit(&dir, Some("missing-base"), None), None);
 
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_needs_a_history_sharing_other_branch() -> std::io::Result<()> {
+        // #7644: the `--base` hedge may only fire when its advice is
+        // actionable. A single-branch repository has no candidate; an
+        // ancestor branch sharing history is one.
+        let dir = unique_fixture_root("another-base-candidate")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        assert!(
+            !another_base_candidate_exists(&dir, None),
+            "a lone branch must not count as its own --base candidate"
+        );
+        run_git_checked(&dir, &["branch", "base-candidate"])?;
+        assert!(
+            !another_base_candidate_exists(&dir, None),
+            "an alias at HEAD's own commit must not count as a --base candidate"
+        );
+        fs::write(dir.join("README"), "second")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "second"])?;
+        assert!(
+            another_base_candidate_exists(&dir, None),
+            "an ancestor branch sharing history must count as a --base candidate"
+        );
+        // A descendant branch has HEAD as its merge base: not a candidate.
+        run_git_checked(&dir, &["checkout", "-b", "descendant"])?;
+        fs::write(dir.join("README"), "third")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "third"])?;
+        run_git_checked(&dir, &["checkout", "master"])?;
+        run_git_checked(&dir, &["branch", "-D", "base-candidate"])?;
+        assert!(
+            !another_base_candidate_exists(&dir, None),
+            "a descendant of HEAD must not count as a --base candidate"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_rejects_a_range_that_restores_the_tree() -> std::io::Result<()> {
+        // Distinct commits whose net tree change is empty still reproduce
+        // the empty result the hedge advises against (#7644).
+        let dir = unique_fixture_root("another-base-restored-tree")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        run_git_checked(&dir, &["branch", "base-candidate"])?;
+        fs::write(dir.join("README"), "second")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "second"])?;
+        fs::write(dir.join("README"), "init")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "restore"])?;
+        assert!(
+            !another_base_candidate_exists(&dir, None),
+            "a range restoring the merge-base tree must not count as a --base candidate"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_ignores_changes_outside_the_analysis_root() -> std::io::Result<()> {
+        // The analysis loader scopes its diff to `root` (`--relative`);
+        // the probe must agree, or a branch differing only in a sibling
+        // package advises a `--base` that reproduces the empty result
+        // for a subdirectory root (#7644).
+        let dir = unique_fixture_root("another-base-candidate-subdir")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        let sub = dir.join("sub");
+        fs::create_dir_all(&sub)?;
+        fs::write(sub.join("lib.txt"), "init")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "seed sub"])?;
+        run_git_checked(&dir, &["branch", "base-candidate"])?;
+        // The ancestor branch now differs from HEAD only outside `sub`.
+        fs::write(dir.join("README"), "outside")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "outside sub"])?;
+        assert!(
+            !another_base_candidate_exists(&sub, None),
+            "a branch differing only outside the analysis root must not count"
+        );
+        // A later change inside `sub` makes the same branch a candidate.
+        fs::write(sub.join("lib.txt"), "inside")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "inside sub"])?;
+        assert!(
+            another_base_candidate_exists(&sub, None),
+            "a branch differing inside the analysis root must count"
+        );
         ignore_remove_dir_all(&dir);
         Ok(())
     }
