@@ -7119,7 +7119,7 @@ fn agent_start_writes_source_edit_free_workflow_packet() -> Result<(), Box<dyn s
 }
 
 #[test]
-fn agent_start_packet_discloses_that_generated_commands_assume_bash()
+fn agent_start_packet_discloses_the_command_shell_assumption()
 -> Result<(), Box<dyn std::error::Error>> {
     let out_dir = unique_temp_workspace("agent-start-shell-disclosure");
     let out = out_dir
@@ -7143,9 +7143,16 @@ fn agent_start_packet_discloses_that_generated_commands_assume_bash()
 
     // The commands are already fenced as ```bash, so a bare `bash` substring is
     // not evidence. Require the prose disclosure ahead of the first fence.
-    let disclosure = commands_md
-        .find("Each step includes Bash command forms and, where supported, PowerShell forms; unavailable variants are disclosed.")
-        .ok_or_else(|| format!("commands.md must disclose the bash assumption:\n{commands_md}"))?;
+    // Host-aware (#7729): the pinned sentence names the shell family the
+    // commands are actually quoted for on the running host.
+    let pinned_disclosure = if cfg!(windows) {
+        "Each step includes command forms for the Windows console and, where supported, PowerShell forms; unavailable variants are disclosed."
+    } else {
+        "Each step includes Bash command forms and, where supported, PowerShell forms; unavailable variants are disclosed."
+    };
+    let disclosure = commands_md.find(pinned_disclosure).ok_or_else(|| {
+        format!("commands.md must disclose the command-shell assumption:\n{commands_md}")
+    })?;
     let first_fence = commands_md
         .find("```bash")
         .ok_or("commands.md must still fence commands as bash")?;
@@ -7157,8 +7164,17 @@ fn agent_start_packet_discloses_that_generated_commands_assume_bash()
         commands_md.contains("PowerShell"),
         "commands.md must name the shells that do not accept these commands:\n{commands_md}"
     );
+    // Machine consumers never read commands.md, so the manifest must carry
+    // the same boundary the Markdown header states. Host-aware (#7729, #8152
+    // review): the command strings are bash source off Windows and the
+    // Windows console form on it.
+    let expected_shell = if cfg!(windows) {
+        "windows-console"
+    } else {
+        "bash"
+    };
     assert!(
-        workflow_json.contains(r#""command_shell": "bash""#),
+        workflow_json.contains(&format!("\"command_shell\": \"{expected_shell}\"")),
         "workflow.json must name the shell its command strings assume:\n{workflow_json}"
     );
 

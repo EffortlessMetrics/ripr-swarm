@@ -1132,9 +1132,15 @@ mod tests {
             markdown.contains("## Local Reproduction Commands\n\n"),
             "section missing:\n{markdown}"
         );
+        // Host-aware shell boundary (#7729): see the agent_status assertion.
+        let boundary_disclosed = if cfg!(windows) {
+            markdown.contains("cmd.exe")
+        } else {
+            markdown.contains("cmd.exe is not supported.")
+        };
         assert!(
-            markdown.contains("cmd.exe is not supported."),
-            "command presentation must state the cmd.exe boundary:\n{markdown}"
+            boundary_disclosed,
+            "command presentation must state the host shell boundary:\n{markdown}"
         );
         // A command that runs unchanged in PowerShell keeps its bash bytes and
         // gains no second, identical block (F60-12).
