@@ -1,0 +1,45 @@
+{
+  "timestamp_utc": "2026-10-16T02:21:05.185347+00:00",
+  "published_commit": "562cb1447b74a46fc86512500149c4b957cdb020",
+  "source_head": "77474e347bbdd8ef2101b7f9865e65f094df44c1",
+  "ref": "refs/heads/evidence/8004-independent-runtime774-20261016",
+  "consumer": "independent fresh filtered network clone; no local alternates; Git promisor blobs fetched from origin",
+  "complete_public_file_reads": [
+    {
+      "name": "README.md",
+      "bytes": 9494,
+      "sha256": "3b300473d967ea917a372e75f16d16d9a2de930f29a3d09ab574b88acf6576f4",
+      "complete_bytes_equal": true
+    },
+    {
+      "name": "receipt.json",
+      "bytes": 49232,
+      "sha256": "b0cd0acafa5fd0226eb9154ab5232e1b0301eb2bb1272a75fbbf36a61008b6c7",
+      "complete_bytes_equal": true
+    },
+    {
+      "name": "MANIFEST.json",
+      "bytes": 1183843,
+      "sha256": "9f1befd38f6026acef98db0956032c83636edcf132ac5c2646a681994d5f6cd1",
+      "complete_bytes_equal": true
+    },
+    {
+      "name": "raw.tar.xz",
+      "bytes": 672216,
+      "sha256": "ad8b2ed75f2c4f539962534fb2a58bfb5604fd7ea5b2723b7521767f2b56137f",
+      "complete_bytes_equal": true
+    },
+    {
+      "name": "SHA256SUMS",
+      "bytes": 312,
+      "sha256": "d465c79e29d1c1f7593894bdf6f2ccc2ca516e16d026fc76447e248b129476a2",
+      "complete_bytes_equal": true
+    }
+  ],
+  "archive_complete_member_reads": 4660,
+  "all_bytes_sizes_modes_nanosecond_mtime_match": true,
+  "same_member_inventory": true,
+  "archive_sha256": "ad8b2ed75f2c4f539962534fb2a58bfb5604fd7ea5b2723b7521767f2b56137f",
+  "source_ref_changed": false,
+  "diff_scope": "exactly five added files under evidence/8004/independent-runtime774; no source changes"
+}
