@@ -122,6 +122,46 @@ including the `repo-exposure.json` that `ripr pilot` writes, carries no head;
 ripr then says so and cannot verify the pair came from the same repository or
 adjacent commits. Matching heads still do not mean matching working trees.
 "#;
+/// The one-screen `ripr check --help`. The exhaustive reference stays in
+/// [`CHECK_HELP`] behind `ripr check --help --all`.
+pub(super) const CHECK_HELP_SHORT: &str = r#"Analyze the current diff and name the changed behavior your tests may not catch.
+
+Usage: ripr check [OPTIONS]
+
+Zero-config: run it inside a Cargo workspace with local changes. The base
+defaults to origin/main (then origin/master, main, master); the diff ends at
+your working tree when you have uncommitted edits, otherwise at HEAD.
+
+Common options:
+  --base REV        Compare against REV instead of the default base.
+  --diff PATH       Read a unified diff file instead of running git; `-` is stdin.
+  --root PATH       Workspace root. Defaults to the current directory, then walks
+                    up to the nearest Cargo.toml inside the git repository.
+  --worktree        Include uncommitted edits (already the default when present).
+  --committed       Only committed history (base...HEAD); ignore uncommitted edits.
+  --format FORMAT   human (default), human-full, json, github, sarif.
+  --json            Shortcut for --format json.
+  --mode MODE       How much of the workspace is indexed: instant, draft (default),
+                    fast, deep, ready. Modes never change what a class means.
+  --quiet           Hide progress on stderr; stdout and exit codes are unchanged.
+  --help --all      Every option, output format and environment variable.
+
+Exit status:
+  0  Complete and partial_with_limitations reports, regardless of findings.
+  2  `unsupported_input` reports exit 2 after the report is written; usage
+     and operational errors also exit 2.
+  A successful exit does not establish complete scope; read the typed outcome.
+
+Examples:
+  ripr check
+  ripr check --base HEAD~1
+  ripr check --base origin/main --committed
+  ripr check --json
+  ripr check --diff changes.patch
+
+Next: `ripr explain <finding-id>` shows why a finding was reported;
+`ripr repair` guides one focused test.
+"#;
 pub(super) const CHECK_HELP: &str = r#"Analyze a diff or workspace and emit findings in human, JSON, SARIF, or badge form.
 
 Usage: ripr check [OPTIONS]
@@ -252,6 +292,8 @@ Options:
                            error names git_invocation_timeout. 0 disables
                            the deadline. Default: 300 (5 minutes). Also
                            settable via RIPR_GIT_TIMEOUT env var.
+  --all                    With --help, print this exhaustive reference
+                           instead of the one-screen summary.
   --quiet                  Suppress analysis progress and heartbeats on
                            stderr. Does not change machine stdout, exit
                            codes, or error reporting.

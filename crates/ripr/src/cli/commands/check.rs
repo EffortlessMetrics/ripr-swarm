@@ -563,8 +563,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             "--quiet" => {
                 quiet = true;
             }
+            // `--all` only widens help; without a help flag it stays unknown.
+            "--all" if args.iter().any(|arg| arg == "--help" || arg == "-h") => {}
             "--help" | "-h" => {
-                help::print_check_help();
+                help::print_check_help(args.iter().any(|arg| arg == "--all"));
                 return Ok(());
             }
             other => return Err(unknown_argument("check", other)),

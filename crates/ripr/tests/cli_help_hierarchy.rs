@@ -509,7 +509,7 @@ fn help_index_routes_agent_repair_to_repair_help() -> Result<(), String> {
 #[test]
 fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), String> {
     for command in ["check", "context"] {
-        let help = normalized(&rendered_help(&[command, "--help"])?);
+        let help = normalized(&rendered_help(&[command, "--help", "--all"])?);
         for needle in [
             "instant (changed files only, cheapest)",
             "deep and ready (whole workspace, slowest)",
@@ -526,7 +526,7 @@ fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), Stri
 /// base through the same authority (#3952), so its help states the same order.
 #[test]
 fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
-    let check = normalized(&rendered_help(&["check", "--help"])?);
+    let check = normalized(&rendered_help(&["check", "--help", "--all"])?);
     for needle in [
         "the local origin/HEAD ref, then origin/main, origin/master, main, and master in order",
         "when none of those resolves, the analysis does not run",
@@ -556,7 +556,7 @@ fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
 /// the group list. Each task below must keep exactly its recommended path.
 #[test]
 fn check_help_chooses_one_format_per_task() -> Result<(), String> {
-    let check = normalized(&rendered_help(&["check", "--help"])?);
+    let check = normalized(&rendered_help(&["check", "--help", "--all"])?);
     for needle in [
         "Choose by task:",
         "eye review -> human",
@@ -631,6 +631,62 @@ fn doc_flag_guard_rejects_removed_flags_and_accepts_prose() -> Result<(), String
     let drift = undocumented_doc_flags(&[("good.md", good)], &mut cache, &run_ripr)?;
     if !drift.is_empty() {
         return Err(format!("guard rejected valid prose: {drift:?}"));
+    }
+    Ok(())
+}
+
+/// Progressive `check --help` (#8158 item 2): the default screen is one
+/// terminal page that carries the first-run task, and `--all` (in either
+/// order, or via `help check --all`) restores the exhaustive reference.
+#[test]
+fn check_help_default_is_one_screen_and_all_is_exhaustive() -> Result<(), String> {
+    let short = rendered_help(&["check", "--help"])?;
+    let lines = short.lines().count();
+    if lines > 45 {
+        return Err(format!(
+            "`ripr check --help` is {lines} lines; expected one screen"
+        ));
+    }
+    for needle in [
+        "Usage: ripr check [OPTIONS]",
+        "--base REV",
+        "--diff PATH",
+        "--format FORMAT",
+        "--mode MODE",
+        "Exit status:",
+        "Examples:",
+        "--help --all",
+    ] {
+        assert_contains("check --help (short)", &short, needle)?;
+    }
+    // Negative control: reference-only material must not leak into the default.
+    for absent in [
+        "RIPR_MAX_DIFF_CHANGED_RUST_LINES",
+        "repo-badge-plus-shields",
+        "--perl-facts",
+    ] {
+        if short.contains(absent) {
+            return Err(format!(
+                "short check help leaked reference-only text {absent:?}"
+            ));
+        }
+    }
+    let full = rendered_help(&["check", "--help", "--all"])?;
+    assert_contains(
+        "check --help --all",
+        &full,
+        "RIPR_MAX_DIFF_CHANGED_RUST_LINES",
+    )?;
+    assert_contains("check --help --all", &full, "--perl-facts")?;
+    for args in [["check", "--all", "--help"], ["help", "check", "--all"]] {
+        if rendered_help(&args)? != full {
+            return Err(format!("{args:?} did not select the exhaustive reference"));
+        }
+    }
+    // `--all` alone is still not a check flag.
+    let output = run_ripr(&["check", "--all"])?;
+    if output.status.success() {
+        return Err("`ripr check --all` without --help must stay an unknown argument".to_string());
     }
     Ok(())
 }
