@@ -176,14 +176,21 @@ mod tests {
     }
 
     #[test]
-    fn preparation_rejects_unknown_arguments() {
-        assert!(prepare(&["--force".into()]).is_err());
+    fn preparation_rejects_unknown_arguments() -> Result<(), String> {
+        let Err(error) = prepare(&["--force".into()]) else {
+            return Err("unknown preparation argument was accepted".into());
+        };
+        assert_eq!(error, "usage: cargo xtask goldens prepare [--offline]");
+        Ok(())
     }
 
     #[test]
     fn repository_toolchain_is_required() -> Result<(), String> {
         assert_eq!(toolchain("[toolchain]\nchannel = '1.95.0'\n")?, "1.95.0");
-        assert!(toolchain("[toolchain]\ncomponents = []").is_err());
+        let Err(error) = toolchain("[toolchain]\ncomponents = []") else {
+            return Err("missing repository toolchain channel was accepted".into());
+        };
+        assert_eq!(error, "rust-toolchain.toml must name toolchain.channel");
         Ok(())
     }
 }
