@@ -13310,6 +13310,12 @@ tests = [
   "crates/ripr/src/git.rs::tests::cat_file_batch_stream_rejects_ready_bytes_past_the_deadline",
   "crates/ripr/src/git.rs::tests::cat_file_batch_session_round_trips_blobs_and_reports_missing",
   "crates/ripr/src/git.rs::tests::cat_file_batch_session_enforces_the_overall_budget",
+  "crates/ripr/src/git.rs::tests::cat_file_batch_cancellation_interrupts_a_stalled_header",
+  "crates/ripr/src/git.rs::tests::cat_file_batch_cancellation_interrupts_a_stalled_body",
+  "crates/ripr/src/git.rs::tests::cat_file_batch_cancellation_interrupts_a_stalled_delimiter",
+  "crates/ripr/src/git.rs::tests::cat_file_batch_cancellation_rejects_a_buffered_delimiter",
+  "crates/ripr/src/git.rs::tests::cat_file_batch_stream_preserves_received_failures_over_a_later_budget",
+  "crates/ripr/src/git.rs::tests::cat_file_batch_cancellation_reap_observer_rejects_kill_without_wait",
   "crates/ripr/src/analysis/git_candidate_execution.rs::tests::batched_materialization_preserves_bytes_at_scale",
 ]
 fixtures = []
