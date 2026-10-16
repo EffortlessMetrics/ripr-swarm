@@ -8116,7 +8116,12 @@ fn create_zip_archive_writes_flat_package_contents() -> Result<(), String> {
             let entry = archive
                 .by_index(index)
                 .map_err(|err| format!("zip entry {index}: {err}"))?;
-            names.push(entry.name().to_string());
+            names.push(
+                entry
+                    .name()
+                    .map_err(|err| format!("zip entry {index} name: {err}"))?
+                    .into_owned(),
+            );
         }
         names.sort();
         assert_eq!(
