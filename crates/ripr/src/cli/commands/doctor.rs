@@ -2591,31 +2591,11 @@ mod tests {
         assert_eq!(ripr_artifact_unignored_warning(&root), None);
 
         for args in [
-            vec!["init".to_string()],
-            vec![
-                "config".to_string(),
-                "user.email".to_string(),
-                "ripr@example.invalid".to_string(),
-            ],
-            vec![
-                "config".to_string(),
-                "user.name".to_string(),
-                "ripr tests".to_string(),
-            ],
+            ["init"].as_slice(),
+            ["config", "user.email", "ripr@example.invalid"].as_slice(),
+            ["config", "user.name", "ripr tests"].as_slice(),
         ] {
-            let output = std::process::Command::new("git")
-                .arg("-C")
-                .arg(&root)
-                .args(&args)
-                .output()
-                .map_err(|error| error.to_string())?;
-            if !output.status.success() {
-                return Err(format!(
-                    "git {:?} failed: {}",
-                    args,
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
         }
         // A repository whose ignore rules do not cover target/ripr warns and
         // names the exact entry to add (#7663).
