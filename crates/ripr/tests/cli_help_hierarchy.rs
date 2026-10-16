@@ -509,7 +509,11 @@ fn help_index_routes_agent_repair_to_repair_help() -> Result<(), String> {
 #[test]
 fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), String> {
     for command in ["check", "context"] {
-        let help = normalized(&rendered_help(&[command, "--help"])?);
+        let help = if command == "check" {
+            normalized(&rendered_help(&[command, "--help", "--all"])?)
+        } else {
+            normalized(&rendered_help(&[command, "--help"])?)
+        };
         for needle in [
             "instant (changed files only, cheapest)",
             "deep and ready (whole workspace, slowest)",
@@ -556,7 +560,7 @@ fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
 /// the group list. Each task below must keep exactly its recommended path.
 #[test]
 fn check_help_chooses_one_format_per_task() -> Result<(), String> {
-    let check = normalized(&rendered_help(&["check", "--help"])?);
+    let check = normalized(&rendered_help(&["check", "--help", "--all"])?);
     for needle in [
         "Choose by task:",
         "eye review -> human",
@@ -631,6 +635,50 @@ fn doc_flag_guard_rejects_removed_flags_and_accepts_prose() -> Result<(), String
     let drift = undocumented_doc_flags(&[("good.md", good)], &mut cache, &run_ripr)?;
     if !drift.is_empty() {
         return Err(format!("guard rejected valid prose: {drift:?}"));
+    }
+    Ok(())
+}
+
+/// #8158: `check --help` is one screen that keeps the first-run options and
+/// the exit contract, and names the route to the exhaustive reference; the
+/// reference itself stays reachable and strictly larger.
+#[test]
+fn check_help_default_is_one_screen_and_all_is_exhaustive() -> Result<(), String> {
+    let short = rendered_help(&["check", "--help"])?;
+    let lines = short.lines().count();
+    if lines > 45 {
+        return Err(format!(
+            "`ripr check --help` should fit one screen, got {lines} lines"
+        ));
+    }
+    let short_n = normalized(&short);
+    for needle in [
+        "--base REV",
+        "--diff PATH",
+        "--json",
+        "exit 0 regardless of findings",
+        "`ripr gate evaluate` owns blocking decisions",
+        "ripr check --help --all",
+    ] {
+        assert_contains("check help (`ripr check --help`)", &short_n, needle)?;
+    }
+    for hidden in [
+        "RIPR_MAX_DIFF_CHANGED_RUST_LINES",
+        "repo-badge-plus-shields",
+    ] {
+        if short_n.contains(hidden) {
+            return Err(format!("one-screen check help leaked `{hidden}`"));
+        }
+    }
+    let all = rendered_help(&["check", "--help", "--all"])?;
+    let via_help = rendered_help(&["help", "check", "--all"])?;
+    if all != via_help {
+        return Err("`help check --all` must equal `check --help --all`".to_string());
+    }
+    assert_contains("check help --all", &all, "RIPR_MAX_DIFF_CHANGED_RUST_LINES")?;
+    assert_contains("check help --all", &all, "repo-badge-plus-shields")?;
+    if all.lines().count() <= lines * 3 {
+        return Err("`check --help --all` should remain the exhaustive reference".to_string());
     }
     Ok(())
 }

@@ -122,6 +122,45 @@ including the `repo-exposure.json` that `ripr pilot` writes, carries no head;
 ripr then says so and cannot verify the pair came from the same repository or
 adjacent commits. Matching heads still do not mean matching working trees.
 "#;
+/// One-screen default for `ripr check --help` (#8158 item 2). The exhaustive
+/// reference stays in [`CHECK_HELP`], reached with `--help --all`.
+pub(super) const CHECK_HELP_SHORT: &str = r#"Analyze the current change and name where tests may not catch it.
+
+Usage: ripr check [OPTIONS]
+
+Common options:
+  --base REV        Compare against REV. Omitted: the local origin/HEAD ref,
+                    then origin/main, origin/master, main, and master in
+                    order; when none of those resolves, the analysis does
+                    not run.
+  --diff PATH       Read a unified diff file instead of running git
+                    (`--diff -` reads stdin).
+  --format FORMAT   Output format. Defaults to human.
+                    Choose by task: eye review -> human (the default);
+                    every finding with drill-in commands -> human-full;
+                    machine consumer (jq, CI scripts) -> json (--json);
+                    file annotations in Actions logs -> github; code
+                    scanning upload -> sarif.
+  --json            Shortcut for --format json.
+  --mode MODE       instant (changed files only, cheapest), draft (the
+                    default), deep and ready (whole workspace, slowest).
+  --root PATH       Workspace root. Defaults to the current directory, then
+                    walks up to the nearest Cargo.toml.
+  --quiet           Suppress progress on stderr.
+  --help --all      Show every option, format, and environment variable.
+
+Exit status: complete and partial_with_limitations reports exit 0
+regardless of findings; unsupported_input and usage errors exit 2. Do not
+use `check` as a CI gate; `ripr gate evaluate` owns blocking decisions.
+
+Examples:
+  ripr check
+  ripr check --base HEAD~1
+  ripr check --json
+
+More: `ripr check --help --all` lists every option, format (badge,
+repo-scope, agent), environment variable, and the progress contract.
+"#;
 pub(super) const CHECK_HELP: &str = r#"Analyze a diff or workspace and emit findings in human, JSON, SARIF, or badge form.
 
 Usage: ripr check [OPTIONS]
@@ -252,6 +291,8 @@ Options:
                            error names git_invocation_timeout. 0 disables
                            the deadline. Default: 300 (5 minutes). Also
                            settable via RIPR_GIT_TIMEOUT env var.
+  --all                    Only with --help: print this exhaustive reference;
+                           plain --help prints a one-screen summary.
   --quiet                  Suppress analysis progress and heartbeats on
                            stderr. Does not change machine stdout, exit
                            codes, or error reporting.
