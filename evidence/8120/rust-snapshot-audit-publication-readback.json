@@ -1,0 +1,33 @@
+{
+  "remote": "https://github.com/EffortlessMetrics/ripr-swarm.git",
+  "evidence_commit": "4d78adde0182c0c4deedfc31c9bdfda97c5f2104",
+  "source_reviewed": "e00018da7d224bd13b4c4e3466d1e626ca0b15f6",
+  "fresh_network_git_directory": "/workspace/scratch/snapshot-audit/readback",
+  "public_file_count": 5,
+  "all_public_files_byte_equal": true,
+  "archive_member_count": 378,
+  "all_members_hash_size_mode_inventory_verified": true,
+  "gzip_sha256": "145b5dde9191e159c21f794030a1d5ed36358e3f35e32e96807dcfafb0a0e55a",
+  "public_files": [
+    {
+      "path": "evidence/8120/rust-snapshot-audit/README.md",
+      "sha256": "f0bcde8200ec58889bf952adee336e5f0b90e94dc03744e945858155b4afe61c"
+    },
+    {
+      "path": "evidence/8120/rust-snapshot-audit/SHA256SUMS",
+      "sha256": "e7ff32ea1c3de8696d6ad63a05f5448d2c66e9b3d95fc795285c81bffb6e0ca6"
+    },
+    {
+      "path": "evidence/8120/rust-snapshot-audit/archive-manifest.json",
+      "sha256": "cf7d607e9b0ae97dfdfc80d382fba028290102867235d40d74f2002daca784f3"
+    },
+    {
+      "path": "evidence/8120/rust-snapshot-audit/audit-evidence.tar.gz.b64.txt",
+      "sha256": "c5e5fd8208cea5861acdbf6a2dbe0d2ef31922092e2560b1c3e9187dca47c250"
+    },
+    {
+      "path": "evidence/8120/rust-snapshot-audit/summary.json",
+      "sha256": "9cef0c4e68eaa286a5dedd0efcbfa16f4f51887b49ae54fae87352becc68cffa"
+    }
+  ]
+}
