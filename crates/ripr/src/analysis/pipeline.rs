@@ -47,7 +47,7 @@ static DIFF_PIPELINE_ENTRIES: std::sync::Mutex<
 pub(crate) fn diff_pipeline_entry_count(root: &std::path::Path) -> Result<usize, String> {
     let counts = DIFF_PIPELINE_ENTRIES
         .lock()
-        .map_err(|_| "diff pipeline counter lock poisoned")?;
+        .map_err(|_poisoned| "diff pipeline counter lock poisoned")?;
     Ok(counts.get(root).copied().unwrap_or(0))
 }
 
@@ -76,7 +76,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     {
         let mut counts = DIFF_PIPELINE_ENTRIES
             .lock()
-            .map_err(|_| "diff pipeline counter lock poisoned".to_string())?;
+            .map_err(|_poisoned| "diff pipeline counter lock poisoned".to_string())?;
         *counts.entry(options.root.clone()).or_default() += 1;
     }
     // Immutable Git candidate subject (#3237 / #3277): resolve the

@@ -24,7 +24,7 @@ impl Boundary {
         });
         let mut guards = GUARDS
             .lock()
-            .map_err(|_| "output-set boundary lock failed")?;
+            .map_err(|_poisoned| "output-set boundary lock failed")?;
         guards.retain(|guard| guard.strong_count() > 0);
         guards.push(Arc::downgrade(&state));
         ACTIVE.fetch_add(1, Ordering::SeqCst);
@@ -161,10 +161,10 @@ mod tests {
             scope
                 .spawn(|| observe_module_read(&first.0, &second.0.join("external.rs"), true))
                 .join()
-                .map_err(|_| "boundary worker failed".to_string())
+                .map_err(|_panic| "boundary worker failed".to_string())
         })?;
         assert!(boundary.verify().is_err());
-        assert!(unrelated.verify().is_ok());
+        unrelated.verify()?;
         Ok(())
     }
 

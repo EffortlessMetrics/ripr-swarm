@@ -646,7 +646,7 @@ mod tests {
         std::os::unix::fs::symlink(&first, &link).map_err(|e| e.to_string())?;
         let requested = link.join(destination.file_name().ok_or("missing destination name")?);
         let custody = Custody::capture(&input, &requested)?;
-        assert!(custody.verify().is_ok());
+        custody.verify()?;
         std::fs::remove_file(&link).map_err(|e| e.to_string())?;
         std::os::unix::fs::symlink(&second, &link).map_err(|e| e.to_string())?;
         assert!(custody.verify().is_err());
@@ -667,7 +667,7 @@ mod tests {
         let identity = custody.identity(&input, &RiprConfig::default());
         let text = serde_json::to_string(&identity).map_err(|e| e.to_string())?;
         assert!(text.contains("observed_inputs"));
-        assert!(custody.verify().is_ok());
+        custody.verify()?;
         Ok(())
     }
 
