@@ -78,7 +78,7 @@ use super::{
     GENERATED_CI_FRONT_PANEL_REPAIR, GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest,
     GhPrStatusReview, Lane1EvidenceAuditRepoExposureGeneration,
     Lane1EvidenceAuditRepoExposureOutcome, LocalContextAllow, LocalMarkdownTarget,
-    LspCockpitFixture, LspCockpitReport, MarkdownLink, PYTHON_REAL_REPO_EVAL_REQUIRED_CASES,
+    LspCockpitFixture, MarkdownLink, PYTHON_REAL_REPO_EVAL_REQUIRED_CASES,
     PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
     PYTHON_REAL_REPO_EVAL_REQUIRED_STATIC_LIMIT_CASES, PrTriageCheck, PrTriageFinding,
     PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
@@ -50102,9 +50102,32 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
 }
 
 #[test]
+fn preview_editor_workflow_fixtures_do_not_wait_for_cwd() -> Result<(), String> {
+    let (started, completed, worker) = with_temp_cwd("preview-independent-cwd", |_root| {
+        let (start_tx, start_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _ = start_tx.send(());
+            let _ = done_tx.send(preview_editor_workflow_fixtures_pin_preview_boundaries());
+        });
+        let started = start_rx.recv_timeout(Duration::from_secs(2));
+        let completed = done_rx.recv_timeout(Duration::from_secs(2));
+        (started, completed, worker)
+    });
+    // Restore the cwd and release its writer before joining, including timeout
+    // and panic paths: the old guarded implementation must fail without hanging.
+    worker
+        .join()
+        .map_err(|_| "preview fixture assertion thread panicked".to_string())?;
+    started.map_err(|error| format!("preview fixture assertion thread did not start: {error}"))?;
+    completed.map_err(|error| {
+        format!("preview fixture assertions waited for the process-wide CWD guard: {error}")
+    })?
+}
+
+#[test]
 fn preview_editor_workflow_fixtures_pin_preview_boundaries() -> Result<(), String> {
-    let report = with_repo_cwd(build_lsp_cockpit_report)?;
-    let python = lsp_fixture(&report, "python_missing_import_graph_limit")?;
+    let python = preview_lsp_fixture("python_missing_import_graph_limit")?;
     assert_eq!(python.diagnostic_count, 1);
     assert_eq!(python.finding_diagnostic_count, 1);
     assert_eq!(python.seam_diagnostic_count, 0);
@@ -50121,7 +50144,7 @@ fn preview_editor_workflow_fixtures_pin_preview_boundaries() -> Result<(), Strin
         "missing_import_graph",
     )?;
 
-    let typescript = lsp_fixture(&report, "typescript_mocked_module_limit")?;
+    let typescript = preview_lsp_fixture("typescript_mocked_module_limit")?;
     assert_eq!(typescript.diagnostic_count, 1);
     assert_eq!(typescript.finding_diagnostic_count, 1);
     assert_eq!(typescript.seam_diagnostic_count, 0);
@@ -50138,7 +50161,7 @@ fn preview_editor_workflow_fixtures_pin_preview_boundaries() -> Result<(), Strin
         "mocked_module",
     )?;
 
-    let disabled = lsp_fixture(&report, "python_disabled")?;
+    let disabled = preview_lsp_fixture("python_disabled")?;
     assert_eq!(disabled.diagnostic_count, 0);
     assert_eq!(disabled.finding_diagnostic_count, 0);
     assert_eq!(disabled.seam_diagnostic_count, 0);
@@ -50171,15 +50194,14 @@ fn lsp_cockpit_report_json_and_markdown_are_structured() -> Result<(), String> {
     Ok(())
 }
 
-fn lsp_fixture<'a>(
-    report: &'a LspCockpitReport,
-    name: &str,
-) -> Result<&'a LspCockpitFixture, String> {
-    report
-        .fixtures
-        .iter()
-        .find(|fixture| fixture.fixture == name)
-        .ok_or_else(|| format!("expected `{name}` LSP cockpit fixture"))
+fn preview_lsp_fixture(name: &str) -> Result<LspCockpitFixture, String> {
+    let fixture = repo_root()?.join("fixtures").join(name);
+    crate::lsp_cockpit_fixture_report(name, &fixture)?.ok_or_else(|| {
+        format!(
+            "expected LSP cockpit fixture `{name}` at {}",
+            fixture.display()
+        )
+    })
 }
 
 fn assert_preview_lsp_fixture(
