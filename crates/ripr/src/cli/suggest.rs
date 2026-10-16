@@ -337,6 +337,19 @@ mod tests {
         );
     }
 
+    /// #8158 item 2: the default `check --help` is a short summary, but typo
+    /// suggestions keep mining the exhaustive reference, so a mistyped
+    /// advanced flag is still named even though the summary omits it (the
+    /// omission itself is pinned in `cli_help_hierarchy`).
+    #[test]
+    fn advanced_flag_typos_are_suggested_from_the_exhaustive_reference() {
+        let message = unknown_argument("check", "--candidate-tre");
+        assert!(
+            message.contains("Did you mean `--candidate-tree`?"),
+            "{message}"
+        );
+    }
+
     #[test]
     fn unknown_argument_still_points_at_help_without_a_near_match() {
         let message = unknown_argument("check", "--totally-unrelated-flag");

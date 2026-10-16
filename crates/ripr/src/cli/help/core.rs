@@ -133,8 +133,10 @@ Common options:
   --base REV        Compare against this revision. When omitted, ripr uses the
                     local origin/HEAD ref, then origin/main, origin/master,
                     main, and master in order.
-  --diff PATH       Read a unified diff file instead of running git diff
-                    (`--diff -` reads stdin).
+  --diff PATH       Read a diff file instead of running git diff (`-` = stdin).
+  --worktree        Include staged and unstaged tracked edits (already the
+                    default when the tree has them).
+  --committed       Compare committed history only (base...HEAD).
   --format FORMAT   human (default); human-full lists every finding with
                     drill-in commands; json (or --json) for scripts and CI;
                     github for Actions annotations; sarif for code scanning.

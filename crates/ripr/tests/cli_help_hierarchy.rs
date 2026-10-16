@@ -642,14 +642,18 @@ fn doc_flag_guard_rejects_removed_flags_and_accepts_prose() -> Result<(), String
 fn check_help_is_one_screen_and_all_is_the_full_reference() -> Result<(), String> {
     let short = rendered_help(&["check", "--help"])?;
     let lines = short.lines().count();
-    if lines > 40 {
+    if lines > 35 {
         return Err(format!(
-            "`ripr check --help` must fit one screen (<= 40 lines), got {lines}"
+            "`ripr check --help` must fit one screen (<= 35 lines), got {lines}"
         ));
     }
     let short = normalized(&short);
     for needle in [
         "--base REV",
+        "--worktree",
+        "already the",
+        "--committed",
+        "committed history only",
         "--format FORMAT",
         "origin/HEAD ref, then origin/main",
         "Exit status:",
