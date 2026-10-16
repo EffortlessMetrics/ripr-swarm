@@ -1102,6 +1102,7 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!(Some(r == Err(E::Bad)), Some(expected));",
         "assert_eq!(Some(matches!(r, Err(E::Bad))), Some(false));",
         "assert_eq!(Ok(Some(r == Err(E::Bad))), Ok(Some(expected)));",
+        "assert_eq!(Some(r == Err(E::Bad),), Some(expected,));",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
