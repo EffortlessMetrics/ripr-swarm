@@ -1117,6 +1117,53 @@ pub fn resolve_base_commit(
     (!commit.is_empty()).then_some(commit)
 }
 
+/// Whether some branch other than the current one could serve as a
+/// `--base`: a local or remote-tracking branch (never a remote's `HEAD`
+/// pointer) that shares history with `HEAD`, so `<branch>...HEAD` has a
+/// merge base. Bounded like the default-base failure context; any Git
+/// failure answers `false`, so callers never advise a `--base` repair that
+/// this probe could not support (#7644).
+pub fn another_base_candidate_exists(root: &Path, git_timeout: Option<Duration>) -> bool {
+    let git_lines = |args: &[&str]| -> Vec<String> {
+        crate::git::run_git_output_with_deadline(root, args, git_timeout)
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let current = git_lines(&["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    let others = git_lines(&[
+        "for-each-ref",
+        "--format=%(refname)",
+        "refs/heads",
+        "refs/remotes",
+    ])
+    .into_iter()
+    .filter(|name| !name.ends_with("/HEAD"))
+    .filter_map(|name| {
+        name.strip_prefix("refs/heads/")
+            .or_else(|| name.strip_prefix("refs/remotes/"))
+            .map(str::to_string)
+    })
+    .filter(|name| !current.contains(name));
+    const MERGE_BASE_PROBE_CAP: usize = 64;
+    others.take(MERGE_BASE_PROBE_CAP).any(|name| {
+        crate::git::run_git_output_with_deadline(
+            root,
+            &["merge-base", name.as_str(), "HEAD"],
+            git_timeout,
+        )
+        .is_ok_and(|output| output.status.success())
+    })
+}
+
 /// Load `<base>...<head>` for the commands that name both revisions (`diff`,
 /// `review-comments`). Callers verify `base` through
 /// [`resolve_effective_base`] first; this verifies `head` the same way, so an
@@ -2383,6 +2430,30 @@ mod tests {
         );
         assert_eq!(resolve_base_commit(&dir, Some("missing-base"), None), None);
 
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_needs_a_history_sharing_other_branch() -> std::io::Result<()> {
+        // #7644: the `--base` hedge may only fire when its advice is
+        // actionable. A single-branch repository has no candidate; an
+        // ancestor branch sharing history is one.
+        let dir = unique_fixture_root("another-base-candidate")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        assert!(
+            !another_base_candidate_exists(&dir, None),
+            "a lone branch must not count as its own --base candidate"
+        );
+        run_git_checked(&dir, &["branch", "base-candidate"])?;
+        fs::write(dir.join("README"), "second")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "second"])?;
+        assert!(
+            another_base_candidate_exists(&dir, None),
+            "an ancestor branch sharing history must count as a --base candidate"
+        );
         ignore_remove_dir_all(&dir);
         Ok(())
     }

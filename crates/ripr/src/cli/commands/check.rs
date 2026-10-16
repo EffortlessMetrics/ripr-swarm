@@ -1208,6 +1208,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 base,
                 analysis::resolve_base_commit(root, Some(base), timeout).as_deref(),
                 analysis::resolve_base_commit(root, Some("HEAD"), timeout).as_deref(),
+                analysis::another_base_candidate_exists(root, timeout),
             ) {
                 eprintln!("{}", terminal_safe(hedge));
             }
@@ -1328,16 +1329,24 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
 /// The stderr warning for an empty default-base result when the default base
 /// and HEAD each resolve to the same commit after analysis. It states those
 /// two later observations only; it does not attribute the analyzed range.
-/// `None` unless both commits resolved and are equal.
+/// `None` unless both commits resolved and are equal, and some other branch
+/// could actually serve as the advised `--base` (#7644): in a single-branch
+/// repository the Start-here action (commit a change, or `--worktree`) is
+/// the only actionable remediation, so the `--base` advice stays silent.
 fn default_base_is_head_hedge(
     base: &str,
     base_commit: Option<&str>,
     head_commit: Option<&str>,
+    another_ref_available: bool,
 ) -> Option<String> {
     match (base_commit, head_commit) {
-        (Some(base_commit), Some(head_commit)) if base_commit == head_commit => Some(format!(
-            "ripr: after analysis, the default base `{base}` and HEAD each resolved to the same commit. This empty result alone is not a clean pass. Pass `--base <ref>` for the branch your change should be compared against (for example `--base origin/main`)."
-        )),
+        (Some(base_commit), Some(head_commit))
+            if base_commit == head_commit && another_ref_available =>
+        {
+            Some(format!(
+                "ripr: after analysis, the default base `{base}` and HEAD each resolved to the same commit. This empty result alone is not a clean pass. Pass `--base <ref>` for the branch your change should be compared against (for example `--base origin/main`)."
+            ))
+        }
         _ => None,
     }
 }
@@ -1715,7 +1724,7 @@ mod tests {
 
     #[test]
     fn default_base_equal_to_head_is_named_and_distinct_commits_stay_silent() {
-        let hedge = default_base_is_head_hedge("origin/feat", Some("abc"), Some("abc"));
+        let hedge = default_base_is_head_hedge("origin/feat", Some("abc"), Some("abc"), true);
         assert!(
             hedge
                 .as_deref()
@@ -1725,12 +1734,25 @@ mod tests {
             "{hedge:?}"
         );
         assert_eq!(
-            default_base_is_head_hedge("origin/main", Some("abc"), Some("def")),
+            default_base_is_head_hedge("origin/main", Some("abc"), Some("def"), true),
             None
         );
         // An unresolved side is never asserted equal.
-        assert_eq!(default_base_is_head_hedge("main", None, None), None);
-        assert_eq!(default_base_is_head_hedge("main", Some("abc"), None), None);
+        assert_eq!(default_base_is_head_hedge("main", None, None, true), None);
+        assert_eq!(
+            default_base_is_head_hedge("main", Some("abc"), None, true),
+            None
+        );
+    }
+
+    #[test]
+    fn default_base_hedge_stays_silent_when_no_other_ref_could_be_a_base() {
+        // #7644: a fresh single-branch repository has no ref the `--base`
+        // advice could name, so the Start-here action owns the remediation.
+        assert_eq!(
+            default_base_is_head_hedge("master", Some("abc"), Some("abc"), false),
+            None
+        );
     }
 
     #[test]

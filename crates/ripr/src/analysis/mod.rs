@@ -60,7 +60,7 @@ pub(crate) use diff::{
 /// diff assembly (#4003): the one named owner for badge input base/diff,
 /// consumed by the analysis route and the xtask badge route alike. Neither
 /// route may hardcode a base ref or rebuild the diff argv inline.
-pub use diff::{load_diff_range, resolve_default_base_commit};
+pub use diff::{another_base_candidate_exists, load_diff_range, resolve_default_base_commit};
 pub(crate) use facts::attributes_define_test;
 pub(crate) use facts::cfg_predicates;
 pub(crate) use facts::validated_file_wide_harness_targets;
