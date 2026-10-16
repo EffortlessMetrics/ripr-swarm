@@ -1,0 +1,46 @@
+{
+  "timestamp": "2026-10-16T07:16:42.332784+00:00",
+  "candidate": "67dc5af9a15590fc8476d09217232831a0009952",
+  "executed_commit": "717e16559445806c75e0b13a483745da80504af9",
+  "executed_tree": "9bdd63a67209ab4a62a0b489e635a781b6e6327f",
+  "source_status": "",
+  "binary_sha256": "b998a2157058dc71b5c86ae8308ace60122bafd29409dd3ac8fa322f29d6bd8d",
+  "commands": [
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--test",
+        "cli_smoke",
+        "partial_preview_disclosure"
+      ],
+      "exit": 0,
+      "passed": 2
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--test",
+        "cli_smoke",
+        "unsupported_check_exit"
+      ],
+      "exit": 0,
+      "passed": 4
+    },
+    {
+      "argv": [
+        "python",
+        "native-review.py"
+      ],
+      "exit": 0,
+      "native_invocations": 36
+    }
+  ]
+}

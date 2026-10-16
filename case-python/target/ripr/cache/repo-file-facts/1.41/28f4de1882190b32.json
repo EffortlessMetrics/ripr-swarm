@@ -1,0 +1,277 @@
+{
+  "file_fact_cache_schema_version": "1.41",
+  "analyzer_version": "0.11.0+717e16559445806c75e0b13a483745da80504af9",
+  "file_path": "tests/pricing.rs",
+  "content_hash": "1baf8d16f6ac7e61",
+  "file_facts": {
+    "path": "tests/pricing.rs",
+    "functions": [
+      {
+        "id": "tests/pricing.rs::below_threshold_has_no_discount",
+        "name": "below_threshold_has_no_discount",
+        "file": "tests/pricing.rs",
+        "start_line": 4,
+        "end_line": 6,
+        "body": {
+          "start": 53,
+          "len": 87
+        },
+        "calls": [
+          {
+            "line": 4,
+            "name": "below_threshold_has_no_discount",
+            "text": "fn below_threshold_has_no_discount() {"
+          },
+          {
+            "line": 5,
+            "name": "discounted_total",
+            "text": "assert_eq!(discounted_total(50, 100), 50);"
+          }
+        ],
+        "returns": [],
+        "literals": [
+          {
+            "line": 5,
+            "value": "100"
+          },
+          {
+            "line": 5,
+            "value": "50"
+          }
+        ],
+        "source_role": "test_attribute",
+        "attrs": [
+          "#[test]"
+        ],
+        "impl_attrs": [],
+        "nested_fn_names": [],
+        "let_bindings": [],
+        "item": {
+          "container": {
+            "kind": "free"
+          },
+          "has_self_param": false,
+          "has_body": true
+        },
+        "impl_context": "Free"
+      },
+      {
+        "id": "tests/pricing.rs::far_above_threshold_discounts",
+        "name": "far_above_threshold_discounts",
+        "file": "tests/pricing.rs",
+        "start_line": 9,
+        "end_line": 11,
+        "body": {
+          "start": 150,
+          "len": 92
+        },
+        "calls": [
+          {
+            "line": 9,
+            "name": "far_above_threshold_discounts",
+            "text": "fn far_above_threshold_discounts() {"
+          },
+          {
+            "line": 10,
+            "name": "discounted_total",
+            "text": "assert_eq!(discounted_total(10_000, 100), 9_990);"
+          }
+        ],
+        "returns": [],
+        "literals": [
+          {
+            "line": 10,
+            "value": "100"
+          },
+          {
+            "line": 10,
+            "value": "10000"
+          },
+          {
+            "line": 10,
+            "value": "9990"
+          }
+        ],
+        "source_role": "test_attribute",
+        "attrs": [
+          "#[test]"
+        ],
+        "impl_attrs": [],
+        "nested_fn_names": [],
+        "let_bindings": [],
+        "item": {
+          "container": {
+            "kind": "free"
+          },
+          "has_self_param": false,
+          "has_body": true
+        },
+        "impl_context": "Free"
+      }
+    ],
+    "tests": [
+      {
+        "name": "below_threshold_has_no_discount",
+        "file": "tests/pricing.rs",
+        "start_line": 4,
+        "end_line": 6,
+        "body": {
+          "start": 53,
+          "len": 87
+        },
+        "calls": [
+          {
+            "line": 4,
+            "name": "below_threshold_has_no_discount",
+            "text": "fn below_threshold_has_no_discount() {"
+          },
+          {
+            "line": 5,
+            "name": "discounted_total",
+            "text": "assert_eq!(discounted_total(50, 100), 50);"
+          }
+        ],
+        "assertions": [
+          {
+            "line": 5,
+            "text": "assert_eq!(discounted_total(50, 100), 50);",
+            "kind": "ExactValue",
+            "strength": "Strong",
+            "observed_tokens": [
+              "100",
+              "discounted_total"
+            ],
+            "ok_value_observed": null
+          }
+        ],
+        "literals": [
+          {
+            "line": 5,
+            "value": "100"
+          },
+          {
+            "line": 5,
+            "value": "50"
+          }
+        ],
+        "attrs": [
+          "#[test]"
+        ],
+        "nested_fn_names": [],
+        "let_bindings": []
+      },
+      {
+        "name": "far_above_threshold_discounts",
+        "file": "tests/pricing.rs",
+        "start_line": 9,
+        "end_line": 11,
+        "body": {
+          "start": 150,
+          "len": 92
+        },
+        "calls": [
+          {
+            "line": 9,
+            "name": "far_above_threshold_discounts",
+            "text": "fn far_above_threshold_discounts() {"
+          },
+          {
+            "line": 10,
+            "name": "discounted_total",
+            "text": "assert_eq!(discounted_total(10_000, 100), 9_990);"
+          }
+        ],
+        "assertions": [
+          {
+            "line": 10,
+            "text": "assert_eq!(discounted_total(10_000, 100), 9_990);",
+            "kind": "ExactValue",
+            "strength": "Strong",
+            "observed_tokens": [
+              "100",
+              "10_000",
+              "9_990",
+              "discounted_total"
+            ],
+            "ok_value_observed": null
+          }
+        ],
+        "literals": [
+          {
+            "line": 10,
+            "value": "100"
+          },
+          {
+            "line": 10,
+            "value": "10000"
+          },
+          {
+            "line": 10,
+            "value": "9990"
+          }
+        ],
+        "attrs": [
+          "#[test]"
+        ],
+        "nested_fn_names": [],
+        "let_bindings": []
+      }
+    ],
+    "returns": [],
+    "literals": [
+      {
+        "line": 5,
+        "value": "100"
+      },
+      {
+        "line": 5,
+        "value": "50"
+      },
+      {
+        "line": 10,
+        "value": "100"
+      },
+      {
+        "line": 10,
+        "value": "10000"
+      },
+      {
+        "line": 10,
+        "value": "9990"
+      }
+    ],
+    "probe_shapes": [],
+    "used_lexical_fallback": false,
+    "module_declarations": [],
+    "unresolved_property_macros": [],
+    "source": "use boundary_gap_fixture::discounted_total;\n\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n\n#[test]\nfn far_above_threshold_discounts() {\n    assert_eq!(discounted_total(10_000, 100), 9_990);\n}\n",
+    "item_scopes": {
+      "fns": [
+        {
+          "line": 4,
+          "name": "below_threshold_has_no_discount",
+          "item": "TopLevel",
+          "local_use": false,
+          "deferred_code": false,
+          "cfg": false,
+          "direct_calls": [],
+          "bound_names": []
+        },
+        {
+          "line": 9,
+          "name": "far_above_threshold_discounts",
+          "item": "TopLevel",
+          "local_use": false,
+          "deferred_code": false,
+          "cfg": false,
+          "direct_calls": [],
+          "bound_names": []
+        }
+      ]
+    },
+    "macro_candidates": {
+      "Names": []
+    }
+  },
+  "payload_digest": "sha256:80fae441f6771b359f579cd4700fde7c668f99ccc78b65f81d46d5a07fa48f8e"
+}

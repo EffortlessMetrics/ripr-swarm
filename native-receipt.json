@@ -1,0 +1,1254 @@
+{
+  "head": "717e16559445806c75e0b13a483745da80504af9",
+  "reviewed_candidate": "67dc5af9a15590fc8476d09217232831a0009952",
+  "timestamp": "2026-10-16T07:15:20.802125+00:00",
+  "binary_sha256": "b998a2157058dc71b5c86ae8308ace60122bafd29409dd3ac8fa322f29d6bd8d",
+  "invocations": [
+    {
+      "label": "python-enabledTrue-budget1",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-python",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-python/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "budget": 1,
+      "config": "[languages]\nenabled = [\"rust\", \"python\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.py b/src/discount.py\nindex 0000000..1111111 100644\n--- a/src/discount.py\n+++ b/src/discount.py\n@@ -1,4 +1,4 @@\n def apply_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\ndiff --git a/src/extra.py b/src/extra.py\nindex 0000000..1111111 100644\n--- a/src/extra.py\n+++ b/src/extra.py\n@@ -1,4 +1,4 @@\n def extra_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\n",
+      "exit": 0,
+      "stdout_sha256": "1c38a9ad91080e34ef1660f9f9c3f2658de45cfc1c8d9020fc75d870b07edd95",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+      "observed": {
+        "kind": "partial_with_limitations",
+        "complete": false,
+        "advisories": [],
+        "files": [
+          "src/lib.rs"
+        ],
+        "scope": {
+          "scope": "diff",
+          "run_status": "limited_partial_scope",
+          "basis": "rust_partial_diff_budget",
+          "downstream_consumable": false,
+          "gate_eligibility": "ineligible",
+          "limitation": "limited_partial_scope",
+          "repair_route": "analysis/diff-scope-budget",
+          "selection_version": "partial-diff-v1",
+          "language_tier_version": "lang-tier-v1",
+          "diff_identity": "sha256:ae1728f9641bea1d4cd31da2b99ef7a0a37f95d8adb399e34789923ccf8886e7",
+          "partition_identity": "8d742b75de7d1adc65d1fd9605e1763cd6bdcf33d2ed34496909220e999a775e",
+          "file_budget": 1,
+          "line_budget": 1000,
+          "budget_disclosures": [],
+          "selected_files": [
+            "src/lib.rs"
+          ],
+          "selected_changed_lines": 2,
+          "uninspected_files_lower_bound": 2,
+          "uninspected_changed_lines_lower_bound": 4,
+          "stop_reason": "file_budget",
+          "continuation": "partial result: raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2, then re-run; named partition continuation is not available"
+        }
+      }
+    },
+    {
+      "label": "python-enabledTrue-budget1",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-python",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-python/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "budget": 1,
+      "config": "[languages]\nenabled = [\"rust\", \"python\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.py b/src/discount.py\nindex 0000000..1111111 100644\n--- a/src/discount.py\n+++ b/src/discount.py\n@@ -1,4 +1,4 @@\n def apply_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\ndiff --git a/src/extra.py b/src/extra.py\nindex 0000000..1111111 100644\n--- a/src/extra.py\n+++ b/src/extra.py\n@@ -1,4 +1,4 @@\n def extra_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\n",
+      "exit": 0,
+      "stdout_sha256": "fc9a87cd6bea1956fc0d3d6fcece8c7c0c17eba38357ba7c88a8b07579705fbb",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d"
+    },
+    {
+      "label": "python-enabledTrue-budget2",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-python",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-python/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "budget": 2,
+      "config": "[languages]\nenabled = [\"rust\", \"python\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.py b/src/discount.py\nindex 0000000..1111111 100644\n--- a/src/discount.py\n+++ b/src/discount.py\n@@ -1,4 +1,4 @@\n def apply_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\ndiff --git a/src/extra.py b/src/extra.py\nindex 0000000..1111111 100644\n--- a/src/extra.py\n+++ b/src/extra.py\n@@ -1,4 +1,4 @@\n def extra_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\n",
+      "exit": 0,
+      "stdout_sha256": "68a9ac408386121ef465fd34d55c2c8382aff38b49665487df2713ac0e0e5ace",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+      "observed": {
+        "kind": "partial_with_limitations",
+        "complete": false,
+        "advisories": [
+          {
+            "language": "python",
+            "file_count": 1,
+            "sample_paths": [
+              "src/discount.py"
+            ],
+            "enabled": true,
+            "analyzed": true,
+            "category": "preview_language_advisory",
+            "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+          }
+        ],
+        "files": [
+          "src/discount.py",
+          "src/lib.rs"
+        ],
+        "scope": {
+          "scope": "diff",
+          "run_status": "limited_partial_scope",
+          "basis": "rust_partial_diff_budget",
+          "downstream_consumable": false,
+          "gate_eligibility": "ineligible",
+          "limitation": "limited_partial_scope",
+          "repair_route": "analysis/diff-scope-budget",
+          "selection_version": "partial-diff-v1",
+          "language_tier_version": "lang-tier-v1",
+          "diff_identity": "sha256:ae1728f9641bea1d4cd31da2b99ef7a0a37f95d8adb399e34789923ccf8886e7",
+          "partition_identity": "ae6d708a684dc890f15ee84a29dbc964496acbbdceacdf81855332f785c94c29",
+          "file_budget": 2,
+          "line_budget": 1000,
+          "budget_disclosures": [],
+          "selected_files": [
+            "src/lib.rs",
+            "src/discount.py"
+          ],
+          "selected_changed_lines": 4,
+          "uninspected_files_lower_bound": 1,
+          "uninspected_changed_lines_lower_bound": 2,
+          "stop_reason": "file_budget",
+          "continuation": "partial result: raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 3, then re-run; named partition continuation is not available"
+        }
+      }
+    },
+    {
+      "label": "python-enabledTrue-budget2",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-python",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-python/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "budget": 2,
+      "config": "[languages]\nenabled = [\"rust\", \"python\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.py b/src/discount.py\nindex 0000000..1111111 100644\n--- a/src/discount.py\n+++ b/src/discount.py\n@@ -1,4 +1,4 @@\n def apply_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\ndiff --git a/src/extra.py b/src/extra.py\nindex 0000000..1111111 100644\n--- a/src/extra.py\n+++ b/src/extra.py\n@@ -1,4 +1,4 @@\n def extra_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\n",
+      "exit": 0,
+      "stdout_sha256": "68cfbe9fa9d62cba1b759df5e6c12661bb714d8e7f2c57d5b92c59fcb917ccc9",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d"
+    },
+    {
+      "label": "python-enabledTrue-budget3",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-python",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-python/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "budget": 3,
+      "config": "[languages]\nenabled = [\"rust\", \"python\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.py b/src/discount.py\nindex 0000000..1111111 100644\n--- a/src/discount.py\n+++ b/src/discount.py\n@@ -1,4 +1,4 @@\n def apply_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\ndiff --git a/src/extra.py b/src/extra.py\nindex 0000000..1111111 100644\n--- a/src/extra.py\n+++ b/src/extra.py\n@@ -1,4 +1,4 @@\n def extra_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\n",
+      "exit": 0,
+      "stdout_sha256": "8fc1345224b3a2eaf22db7e450ec1396d663133b9516f0a5a859e3d3badad9e3",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+      "observed": {
+        "kind": "complete_with_findings",
+        "complete": true,
+        "advisories": [
+          {
+            "language": "python",
+            "file_count": 2,
+            "sample_paths": [
+              "src/discount.py",
+              "src/extra.py"
+            ],
+            "enabled": true,
+            "analyzed": true,
+            "category": "preview_language_advisory",
+            "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+          }
+        ],
+        "files": [
+          "src/discount.py",
+          "src/extra.py",
+          "src/lib.rs"
+        ],
+        "scope": null
+      }
+    },
+    {
+      "label": "python-enabledTrue-budget3",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-python",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-python/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "budget": 3,
+      "config": "[languages]\nenabled = [\"rust\", \"python\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.py b/src/discount.py\nindex 0000000..1111111 100644\n--- a/src/discount.py\n+++ b/src/discount.py\n@@ -1,4 +1,4 @@\n def apply_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\ndiff --git a/src/extra.py b/src/extra.py\nindex 0000000..1111111 100644\n--- a/src/extra.py\n+++ b/src/extra.py\n@@ -1,4 +1,4 @@\n def extra_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\n",
+      "exit": 0,
+      "stdout_sha256": "160ec43887eaca65618475fb255f613fe18b527f235f7bf38090057b76c22a0f",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d"
+    },
+    {
+      "label": "python-enabledFalse-budget1",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-python",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-python/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "budget": 1,
+      "config": "[languages]\nenabled = [\"rust\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.py b/src/discount.py\nindex 0000000..1111111 100644\n--- a/src/discount.py\n+++ b/src/discount.py\n@@ -1,4 +1,4 @@\n def apply_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\ndiff --git a/src/extra.py b/src/extra.py\nindex 0000000..1111111 100644\n--- a/src/extra.py\n+++ b/src/extra.py\n@@ -1,4 +1,4 @@\n def extra_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\n",
+      "exit": 0,
+      "stdout_sha256": "8ad80f3214daf8f600fc5a05860a1c9bbb5f11cb6e0b2cc86435b71579cd8f21",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+      "observed": {
+        "kind": "partial_with_limitations",
+        "complete": false,
+        "advisories": [
+          {
+            "language": "python",
+            "file_count": 2,
+            "sample_paths": [
+              "src/discount.py",
+              "src/extra.py"
+            ],
+            "enabled": false,
+            "analyzed": false,
+            "category": "preview_language_advisory",
+            "why": "preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; to enable add to ripr.toml: [languages] enabled = [\"rust\", \"python\"]"
+          }
+        ],
+        "files": [
+          "src/lib.rs"
+        ],
+        "scope": null
+      }
+    },
+    {
+      "label": "python-enabledFalse-budget1",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-python",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-python/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "budget": 1,
+      "config": "[languages]\nenabled = [\"rust\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.py b/src/discount.py\nindex 0000000..1111111 100644\n--- a/src/discount.py\n+++ b/src/discount.py\n@@ -1,4 +1,4 @@\n def apply_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\ndiff --git a/src/extra.py b/src/extra.py\nindex 0000000..1111111 100644\n--- a/src/extra.py\n+++ b/src/extra.py\n@@ -1,4 +1,4 @@\n def extra_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\n",
+      "exit": 0,
+      "stdout_sha256": "eee280c214127e038c0457d0c23f6faa4b8abdba0c477b921036ac6d782c16dc",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d"
+    },
+    {
+      "label": "python-enabledFalse-budget3",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-python",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-python/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "budget": 3,
+      "config": "[languages]\nenabled = [\"rust\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.py b/src/discount.py\nindex 0000000..1111111 100644\n--- a/src/discount.py\n+++ b/src/discount.py\n@@ -1,4 +1,4 @@\n def apply_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\ndiff --git a/src/extra.py b/src/extra.py\nindex 0000000..1111111 100644\n--- a/src/extra.py\n+++ b/src/extra.py\n@@ -1,4 +1,4 @@\n def extra_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\n",
+      "exit": 0,
+      "stdout_sha256": "8ad80f3214daf8f600fc5a05860a1c9bbb5f11cb6e0b2cc86435b71579cd8f21",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+      "observed": {
+        "kind": "partial_with_limitations",
+        "complete": false,
+        "advisories": [
+          {
+            "language": "python",
+            "file_count": 2,
+            "sample_paths": [
+              "src/discount.py",
+              "src/extra.py"
+            ],
+            "enabled": false,
+            "analyzed": false,
+            "category": "preview_language_advisory",
+            "why": "preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; to enable add to ripr.toml: [languages] enabled = [\"rust\", \"python\"]"
+          }
+        ],
+        "files": [
+          "src/lib.rs"
+        ],
+        "scope": null
+      }
+    },
+    {
+      "label": "python-enabledFalse-budget3",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-python",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-python/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "budget": 3,
+      "config": "[languages]\nenabled = [\"rust\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.py b/src/discount.py\nindex 0000000..1111111 100644\n--- a/src/discount.py\n+++ b/src/discount.py\n@@ -1,4 +1,4 @@\n def apply_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\ndiff --git a/src/extra.py b/src/extra.py\nindex 0000000..1111111 100644\n--- a/src/extra.py\n+++ b/src/extra.py\n@@ -1,4 +1,4 @@\n def extra_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\n",
+      "exit": 0,
+      "stdout_sha256": "eee280c214127e038c0457d0c23f6faa4b8abdba0c477b921036ac6d782c16dc",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d"
+    },
+    {
+      "label": "python-unsupported-mixed",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-python",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-python/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "budget": 3,
+      "config": "[languages]\nenabled = [\"rust\", \"python\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.py b/src/discount.py\n--- a/src/discount.py\n+++ b/src/discount.py\n@@ -1,4 +1,4 @@\n",
+      "exit": 2,
+      "stdout_sha256": "67ef58973f3a26605777f347df4cef20a6068e02506ce5057fdd84df517147fe",
+      "stderr_sha256": "cc1ed4dad1f5586c2d0cdc0f9e17463fa804f59ce6ea119b7f99676ecf469fe1",
+      "observed": {
+        "kind": "unsupported_input",
+        "complete": false,
+        "findings": 1
+      }
+    },
+    {
+      "label": "python-unsupported-mixed",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-python",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-python/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "budget": 3,
+      "config": "[languages]\nenabled = [\"rust\", \"python\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.py b/src/discount.py\n--- a/src/discount.py\n+++ b/src/discount.py\n@@ -1,4 +1,4 @@\n",
+      "exit": 2,
+      "stdout_sha256": "210d80cd38038e615077bd5442aa3b9d8b3da8854140bc5f6c27f9d77059d965",
+      "stderr_sha256": "cc1ed4dad1f5586c2d0cdc0f9e17463fa804f59ce6ea119b7f99676ecf469fe1"
+    },
+    {
+      "label": "typescript-enabledTrue-budget1",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-typescript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-typescript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "budget": 1,
+      "config": "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.ts b/src/discount.ts\nindex 0000000..1111111 100644\n--- a/src/discount.ts\n+++ b/src/discount.ts\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.ts b/src/extra.ts\nindex 0000000..1111111 100644\n--- a/src/extra.ts\n+++ b/src/extra.ts\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "d3731348b22ea8894f6fe6027ccb567eadb43f6b369ceb669f3e37692ceec8b6",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+      "observed": {
+        "kind": "partial_with_limitations",
+        "complete": false,
+        "advisories": [],
+        "files": [
+          "src/lib.rs"
+        ],
+        "scope": {
+          "scope": "diff",
+          "run_status": "limited_partial_scope",
+          "basis": "rust_partial_diff_budget",
+          "downstream_consumable": false,
+          "gate_eligibility": "ineligible",
+          "limitation": "limited_partial_scope",
+          "repair_route": "analysis/diff-scope-budget",
+          "selection_version": "partial-diff-v1",
+          "language_tier_version": "lang-tier-v1",
+          "diff_identity": "sha256:dfb2058250c69dfafa4319714fef97802137c9128fbf03debe706c6778dffda1",
+          "partition_identity": "d5e64b7e93692d566b97eaf5390a6476e6bd411e5672f4f352aa9418dbb8e090",
+          "file_budget": 1,
+          "line_budget": 1000,
+          "budget_disclosures": [],
+          "selected_files": [
+            "src/lib.rs"
+          ],
+          "selected_changed_lines": 2,
+          "uninspected_files_lower_bound": 2,
+          "uninspected_changed_lines_lower_bound": 4,
+          "stop_reason": "file_budget",
+          "continuation": "partial result: raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2, then re-run; named partition continuation is not available"
+        }
+      }
+    },
+    {
+      "label": "typescript-enabledTrue-budget1",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-typescript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-typescript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "budget": 1,
+      "config": "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.ts b/src/discount.ts\nindex 0000000..1111111 100644\n--- a/src/discount.ts\n+++ b/src/discount.ts\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.ts b/src/extra.ts\nindex 0000000..1111111 100644\n--- a/src/extra.ts\n+++ b/src/extra.ts\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "121b38c31ed1757ba4c1f3a4061fd8a8bf1d04727d4651aaa1fffca18593e524",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d"
+    },
+    {
+      "label": "typescript-enabledTrue-budget2",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-typescript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-typescript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "budget": 2,
+      "config": "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.ts b/src/discount.ts\nindex 0000000..1111111 100644\n--- a/src/discount.ts\n+++ b/src/discount.ts\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.ts b/src/extra.ts\nindex 0000000..1111111 100644\n--- a/src/extra.ts\n+++ b/src/extra.ts\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "38edc0064e82712011df134e4da95f2fba4647df67e5a91a6d3fecd94253ce93",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+      "observed": {
+        "kind": "partial_with_limitations",
+        "complete": false,
+        "advisories": [
+          {
+            "language": "typescript",
+            "file_count": 1,
+            "sample_paths": [
+              "src/discount.ts"
+            ],
+            "enabled": true,
+            "analyzed": true,
+            "category": "preview_language_advisory",
+            "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+          }
+        ],
+        "files": [
+          "src/discount.ts",
+          "src/lib.rs"
+        ],
+        "scope": {
+          "scope": "diff",
+          "run_status": "limited_partial_scope",
+          "basis": "rust_partial_diff_budget",
+          "downstream_consumable": false,
+          "gate_eligibility": "ineligible",
+          "limitation": "limited_partial_scope",
+          "repair_route": "analysis/diff-scope-budget",
+          "selection_version": "partial-diff-v1",
+          "language_tier_version": "lang-tier-v1",
+          "diff_identity": "sha256:dfb2058250c69dfafa4319714fef97802137c9128fbf03debe706c6778dffda1",
+          "partition_identity": "191ba9deb3caf98bbce149b7ca7457f54d3b47a81c0fc366edac09c11766795c",
+          "file_budget": 2,
+          "line_budget": 1000,
+          "budget_disclosures": [],
+          "selected_files": [
+            "src/lib.rs",
+            "src/discount.ts"
+          ],
+          "selected_changed_lines": 4,
+          "uninspected_files_lower_bound": 1,
+          "uninspected_changed_lines_lower_bound": 2,
+          "stop_reason": "file_budget",
+          "continuation": "partial result: raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 3, then re-run; named partition continuation is not available"
+        }
+      }
+    },
+    {
+      "label": "typescript-enabledTrue-budget2",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-typescript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-typescript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "budget": 2,
+      "config": "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.ts b/src/discount.ts\nindex 0000000..1111111 100644\n--- a/src/discount.ts\n+++ b/src/discount.ts\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.ts b/src/extra.ts\nindex 0000000..1111111 100644\n--- a/src/extra.ts\n+++ b/src/extra.ts\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "21faace46367e9bbad01f0ce90acb3c0877366a1b4b8e33fbacad22612532be5",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d"
+    },
+    {
+      "label": "typescript-enabledTrue-budget3",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-typescript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-typescript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "budget": 3,
+      "config": "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.ts b/src/discount.ts\nindex 0000000..1111111 100644\n--- a/src/discount.ts\n+++ b/src/discount.ts\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.ts b/src/extra.ts\nindex 0000000..1111111 100644\n--- a/src/extra.ts\n+++ b/src/extra.ts\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "e249aba879f53a938c50a491bb4e23c77e00db424aacf34b67813fb3c9791142",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+      "observed": {
+        "kind": "complete_with_findings",
+        "complete": true,
+        "advisories": [
+          {
+            "language": "typescript",
+            "file_count": 2,
+            "sample_paths": [
+              "src/discount.ts",
+              "src/extra.ts"
+            ],
+            "enabled": true,
+            "analyzed": true,
+            "category": "preview_language_advisory",
+            "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+          }
+        ],
+        "files": [
+          "src/discount.ts",
+          "src/extra.ts",
+          "src/lib.rs"
+        ],
+        "scope": null
+      }
+    },
+    {
+      "label": "typescript-enabledTrue-budget3",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-typescript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-typescript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "budget": 3,
+      "config": "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.ts b/src/discount.ts\nindex 0000000..1111111 100644\n--- a/src/discount.ts\n+++ b/src/discount.ts\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.ts b/src/extra.ts\nindex 0000000..1111111 100644\n--- a/src/extra.ts\n+++ b/src/extra.ts\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "4b2c1b7a5f8e688b66e9389ba195a226ad6b206d5235fd51a7afb7c6b2dd0670",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d"
+    },
+    {
+      "label": "typescript-enabledFalse-budget1",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-typescript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-typescript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "budget": 1,
+      "config": "[languages]\nenabled = [\"rust\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.ts b/src/discount.ts\nindex 0000000..1111111 100644\n--- a/src/discount.ts\n+++ b/src/discount.ts\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.ts b/src/extra.ts\nindex 0000000..1111111 100644\n--- a/src/extra.ts\n+++ b/src/extra.ts\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "93bbb1979d26fbee1a560eff9bbaf58f3f8feadee4515a435a2d0861b49aaebc",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+      "observed": {
+        "kind": "partial_with_limitations",
+        "complete": false,
+        "advisories": [
+          {
+            "language": "typescript",
+            "file_count": 2,
+            "sample_paths": [
+              "src/discount.ts",
+              "src/extra.ts"
+            ],
+            "enabled": false,
+            "analyzed": false,
+            "category": "preview_language_advisory",
+            "why": "preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; to enable add to ripr.toml: [languages] enabled = [\"rust\", \"typescript\"]"
+          }
+        ],
+        "files": [
+          "src/lib.rs"
+        ],
+        "scope": null
+      }
+    },
+    {
+      "label": "typescript-enabledFalse-budget1",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-typescript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-typescript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "budget": 1,
+      "config": "[languages]\nenabled = [\"rust\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.ts b/src/discount.ts\nindex 0000000..1111111 100644\n--- a/src/discount.ts\n+++ b/src/discount.ts\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.ts b/src/extra.ts\nindex 0000000..1111111 100644\n--- a/src/extra.ts\n+++ b/src/extra.ts\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "24a4d201d4beb6d03d66b7f4d064512c6b087a6335dd862a2367a7f572724af6",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d"
+    },
+    {
+      "label": "typescript-enabledFalse-budget3",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-typescript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-typescript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "budget": 3,
+      "config": "[languages]\nenabled = [\"rust\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.ts b/src/discount.ts\nindex 0000000..1111111 100644\n--- a/src/discount.ts\n+++ b/src/discount.ts\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.ts b/src/extra.ts\nindex 0000000..1111111 100644\n--- a/src/extra.ts\n+++ b/src/extra.ts\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "93bbb1979d26fbee1a560eff9bbaf58f3f8feadee4515a435a2d0861b49aaebc",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+      "observed": {
+        "kind": "partial_with_limitations",
+        "complete": false,
+        "advisories": [
+          {
+            "language": "typescript",
+            "file_count": 2,
+            "sample_paths": [
+              "src/discount.ts",
+              "src/extra.ts"
+            ],
+            "enabled": false,
+            "analyzed": false,
+            "category": "preview_language_advisory",
+            "why": "preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; to enable add to ripr.toml: [languages] enabled = [\"rust\", \"typescript\"]"
+          }
+        ],
+        "files": [
+          "src/lib.rs"
+        ],
+        "scope": null
+      }
+    },
+    {
+      "label": "typescript-enabledFalse-budget3",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-typescript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-typescript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "budget": 3,
+      "config": "[languages]\nenabled = [\"rust\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.ts b/src/discount.ts\nindex 0000000..1111111 100644\n--- a/src/discount.ts\n+++ b/src/discount.ts\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.ts b/src/extra.ts\nindex 0000000..1111111 100644\n--- a/src/extra.ts\n+++ b/src/extra.ts\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount: number, threshold: number): number {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "24a4d201d4beb6d03d66b7f4d064512c6b087a6335dd862a2367a7f572724af6",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d"
+    },
+    {
+      "label": "typescript-unsupported-mixed",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-typescript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-typescript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "budget": 3,
+      "config": "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.ts b/src/discount.ts\n--- a/src/discount.ts\n+++ b/src/discount.ts\n@@ -1,4 +1,4 @@\n",
+      "exit": 2,
+      "stdout_sha256": "e69e4957ca2b2e8e1abd042973af891e5c6951ba528ad0adc1550bf938e2c9de",
+      "stderr_sha256": "cc1ed4dad1f5586c2d0cdc0f9e17463fa804f59ce6ea119b7f99676ecf469fe1",
+      "observed": {
+        "kind": "unsupported_input",
+        "complete": false,
+        "findings": 1
+      }
+    },
+    {
+      "label": "typescript-unsupported-mixed",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-typescript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-typescript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "budget": 3,
+      "config": "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.ts b/src/discount.ts\n--- a/src/discount.ts\n+++ b/src/discount.ts\n@@ -1,4 +1,4 @@\n",
+      "exit": 2,
+      "stdout_sha256": "95f9c2a3d284895f432fc1740a02654e599f4c783b1d0243b09a8588fa9477a8",
+      "stderr_sha256": "cc1ed4dad1f5586c2d0cdc0f9e17463fa804f59ce6ea119b7f99676ecf469fe1"
+    },
+    {
+      "label": "javascript-enabledTrue-budget1",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-javascript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-javascript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "budget": 1,
+      "config": "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.js b/src/discount.js\nindex 0000000..1111111 100644\n--- a/src/discount.js\n+++ b/src/discount.js\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.js b/src/extra.js\nindex 0000000..1111111 100644\n--- a/src/extra.js\n+++ b/src/extra.js\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "94d4795a88956987d97bb8cb4f5d570e69f1b9c971f2efa9605a93c6c7fdc624",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+      "observed": {
+        "kind": "partial_with_limitations",
+        "complete": false,
+        "advisories": [],
+        "files": [
+          "src/lib.rs"
+        ],
+        "scope": {
+          "scope": "diff",
+          "run_status": "limited_partial_scope",
+          "basis": "rust_partial_diff_budget",
+          "downstream_consumable": false,
+          "gate_eligibility": "ineligible",
+          "limitation": "limited_partial_scope",
+          "repair_route": "analysis/diff-scope-budget",
+          "selection_version": "partial-diff-v1",
+          "language_tier_version": "lang-tier-v1",
+          "diff_identity": "sha256:7680ccc5ebce6c09d0da8f1ab943d853138b2b6f974c4ab2a597aa71650dd8a6",
+          "partition_identity": "d9a3a6996268ef8c1dca2e256b3b8d1078db33c8d027052a5efa3654882f8298",
+          "file_budget": 1,
+          "line_budget": 1000,
+          "budget_disclosures": [],
+          "selected_files": [
+            "src/lib.rs"
+          ],
+          "selected_changed_lines": 2,
+          "uninspected_files_lower_bound": 2,
+          "uninspected_changed_lines_lower_bound": 4,
+          "stop_reason": "file_budget",
+          "continuation": "partial result: raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2, then re-run; named partition continuation is not available"
+        }
+      }
+    },
+    {
+      "label": "javascript-enabledTrue-budget1",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-javascript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-javascript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "budget": 1,
+      "config": "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.js b/src/discount.js\nindex 0000000..1111111 100644\n--- a/src/discount.js\n+++ b/src/discount.js\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.js b/src/extra.js\nindex 0000000..1111111 100644\n--- a/src/extra.js\n+++ b/src/extra.js\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "904aaef0db2ede7728fc078e328b9b9de66a827a5adca3e68b5b5b39b65ed025",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d"
+    },
+    {
+      "label": "javascript-enabledTrue-budget2",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-javascript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-javascript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "budget": 2,
+      "config": "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.js b/src/discount.js\nindex 0000000..1111111 100644\n--- a/src/discount.js\n+++ b/src/discount.js\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.js b/src/extra.js\nindex 0000000..1111111 100644\n--- a/src/extra.js\n+++ b/src/extra.js\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "3fdd927b85f3981a629bc8b7a16f22c2d5c4d4624c6c2c8bf9d2579682ad6231",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+      "observed": {
+        "kind": "partial_with_limitations",
+        "complete": false,
+        "advisories": [
+          {
+            "language": "typescript",
+            "file_count": 1,
+            "sample_paths": [
+              "src/discount.js"
+            ],
+            "enabled": true,
+            "analyzed": true,
+            "category": "preview_language_advisory",
+            "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+          }
+        ],
+        "files": [
+          "src/discount.js",
+          "src/lib.rs"
+        ],
+        "scope": {
+          "scope": "diff",
+          "run_status": "limited_partial_scope",
+          "basis": "rust_partial_diff_budget",
+          "downstream_consumable": false,
+          "gate_eligibility": "ineligible",
+          "limitation": "limited_partial_scope",
+          "repair_route": "analysis/diff-scope-budget",
+          "selection_version": "partial-diff-v1",
+          "language_tier_version": "lang-tier-v1",
+          "diff_identity": "sha256:7680ccc5ebce6c09d0da8f1ab943d853138b2b6f974c4ab2a597aa71650dd8a6",
+          "partition_identity": "d7f7ddec4a3cf308a13f07b2941e3e3b02d4625a8edbfd1a0ee278669673a62d",
+          "file_budget": 2,
+          "line_budget": 1000,
+          "budget_disclosures": [],
+          "selected_files": [
+            "src/lib.rs",
+            "src/discount.js"
+          ],
+          "selected_changed_lines": 4,
+          "uninspected_files_lower_bound": 1,
+          "uninspected_changed_lines_lower_bound": 2,
+          "stop_reason": "file_budget",
+          "continuation": "partial result: raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 3, then re-run; named partition continuation is not available"
+        }
+      }
+    },
+    {
+      "label": "javascript-enabledTrue-budget2",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-javascript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-javascript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "budget": 2,
+      "config": "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.js b/src/discount.js\nindex 0000000..1111111 100644\n--- a/src/discount.js\n+++ b/src/discount.js\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.js b/src/extra.js\nindex 0000000..1111111 100644\n--- a/src/extra.js\n+++ b/src/extra.js\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "3d4b2d8b943360170510eef217464e7de7856ca7acabf43021ecaa13b38c9f6f",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d"
+    },
+    {
+      "label": "javascript-enabledTrue-budget3",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-javascript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-javascript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "budget": 3,
+      "config": "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.js b/src/discount.js\nindex 0000000..1111111 100644\n--- a/src/discount.js\n+++ b/src/discount.js\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.js b/src/extra.js\nindex 0000000..1111111 100644\n--- a/src/extra.js\n+++ b/src/extra.js\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "1c5fdf62769f236fdb17753cfbf3497f7b4a4c1c9e5bd8b4f7e8b1932b89253f",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+      "observed": {
+        "kind": "complete_with_findings",
+        "complete": true,
+        "advisories": [
+          {
+            "language": "typescript",
+            "file_count": 2,
+            "sample_paths": [
+              "src/discount.js",
+              "src/extra.js"
+            ],
+            "enabled": true,
+            "analyzed": true,
+            "category": "preview_language_advisory",
+            "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+          }
+        ],
+        "files": [
+          "src/discount.js",
+          "src/extra.js",
+          "src/lib.rs"
+        ],
+        "scope": null
+      }
+    },
+    {
+      "label": "javascript-enabledTrue-budget3",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-javascript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-javascript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "budget": 3,
+      "config": "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.js b/src/discount.js\nindex 0000000..1111111 100644\n--- a/src/discount.js\n+++ b/src/discount.js\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.js b/src/extra.js\nindex 0000000..1111111 100644\n--- a/src/extra.js\n+++ b/src/extra.js\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "01a71124dd5bde8e75f06aad00e262838bdd3938c7bdf4c1ada933664174f47d",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d"
+    },
+    {
+      "label": "javascript-enabledFalse-budget1",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-javascript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-javascript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "budget": 1,
+      "config": "[languages]\nenabled = [\"rust\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.js b/src/discount.js\nindex 0000000..1111111 100644\n--- a/src/discount.js\n+++ b/src/discount.js\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.js b/src/extra.js\nindex 0000000..1111111 100644\n--- a/src/extra.js\n+++ b/src/extra.js\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "e5ed3d484948aabc384e1683fd85915f6b5067e7e3bb0e8397876f9cbdb899bc",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+      "observed": {
+        "kind": "partial_with_limitations",
+        "complete": false,
+        "advisories": [
+          {
+            "language": "typescript",
+            "file_count": 2,
+            "sample_paths": [
+              "src/discount.js",
+              "src/extra.js"
+            ],
+            "enabled": false,
+            "analyzed": false,
+            "category": "preview_language_advisory",
+            "why": "preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; to enable add to ripr.toml: [languages] enabled = [\"rust\", \"typescript\"]"
+          }
+        ],
+        "files": [
+          "src/lib.rs"
+        ],
+        "scope": null
+      }
+    },
+    {
+      "label": "javascript-enabledFalse-budget1",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-javascript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-javascript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "budget": 1,
+      "config": "[languages]\nenabled = [\"rust\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.js b/src/discount.js\nindex 0000000..1111111 100644\n--- a/src/discount.js\n+++ b/src/discount.js\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.js b/src/extra.js\nindex 0000000..1111111 100644\n--- a/src/extra.js\n+++ b/src/extra.js\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "32941b84b4fd5b32064f3d05cecec65267bf33d49545818d8de85b7e41be7a65",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d"
+    },
+    {
+      "label": "javascript-enabledFalse-budget3",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-javascript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-javascript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "budget": 3,
+      "config": "[languages]\nenabled = [\"rust\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.js b/src/discount.js\nindex 0000000..1111111 100644\n--- a/src/discount.js\n+++ b/src/discount.js\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.js b/src/extra.js\nindex 0000000..1111111 100644\n--- a/src/extra.js\n+++ b/src/extra.js\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "e5ed3d484948aabc384e1683fd85915f6b5067e7e3bb0e8397876f9cbdb899bc",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+      "observed": {
+        "kind": "partial_with_limitations",
+        "complete": false,
+        "advisories": [
+          {
+            "language": "typescript",
+            "file_count": 2,
+            "sample_paths": [
+              "src/discount.js",
+              "src/extra.js"
+            ],
+            "enabled": false,
+            "analyzed": false,
+            "category": "preview_language_advisory",
+            "why": "preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; to enable add to ripr.toml: [languages] enabled = [\"rust\", \"typescript\"]"
+          }
+        ],
+        "files": [
+          "src/lib.rs"
+        ],
+        "scope": null
+      }
+    },
+    {
+      "label": "javascript-enabledFalse-budget3",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-javascript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-javascript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "budget": 3,
+      "config": "[languages]\nenabled = [\"rust\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.js b/src/discount.js\nindex 0000000..1111111 100644\n--- a/src/discount.js\n+++ b/src/discount.js\n@@ -1,5 +1,5 @@\n export function applyDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\ndiff --git a/src/extra.js b/src/extra.js\nindex 0000000..1111111 100644\n--- a/src/extra.js\n+++ b/src/extra.js\n@@ -1,5 +1,5 @@\n export function extraDiscount(amount, threshold) {\n-    if (amount > threshold) {\n+    if (amount >= threshold) {\n         return amount - 10;\n     }\n     return amount;\n",
+      "exit": 0,
+      "stdout_sha256": "32941b84b4fd5b32064f3d05cecec65267bf33d49545818d8de85b7e41be7a65",
+      "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d"
+    },
+    {
+      "label": "javascript-unsupported-mixed",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-javascript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-javascript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "budget": 3,
+      "config": "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.js b/src/discount.js\n--- a/src/discount.js\n+++ b/src/discount.js\n@@ -1,4 +1,4 @@\n",
+      "exit": 2,
+      "stdout_sha256": "29f566c1df36b5f4a4c1c9da2c775aa9afd94d58326d5aca3d6f2e86f74947f9",
+      "stderr_sha256": "cc1ed4dad1f5586c2d0cdc0f9e17463fa804f59ce6ea119b7f99676ecf469fe1",
+      "observed": {
+        "kind": "unsupported_input",
+        "complete": false,
+        "findings": 1
+      }
+    },
+    {
+      "label": "javascript-unsupported-mixed",
+      "argv": [
+        "/workspace/review-8229-target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/review-8229-integration-evidence/case-javascript",
+        "--diff",
+        "/workspace/review-8229-integration-evidence/case-javascript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "budget": 3,
+      "config": "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+      "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n         amount - 10\n     } else {\n         amount\ndiff --git a/src/discount.js b/src/discount.js\n--- a/src/discount.js\n+++ b/src/discount.js\n@@ -1,4 +1,4 @@\n",
+      "exit": 2,
+      "stdout_sha256": "e720f55f470566374fd6442b2c1c6c9ded1093bd9bdf6809ad0e54c0c5e404b8",
+      "stderr_sha256": "cc1ed4dad1f5586c2d0cdc0f9e17463fa804f59ce6ea119b7f99676ecf469fe1"
+    }
+  ],
+  "all_assertions_passed": true
+}

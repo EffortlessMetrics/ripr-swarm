@@ -1,0 +1,448 @@
+{
+  "total_count": 7,
+  "jobs": [
+    {
+      "id": 116853016294,
+      "name": "Detect Docs-Only Surface",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38864156917/job/116853016294",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-16T06:57:09Z",
+          "completed_at": "2026-10-16T06:57:10Z"
+        },
+        {
+          "name": "Run actions/checkout@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-16T06:57:10Z",
+          "completed_at": "2026-10-16T06:57:26Z"
+        },
+        {
+          "name": "Check whether every changed file is docs/spec/markdown",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-16T06:57:26Z",
+          "completed_at": "2026-10-16T06:57:26Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-16T06:57:26Z",
+          "completed_at": "2026-10-16T06:57:26Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-16T06:57:26Z",
+          "completed_at": "2026-10-16T06:57:26Z"
+        }
+      ]
+    },
+    {
+      "id": 116853016811,
+      "name": "Route Ripr Rust Small",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38864156917/job/116853016811",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-16T06:57:09Z",
+          "completed_at": "2026-10-16T06:57:09Z"
+        },
+        {
+          "name": "Select runner",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-16T06:57:09Z",
+          "completed_at": "2026-10-16T06:57:10Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-16T06:57:10Z",
+          "completed_at": "2026-10-16T06:57:10Z"
+        }
+      ]
+    },
+    {
+      "id": 116853138097,
+      "name": "Ripr Rust Small on GitHub Hosted / Rust gates",
+      "status": "in_progress",
+      "conclusion": null,
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38864156917/job/116853138097",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-16T06:57:32Z",
+          "completed_at": "2026-10-16T06:57:34Z"
+        },
+        {
+          "name": "Run actions/checkout@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-16T06:57:34Z",
+          "completed_at": "2026-10-16T06:57:48Z"
+        },
+        {
+          "name": "Acquire scratch lease",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 3,
+          "started_at": "2026-10-16T06:57:48Z",
+          "completed_at": "2026-10-16T06:57:48Z"
+        },
+        {
+          "name": "Reclaim terminal scratch",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 4,
+          "started_at": "2026-10-16T06:57:48Z",
+          "completed_at": "2026-10-16T06:57:48Z"
+        },
+        {
+          "name": "Prepare toolchain temp",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 5,
+          "started_at": "2026-10-16T06:57:48Z",
+          "completed_at": "2026-10-16T06:57:48Z"
+        },
+        {
+          "name": "Configure scratch environment",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 6,
+          "started_at": "2026-10-16T06:57:48Z",
+          "completed_at": "2026-10-16T06:57:48Z"
+        },
+        {
+          "name": "Prepare scratch",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 7,
+          "started_at": "2026-10-16T06:57:48Z",
+          "completed_at": "2026-10-16T06:57:48Z"
+        },
+        {
+          "name": "Run dtolnay/rust-toolchain@v1",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-16T06:57:48Z",
+          "completed_at": "2026-10-16T06:57:59Z"
+        },
+        {
+          "name": "Formatting preflight",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-16T06:57:59Z",
+          "completed_at": "2026-10-16T06:58:14Z"
+        },
+        {
+          "name": "Install CI tools",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10,
+          "started_at": "2026-10-16T06:58:14Z",
+          "completed_at": "2026-10-16T06:58:15Z"
+        },
+        {
+          "name": "Restore hosted Rust cache",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-10-16T06:58:15Z",
+          "completed_at": "2026-10-16T06:58:32Z"
+        },
+        {
+          "name": "Start sccache server",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 12,
+          "started_at": "2026-10-16T06:58:32Z",
+          "completed_at": "2026-10-16T06:58:32Z"
+        },
+        {
+          "name": "Agent skill contracts",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13,
+          "started_at": "2026-10-16T06:58:32Z",
+          "completed_at": "2026-10-16T06:58:36Z"
+        },
+        {
+          "name": "Prepare locked owner-return fixture dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14,
+          "started_at": "2026-10-16T06:58:36Z",
+          "completed_at": "2026-10-16T06:58:36Z"
+        },
+        {
+          "name": "Repository policy preflight",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15,
+          "started_at": "2026-10-16T06:58:36Z",
+          "completed_at": "2026-10-16T07:03:41Z"
+        },
+        {
+          "name": "Evidence promotion honesty",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16,
+          "started_at": "2026-10-16T07:03:41Z",
+          "completed_at": "2026-10-16T07:03:42Z"
+        },
+        {
+          "name": "Dependency policy",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17,
+          "started_at": "2026-10-16T07:03:42Z",
+          "completed_at": "2026-10-16T07:03:42Z"
+        },
+        {
+          "name": "Process policy",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 18,
+          "started_at": "2026-10-16T07:03:42Z",
+          "completed_at": "2026-10-16T07:03:43Z"
+        },
+        {
+          "name": "Network policy",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 19,
+          "started_at": "2026-10-16T07:03:43Z",
+          "completed_at": "2026-10-16T07:03:45Z"
+        },
+        {
+          "name": "Workspace and all-target check",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 20,
+          "started_at": "2026-10-16T07:03:45Z",
+          "completed_at": "2026-10-16T07:05:03Z"
+        },
+        {
+          "name": "All-features ripr target check",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 21,
+          "started_at": "2026-10-16T07:05:03Z",
+          "completed_at": "2026-10-16T07:06:15Z"
+        },
+        {
+          "name": "Strict workspace Clippy",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 22,
+          "started_at": "2026-10-16T07:06:15Z",
+          "completed_at": "2026-10-16T07:08:17Z"
+        },
+        {
+          "name": "Required Rust tests",
+          "status": "in_progress",
+          "conclusion": null,
+          "number": 23,
+          "started_at": "2026-10-16T07:08:17Z",
+          "completed_at": null
+        },
+        {
+          "name": "Upload required Rust test results",
+          "status": "pending",
+          "conclusion": null,
+          "number": 24,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Required Rust doctests",
+          "status": "pending",
+          "conclusion": null,
+          "number": 25,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Golden output contracts",
+          "status": "pending",
+          "conclusion": null,
+          "number": 26,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Retain wildcard calibration producer outputs",
+          "status": "pending",
+          "conclusion": null,
+          "number": 27,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Fixture contracts",
+          "status": "pending",
+          "conclusion": null,
+          "number": 28,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Verdict corpora",
+          "status": "pending",
+          "conclusion": null,
+          "number": 29,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "PR evidence",
+          "status": "pending",
+          "conclusion": null,
+          "number": 30,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Proof route dry-run (advisory)",
+          "status": "pending",
+          "conclusion": null,
+          "number": 31,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Advisory reports",
+          "status": "pending",
+          "conclusion": null,
+          "number": 32,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Show sccache stats",
+          "status": "pending",
+          "conclusion": null,
+          "number": 33,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Write gate summary",
+          "status": "pending",
+          "conclusion": null,
+          "number": 34,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Remove RIPR analysis cache before artifact upload",
+          "status": "pending",
+          "conclusion": null,
+          "number": 35,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Upload RIPR reports",
+          "status": "pending",
+          "conclusion": null,
+          "number": 36,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Clean scratch",
+          "status": "pending",
+          "conclusion": null,
+          "number": 37,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Release scratch lease",
+          "status": "pending",
+          "conclusion": null,
+          "number": 38,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Post Restore hosted Rust cache",
+          "status": "pending",
+          "conclusion": null,
+          "number": 75,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Post Run actions/checkout@v6",
+          "status": "pending",
+          "conclusion": null,
+          "number": 76,
+          "started_at": null,
+          "completed_at": null
+        }
+      ]
+    },
+    {
+      "id": 116853138925,
+      "name": "Ripr Rust Small on CPX42",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38864156917/job/116853138925",
+      "steps": []
+    },
+    {
+      "id": 116853139203,
+      "name": "Ripr Rust Small on CX43",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38864156917/job/116853139203",
+      "steps": []
+    },
+    {
+      "id": 116853139216,
+      "name": "Ripr Rust Small on CX53",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38864156917/job/116853139216",
+      "steps": []
+    },
+    {
+      "id": 116853139766,
+      "name": "Ripr Docs Gate",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/38864156917/job/116853139766",
+      "steps": []
+    }
+  ]
+}

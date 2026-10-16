@@ -1,0 +1,51 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: /workspace/review-8229-integration-evidence/case-javascript
+config: /workspace/review-8229-integration-evidence/case-javascript/ripr.toml
+
+Summary: 2 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 1 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+
+Changed file(s) by language: javascript = 1, rust = 1
+
+Analysis outcome: limitations below (analysis incomplete; partial_with_limitations)
+  The 2 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
+  Limitation: the diff is larger than the configured limit during the analysis pipeline (diff_scope_oversized at analysis_pipeline); affected items: 2; recovery: raise the configured limit (increase_configured_limit) — To widen the analyzed partition, raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 3, then re-run.
+
+Partial scope: run state limited_partial_scope — analysis stopped at the file budget of 2 changed file(s) (RIPR_PARTIAL_DIFF_FILE_BUDGET=2); analyzed 2 changed file(s) (4 changed line(s)) of the diff; stop reason: file_budget.
+  Found 2 finding(s) before stopping. NOT inspected: at least 1 changed file(s) and at least 2 changed line(s); more findings may exist beyond the budget.
+  selected: src/lib.rs
+  selected: src/discount.js
+  This partial result is not eligible as a gate, baseline, badge, or RIPR Zero input (gate_eligibility: ineligible).
+  To widen the analyzed partition, raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 3, then re-run. Overrides above the analysis-cost limit are clamped, the budget cannot be switched off, and named partition continuation is not available.
+  partition_identity: d7f7ddec4a3cf308a13f07b2941e3e3b02d4625a8edbfd1a0ee278669673a62d
+
+Start here:
+  State: a test gap to inspect or repair (top_gap)
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  File: ./src/lib.rs:2
+  Static exposure: weak (weakly_exposed, warning, confidence 0.92)
+  Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
+  Canonical gap: gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold
+  Changed behavior: amount >= discount_threshold
+  Missing discriminator: amount == discount_threshold
+  Related test (1 of 2 matched rows): tests/pricing.rs:4 below_threshold_has_no_discount (no test input reaches `amount == discount_threshold`)
+  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
+  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
+    - reach yes: Related tests appear to reach discounted_total: below_threshold_has_no_discount, far_above_threshold_discounts
+    - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
+    - 12 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root /workspace/review-8229-integration-evidence/case-javascript --diff /workspace/review-8229-integration-evidence/case-javascript/change.patch --mode fast probe:src_lib.rs:predicate:c80557eb
+  ripr context --root /workspace/review-8229-integration-evidence/case-javascript --diff /workspace/review-8229-integration-evidence/case-javascript/change.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+Write a test for it:
+  ripr agent stub --root /workspace/review-8229-integration-evidence/case-javascript --at src/lib.rs:2 --kind predicate
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output (JavaScript preview: 1).
+    - src/discount.js:2 (no_static_path)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 1 JavaScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

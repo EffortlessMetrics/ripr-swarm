@@ -1,0 +1,1243 @@
+diff --git a/README.md b/README.md
+index 212fc7ab0..935947a53 100644
+--- a/README.md
++++ b/README.md
+@@ -92,6 +92,10 @@ or not it finds a gap, and exit 2 means the analysis could not complete. On the
+ base branch itself there are no changed files, and ripr says so. A result with
+ no findings or limited evidence is not a clean bill of health.
+ 
++Use `ripr doctor` to diagnose setup when a check cannot complete; it is not a
++required step before analysis. For whole-repository exploration when there is
++no active diff, use `ripr pilot --root .` with the development build below.
++
+ Cargo installation requires Rust 1.95 or newer; the diff workflow needs Git.
+ See the [CLI quickstart](docs/QUICKSTART.md#cli-first-hour) for choosing a base,
+ including uncommitted edits in a development build, and diagnosing setup.
+@@ -106,7 +110,13 @@ shown above, `--worktree`, and the repair steps below need a development build:
+ cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm ripr
+ ```
+ 
+-This compiles from source in the workspace, with its fat-LTO release profile.
++In this development build, `ripr check` uses uncommitted tracked edits when
++present, otherwise committed history against the default base. On a clean
++checkout of the base branch, edit a tracked source file, then run `ripr check`
++to inspect that change. Stage a new file with `git add -N PATH` to include it.
++No commit or configuration file is needed for this edit-and-check loop.
++
++Installing from Git compiles in the workspace, with its fat-LTO release profile.
+ A `cargo build --release` there took about 12 minutes (751 s) on a cold 4-core
+ Linux container in October 2026 (`cargo install ripr` for 0.10.0 took about 2
+ minutes on an earlier run). The packaged 0.11.0 crate drops that profile, so
+@@ -142,14 +152,15 @@ complete paths, including read-only [MCP status](docs/interop/mcp.md).
+ 
+ ```bash
+ ripr check
+-ripr pilot --root .
+ ```
+ 
+ `check` reports gaps in the current change and prints the `ripr explain` and
+ `ripr context` commands for the top finding; add `--format json` for
+ machine-readable results that embed the same bounded `canonical_next_action`
+-(class, selected item, root, diff source, and followable route). `pilot`
+-names one supported repair or explains why none is ready. Run the follow-up
++(class, selected item, root, diff source, and followable route).
++For whole-repository exploration or a supported repair route, use
++`ripr pilot --root .`; it names one supported repair or explains why none is
++ready. Run the follow-up
+ commands ripr prints
+ (`ripr explain`, `ripr context`, `ripr agent repair ...`) exactly as printed:
+ their IDs belong to that run and cannot be copied from documentation.
+diff --git a/changelog.d/7642-proximity-oracle-rows-no-call-path.md b/changelog.d/7642-proximity-oracle-rows-no-call-path.md
+new file mode 100644
+index 000000000..03a62b084
+--- /dev/null
++++ b/changelog.d/7642-proximity-oracle-rows-no-call-path.md
+@@ -0,0 +1,3 @@
++<!-- section: Fixed -->
++- On `exposed` and unknown-class findings, a matched oracle row whose related-test link is proximity-only (same file or module, name match, token substring, import-path or fixture affinity, seam-callee) now carries the `no_call_path` miss it always established, so the row renders as "misses: no call to the changed code found; linked by file location only" next to its oracle instead of reading as an unqualified discriminator. Rows with no recorded relation reason and rows without a matched oracle keep the unknown; no classification or reach decision reads the annotation (#7642).
++- The evidence-promotion-honesty corpus `expected_related_test` assertion accepts an optional `miss` pin (a known miss string, or explicit `null` to require no miss), and the `match_arm_proximity_wrapper_confirms` case pins the reaching row with no miss beside both proximity sibling rows carrying `no_call_path` (#7642).
+diff --git a/changelog.d/7643-hidden-bullet-currentness.md b/changelog.d/7643-hidden-bullet-currentness.md
+new file mode 100644
+index 000000000..6a8ce153f
+--- /dev/null
++++ b/changelog.d/7643-hidden-bullet-currentness.md
+@@ -0,0 +1,2 @@
++<!-- section: Fixed -->
++- In the `Hidden:` block, each omitted-finding bullet now appends its source-currentness category (`lower-priority candidate`, `base-side`, or `unresolved currentness`) whenever the omitted set mixes categories, so the count line's clauses connect to individual rows and a base-deleted evidence row is no longer mistaken for an outranked candidate at the same file:line. Single-category omitted sets keep the legacy unlabeled bullet, which the count line already names (#7643).
+diff --git a/changelog.d/8164-canonical-first-run.md b/changelog.d/8164-canonical-first-run.md
+new file mode 100644
+index 000000000..46a1cc142
+--- /dev/null
++++ b/changelog.d/8164-canonical-first-run.md
+@@ -0,0 +1,4 @@
++<!-- section: Fixed -->
++- Help, README, and quickstart lead with `ripr check` as the first analysis
++  command, explain how to start from a clean checkout, and distinguish setup
++  diagnosis from whole-repository exploration (#8164).
+diff --git a/crates/ripr/src/analysis/classifier/finding.rs b/crates/ripr/src/analysis/classifier/finding.rs
+index 3b2258075..f283a6613 100644
+--- a/crates/ripr/src/analysis/classifier/finding.rs
++++ b/crates/ripr/src/analysis/classifier/finding.rs
+@@ -243,8 +243,13 @@ enum Unconfirmed {
+ /// boundary value, or when no assertion pins the exact error variant or field
+ /// value the change alters, and an oracle `reveal` left unconfirmed (see
+ /// [`Unconfirmed`]) is not established to observe it.
+-/// `exposed` and the unknown classes are left alone: ripr does not claim a
+-/// miss it has not established.
++/// `exposed` and the unknown classes name one established miss: a matched
++/// oracle row whose relation is proximity-only never calls the owner, so
++/// next to a reaching row its identical "uses ... oracle" line would
++/// attribute part of the discrimination to a test whose assertion is about
++/// different code (#7642). Rows without a matched oracle, and rows with no
++/// recorded relation reason, stay unannotated: ripr does not claim a miss
++/// it has not established.
+ fn annotate_related_test_misses(
+     related_tests: &mut [RelatedTest],
+     class: &ExposureClass,
+@@ -308,7 +313,27 @@ fn annotate_related_test_misses(
+                     None
+                 }
+             }
+-            _ => None,
++            _ => {
++                // #7642: on `exposed` and the unknown classes a matched row
++                // whose relation reason does not establish reach
++                // (`establishes_reach`, the rule `reach_evidence` reads,
++                // #7531) never invokes the owner, so its oracle cannot
++                // discriminate this change no matter how strong the
++                // assertion. Annotate the established fact; the verdict is
++                // untouched because `miss` is evidence-only. A row without
++                // a matched oracle or without a recorded relation reason
++                // keeps the unknown: the pass must not claim what the
++                // relation layer did not establish.
++                if test.oracle.is_some()
++                    && test
++                        .relation_reason
++                        .is_some_and(|reason| !reason.establishes_reach(owner_is_function))
++                {
++                    Some(RelatedTestMiss::NoCallPath)
++                } else {
++                    None
++                }
++            }
+         };
+     }
+ }
+@@ -601,6 +626,107 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn exposed_marks_proximity_only_oracle_rows_as_no_call_path() {
++        // #7642: on an exposed finding a matched oracle row linked by
++        // proximity only never invokes the owner, so it must not render as
++        // an unqualified oracle row next to the reaching test.
++        let row = |name: &str, reason: Option<RelationReason>| RelatedTest {
++            relation_reason: reason,
++            ..matched_row(name, OracleStrength::Strong)
++        };
++        let mut rows = vec![
++            row("reaches_owner", Some(RelationReason::DirectOwnerCall)),
++            row(
++                "sibling_asserts_elsewhere",
++                Some(RelationReason::SameTestFile),
++            ),
++            row("named_after_owner", Some(RelationReason::OwnerNamedTest)),
++            row(
++                "assertion_target",
++                Some(RelationReason::AssertionTargetAffinity),
++            ),
++            row("no_relation_recorded", None),
++        ];
++        annotate_related_test_misses(
++            &mut rows,
++            &crate::domain::ExposureClass::Exposed,
++            true,
++            &ProbeFamily::MatchArm,
++            &ActivationEvidence::default(),
++            Unconfirmed::Confirmed,
++        );
++        assert_eq!(
++            rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
++            vec![
++                None,
++                Some(crate::domain::RelatedTestMiss::NoCallPath),
++                Some(crate::domain::RelatedTestMiss::NoCallPath),
++                Some(crate::domain::RelatedTestMiss::NoCallPath),
++                None,
++            ]
++        );
++        // For an owner without a function, assertion-target affinity is how
++        // the owner is observed, so that row keeps no miss; file proximity
++        // still does not call the owner.
++        let mut module_rows = vec![
++            row(
++                "sibling_asserts_elsewhere",
++                Some(RelationReason::SameTestFile),
++            ),
++            row(
++                "assertion_target",
++                Some(RelationReason::AssertionTargetAffinity),
++            ),
++        ];
++        annotate_related_test_misses(
++            &mut module_rows,
++            &crate::domain::ExposureClass::Exposed,
++            false,
++            &ProbeFamily::MatchArm,
++            &ActivationEvidence::default(),
++            Unconfirmed::Confirmed,
++        );
++        assert_eq!(
++            module_rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
++            vec![Some(crate::domain::RelatedTestMiss::NoCallPath), None,]
++        );
++    }
++
++    #[test]
++    fn exposed_keeps_unmatched_and_oracle_free_rows_unannotated() {
++        // Rows reveal already annotated, and rows with no matched oracle,
++        // keep their existing state: the pass annotates matched oracle rows
++        // only.
++        let mut rows = vec![
++            RelatedTest {
++                miss: Some(crate::domain::RelatedTestMiss::AssertionNotObserving),
++                relation_reason: Some(RelationReason::SameTestFile),
++                ..matched_row("examined_only", OracleStrength::None)
++            },
++            RelatedTest {
++                oracle: None,
++                relation_reason: Some(RelationReason::SameTestFile),
++                ..matched_row("no_oracle_row", OracleStrength::None)
++            },
++        ];
++        annotate_related_test_misses(
++            &mut rows,
++            &crate::domain::ExposureClass::StaticUnknown,
++            true,
++            &ProbeFamily::MatchArm,
++            &ActivationEvidence::default(),
++            Unconfirmed::Confirmed,
++        );
++        assert_eq!(
++            rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
++            vec![
++                Some(crate::domain::RelatedTestMiss::AssertionNotObserving),
++                None,
++            ]
++        );
++    }
++
+     #[test]
+     fn mixed_confirmation_marks_only_the_strongest_rows_unconfirmed() {
+         // A strong unconfirmed oracle beside a medium mock that confirms:
+diff --git a/crates/ripr/src/cli/help.rs b/crates/ripr/src/cli/help.rs
+index bdd5d0f5e..fd4d5fe00 100644
+--- a/crates/ripr/src/cli/help.rs
++++ b/crates/ripr/src/cli/help.rs
+@@ -505,6 +505,37 @@ mod tests {
+         );
+     }
+ 
++    /// #8164: HELP, README, and Quickstart must lead with one analysis command.
++    /// `Try this first:` is the live help owner; doctor stays a setup task and
++    /// must not reappear as a co-first command or a hardcoded `--base`.
++    #[test]
++    fn help_overview_has_one_canonical_first_run() -> Result<(), String> {
++        let Some((_, after)) = HELP.split_once("Try this first:\n") else {
++            return Err("default help lost its first-run section".to_string());
++        };
++        let section = after.split("\n\n").next().unwrap_or_default();
++        let commands: Vec<_> = section
++            .lines()
++            .map(str::trim)
++            .filter(|line| line.starts_with("ripr "))
++            .collect();
++        let [line] = commands.as_slice() else {
++            return Err(format!(
++                "first run must name exactly one command, got:\n{section}"
++            ));
++        };
++        let command = line.split_once("  ").map(|(part, _)| part).unwrap_or(line);
++        if command != "ripr check" {
++            return Err(format!(
++                "first run must be `ripr check` without a fixed base, got `{command}`"
++            ));
++        }
++        if section.contains("--base") {
++            return Err("first-run command must not hardcode --base".to_string());
++        }
++        Ok(())
++    }
++
+     /// The first screen has to answer "what do I run?" without the reader
+     /// knowing any internal vocabulary: the setup commands, one route per task,
+     /// and how to reach the rest.
+diff --git a/crates/ripr/src/cli/help/overview.rs b/crates/ripr/src/cli/help/overview.rs
+index 8b01f5c79..7ba642368 100644
+--- a/crates/ripr/src/cli/help/overview.rs
++++ b/crates/ripr/src/cli/help/overview.rs
+@@ -23,9 +23,11 @@ Usage:
+   ripr <command> [options]
+ 
+ Try this first:
+-  ripr doctor                     Check this workspace can produce evidence.
+   ripr check                      Analyze the current diff, name the top gap.
+ 
++Uses tracked edits, or committed history when clean. On a clean base branch,
++edit a tracked source file first; new files need git add -N PATH.
++
+ The loop is: ripr names one gap -> you add one focused test -> ripr records
+ whether the gap closed. `ripr.toml` is optional; the zero-config run is the
+ intended first interface.
+diff --git a/crates/ripr/src/output/human.rs b/crates/ripr/src/output/human.rs
+index 41eb897fd..3f5b9ea01 100644
+--- a/crates/ripr/src/output/human.rs
++++ b/crates/ripr/src/output/human.rs
+@@ -2027,7 +2027,8 @@ mod tests {
+     /// #5021: when a top gap is selected and the omitted set mixes
+     /// lower-ranked candidates with base-side evidence, the count line names
+     /// the mix with its own counts instead of promoting the base-side
+-    /// findings to lower-priority candidates.
++    /// findings to lower-priority candidates. #7643: the bullets append each
++    /// finding's currentness category so the two clauses connect to rows.
+     #[test]
+     fn hidden_block_selected_mixed_omitted_names_base_side_count() {
+         // Ranking ties break on file path (see `triage_rank`), so the
+@@ -2052,11 +2053,11 @@ mod tests {
+             "{rendered}"
+         );
+         assert!(
+-            rendered.contains("    - src/base.rs:1 (weakly_exposed)\n"),
++            rendered.contains("    - src/base.rs:1 (weakly_exposed, base-side)\n"),
+             "{rendered}"
+         );
+         assert!(
+-            rendered.contains("    - src/lower.rs:1 (weakly_exposed)\n"),
++            rendered.contains("    - src/lower.rs:1 (weakly_exposed, lower-priority candidate)\n"),
+             "{rendered}"
+         );
+     }
+diff --git a/crates/ripr/src/output/human/triage.rs b/crates/ripr/src/output/human/triage.rs
+index e7398b06e..2b5ac8031 100644
+--- a/crates/ripr/src/output/human/triage.rs
++++ b/crates/ripr/src/output/human/triage.rs
+@@ -371,12 +371,31 @@ pub(crate) fn render_human_triage(
+             out.push_str(&selected_hidden_line(&triage.omitted));
+         }
+         let listed = triage.omitted.len().min(HIDDEN_FINDINGS_LISTED);
++        // #7643: when the omitted set mixes currentness categories, the
++        // count line's clauses cannot be connected to individual bullets;
++        // append each finding's category so the reader can tell an
++        // outranked candidate from base-side evidence without a rerun.
++        // Single-category sets keep the legacy bullet: the count line
++        // already names the one category that applies.
++        let label_currentness = {
++            let mut categories = std::collections::BTreeSet::new();
++            for finding in &triage.omitted {
++                categories.insert(hidden_bullet_currentness(finding));
++            }
++            categories.len() > 1
++        };
+         for finding in triage.omitted.iter().take(listed) {
++            let currentness = if label_currentness {
++                format!(", {}", hidden_bullet_currentness(finding))
++            } else {
++                String::new()
++            };
+             out.push_str(&format!(
+-                "    - {}:{} ({})\n",
++                "    - {}:{} ({}{})\n",
+                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
+                 finding.probe.location.line,
+-                finding.class.as_str()
++                finding.class.as_str(),
++                currentness
+             ));
+         }
+         let remaining = triage.omitted.len() - listed;
+@@ -612,6 +631,19 @@ fn no_selection_mix(omitted: &[&Finding]) -> NoSelectionMix {
+     }
+ }
+ 
++/// #7643: the per-bullet currentness label, mirroring the categories the
++/// count line names: base-deleted or moved evidence is base-side, an
++/// unresolved subject is not established as either category, and the
++/// remainder is a lower-priority candidate.
++fn hidden_bullet_currentness(finding: &Finding) -> &'static str {
++    match finding.source_currentness {
++        crate::domain::SourceCurrentness::BaseDeleted
++        | crate::domain::SourceCurrentness::MovedOrRenamed => "base-side",
++        crate::domain::SourceCurrentness::UnresolvedSubject => "unresolved currentness",
++        _ => "lower-priority candidate",
++    }
++}
++
+ /// #5021: the `Hidden:` count line for a run where a top gap was selected.
+ /// `triage.omitted` is every considered finding except the selected one, so
+ /// it can hold base-side or unresolved-currentness evidence next to
+@@ -1559,4 +1591,70 @@ mod tests {
+         }
+         Ok(())
+     }
++
++    #[test]
++    fn hidden_bullets_label_currentness_when_categories_mix() {
++        // #7643: the count line names the mix; each bullet must connect to
++        // its clause so a base-side row is not mistaken for an outranked
++        // candidate.
++        let top = super::super::tests::sample_finding();
++        let mut candidate = super::super::tests::sample_finding();
++        candidate.id = "finding:candidate".to_string();
++        candidate.probe.id = ProbeId("finding:candidate".to_string());
++        candidate.probe.location = SourceLocation::new("src/lib.rs", 21, 1);
++        let mut base_side = super::super::tests::sample_finding();
++        base_side.id = "finding:base".to_string();
++        base_side.probe.id = ProbeId("finding:base".to_string());
++        base_side.probe.location = SourceLocation::new("src/lib.rs", 26, 1);
++        base_side.source_currentness = SourceCurrentness::BaseDeleted;
++        let mut unresolved = super::super::tests::sample_finding();
++        unresolved.id = "finding:unresolved".to_string();
++        unresolved.probe.id = ProbeId("finding:unresolved".to_string());
++        unresolved.probe.location = SourceLocation::new("src/lib.rs", 31, 1);
++        unresolved.source_currentness = SourceCurrentness::UnresolvedSubject;
++        let output = super::super::tests::bounded_output_with_findings(vec![
++            top, candidate, base_side, unresolved,
++        ]);
++        let rendered = super::super::render(&output);
++        assert!(
++            rendered.contains("    - src/sample.rs:7 (weakly_exposed, lower-priority candidate)\n"),
++            "{rendered}"
++        );
++        assert!(
++            rendered.contains("    - src/lib.rs:26 (weakly_exposed, base-side)\n"),
++            "{rendered}"
++        );
++        assert!(
++            rendered.contains("    - src/lib.rs:31 (weakly_exposed, unresolved currentness)\n"),
++            "{rendered}"
++        );
++    }
++
++    #[test]
++    fn hidden_bullets_stay_unlabeled_when_the_set_is_single_category() {
++        // A single-category omitted set keeps the legacy bullet: the count
++        // line already names the one category that applies.
++        let top = super::super::tests::sample_finding();
++        let mut omitted = super::super::tests::sample_finding();
++        omitted.id = "finding:omitted".to_string();
++        omitted.probe.id = ProbeId("finding:omitted".to_string());
++        omitted.probe.location = SourceLocation::new("src/lib.rs", 21, 1);
++        let output = super::super::tests::bounded_output_with_findings(vec![top, omitted]);
++        let rendered = super::super::render(&output);
++        // Exactly one omitted bullet, and no per-bullet currentness label:
++        // the count line already named the single category.
++        assert_eq!(rendered.matches("\n    - src/").count(), 1, "{rendered}");
++        assert!(
++            !rendered.contains("(weakly_exposed, lower-priority candidate)"),
++            "{rendered}"
++        );
++        assert!(
++            !rendered.contains("(weakly_exposed, base-side)"),
++            "{rendered}"
++        );
++        assert!(
++            !rendered.contains("(weakly_exposed, unresolved currentness)"),
++            "{rendered}"
++        );
++    }
+ }
+diff --git a/docs/QUICKSTART.md b/docs/QUICKSTART.md
+index 3f8f6ff1c..fb25b018c 100644
+--- a/docs/QUICKSTART.md
++++ b/docs/QUICKSTART.md
+@@ -66,12 +66,23 @@ For another installation method or a pinned server, see
+ 
+ ## CLI First Hour
+ 
+-From a Rust repository on a branch with committed changes:
++From a Rust repository with a change to inspect:
+ 
+ ```bash
+ ripr check
+ ```
+ 
++In this development build, `check` uses uncommitted tracked edits when present,
++otherwise committed history against the default base. On a clean checkout of
++the base branch, edit a tracked source file and run `ripr check` again. For a new
++file, first use `git add -N PATH` so it enters the tracked diff. See
++[Choose the change](#choose-the-change) for explicit diff selection.
++
++Use `ripr doctor` to diagnose setup if analysis cannot complete; it is not a
++required first step. To explore a clean repository without making a change,
++use the separate [repository exploration](#explore-the-repository) path,
++`ripr pilot --root .`.
++
+ No `ripr.toml` is required. The development CLI prints a summary and a bounded
+ `Start here:` section with a finding, a no-action result, or the limitation
+ preventing useful guidance. Read the changed behavior, related test, and
+diff --git a/fixtures/evidence-promotion-honesty-corpus/corpus.json b/fixtures/evidence-promotion-honesty-corpus/corpus.json
+index 3a72872b0..8a827d841 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/corpus.json
++++ b/fixtures/evidence-promotion-honesty-corpus/corpus.json
+@@ -2633,6 +2633,36 @@
+         {
+           "type": "expected_class",
+           "class": "exposed"
++        },
++        {
++          "type": "expected_related_test",
++          "name": "seconds_total",
++          "file": "src/lib.rs",
++          "line": 36,
++          "kind": "exact_value",
++          "strength": "strong",
++          "relation_reason": "direct_owner_call",
++          "miss": null
++        },
++        {
++          "type": "expected_related_test",
++          "name": "bridge_fortnight",
++          "file": "src/lib.rs",
++          "line": 45,
++          "kind": "exact_value",
++          "strength": "strong",
++          "relation_reason": "same_test_file",
++          "miss": "no_call_path"
++        },
++        {
++          "type": "expected_related_test",
++          "name": "from_str_fortnight",
++          "file": "src/lib.rs",
++          "line": 50,
++          "kind": "exact_value",
++          "strength": "strong",
++          "relation_reason": "same_test_file",
++          "miss": "no_call_path"
+         }
+       ]
+     },
+diff --git a/fixtures/human_full_shared_parse_port/expected/CHANGELOG.md b/fixtures/human_full_shared_parse_port/expected/CHANGELOG.md
+index 23c074075..9942c288c 100644
+--- a/fixtures/human_full_shared_parse_port/expected/CHANGELOG.md
++++ b/fixtures/human_full_shared_parse_port/expected/CHANGELOG.md
+@@ -51,3 +51,16 @@ Updated:
+ - `expected/check.json`
+ - `expected/human.txt`
+ - `expected/human-full.txt`
++
++## Pending — human_full_shared_parse_port (5)
++
++Reason:
++RIPR-SPEC-0122: #7643 hidden-block bullets append each finding's currentness category when the omitted set mixes categories, connecting the count line's clauses to its rows
++
++Command:
++`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
++- `expected/human-full.txt`
+diff --git a/fixtures/human_full_shared_parse_port/expected/human.txt b/fixtures/human_full_shared_parse_port/expected/human.txt
+index 2147fc8ab..841833248 100644
+--- a/fixtures/human_full_shared_parse_port/expected/human.txt
++++ b/fixtures/human_full_shared_parse_port/expected/human.txt
+@@ -31,11 +31,11 @@ Write a test for it:
+ 
+ Hidden:
+   4 lower-priority finding(s) omitted; 2 base-side evidence, not candidate edit targets.
+-    - ./src/lib.rs:3 (weakly_exposed)
+-    - ./src/lib.rs:3 (weakly_exposed)
+-    - ./src/lib.rs:3 (weakly_exposed)
+-    - ./src/lib.rs:3 (weakly_exposed)
+-    - ./src/lib.rs:4 (weakly_exposed)
+-    - ./src/lib.rs:4 (weakly_exposed)
++    - ./src/lib.rs:3 (weakly_exposed, base-side)
++    - ./src/lib.rs:3 (weakly_exposed, lower-priority candidate)
++    - ./src/lib.rs:3 (weakly_exposed, lower-priority candidate)
++    - ./src/lib.rs:3 (weakly_exposed, base-side)
++    - ./src/lib.rs:4 (weakly_exposed, lower-priority candidate)
++    - ./src/lib.rs:4 (weakly_exposed, lower-priority candidate)
+   Full evidence: rerun with --format human-full
+   Machine data: rerun with --format json
+diff --git a/fixtures/match_arm_proximity_wrapper_confirms/expected/CHANGELOG.md b/fixtures/match_arm_proximity_wrapper_confirms/expected/CHANGELOG.md
+index bafa63d60..e72854b6b 100644
+--- a/fixtures/match_arm_proximity_wrapper_confirms/expected/CHANGELOG.md
++++ b/fixtures/match_arm_proximity_wrapper_confirms/expected/CHANGELOG.md
+@@ -78,3 +78,16 @@ Updated:
+ - `expected/check.json`
+ - `expected/human.txt`
+ - `expected/human-full.txt`
++
++## Pending — match_arm_proximity_wrapper_confirms (7)
++
++Reason:
++RIPR-SPEC-0108: #7642 matched oracle rows with a proximity-only relation now carry no_call_path on exposed and unknown classes so sibling tests no longer render as unqualified oracle evidence
++
++Command:
++`cargo xtask goldens bless match_arm_proximity_wrapper_confirms --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
++- `expected/human-full.txt`
+diff --git a/fixtures/match_arm_proximity_wrapper_confirms/expected/check.json b/fixtures/match_arm_proximity_wrapper_confirms/expected/check.json
+index 6a5300939..a38995d82 100644
+--- a/fixtures/match_arm_proximity_wrapper_confirms/expected/check.json
++++ b/fixtures/match_arm_proximity_wrapper_confirms/expected/check.json
+@@ -142,7 +142,9 @@
+           "oracle_kind": "exact_value",
+           "oracle": "assert_eq!(seconds_bridge(Unit::Fortnight), 1_209_600);",
+           "relation_reason": "same_test_file",
+-          "relation_confidence": "medium"
++          "relation_confidence": "medium",
++          "miss": "no_call_path",
++          "why": "no call to the changed code found; linked by file location only"
+         },
+         {
+           "name": "from_str_fortnight",
+@@ -152,7 +154,9 @@
+           "oracle_kind": "exact_value",
+           "oracle": "assert!(matches!(Unit::from_str(\"fortnight\"), Ok(Unit::Fortnight)));",
+           "relation_reason": "same_test_file",
+-          "relation_confidence": "medium"
++          "relation_confidence": "medium",
++          "miss": "no_call_path",
++          "why": "no call to the changed code found; linked by file location only"
+         }
+       ],
+       "stop_reasons": [],
+diff --git a/fixtures/match_arm_proximity_wrapper_confirms/expected/human-full.txt b/fixtures/match_arm_proximity_wrapper_confirms/expected/human-full.txt
+index 24d19168f..4d5808ca3 100644
+--- a/fixtures/match_arm_proximity_wrapper_confirms/expected/human-full.txt
++++ b/fixtures/match_arm_proximity_wrapper_confirms/expected/human-full.txt
+@@ -32,8 +32,8 @@ Evidence
+   - local flow reaches match arm result: Unit::Fortnight => (line 23)
+   - related test src/lib.rs:36 seconds_total uses smoke smoke only oracle: Unit::from_str(s).unwrap()
+   - related test src/lib.rs:36 seconds_total uses strong exact value oracle: assert_eq!(total, 1_814_400);
+-  - related test src/lib.rs:45 bridge_fortnight uses strong exact value oracle: assert_eq!(seconds_bridge(Unit::Fortnight), 1_209_600);
+-  - related test src/lib.rs:50 from_str_fortnight uses strong exact value oracle: assert!(matches!(Unit::from_str("fortnight"), Ok(Unit::Fortnight)));
++  - related test src/lib.rs:45 bridge_fortnight uses strong exact value oracle: assert_eq!(seconds_bridge(Unit::Fortnight), 1_209_600); misses: no call to the changed code found; linked by file location only
++  - related test src/lib.rs:50 from_str_fortnight uses strong exact value oracle: assert!(matches!(Unit::from_str("fortnight"), Ok(Unit::Fortnight))); misses: no call to the changed code found; linked by file location only
+   - source assertion argument value 1_814_400 at line 41
+   - source assertion argument value 1_209_600 at line 46
+   - source enum variant value Unit::Fortnight at line 46
+diff --git a/fixtures/multi_hunk_removed_line_wrong_target/expected/CHANGELOG.md b/fixtures/multi_hunk_removed_line_wrong_target/expected/CHANGELOG.md
+index 24a0d17d4..b642dc7c6 100644
+--- a/fixtures/multi_hunk_removed_line_wrong_target/expected/CHANGELOG.md
++++ b/fixtures/multi_hunk_removed_line_wrong_target/expected/CHANGELOG.md
+@@ -425,3 +425,15 @@ Command:
+ Updated:
+ - `expected/check.json`
+ - `expected/human.txt`
++
++## Pending — multi_hunk_removed_line_wrong_target (18)
++
++Reason:
++RIPR-SPEC-0122: #7643 hidden-block bullets append each finding's currentness category when the omitted set mixes categories, connecting the count line's clauses to its rows
++
++Command:
++`cargo xtask goldens bless multi_hunk_removed_line_wrong_target --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
+diff --git a/fixtures/multi_hunk_removed_line_wrong_target/expected/human.txt b/fixtures/multi_hunk_removed_line_wrong_target/expected/human.txt
+index 5a96fa2cb..5f3e88020 100644
+--- a/fixtures/multi_hunk_removed_line_wrong_target/expected/human.txt
++++ b/fixtures/multi_hunk_removed_line_wrong_target/expected/human.txt
+@@ -31,10 +31,10 @@ Next: drill into the top finding:
+ 
+ Hidden:
+   3 lower-priority finding(s) omitted; 1 base-side evidence, not candidate edit targets.
+-    - ./src/lib.rs:2 (no_static_path)
+-    - ./src/lib.rs:3 (no_static_path)
+-    - ./src/lib.rs:4 (no_static_path)
+-    - ./src/lib.rs:8 (no_static_path)
++    - ./src/lib.rs:2 (no_static_path, base-side)
++    - ./src/lib.rs:3 (no_static_path, lower-priority candidate)
++    - ./src/lib.rs:4 (no_static_path, lower-priority candidate)
++    - ./src/lib.rs:8 (no_static_path, lower-priority candidate)
+   Full evidence: rerun with --format human-full
+   Machine data: rerun with --format json
+ 
+diff --git a/fixtures/owner_return_pin_identity_traps/expected/CHANGELOG.md b/fixtures/owner_return_pin_identity_traps/expected/CHANGELOG.md
+index 7dc19c378..17125b3f9 100644
+--- a/fixtures/owner_return_pin_identity_traps/expected/CHANGELOG.md
++++ b/fixtures/owner_return_pin_identity_traps/expected/CHANGELOG.md
+@@ -191,3 +191,27 @@ Command:
+ Updated:
+ - `expected/check.json`
+ - `expected/human.txt`
++
++## Pending — owner_return_pin_identity_traps (17)
++
++Reason:
++RIPR-SPEC-0108: #7642 matched oracle rows with a proximity-only relation now carry no_call_path on exposed and unknown classes so sibling tests no longer render as unqualified oracle evidence
++
++Command:
++`cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
++
++## Pending — owner_return_pin_identity_traps (18)
++
++Reason:
++RIPR-SPEC-0122: #7643 hidden-block bullets append each finding's currentness category when the omitted set mixes categories, connecting the count line's clauses to its rows
++
++Command:
++`cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
+diff --git a/fixtures/owner_return_pin_identity_traps/expected/check.json b/fixtures/owner_return_pin_identity_traps/expected/check.json
+index e98baaf30..0d288b3a5 100644
+--- a/fixtures/owner_return_pin_identity_traps/expected/check.json
++++ b/fixtures/owner_return_pin_identity_traps/expected/check.json
+@@ -238,7 +238,9 @@
+           "oracle_kind": "exact_value",
+           "oracle": "assert_eq!(decode(8), 9);",
+           "relation_reason": "weak_token_substring",
+-          "relation_confidence": "low"
++          "relation_confidence": "low",
++          "miss": "no_call_path",
++          "why": "no call to the changed code found; linked by name only"
+         },
+         {
+           "name": "negative_input_exits_early",
+@@ -248,7 +250,9 @@
+           "oracle_kind": "exact_error_variant",
+           "oracle": "assert_eq!(checked_half(-4), Err(HalfError::Negative));",
+           "relation_reason": "weak_token_substring",
+-          "relation_confidence": "low"
++          "relation_confidence": "low",
++          "miss": "no_call_path",
++          "why": "no call to the changed code found; linked by name only"
+         }
+       ],
+       "stop_reasons": ["static_probe_unknown"],
+diff --git a/fixtures/owner_return_pin_identity_traps/expected/human.txt b/fixtures/owner_return_pin_identity_traps/expected/human.txt
+index 2172c1c28..63a700025 100644
+--- a/fixtures/owner_return_pin_identity_traps/expected/human.txt
++++ b/fixtures/owner_return_pin_identity_traps/expected/human.txt
+@@ -32,10 +32,10 @@ No test stub here: the owner is a trait default method or nested function, sits
+ 
+ Hidden:
+   3 lower-priority finding(s) omitted; 2 base-side evidence, not candidate edit targets.
+-    - ./src/lib.rs:7 (weakly_exposed)
+-    - ./src/lib.rs:7 (static_unknown)
+-    - ./src/lib.rs:50 (weakly_exposed)
+-    - ./src/lib.rs:55 (weakly_exposed)
+-    - ./src/lib.rs:55 (static_unknown)
++    - ./src/lib.rs:7 (weakly_exposed, lower-priority candidate)
++    - ./src/lib.rs:7 (static_unknown, base-side)
++    - ./src/lib.rs:50 (weakly_exposed, lower-priority candidate)
++    - ./src/lib.rs:55 (weakly_exposed, lower-priority candidate)
++    - ./src/lib.rs:55 (static_unknown, base-side)
+   Full evidence: rerun with --format human-full
+   Machine data: rerun with --format json
+diff --git a/fixtures/rust_slice_table_call_exit/expected/CHANGELOG.md b/fixtures/rust_slice_table_call_exit/expected/CHANGELOG.md
+index ca3b5bda6..3b385edad 100644
+--- a/fixtures/rust_slice_table_call_exit/expected/CHANGELOG.md
++++ b/fixtures/rust_slice_table_call_exit/expected/CHANGELOG.md
+@@ -25,3 +25,16 @@ Updated:
+ - `expected/check.json`
+ - `expected/human.txt`
+ - `expected/human-full.txt`
++
++## Pending — rust_slice_table_call_exit (3)
++
++Reason:
++RIPR-SPEC-0108: #7642 matched oracle rows with a proximity-only relation now carry no_call_path on exposed and unknown classes so sibling tests no longer render as unqualified oracle evidence
++
++Command:
++`cargo xtask goldens bless rust_slice_table_call_exit --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
++- `expected/human-full.txt`
+diff --git a/fixtures/rust_slice_table_call_exit/expected/check.json b/fixtures/rust_slice_table_call_exit/expected/check.json
+index e241caad7..6d752d59b 100644
+--- a/fixtures/rust_slice_table_call_exit/expected/check.json
++++ b/fixtures/rust_slice_table_call_exit/expected/check.json
+@@ -225,7 +225,9 @@
+           "oracle_kind": "exact_value",
+           "oracle": "assert_eq!(average(&[]), 0);",
+           "relation_reason": "same_test_file",
+-          "relation_confidence": "medium"
++          "relation_confidence": "medium",
++          "miss": "no_call_path",
++          "why": "no call to the changed code found; linked by file location only"
+         },
+         {
+           "name": "average_of_nothing_is_zero",
+@@ -235,7 +237,9 @@
+           "oracle_kind": "exact_value",
+           "oracle": "assert_eq!(average(&[2, 4]), 3);",
+           "relation_reason": "same_test_file",
+-          "relation_confidence": "medium"
++          "relation_confidence": "medium",
++          "miss": "no_call_path",
++          "why": "no call to the changed code found; linked by file location only"
+         },
+         {
+           "name": "initial_table",
+@@ -245,7 +249,9 @@
+           "oracle_kind": "exact_value",
+           "oracle": "assert_eq!(initial(name), want, \"{name:?}\");",
+           "relation_reason": "same_test_file",
+-          "relation_confidence": "medium"
++          "relation_confidence": "medium",
++          "miss": "no_call_path",
++          "why": "no call to the changed code found; linked by file location only"
+         },
+         {
+           "name": "ratio_smoke",
+@@ -267,7 +273,9 @@
+           "oracle_kind": "exact_value",
+           "oracle": "assert_eq!(discount(total), want, \"total {total}\");",
+           "relation_reason": "same_test_file",
+-          "relation_confidence": "medium"
++          "relation_confidence": "medium",
++          "miss": "no_call_path",
++          "why": "no call to the changed code found; linked by file location only"
+         }
+       ],
+       "stop_reasons": ["infection_evidence_unknown"],
+diff --git a/fixtures/rust_slice_table_call_exit/expected/human-full.txt b/fixtures/rust_slice_table_call_exit/expected/human-full.txt
+index f110c2069..03f156804 100644
+--- a/fixtures/rust_slice_table_call_exit/expected/human-full.txt
++++ b/fixtures/rust_slice_table_call_exit/expected/human-full.txt
+@@ -31,9 +31,9 @@ Evidence
+   - discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion
+   - local flow reaches returned value: 0 (line 19)
+   - related test src/lib.rs:57 mean_lies_between_min_and_max uses weak relational check oracle: assert!({ std::process::exit(0); true });
+-  - related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[]), 0);
+-  - related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[2, 4]), 3);
+-  - related test src/lib.rs:49 initial_table uses strong exact value oracle: assert_eq!(initial(name), want, "{name:?}");
++  - related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[]), 0); misses: no call to the changed code found; linked by file location only
++  - related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[2, 4]), 3); misses: no call to the changed code found; linked by file location only
++  - related test src/lib.rs:49 initial_table uses strong exact value oracle: assert_eq!(initial(name), want, "{name:?}"); misses: no call to the changed code found; linked by file location only
+   - related test src/lib.rs:76 ratio_smoke uses none unknown oracle; misses: has no assertion
+   - related tests (showing 5 of 6; more in --format json)
+   - source assertion argument value 0 at line 44
+diff --git a/fixtures/rust_slice_table_try_exit/expected/CHANGELOG.md b/fixtures/rust_slice_table_try_exit/expected/CHANGELOG.md
+index a40eb1e1a..c1cc7b28d 100644
+--- a/fixtures/rust_slice_table_try_exit/expected/CHANGELOG.md
++++ b/fixtures/rust_slice_table_try_exit/expected/CHANGELOG.md
+@@ -37,3 +37,16 @@ Updated:
+ - `expected/check.json`
+ - `expected/human.txt`
+ - `expected/human-full.txt`
++
++## Pending — rust_slice_table_try_exit (4)
++
++Reason:
++RIPR-SPEC-0108: #7642 matched oracle rows with a proximity-only relation now carry no_call_path on exposed and unknown classes so sibling tests no longer render as unqualified oracle evidence
++
++Command:
++`cargo xtask goldens bless rust_slice_table_try_exit --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
++- `expected/human-full.txt`
+diff --git a/fixtures/rust_slice_table_try_exit/expected/check.json b/fixtures/rust_slice_table_try_exit/expected/check.json
+index 25bc67d6c..caebd9ee4 100644
+--- a/fixtures/rust_slice_table_try_exit/expected/check.json
++++ b/fixtures/rust_slice_table_try_exit/expected/check.json
+@@ -206,7 +206,9 @@
+           "oracle_kind": "exact_value",
+           "oracle": "assert_eq!(average(&[]), 0);",
+           "relation_reason": "same_test_file",
+-          "relation_confidence": "medium"
++          "relation_confidence": "medium",
++          "miss": "no_call_path",
++          "why": "no call to the changed code found; linked by file location only"
+         },
+         {
+           "name": "average_of_nothing_is_zero",
+@@ -216,7 +218,9 @@
+           "oracle_kind": "exact_value",
+           "oracle": "assert_eq!(average(&[2, 4]), 3);",
+           "relation_reason": "same_test_file",
+-          "relation_confidence": "medium"
++          "relation_confidence": "medium",
++          "miss": "no_call_path",
++          "why": "no call to the changed code found; linked by file location only"
+         },
+         {
+           "name": "initial_table",
+@@ -226,7 +230,9 @@
+           "oracle_kind": "exact_value",
+           "oracle": "assert_eq!(initial(name), want, \"{name:?}\");",
+           "relation_reason": "same_test_file",
+-          "relation_confidence": "medium"
++          "relation_confidence": "medium",
++          "miss": "no_call_path",
++          "why": "no call to the changed code found; linked by file location only"
+         },
+         {
+           "name": "ratio_smoke",
+@@ -248,7 +254,9 @@
+           "oracle_kind": "exact_value",
+           "oracle": "assert_eq!(discount(total), want, \"total {total}\");",
+           "relation_reason": "same_test_file",
+-          "relation_confidence": "medium"
++          "relation_confidence": "medium",
++          "miss": "no_call_path",
++          "why": "no call to the changed code found; linked by file location only"
+         }
+       ],
+       "stop_reasons": ["infection_evidence_unknown"],
+diff --git a/fixtures/rust_slice_table_try_exit/expected/human-full.txt b/fixtures/rust_slice_table_try_exit/expected/human-full.txt
+index 209961725..c0c1a1bf4 100644
+--- a/fixtures/rust_slice_table_try_exit/expected/human-full.txt
++++ b/fixtures/rust_slice_table_try_exit/expected/human-full.txt
+@@ -31,9 +31,9 @@ Evidence
+   - discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion
+   - local flow reaches returned value: 0 (line 19)
+   - related test src/lib.rs:57 mean_lies_between_min_and_max uses none unknown oracle; misses: has no assertion
+-  - related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[]), 0);
+-  - related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[2, 4]), 3);
+-  - related test src/lib.rs:49 initial_table uses strong exact value oracle: assert_eq!(initial(name), want, "{name:?}");
++  - related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[]), 0); misses: no call to the changed code found; linked by file location only
++  - related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[2, 4]), 3); misses: no call to the changed code found; linked by file location only
++  - related test src/lib.rs:49 initial_table uses strong exact value oracle: assert_eq!(initial(name), want, "{name:?}"); misses: no call to the changed code found; linked by file location only
+   - related test src/lib.rs:79 ratio_smoke uses none unknown oracle; misses: has no assertion
+   - related tests (showing 5 of 6; more in --format json)
+   - source assertion argument value 0 at line 44
+diff --git a/xtask/src/evidence_promotion.rs b/xtask/src/evidence_promotion.rs
+index 8bf18d4d7..de00556b4 100644
+--- a/xtask/src/evidence_promotion.rs
++++ b/xtask/src/evidence_promotion.rs
+@@ -287,6 +287,10 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
+         kind: String,
+         strength: String,
+         relation_reason: Option<String>,
++        /// Miss-row pin (#7642): `Exact` requires the row to carry exactly
++        /// this miss; `Absent` requires the row to carry no miss at all;
++        /// `None` leaves the miss unconstrained (legacy cases).
++        miss: Option<ExpectedRelatedTestMissConstraint>,
+     },
+     ExpectedClass {
+         class: String,
+@@ -331,6 +335,15 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
+     },
+ }
+ 
++/// Miss constraint for an `expected_related_test` row (#7642).
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub(crate) enum ExpectedRelatedTestMissConstraint {
++    /// The row must carry exactly this miss reason.
++    Exact(String),
++    /// The row must carry no miss at all.
++    Absent,
++}
++
+ fn run_evidence_promotion_pinned_external_cases(
+     corpus_path: &Path,
+     options: &EvidencePromotionHonestyOptions,
+@@ -700,6 +713,7 @@ fn evidence_promotion_parse_assertion(
+                     assertion,
+                     "relation_reason",
+                 )?,
++                miss: evidence_promotion_optional_related_test_miss(case_id, index, assertion)?,
+             })
+         }
+         "expected_class" => {
+@@ -879,6 +893,46 @@ fn evidence_promotion_optional_assertion_string(
+     }
+ }
+ 
++/// The `miss` pin of an `expected_related_test` assertion (#7642): a string
++/// requires exactly that miss on the row; an explicit `null` requires the
++/// row to carry no miss; a missing key leaves the miss unconstrained.
++fn evidence_promotion_optional_related_test_miss(
++    case_id: &str,
++    index: usize,
++    assertion: &Value,
++) -> Result<Option<ExpectedRelatedTestMissConstraint>, String> {
++    match assertion.get("miss") {
++        None => Ok(None),
++        Some(Value::Null) => Ok(Some(ExpectedRelatedTestMissConstraint::Absent)),
++        Some(Value::String(value)) => {
++            const KNOWN_MISSES: [&str; 8] = [
++                "no_call_path",
++                "no_assertion",
++                "assertion_not_observing",
++                "assertion_not_credited",
++                "weak_assertion",
++                "missing_input",
++                "missing_exact_assertion",
++                "observation_unconfirmed",
++            ];
++            if !KNOWN_MISSES.contains(&value.as_str()) {
++                return Err(format!(
++                    "evidence promotion case `{case_id}` assertion {index}: \
++                     expected_related_test.miss must be one of {}, got `{value}`",
++                    KNOWN_MISSES.join(", ")
++                ));
++            }
++            Ok(Some(ExpectedRelatedTestMissConstraint::Exact(
++                value.clone(),
++            )))
++        }
++        Some(_) => Err(format!(
++            "evidence promotion case `{case_id}` assertion {index}: \
++             expected_related_test.miss must be a known miss string or explicit null"
++        )),
++    }
++}
++
+ fn evidence_promotion_required_assertion_usize(
+     case_id: &str,
+     index: usize,
+@@ -1948,6 +2002,7 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
+                 kind,
+                 strength,
+                 relation_reason,
++                miss,
+             } => {
+                 if findings.is_empty() {
+                     violations.push(format!(
+@@ -1972,6 +2027,15 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
+                                         test.get("relation_reason").and_then(Value::as_str)
+                                             == Some(expected)
+                                     })
++                                    && miss.as_ref().is_none_or(|constraint| match constraint {
++                                        ExpectedRelatedTestMissConstraint::Exact(expected) => {
++                                            test.get("miss").and_then(Value::as_str)
++                                                == Some(expected.as_str())
++                                        }
++                                        ExpectedRelatedTestMissConstraint::Absent => {
++                                            test.get("miss").is_none()
++                                        }
++                                    })
+                             })
+                         });
+                     if !matched {
+@@ -1984,8 +2048,17 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
+                             .map_or_else(String::new, |expected| {
+                                 format!(" with relation `{expected}`")
+                             });
++                        let miss_suffix = match miss {
++                            None => String::new(),
++                            Some(ExpectedRelatedTestMissConstraint::Exact(expected)) => {
++                                format!(" with miss `{expected}`")
++                            }
++                            Some(ExpectedRelatedTestMissConstraint::Absent) => {
++                                " with no miss".to_string()
++                            }
++                        };
+                         violations.push(format!(
+-                            "{case_label}: `expected_related_test` requires `{file}:{line} {name}` with oracle `{kind}/{strength}`{relation_suffix} on finding `{finding_id}`"
++                            "{case_label}: `expected_related_test` requires `{file}:{line} {name}` with oracle `{kind}/{strength}`{relation_suffix}{miss_suffix} on finding `{finding_id}`"
+                         ));
+                     }
+                 }
+diff --git a/xtask/src/tests.rs b/xtask/src/tests.rs
+index 601488d70..6ab0f20d9 100644
+--- a/xtask/src/tests.rs
++++ b/xtask/src/tests.rs
+@@ -1471,6 +1471,7 @@ fn evidence_promotion_semantic_assertions_retain_related_test_identity() -> Resu
+             kind: "relational_check".to_string(),
+             strength: "weak".to_string(),
+             relation_reason: None,
++            miss: None,
+         },
+     ];
+     let original: serde_json::Value = serde_json::from_str(include_str!(
+@@ -1534,6 +1535,7 @@ fn evidence_promotion_related_test_relation_pin_is_optional_and_exact() -> Resul
+                 kind: "relational_check".to_string(),
+                 strength: "weak".to_string(),
+                 relation_reason: relation_reason.map(str::to_string),
++                miss: None,
+             },
+         ]
+     };
+diff --git a/xtask/src/tests/discarded_matcher_honesty.rs b/xtask/src/tests/discarded_matcher_honesty.rs
+index 8b23a5e82..c9f991716 100644
+--- a/xtask/src/tests/discarded_matcher_honesty.rs
++++ b/xtask/src/tests/discarded_matcher_honesty.rs
+@@ -52,6 +52,7 @@ fn expectations(class: &str, kind: &str, strength: &str) -> Vec<Assertion> {
+             kind: kind.to_string(),
+             strength: strength.to_string(),
+             relation_reason: None,
++            miss: None,
+         },
+     ];
+     if class == "exposed" {
+diff --git a/xtask/tests/ripr_public_guide_contract.rs b/xtask/tests/ripr_public_guide_contract.rs
+index 3fa2acc12..f162496c9 100644
+--- a/xtask/tests/ripr_public_guide_contract.rs
++++ b/xtask/tests/ripr_public_guide_contract.rs
+@@ -280,19 +280,158 @@ fn hierarchy_feedback_record_row_matches_the_c2_example() -> Result<(), String>
+     Ok(())
+ }
+ 
++/// Live default-help dispatch, not the HELP constant: `ripr`, `--help`, `-h`,
++/// and `help` must share one unqualified first-run command.
++fn canonical_first_run_command(help: &str) -> Result<String, String> {
++    let lf = help.replace("\r\n", "\n");
++    let Some((_, after)) = lf.split_once("Try this first:\n") else {
++        return Err("default help lost its first-run section".to_string());
++    };
++    let section = after.split("\n\n").next().unwrap_or_default();
++    let commands: Vec<_> = section
++        .lines()
++        .map(str::trim)
++        .filter(|line| line.starts_with("ripr "))
++        .collect();
++    let [line] = commands.as_slice() else {
++        return Err(format!(
++            "first run must name exactly one command, got:\n{section}"
++        ));
++    };
++    let command = line.split_once("  ").map(|(part, _)| part).unwrap_or(line);
++    if normalized(command) != "ripr check" {
++        return Err(format!(
++            "first run must be `ripr check` without a fixed base, got `{command}`"
++        ));
++    }
++    if section.contains("--base") {
++        return Err("first-run command must not hardcode --base".to_string());
++    }
++    Ok(command.to_string())
++}
++
++#[test]
++fn rendered_default_help_routes_share_one_canonical_first_run() -> Result<(), String> {
++    for args in [
++        [].as_slice(),
++        ["--help"].as_slice(),
++        ["-h"].as_slice(),
++        ["help"].as_slice(),
++    ] {
++        let stdout = rendered_help(args)?;
++        if stdout.replace("\r\n", "\n").lines().count() > 40 {
++            return Err(format!(
++                "default help {args:?} exceeded the 40-line screen budget"
++            ));
++        }
++        canonical_first_run_command(&stdout)?;
++    }
++    Ok(())
++}
++
+ #[test]
+ fn first_run_guard_does_not_credit_a_later_correct_example() -> Result<(), String> {
+     let changed = "```bash\nripr pilot\n```\nLater:\n```bash\nripr check\n```\n";
+     if first_bash_block(changed)? == "ripr check" {
+         return Err("a later command must not hide a wrong first-run route".to_string());
+     }
+-    let cli = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
+-    let wrong = cli.replacen("ripr check", "ripr pilot", 1);
+-    if first_bash_block(&wrong)? == "ripr check" {
+-        return Err(
+-            "the CLI section credited a later check instead of its first command".to_string(),
+-        );
++    for (surface, section, expected) in [
++        (
++            "README",
++            doc_section(ROOT_README, "## The first useful run")?,
++            "cargo install ripr ripr check",
++        ),
++        (
++            "Quickstart CLI",
++            doc_section(QUICKSTART_DOC, "## CLI First Hour")?,
++            "ripr check",
++        ),
++    ] {
++        for command in [
++            "ripr doctor",
++            "ripr pilot --root .",
++            "ripr check --base origin/main",
++        ] {
++            let wrong = section.replacen("\nripr check\n", &format!("\n{command}\n"), 1);
++            if wrong == section {
++                return Err(format!(
++                    "{surface} negative control did not change a command"
++                ));
++            }
++            if first_bash_block(&wrong)? == expected {
++                return Err(format!(
++                    "{surface} first-run guard accepted `{command}` before a later correct example"
++                ));
++            }
++        }
++    }
++    Ok(())
++}
++
++/// First-run usability: a clean checkout needs a tracked source edit, and a
++/// new file needs `git add -N PATH`. Command-only checks stay green if this
++/// note is deleted (#8179 review 5543109598).
++fn assert_clean_checkout_guidance(surface: &str, text: &str) -> Result<(), String> {
++    let n = normalized(text);
++    for needle in ["tracked source", "git add -N PATH"] {
++        assert_contains(surface, &n, needle)?;
++    }
++    if !(n.contains("clean base") || n.contains("clean checkout")) {
++        return Err(format!(
++            "{surface} lost clean-base-branch first-run guidance"
++        ));
++    }
++    for forbidden in ["is a clean bill of health", "commit your changes first"] {
++        if n.contains(forbidden) {
++            return Err(format!(
++                "{surface} presents `{forbidden}` as first-run guidance"
++            ));
++        }
++    }
++    Ok(())
++}
++
++fn without_clean_checkout_note(text: &str) -> String {
++    text.replace("git add -N PATH", "")
++        .replace("tracked source", "")
++}
++
++#[test]
++fn first_run_surfaces_require_clean_checkout_guidance() -> Result<(), String> {
++    let readme = doc_section(ROOT_README, "## The first useful run")?;
++    let quickstart = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
++    let mut surfaces = vec![
++        ("README first useful run".to_string(), readme),
++        ("Quickstart CLI First Hour".to_string(), quickstart),
++    ];
++    for args in [
++        [].as_slice(),
++        ["--help"].as_slice(),
++        ["-h"].as_slice(),
++        ["help"].as_slice(),
++    ] {
++        surfaces.push((
++            format!("rendered default help {args:?}"),
++            rendered_help(args)?,
++        ));
++    }
++    for (surface, text) in &surfaces {
++        assert_clean_checkout_guidance(surface, text)?;
++        let removed = without_clean_checkout_note(text);
++        if assert_clean_checkout_guidance(surface, &removed).is_ok() {
++            return Err(format!(
++                "{surface} still passed after removing tracked-edit / git add -N PATH guidance"
++            ));
++        }
++        let wrong = format!("{text}\nAn empty diff is a clean bill of health.\n");
++        if assert_clean_checkout_guidance(surface, &wrong).is_ok() {
++            return Err(format!(
++                "{surface} accepted empty-diff-as-clean-bill-of-health guidance"
++            ));
++        }
+     }
++    let help = rendered_help(&["--help"])?;
++    canonical_first_run_command(&without_clean_checkout_note(&help))?;
+     Ok(())
+ }
+ 
