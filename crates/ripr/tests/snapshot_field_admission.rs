@@ -9,7 +9,8 @@ use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const SOURCE: &str = "pub struct Record {\n    pub items: usize,\n}\n\npub fn make_record(count: usize) -> Record {\n    Record { items: count + 0 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use expect_test::expect;\n    #[test]\n    fn snapshot_field() {\n        let record = make_record(2);\n        ASSERTION\n    }\n}\n";
+const SOURCE: &str = "pub struct Record {\n    pub items: usize,\n}\n\npub fn make_record(count: usize) -> Record {\n    Record { items: count + 0 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use expect_test::expect;\n    #[test]\n    fn snapshot_field() {\n        let record = make_record(2);\n        __RIPR_FIELD_SNAPSHOT_ASSERTION__\n    }\n}\n";
+const ASSERTION_MARKER: &str = "__RIPR_FIELD_SNAPSHOT_ASSERTION__";
 const SNAPSHOT: &str = "src/snapshots/field_snapshot_admission__tests__snapshot_field.snap";
 
 struct Fixture {
@@ -18,6 +19,7 @@ struct Fixture {
 
 impl Fixture {
     fn new(assertion: &str, expected: Option<&str>) -> Result<Self, String> {
+        assert_eq!(SOURCE.matches(ASSERTION_MARKER).count(), 1);
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let parent = std::env::temp_dir();
         std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
@@ -37,7 +39,7 @@ impl Fixture {
         .map_err(|error| error.to_string())?;
         std::fs::write(
             fixture.root.join("src/lib.rs"),
-            SOURCE.replace("ASSERTION", assertion),
+            SOURCE.replace(ASSERTION_MARKER, assertion),
         )
         .map_err(|error| error.to_string())?;
         fixture.expected(expected)?;
