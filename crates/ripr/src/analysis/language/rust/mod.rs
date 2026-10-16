@@ -413,11 +413,7 @@ fn declares_skippable_test_target(
 /// `test = false`, unmet `required-features` under cargo defaults, or
 /// `harness = false`. An unavailable probe or an undeclared path is not an
 /// established skip, so the file keeps its credit.
-fn cargo_skips_test_target(
-    root: &Path,
-    path: &Path,
-    inventory: &mut ManifestInventory,
-) -> bool {
+fn cargo_skips_test_target(root: &Path, path: &Path, inventory: &mut ManifestInventory) -> bool {
     inventory.cargo_test_collection_skipped(root, path)
         || matches!(
             inventory.verdict(root, path),
