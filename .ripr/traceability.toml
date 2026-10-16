@@ -12400,6 +12400,9 @@ id = "RIPR-SPEC-0195"
 name = "Repair-attempt store identity and resolver"
 spec = "docs/specs/RIPR-SPEC-0195-repair-attempt-store-identity.md"
 tests = [
+  "crates/ripr/tests/task_first_facade.rs::repair_human_paths_preserve_percent_root_identity",
+  "crates/ripr/tests/task_first_facade.rs::repair_human_paths_preserve_literal_backslash_root_identity",
+  "crates/ripr/src/output/path.rs::tests::repair_path_display_preserves_literal_percent_on_both_hosts",
   "crates/ripr/src/mcp/repair_manifest_root_tests.rs::durable_literal_unix_manifest_reopens_in_selected_root",
   "crates/ripr/src/mcp/repair_manifest_root_tests.rs::durable_literal_unix_manifest_copy_refuses_slash_decoy",
   "crates/ripr/src/app/repair_attempt/store.rs::tests::default_store_is_the_repository_local_directory",
