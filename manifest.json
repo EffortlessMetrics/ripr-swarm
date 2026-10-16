@@ -132,9 +132,19 @@
       "sha256": "2a8c7799415cc247154adfc76865a676a8c43d0747fccb8199a507c50f0d88fe"
     },
     {
+      "path": "final0ffd/late-thread-inventory.json",
+      "bytes": 995,
+      "sha256": "136a11a1a2022b10e3598f1fd6ccd5b024eee5746b454254c4ff7b55e4b38d7d"
+    },
+    {
       "path": "final0ffd/subjects.json",
       "bytes": 3935,
       "sha256": "9be30a2fd77a88e4e73de5859676dce5f1f6abc61fecef1efc9fb307fe600384"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/SETUP.md",
+      "bytes": 1243,
+      "sha256": "4c90f1f38702e085f993ed2c7b8db931f5be15aa86e61a9ca2bb0ccccfabc821"
     },
     {
       "path": "final0ffd/symlink-experiment/alias-native.stderr",

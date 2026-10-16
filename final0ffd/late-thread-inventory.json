@@ -1,0 +1,26 @@
+{
+  "observation": "completion-time permitted thread read after initial empty inventory; no check-run read",
+  "threads": [
+    {
+      "id": "PRRT_kwDOSiSx0c6tFdyL",
+      "comment_id": 4291492127,
+      "path": "crates/ripr/src/analysis/input_boundary.rs",
+      "line": 10,
+      "resolved": false,
+      "outdated": false,
+      "created_at": "2026-10-16T06:17:09Z",
+      "adjudication": "confirmed process-wide sticky failure in internal exact-module harness; nonblocking P2 for current one-command CLI surface"
+    },
+    {
+      "id": "PRRT_kwDOSiSx0c6tFdyR",
+      "comment_id": 4291492134,
+      "path": "crates/ripr/src/analysis/input_boundary.rs",
+      "line": 81,
+      "resolved": false,
+      "outdated": false,
+      "created_at": "2026-10-16T06:17:09Z",
+      "adjudication": "root-alias false refusal independently verified P1; stable in-root-symlink escape premise refuted by pre-analysis custody rejection"
+    }
+  ],
+  "actions": "no bot contact, replies or resolutions"
+}
