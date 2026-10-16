@@ -1,0 +1,11 @@
+   Compiling ripr v0.11.0 (/workspace/probe-shape-reuse/crates/ripr)
+   Compiling xtask v0.1.0 (/workspace/probe-shape-reuse/xtask)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5m 22s
+     Running `/workspace/ripr-swarm/target/debug/xtask check-fast`
+$ cargo fmt --check
+$ cargo clippy --workspace --all-targets -- -D warnings
+   Compiling ripr v0.11.0 (/workspace/probe-shape-reuse/crates/ripr)
+   Compiling repo-policy v0.1.0 (/workspace/probe-shape-reuse/tools/repo-policy)
+    Checking xtask v0.1.0 (/workspace/probe-shape-reuse/xtask)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6m 05s
+check-fast: ran 10 gate(s), skipped 2 (check-support-tiers (not applicable), check-fixture-contracts), base=origin/main, 3 file(s) changed

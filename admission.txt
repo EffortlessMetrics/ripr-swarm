@@ -1,0 +1,6 @@
+Owner: delegated #8201 source/profile maintainer; sole writer for this candidate.
+New worktree: /workspace/probe-shape-reuse; branch codex/probe-shape-walk-reuse; basis origin/main 14afcde1c5e7777ecb5697bdbfb80394dd9e5fb2.
+Git common store: /workspace/ripr-swarm/.git. Shared mutable Cargo target: /workspace/ripr-swarm/target; serialize all Cargo tasks. Local linker temp: worktree/target.
+Proof: /workspace/scratch/probe-shape-reuse; baseline and candidate exact binary copies if distinct are mandatory witnesses for completed small-input comparison. Retain original timeout/profile packets and binaries unchanged for #8201 review; never hard-link mutable artifacts.
+Available24GiB; reserve10GiB; conservative peak additional8GiB (worktree0.3GiB, compilation6GiB, binaries/tests/receipts1.7GiB). No prospective cleanup assumed. Stop if reserve/budget no longer fits. Existing target reused, no cleanup authorized.
+Claim: single traversal reuse of immutable parser descendant nodes for probe-shape categories; preserve complete FileFacts and category order. No semantic owner/cache/include/receiver change.

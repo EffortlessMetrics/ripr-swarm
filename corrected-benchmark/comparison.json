@@ -1,0 +1,62 @@
+{
+  "scope": "comparison-only: debug binaries, Linux, one completed fixed input; no full-repository timeout/qualification inference",
+  "measurement_scope": "wall: full command; CPU/RSS: Linux wait4 root process (including its worker threads), not a sampled process-tree peak",
+  "input_bytes": 147670,
+  "input_hashes": {
+    "src/lib.rs": "81494ab0623c508553141bd432a0b4aa8f1b67f883c95c628978cfda1fe99bff",
+    "Cargo.toml": "32788041e48a6b4e95e25004a9a0fa68bd3d0267a99ebc4d3eafbf0c80ef847e",
+    "Cargo.lock": "2f344195a869a4dbd0966bf62d288415822c04c565530807370fda676fd4ef42",
+    "change.diff": "435499ab51f53e0071a63f8aa184294ec157ae56b8b51abc55c2884d27093c67"
+  },
+  "workload_functions": 96,
+  "functions": 97,
+  "pairs": 3,
+  "deadline_s_per_run": 30,
+  "all_completed": true,
+  "all_stdout_byte_identical": true,
+  "samples": {
+    "baseline": {
+      "wall_s": [
+        4.742160133002471,
+        5.307488528997055,
+        4.394998341002065
+      ],
+      "wall_median_s": 4.742160133002471,
+      "cpu_s": [
+        4.769775,
+        5.327033999999999,
+        4.410962
+      ],
+      "cpu_median_s": 4.769775,
+      "maxrss_kib": [
+        67232,
+        68204,
+        68056
+      ],
+      "peak_maxrss_kib": 68204,
+      "binary_sha256": "e6983dbca3cd15b95948956ad788d8c9e4bf1f89b03afecefac29fc7b40be0fa"
+    },
+    "candidate": {
+      "wall_s": [
+        4.018851767003071,
+        4.746871531999204,
+        4.08817238499978
+      ],
+      "wall_median_s": 4.08817238499978,
+      "cpu_s": [
+        4.044335,
+        4.767304,
+        4.114019000000001
+      ],
+      "cpu_median_s": 4.114019000000001,
+      "maxrss_kib": [
+        68300,
+        68396,
+        68328
+      ],
+      "peak_maxrss_kib": 68396,
+      "binary_sha256": "65b1773d458cdef819f1163c90728ed4e1e46e7851a71565c07a51327ed04e0f"
+    }
+  },
+  "median_wall_reduction_percent": 13.790925014348321
+}

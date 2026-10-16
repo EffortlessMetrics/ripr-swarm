@@ -1,0 +1,40 @@
+[
+  {
+    "label": "baseline-check-fast",
+    "command": [
+      "cargo",
+      "xtask",
+      "check-fast"
+    ],
+    "exit": 0,
+    "elapsed_s": 42.45661820099849
+  },
+  {
+    "label": "baseline-check",
+    "command": [
+      "cargo",
+      "check",
+      "--locked",
+      "-p",
+      "ripr",
+      "--all-targets"
+    ],
+    "exit": 0,
+    "elapsed_s": 210.833398347997
+  },
+  {
+    "label": "baseline-build",
+    "command": [
+      "cargo",
+      "build",
+      "--locked",
+      "-p",
+      "ripr",
+      "--bin",
+      "ripr",
+      "--message-format=json"
+    ],
+    "exit": 0,
+    "elapsed_s": 197.6906224480008
+  }
+]

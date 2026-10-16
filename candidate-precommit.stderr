@@ -1,0 +1,3 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.85s
+     Running `/workspace/ripr-swarm/target/debug/xtask precommit`
+$ cargo fmt --check

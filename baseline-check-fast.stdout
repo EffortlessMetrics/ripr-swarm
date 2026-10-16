@@ -1,0 +1,5 @@
+check-static-language: pass (target/ripr/reports/static-language.md)
+check-command-catalog: pass (target/ripr/reports/command-catalog.md)
+check-generated: pass (target/ripr/reports/generated.md)
+check-generated-clean: pass (target/ripr/reports/generated-clean.md)
+check-lint-policy: pass (target/ripr/reports/lint-policy.md)

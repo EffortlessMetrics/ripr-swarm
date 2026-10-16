@@ -1,0 +1,17 @@
+{
+  "head": "e22fc35e53c40f273dcf0981ce81cacfc15236a7",
+  "total_parser_tests_passed": 53,
+  "new_full_facts_tests": [
+    "analysis::syntax::ra::probe_shape_walk_tests::probe_walk_full_facts_bodyless_methods_and_empty_bodies",
+    "analysis::syntax::ra::probe_shape_walk_tests::probe_walk_full_facts_equal_sort_keys_keep_first_span",
+    "analysis::syntax::ra::probe_shape_walk_tests::probe_walk_full_facts_all_shape_categories",
+    "analysis::syntax::ra::probe_shape_walk_tests::probe_walk_full_facts_macro_opacity_comments_and_same_line_nodes",
+    "analysis::syntax::ra::probe_shape_walk_tests::probe_walk_full_facts_multiline_match_metadata_and_unicode",
+    "analysis::syntax::ra::probe_shape_walk_tests::probe_walk_full_facts_parser_refusal_parity",
+    "analysis::syntax::ra::probe_shape_walk_tests::probe_walk_full_facts_nested_return_targets_and_duplicate_shapes",
+    "analysis::syntax::ra::probe_shape_walk_tests::probe_walk_full_facts_real_sources"
+  ],
+  "failed": 0,
+  "ignored": 0,
+  "execution_s": 5.66
+}

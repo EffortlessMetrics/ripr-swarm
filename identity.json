@@ -1,0 +1,9 @@
+{
+  "head": "e22fc35e53c40f273dcf0981ce81cacfc15236a7",
+  "tree": "ab2cb9eb86339ba146150e8568fbd832d8a00f00",
+  "base": "14afcde1c5e7777ecb5697bdbfb80394dd9e5fb2",
+  "branch": "codex/probe-shape-walk-reuse",
+  "timestamp_utc": "2026-10-16T12:06:22Z",
+  "prior_full_repo_profile": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8201#issuecomment-6214210188",
+  "claim": "Probe-shape descendant traversal reuse only; independent review and hosted qualification outstanding."
+}

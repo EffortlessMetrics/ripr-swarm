@@ -1,0 +1,137 @@
+[
+  {
+    "case": "boundary",
+    "variant": "baseline",
+    "argv": [
+      "/workspace/scratch/probe-shape-reuse/baseline-ripr",
+      "check",
+      "--root",
+      "/workspace/probe-shape-reuse/fixtures/boundary_gap/input",
+      "--diff",
+      "/workspace/probe-shape-reuse/fixtures/boundary_gap/diff.patch",
+      "--format",
+      "json",
+      "--mode",
+      "ready"
+    ],
+    "exit": 0,
+    "stdout_sha256": "2a87497ea2a96712fab9a99c5a1d13c6d03751ef84c5d7a7e832e6efe47f7984",
+    "findings": 1,
+    "artifact_removed": false
+  },
+  {
+    "case": "boundary",
+    "variant": "candidate",
+    "argv": [
+      "/workspace/scratch/probe-shape-reuse/candidate-ripr",
+      "check",
+      "--root",
+      "/workspace/probe-shape-reuse/fixtures/boundary_gap/input",
+      "--diff",
+      "/workspace/probe-shape-reuse/fixtures/boundary_gap/diff.patch",
+      "--format",
+      "json",
+      "--mode",
+      "ready"
+    ],
+    "exit": 0,
+    "stdout_sha256": "2a87497ea2a96712fab9a99c5a1d13c6d03751ef84c5d7a7e832e6efe47f7984",
+    "findings": 1,
+    "artifact_removed": false
+  },
+  {
+    "case": "boundary",
+    "semantic_equal_after_only_top_level_artifact_removal": true,
+    "exact_stdout_equal": true
+  },
+  {
+    "case": "roles",
+    "variant": "baseline",
+    "argv": [
+      "/workspace/scratch/probe-shape-reuse/baseline-ripr",
+      "check",
+      "--root",
+      "/workspace/probe-shape-reuse/fixtures/source_role_harness_suppression/input",
+      "--diff",
+      "/workspace/probe-shape-reuse/fixtures/source_role_harness_suppression/diff.patch",
+      "--format",
+      "json",
+      "--mode",
+      "ready"
+    ],
+    "exit": 0,
+    "stdout_sha256": "5d01998642fea174b9a9d1114bc38484f321b36494fd15e48c223c2355e19557",
+    "findings": 1,
+    "artifact_removed": false
+  },
+  {
+    "case": "roles",
+    "variant": "candidate",
+    "argv": [
+      "/workspace/scratch/probe-shape-reuse/candidate-ripr",
+      "check",
+      "--root",
+      "/workspace/probe-shape-reuse/fixtures/source_role_harness_suppression/input",
+      "--diff",
+      "/workspace/probe-shape-reuse/fixtures/source_role_harness_suppression/diff.patch",
+      "--format",
+      "json",
+      "--mode",
+      "ready"
+    ],
+    "exit": 0,
+    "stdout_sha256": "5d01998642fea174b9a9d1114bc38484f321b36494fd15e48c223c2355e19557",
+    "findings": 1,
+    "artifact_removed": false
+  },
+  {
+    "case": "roles",
+    "semantic_equal_after_only_top_level_artifact_removal": true,
+    "exact_stdout_equal": true
+  },
+  {
+    "case": "include",
+    "variant": "baseline",
+    "argv": [
+      "/workspace/scratch/probe-shape-reuse/baseline-ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/probe-shape-reuse/include-control",
+      "--diff",
+      "/workspace/scratch/probe-shape-reuse/include-control/change.diff",
+      "--format",
+      "json",
+      "--mode",
+      "ready"
+    ],
+    "exit": 0,
+    "stdout_sha256": "b7916a4a6c194ac2425fb1102bea07be1255d1e7c0aae45ebea7f27ca4084ff6",
+    "findings": 2,
+    "artifact_removed": false
+  },
+  {
+    "case": "include",
+    "variant": "candidate",
+    "argv": [
+      "/workspace/scratch/probe-shape-reuse/candidate-ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/probe-shape-reuse/include-control",
+      "--diff",
+      "/workspace/scratch/probe-shape-reuse/include-control/change.diff",
+      "--format",
+      "json",
+      "--mode",
+      "ready"
+    ],
+    "exit": 0,
+    "stdout_sha256": "b7916a4a6c194ac2425fb1102bea07be1255d1e7c0aae45ebea7f27ca4084ff6",
+    "findings": 2,
+    "artifact_removed": false
+  },
+  {
+    "case": "include",
+    "semantic_equal_after_only_top_level_artifact_removal": true,
+    "exact_stdout_equal": true
+  }
+]

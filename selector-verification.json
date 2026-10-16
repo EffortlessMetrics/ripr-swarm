@@ -1,0 +1,17 @@
+{
+  "base": "14afcde1c5e7777ecb5697bdbfb80394dd9e5fb2",
+  "head": "e22fc35e53c40f273dcf0981ce81cacfc15236a7",
+  "independent_paths": [
+    "crates/ripr/src/analysis/syntax/ra.rs",
+    "crates/ripr/src/analysis/syntax/ra/probe_shape_walk_tests.rs",
+    "crates/ripr/src/analysis/syntax/ra/probe_shapes.rs"
+  ],
+  "expected_path_count": 3,
+  "observed_check_fast_path_count": 3,
+  "check_fast_exit": 0,
+  "selected_gates": 10,
+  "inapplicable": [
+    "check-support-tiers",
+    "check-fixture-contracts"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "command": [
+    "rustc",
+    "--edition",
+    "2024",
+    "--crate-name",
+    "probe_walk_workload",
+    "--crate-type",
+    "lib",
+    "--emit",
+    "metadata",
+    "small-workload/src/lib.rs",
+    "-o",
+    "workload.rmeta"
+  ],
+  "toolchain": "1.95.0",
+  "exit": 0,
+  "input_sha256": "81494ab0623c508553141bd432a0b4aa8f1b67f883c95c628978cfda1fe99bff"
+}

@@ -1,0 +1,43 @@
+{
+  "source": "14afcde1c5e7777ecb5697bdbfb80394dd9e5fb2",
+  "artifact": {
+    "reason": "compiler-artifact",
+    "package_id": "path+file:///workspace/probe-shape-reuse/crates/ripr#0.11.0",
+    "manifest_path": "/workspace/probe-shape-reuse/crates/ripr/Cargo.toml",
+    "target": {
+      "kind": [
+        "bin"
+      ],
+      "crate_types": [
+        "bin"
+      ],
+      "name": "ripr",
+      "src_path": "/workspace/probe-shape-reuse/crates/ripr/src/main.rs",
+      "edition": "2024",
+      "doc": true,
+      "doctest": false,
+      "test": true
+    },
+    "profile": {
+      "opt_level": "0",
+      "debuginfo": "line-tables-only",
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": false
+    },
+    "features": [
+      "default",
+      "lang-python",
+      "lang-rust",
+      "lang-typescript"
+    ],
+    "filenames": [
+      "/workspace/ripr-swarm/target/debug/ripr"
+    ],
+    "executable": "/workspace/ripr-swarm/target/debug/ripr",
+    "fresh": false
+  },
+  "sha256": "e6983dbca3cd15b95948956ad788d8c9e4bf1f89b03afecefac29fc7b40be0fa",
+  "tree": "c3574f46597330e3cf168041ba3c0e05c434e7c5",
+  "version": "ripr 0.11.0 (14afcde1c5e7777ecb5697bdbfb80394dd9e5fb2)"
+}

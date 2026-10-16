@@ -1,0 +1,12 @@
+{
+  "14afcde1c5e7777ecb5697bdbfb80394dd9e5fb2": {
+    "function_sha256": "6067180f738854cce27c4ff20f1a4943aa56a5d91e155d744e1bd98818ce7172",
+    "bytes": 9168,
+    "descendant_walks": 9
+  },
+  "7995ea78d776692085f4f7035ce4aaa9b63be782": {
+    "function_sha256": "6067180f738854cce27c4ff20f1a4943aa56a5d91e155d744e1bd98818ce7172",
+    "bytes": 9168,
+    "descendant_walks": 9
+  }
+}

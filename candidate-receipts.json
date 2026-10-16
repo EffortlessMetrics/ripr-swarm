@@ -1,0 +1,57 @@
+[
+  {
+    "label": "candidate-units",
+    "head": "e22fc35e53c40f273dcf0981ce81cacfc15236a7",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--lib",
+      "analysis::syntax::ra::",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "elapsed_s": 471.81698314299865
+  },
+  {
+    "label": "candidate-build",
+    "head": "e22fc35e53c40f273dcf0981ce81cacfc15236a7",
+    "command": [
+      "cargo",
+      "build",
+      "--locked",
+      "-p",
+      "ripr",
+      "--bin",
+      "ripr",
+      "--message-format=json"
+    ],
+    "exit": 0,
+    "elapsed_s": 213.5708556210011
+  },
+  {
+    "label": "candidate-check-fast",
+    "head": "e22fc35e53c40f273dcf0981ce81cacfc15236a7",
+    "command": [
+      "cargo",
+      "xtask",
+      "check-fast"
+    ],
+    "exit": 0,
+    "elapsed_s": 1191.5181727649979
+  },
+  {
+    "label": "candidate-precommit",
+    "head": "e22fc35e53c40f273dcf0981ce81cacfc15236a7",
+    "command": [
+      "cargo",
+      "xtask",
+      "precommit"
+    ],
+    "exit": 0,
+    "elapsed_s": 397.6696826459993
+  }
+]

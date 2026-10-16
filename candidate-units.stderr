@@ -1,0 +1,3 @@
+   Compiling ripr v0.11.0 (/workspace/probe-shape-reuse/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7m 45s
+     Running unittests src/lib.rs (/workspace/ripr-swarm/target/debug/deps/ripr-a6dce9f917d6369e)

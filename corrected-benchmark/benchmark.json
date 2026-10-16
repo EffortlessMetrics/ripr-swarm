@@ -1,0 +1,188 @@
+{
+  "input_hashes": {
+    "src/lib.rs": "81494ab0623c508553141bd432a0b4aa8f1b67f883c95c628978cfda1fe99bff",
+    "Cargo.toml": "32788041e48a6b4e95e25004a9a0fa68bd3d0267a99ebc4d3eafbf0c80ef847e",
+    "Cargo.lock": "2f344195a869a4dbd0966bf62d288415822c04c565530807370fda676fd4ef42",
+    "change.diff": "435499ab51f53e0071a63f8aa184294ec157ae56b8b51abc55c2884d27093c67"
+  },
+  "input_sha256": "81494ab0623c508553141bd432a0b4aa8f1b67f883c95c628978cfda1fe99bff",
+  "input_bytes": 147670,
+  "functions": 97,
+  "workload_functions": 96,
+  "records": [
+    {
+      "label": "0-baseline",
+      "argv": [
+        "/workspace/scratch/probe-shape-reuse/baseline-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/probe-shape-reuse/small-workload",
+        "--diff",
+        "/workspace/scratch/probe-shape-reuse/small-workload/change.diff",
+        "--format",
+        "json",
+        "--mode",
+        "ready"
+      ],
+      "environment": {
+        "RAYON_NUM_THREADS": "4",
+        "RUSTUP_TOOLCHAIN": "1.95.0",
+        "RIPR_CACHE_DIR": "/workspace/scratch/probe-shape-reuse/corrected-benchmark/bench-cache-0-baseline",
+        "profiling_disabled": true
+      },
+      "elapsed_s": 4.742160133002471,
+      "cpu_s": 4.769775,
+      "maxrss_kib": 67232,
+      "exit": 0,
+      "censored": false,
+      "stdout_sha256": "8913b4bea8b6e675e20dddd0557db39ae91baf7d9525014a7091a0a9a85f7172",
+      "binary_sha256": "e6983dbca3cd15b95948956ad788d8c9e4bf1f89b03afecefac29fc7b40be0fa",
+      "remaining_owned_processes": {}
+    },
+    {
+      "label": "0-candidate",
+      "argv": [
+        "/workspace/scratch/probe-shape-reuse/candidate-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/probe-shape-reuse/small-workload",
+        "--diff",
+        "/workspace/scratch/probe-shape-reuse/small-workload/change.diff",
+        "--format",
+        "json",
+        "--mode",
+        "ready"
+      ],
+      "environment": {
+        "RAYON_NUM_THREADS": "4",
+        "RUSTUP_TOOLCHAIN": "1.95.0",
+        "RIPR_CACHE_DIR": "/workspace/scratch/probe-shape-reuse/corrected-benchmark/bench-cache-0-candidate",
+        "profiling_disabled": true
+      },
+      "elapsed_s": 4.018851767003071,
+      "cpu_s": 4.044335,
+      "maxrss_kib": 68300,
+      "exit": 0,
+      "censored": false,
+      "stdout_sha256": "8913b4bea8b6e675e20dddd0557db39ae91baf7d9525014a7091a0a9a85f7172",
+      "binary_sha256": "65b1773d458cdef819f1163c90728ed4e1e46e7851a71565c07a51327ed04e0f",
+      "remaining_owned_processes": {}
+    },
+    {
+      "label": "1-candidate",
+      "argv": [
+        "/workspace/scratch/probe-shape-reuse/candidate-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/probe-shape-reuse/small-workload",
+        "--diff",
+        "/workspace/scratch/probe-shape-reuse/small-workload/change.diff",
+        "--format",
+        "json",
+        "--mode",
+        "ready"
+      ],
+      "environment": {
+        "RAYON_NUM_THREADS": "4",
+        "RUSTUP_TOOLCHAIN": "1.95.0",
+        "RIPR_CACHE_DIR": "/workspace/scratch/probe-shape-reuse/corrected-benchmark/bench-cache-1-candidate",
+        "profiling_disabled": true
+      },
+      "elapsed_s": 4.746871531999204,
+      "cpu_s": 4.767304,
+      "maxrss_kib": 68396,
+      "exit": 0,
+      "censored": false,
+      "stdout_sha256": "8913b4bea8b6e675e20dddd0557db39ae91baf7d9525014a7091a0a9a85f7172",
+      "binary_sha256": "65b1773d458cdef819f1163c90728ed4e1e46e7851a71565c07a51327ed04e0f",
+      "remaining_owned_processes": {}
+    },
+    {
+      "label": "1-baseline",
+      "argv": [
+        "/workspace/scratch/probe-shape-reuse/baseline-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/probe-shape-reuse/small-workload",
+        "--diff",
+        "/workspace/scratch/probe-shape-reuse/small-workload/change.diff",
+        "--format",
+        "json",
+        "--mode",
+        "ready"
+      ],
+      "environment": {
+        "RAYON_NUM_THREADS": "4",
+        "RUSTUP_TOOLCHAIN": "1.95.0",
+        "RIPR_CACHE_DIR": "/workspace/scratch/probe-shape-reuse/corrected-benchmark/bench-cache-1-baseline",
+        "profiling_disabled": true
+      },
+      "elapsed_s": 5.307488528997055,
+      "cpu_s": 5.327033999999999,
+      "maxrss_kib": 68204,
+      "exit": 0,
+      "censored": false,
+      "stdout_sha256": "8913b4bea8b6e675e20dddd0557db39ae91baf7d9525014a7091a0a9a85f7172",
+      "binary_sha256": "e6983dbca3cd15b95948956ad788d8c9e4bf1f89b03afecefac29fc7b40be0fa",
+      "remaining_owned_processes": {}
+    },
+    {
+      "label": "2-baseline",
+      "argv": [
+        "/workspace/scratch/probe-shape-reuse/baseline-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/probe-shape-reuse/small-workload",
+        "--diff",
+        "/workspace/scratch/probe-shape-reuse/small-workload/change.diff",
+        "--format",
+        "json",
+        "--mode",
+        "ready"
+      ],
+      "environment": {
+        "RAYON_NUM_THREADS": "4",
+        "RUSTUP_TOOLCHAIN": "1.95.0",
+        "RIPR_CACHE_DIR": "/workspace/scratch/probe-shape-reuse/corrected-benchmark/bench-cache-2-baseline",
+        "profiling_disabled": true
+      },
+      "elapsed_s": 4.394998341002065,
+      "cpu_s": 4.410962,
+      "maxrss_kib": 68056,
+      "exit": 0,
+      "censored": false,
+      "stdout_sha256": "8913b4bea8b6e675e20dddd0557db39ae91baf7d9525014a7091a0a9a85f7172",
+      "binary_sha256": "e6983dbca3cd15b95948956ad788d8c9e4bf1f89b03afecefac29fc7b40be0fa",
+      "remaining_owned_processes": {}
+    },
+    {
+      "label": "2-candidate",
+      "argv": [
+        "/workspace/scratch/probe-shape-reuse/candidate-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/probe-shape-reuse/small-workload",
+        "--diff",
+        "/workspace/scratch/probe-shape-reuse/small-workload/change.diff",
+        "--format",
+        "json",
+        "--mode",
+        "ready"
+      ],
+      "environment": {
+        "RAYON_NUM_THREADS": "4",
+        "RUSTUP_TOOLCHAIN": "1.95.0",
+        "RIPR_CACHE_DIR": "/workspace/scratch/probe-shape-reuse/corrected-benchmark/bench-cache-2-candidate",
+        "profiling_disabled": true
+      },
+      "elapsed_s": 4.08817238499978,
+      "cpu_s": 4.114019000000001,
+      "maxrss_kib": 68328,
+      "exit": 0,
+      "censored": false,
+      "stdout_sha256": "8913b4bea8b6e675e20dddd0557db39ae91baf7d9525014a7091a0a9a85f7172",
+      "binary_sha256": "65b1773d458cdef819f1163c90728ed4e1e46e7851a71565c07a51327ed04e0f",
+      "remaining_owned_processes": {}
+    }
+  ]
+}
