@@ -71,6 +71,10 @@ pub(crate) enum DoctorFirstCommand {
     /// and would hit the same error. Name the config correction, not a
     /// check command (#8168).
     InvalidConfig,
+    /// A cargo_toml or required-runtime failure already named its `Fix:`.
+    /// `ripr check` would hit the same prerequisite, so name the repairs
+    /// above rather than a check command (#8168).
+    FailedPrerequisites,
     SavedDiff,
     Worktree,
     DefaultCheck,
@@ -137,6 +141,19 @@ impl DoctorFirstCommand {
             // #5259: the work tree is real but `HEAD` is unborn, so no base
             // can resolve; the diff-scoped first commands would all fail.
             Self::UnbornHead
+        } else if report
+            .checks
+            .iter()
+            .any(|check| check.name == "cargo_toml" && check.status == DoctorCheckStatus::Fail)
+            || report
+                .runtime_probes
+                .iter()
+                .any(|probe| probe.required && probe.status == DoctorStatus::Fail)
+        {
+            // Missing Cargo.toml and a required runtime are named on the
+            // bang lines. DefaultCheck / Worktree would still print
+            // `ripr check`, which hits the same failure (#8168).
+            Self::FailedPrerequisites
         } else {
             Self::resolve(true, dirty_worktree)
         }
@@ -150,7 +167,11 @@ impl DoctorFirstCommand {
             Self::SavedDiff => Some(Self::SAVED_DIFF_LINE),
             Self::Worktree => Some(Self::WORKTREE_LINE),
             Self::DefaultCheck => Some(Self::DEFAULT_LINE),
-            Self::MissingRoot | Self::OutsideGit | Self::UnbornHead | Self::InvalidConfig => None,
+            Self::MissingRoot
+            | Self::OutsideGit
+            | Self::UnbornHead
+            | Self::InvalidConfig
+            | Self::FailedPrerequisites => None,
         }
     }
 
@@ -195,6 +216,10 @@ impl DoctorFirstCommand {
             }
             Self::InvalidConfig => vec![
                 "- Recommended first command: correct `ripr.toml` so it loads, then rerun `ripr doctor`"
+                    .to_string(),
+            ],
+            Self::FailedPrerequisites => vec![
+                "- Recommended first command: fix the `!` checks above, then rerun `ripr doctor`"
                     .to_string(),
             ],
             Self::OutsideGit => {
@@ -4999,6 +5024,50 @@ mod tests {
             "invalid config outranks a dirty worktree first command"
         );
         assert!(DoctorFirstCommand::InvalidConfig.command_line().is_none());
+
+        let mut missing_manifest = DoctorReport::new(".");
+        pass(&mut missing_manifest, "root_directory");
+        pass(&mut missing_manifest, "tool_git");
+        pass(&mut missing_manifest, "git_repository");
+        missing_manifest.add_check(
+            "cargo_toml",
+            DoctorStatus::Fail,
+            Some("no Cargo.toml found".to_string()),
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&missing_manifest, || false),
+            DoctorFirstCommand::FailedPrerequisites,
+            "a cargo_toml failure must not recommend ripr check"
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&missing_manifest, || true),
+            DoctorFirstCommand::FailedPrerequisites,
+            "a cargo_toml failure outranks a dirty worktree first command"
+        );
+        assert!(
+            DoctorFirstCommand::FailedPrerequisites
+                .command_line()
+                .is_none()
+        );
+
+        let mut runtime_fail = DoctorReport::new(".");
+        pass(&mut runtime_fail, "root_directory");
+        pass(&mut runtime_fail, "tool_git");
+        pass(&mut runtime_fail, "git_repository");
+        pass(&mut runtime_fail, "cargo_toml");
+        runtime_fail.add_runtime_probe(
+            "python",
+            "python3",
+            DoctorStatus::Fail,
+            "python3 not available",
+            true,
+            "install python3",
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&runtime_fail, || false),
+            DoctorFirstCommand::FailedPrerequisites,
+            "a required runtime failure must not recommend ripr check"
+        );
     }
 
     /// #5259: a repository with no commits passes `git_repository` (it is a

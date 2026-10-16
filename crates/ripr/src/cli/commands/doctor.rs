@@ -536,6 +536,15 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         &environment.facts.detected_languages,
         &environment.facts.unanalyzed_source_languages,
     ));
+    // Compact keeps the ignored-[perl].executable disclosure: the full
+    // Perl preview dump is verbose-only, but this line is a safety
+    // contract (`repo_config_perl_executable_runs_only_with_user_opt_in`).
+    if !verbose
+        && let Some(line) =
+            ignored_perl_executable_compact_line(environment.facts.perl_preview.as_ref())
+    {
+        lines.push(line);
+    }
     let cache = &environment.facts.cache;
     let cache_loc = if cache.relocated_by_env {
         format!("{} (RIPR_CACHE_DIR active)", cache.cache_dir)
@@ -605,6 +614,16 @@ Point RIPR_CACHE_DIR at a writable directory."
             {
                 lines.push(
                     "- Safe next action: correct `ripr.toml` so it loads; no check command can run until it does"
+                        .to_string(),
+                );
+            } else if !passed
+                && matches!(
+                    first,
+                    output::doctor::DoctorFirstCommand::FailedPrerequisites
+                )
+            {
+                lines.push(
+                    "- Safe next action: fix the `!` checks above; no check command can run until they pass"
                         .to_string(),
                 );
             }
@@ -858,6 +877,11 @@ fn doctor_start_here_lines(
                         "- Safe next action: correct `ripr.toml` so it loads; no check command can run until it does"
                             .to_string(),
                     );
+                } else if matches!(first, output::doctor::DoctorFirstCommand::FailedPrerequisites) {
+                    lines.push(
+                        "- Safe next action: fix the `!` checks above; no check command can run until they pass"
+                            .to_string(),
+                    );
                 } else {
                     lines.push(
                         "- Safe next action: run the recommended first command below; it produces the evidence the packet is composed from"
@@ -906,7 +930,8 @@ fn doctor_start_here_lines(
         output::doctor::DoctorFirstCommand::SavedDiff => {}
         output::doctor::DoctorFirstCommand::MissingRoot
         | output::doctor::DoctorFirstCommand::OutsideGit
-        | output::doctor::DoctorFirstCommand::InvalidConfig => {}
+        | output::doctor::DoctorFirstCommand::InvalidConfig
+        | output::doctor::DoctorFirstCommand::FailedPrerequisites => {}
         // #5259: the recommended line above already names the commit-first
         // repair; the advisory `git_head` check line carries the same state.
         output::doctor::DoctorFirstCommand::UnbornHead => {}
@@ -1852,6 +1877,21 @@ fn path_command_candidates(
 /// Conservative throughout: every line reports only what the static layer can
 /// determine. No claim is made that the producer works end-to-end (that is the
 /// two-binary proof, item 3). Prints only when Perl markers are detected.
+/// Shared wording for a refused `[perl].executable`. Compact and verbose
+/// both include this exact phrase so the opt-in smoke test cannot pass one
+/// surface and miss the other.
+fn ignored_perl_executable_disclosure(refused: &str) -> String {
+    format!("ignoring [perl].executable `{refused}` from ripr.toml (not run)")
+}
+
+fn ignored_perl_executable_compact_line(
+    preview: Option<&output::doctor::DoctorPerlPreview>,
+) -> Option<String> {
+    preview
+        .and_then(|preview| preview.ignored_configured_executable.as_deref())
+        .map(|refused| format!("- {}", ignored_perl_executable_disclosure(refused)))
+}
+
 /// The Perl preview lines, in the order the human screen prints them. Rendered
 /// from the same typed value the JSON `perl_preview` object serializes, so the
 /// two surfaces cannot drift.
@@ -1888,7 +1928,8 @@ fn perl_preview_lines(preview: &output::doctor::DoctorPerlPreview) -> Vec<String
     // the configured path was not probed.
     if let Some(refused) = &preview.ignored_configured_executable {
         lines.push(format!(
-            "executable: ignoring [perl].executable `{refused}` from ripr.toml (not run); set {}=1 to trust it",
+            "executable: {}; set {}=1 to trust it",
+            ignored_perl_executable_disclosure(refused),
             crate::config::PERL_EXECUTABLE_OPT_IN_ENV
         ));
     }
@@ -2959,6 +3000,99 @@ mod tests {
         assert!(
             !text.contains("python3 not available — install python3"),
             "required runtime fail must not bury the fix on the bang line:\n{text}"
+        );
+        assert!(
+            !text.contains("Recommended first command: ripr check"),
+            "a required runtime failure must not recommend a check that hits the same gap:\n{text}"
+        );
+        assert!(
+            text.contains("fix the `!` checks above, then rerun `ripr doctor`"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn cargo_toml_failure_suppresses_check() {
+        let mut report = passing_report();
+        report.add_check(
+            "cargo_toml",
+            output::doctor::DoctorStatus::Fail,
+            Some(
+                "no Cargo.toml found at .; pass `--root <dir>` to target a crate or run `cargo init` in the selected root to create a package"
+                    .to_string(),
+            ),
+        );
+        report.checks.retain(|check| {
+            check.name != "cargo_toml" || check.status == output::doctor::DoctorCheckStatus::Fail
+        });
+        report.status = output::doctor::DoctorStatus::Fail;
+        let environment = empty_environment();
+        let lines = render_screen(&report, &environment, false, false);
+        assert!(
+            lines.len() <= DOCTOR_HUMAN_SCREEN_BUDGET,
+            "cargo_toml failure must still fit 80x24 ({} lines):\n{}",
+            lines.len(),
+            lines.join("\n")
+        );
+        let text = lines.join("\n");
+        assert!(text.contains("! no Cargo.toml found at ."), "{text}");
+        assert!(text.contains("  Fix: pass `--root <dir>`"), "{text}");
+        assert!(
+            !text.contains("Recommended first command: ripr check"),
+            "a missing Cargo.toml must not recommend a check that will fail the same way:\n{text}"
+        );
+        assert!(
+            text.contains("fix the `!` checks above, then rerun `ripr doctor`"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn compact_discloses_ignored_perl_executable() {
+        let report = passing_report();
+        let mut environment = empty_environment();
+        environment.facts.perl_preview = Some(output::doctor::DoctorPerlPreview {
+            pm_files: 1,
+            pl_files: 0,
+            t_files: 0,
+            adapter_compiled: false,
+            producer: Some("perl-ripr-facts".to_string()),
+            ignored_configured_executable: Some("sh".to_string()),
+            exporter: output::doctor::DoctorPerlExporter {
+                state: output::doctor::DoctorPerlExporterState::NotFound,
+                executable: None,
+                version: None,
+            },
+            expected_schema: "1".to_string(),
+            test_roots: Vec::new(),
+            frameworks: Vec::new(),
+            runners: Vec::new(),
+            next_command: "next".to_string(),
+        });
+        let compact = render_screen(&report, &environment, false, true);
+        assert!(
+            compact.len() <= DOCTOR_HUMAN_SCREEN_BUDGET,
+            "perl-executable disclosure must still fit 80x24 ({} lines):\n{}",
+            compact.len(),
+            compact.join("\n")
+        );
+        let text = compact.join("\n");
+        assert!(
+            text.contains("ignoring [perl].executable `sh` from ripr.toml (not run)"),
+            "compact doctor must keep the opt-in refusal visible:\n{text}"
+        );
+        assert!(
+            !text.contains("- Perl preview:"),
+            "full Perl preview stays behind --verbose:\n{text}"
+        );
+        let verbose = render_screen(&report, &environment, true, true).join("\n");
+        assert!(
+            verbose.contains("ignoring [perl].executable `sh` from ripr.toml (not run)"),
+            "verbose must still name the refused executable:\n{verbose}"
+        );
+        assert!(
+            verbose.contains("- Perl preview:"),
+            "verbose restores the Perl preview dump:\n{verbose}"
         );
     }
 
