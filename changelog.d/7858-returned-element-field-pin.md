@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A field built inside an array the owner returns no longer reads as a missing field-value discriminator when a test pins that element alone, by its literal index (`assert_eq!(rows[1].total, 33)`) or through an `.any(|r| r.total == 33)` membership that no other element can satisfy. The credit applies only in a closed workspace: no outside dependencies, no macro definitions and no unscanned modules. A membership another element may already satisfy, such as `[Row { total: 33 }, Row { total: a + b }]`, keeps the gap (RIPR-SPEC-0225 decision 9, #7858).

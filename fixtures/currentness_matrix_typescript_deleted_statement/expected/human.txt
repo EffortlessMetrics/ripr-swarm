@@ -5,25 +5,25 @@ config: <cwd>/fixtures/currentness_matrix_typescript_deleted_statement/input/rip
 
 Summary: 3 probe(s), 3 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed
 
-Changed file(s) by language: typescript: 1.
+Changed file(s) by language: typescript = 1
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 8 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 8 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s)
 
 Start here:
   State: preview language, advisory only (preview_limited)
-  Safe next action: preview-language evidence is advisory; a related test appears to observe this change, so there is no repair to make; verify independently before relying on it.
+  Safe next action: preview-language evidence is advisory; a related test appears to observe this change, so there is no repair to make; verify independently before relying on it
   File: src/cart.ts:17
   Language: typescript
   Language status: preview
   Static exposure: exposed (info, confidence 0.60)
   Changed behavior: return x * 2;
-  Discriminator (observed, advisory): Related test reaches `doubled` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.
+  Discriminator (observed, advisory): Related test reaches `doubled` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator
   Related test: tests/cart.test.ts:11 doubled doubles
-  Next step: TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
+  Next step — TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator yes
     - reach yes: 1 related test(s) found for owner `doubled`
-    - infection unknown: TypeScript preview adapter does not yet model infection.
+    - infection unknown: TypeScript preview adapter does not yet model infection
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:

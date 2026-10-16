@@ -4,8 +4,8 @@ root: fixtures/human_full_shared_parse_port/input
 
 Summary: 7 probe(s), 0 exposed, 7 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 7 of 7 finding(s) unsuppressed
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 3 changed line(s), 2 candidate line(s), 7 probe(s), 7 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 3 changed line(s), 2 candidate line(s), 7 probe(s), 7 finding(s)
 
 Shared evidence and guidance
   E1 [findings 1, 4, 6, 7]: reach yes: Related tests appear to reach parse_port: parses_valid_port
@@ -15,7 +15,7 @@ Shared evidence and guidance
   E5 [findings 1, 4, 6, 7]: related test src/lib.rs:14 parses_valid_port uses strong exact value oracle: assert_eq!(parse_port("8080").unwrap(), 8080); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   E6 [findings 1, 4, 6, 7]: source assertion argument value 8080 at line 15
   E7 [findings 1, 4, 6, 7]: source function argument value input = "8080" at line 15
-  N1 [findings 1, 7]: Strengthen the related assertion so it discriminates the changed behavior.
+  N1 [findings 1, 7]: Strengthen the related assertion so it discriminates the changed behavior
   E8 [findings 2, 5]: reach yes: Related tests appear to reach parse_port: parses_valid_port
   E9 [findings 2, 5]: infection yes: Reachable tests can plausibly activate this changed behavior
   E10 [findings 2, 5]: observation yes: A related test observes a value or effect near the changed behavior
@@ -72,7 +72,7 @@ Evidence
 Weakness
   - No strong discriminator was detected
 Next step
-  - Strengthen the related assertion so it discriminates the changed behavior.
+  - Strengthen the related assertion so it discriminates the changed behavior
 Drill in:
   ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:match_arm:35759cb1
   ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:match_arm:35759cb1
@@ -102,7 +102,7 @@ Evidence
 Weakness
   - missing discriminator p == 0: No related test call uses p equal to 0; observed p values: "8080"; target 0 value: 0
 Next step
-  - Add boundary tests for below, equal, and above the changed threshold with exact assertions.
+  - Add boundary tests for below, equal, and above the changed threshold with exact assertions
 Drill in:
   ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:predicate:27488362
   ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:predicate:27488362
@@ -128,7 +128,7 @@ Evidence
 Weakness
   - No strong discriminator was detected
 Next step
-  - The related test `parses_valid_port` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.
+  - The related test `parses_valid_port` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion
 Drill in:
   ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:return_value:d9dae5de
   ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:return_value:d9dae5de
@@ -155,7 +155,7 @@ Evidence
 Weakness
   - No strong discriminator was detected
 Next step
-  - The related test `parses_valid_port` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.
+  - The related test `parses_valid_port` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion
 Drill in:
   ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:return_value:a207aa93
   ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:return_value:a207aa93
@@ -181,7 +181,7 @@ Evidence
 Weakness
   - No exact error variant discriminator was detected
 Next step
-  - The related test `parses_valid_port` already asserts an exact value; the gap is not the assertion shape. Add a test input that executes the changed error arm and assert the exact variant or payload it produces.
+  - The related test `parses_valid_port` already asserts an exact value; the gap is not the assertion shape. Add a test input that executes the changed error arm and assert the exact variant or payload it produces
 Drill in:
   ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:error_path:d71ee10b
   ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:error_path:d71ee10b

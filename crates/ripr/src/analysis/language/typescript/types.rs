@@ -130,6 +130,15 @@ pub(crate) struct TypeScriptTest {
     /// `f(`. Populated once per file by `extract_tests`; empty when anything
     /// could rebind or replace the name.
     pub(crate) identity_helpers_in_file: Vec<String>,
+    /// Test-local mock factories of the containing test file
+    /// (RIPR-SPEC-0247 rule 1, amended 2026-10-15): top-level
+    /// `function f() { return { ... }; }` or `const f = () => ({ ... });`
+    /// declarations without parameters whose name appears nowhere else in
+    /// the file except as a direct call `f(`, each paired with the source of
+    /// the object literal it returns. Every call builds a fresh object, so a
+    /// test-body `const p = f();` is read as that literal. Empty when
+    /// anything could rebind or replace the name.
+    pub(crate) mock_factories_in_file: Vec<(String, String)>,
     /// Whether the test's assertion state is established: a recognized
     /// assertion, an established absence of anything assertion-like, or
     /// something assertion-like RIPR cannot resolve (#5524). An empty

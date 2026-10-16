@@ -354,7 +354,12 @@ fn check_with_progress_and_origins_with_open_rust_paths(
     if crate::is_verbose() {
         let finding_count = analysis.findings.len();
         let probe_count = analysis.summary.probes;
-        eprintln!("ripr: analysis complete — {probe_count} probes, {finding_count} findings");
+        // #7753: count-aware nouns — a single-probe run says "1 probe, 1 finding".
+        eprintln!(
+            "ripr: analysis complete — {probes}, {findings}",
+            probes = crate::output::count_noun::count_noun(probe_count, "probe", "probes"),
+            findings = crate::output::count_noun::count_noun(finding_count, "finding", "findings"),
+        );
     }
 
     progress.emit(AnalysisProgressStage::BuildingOutput);
