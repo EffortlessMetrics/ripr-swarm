@@ -3455,14 +3455,25 @@ mod tests {
     #[test]
     fn compact_ordinary_path_with_enablement_tip_fits_one_screen() {
         let mut report = passing_report();
+        for tool in ["cargo", "rustc"] {
+            let name = format!("tool_{tool}");
+            report.add_advisory_check(
+                &name,
+                format!("{tool} not available; static analysis continues"),
+            );
+            report.checks.retain(|check| {
+                check.name != name || check.status == output::doctor::DoctorCheckStatus::Advisory
+            });
+        }
         report.add_runtime_probe(
             "python",
             "python3",
-            output::doctor::DoctorStatus::Pass,
-            "Python 3.12.0",
+            output::doctor::DoctorStatus::Fail,
+            "python3 not available",
             true,
-            "",
+            "install python3 (e.g. apt install python3)",
         );
+        report.status = output::doctor::DoctorStatus::Fail;
         let mut environment = empty_environment();
         if let Some(defaults) = environment.facts.config_defaults.as_mut() {
             defaults.source_path = Some("ripr.toml".to_string());
@@ -3505,7 +3516,7 @@ mod tests {
             ],
             suggestion: vec![LanguageId::Rust, LanguageId::TypeScript],
         });
-        let lines = render_screen(&report, &environment, false, true);
+        let lines = render_screen(&report, &environment, false, false);
         assert_fits_one_screen(&lines);
         let text = lines.join("\n");
         let tip = lines
@@ -3524,13 +3535,26 @@ mod tests {
             tip.contains("the `typescript` entry also analyzes JavaScript"),
             "{tip}"
         );
+        assert!(
+            text.contains("! python verify-route runtime: python3 not available"),
+            "{text}"
+        );
+        assert!(
+            text.contains("  Fix: install python3 (e.g. apt install python3)"),
+            "{text}"
+        );
+        assert!(text.contains("~ cargo not available"), "{text}");
+        assert!(text.contains("~ rustc not available"), "{text}");
         assert!(text.contains("Config: loaded ripr.toml"), "{text}");
         assert!(text.contains("Analysis mode default: deep"), "{text}");
         assert!(
             text.contains("LSP seam diagnostics default: true"),
             "{text}"
         );
-        assert!(text.contains("Recommended first command:"), "{text}");
+        assert!(
+            !text.contains("Recommended first command: ripr check"),
+            "a required runtime failure must not recommend a check:\n{text}"
+        );
         assert!(text.contains("- Before that: enable typescript"), "{text}");
         assert!(
             !text.contains("To analyze them, set in ripr.toml:"),

@@ -12711,10 +12711,10 @@ fn doctor_discloses_missing_verification_tools_but_still_checks_manifest() -> Re
     .map_err(|error| format!("run source-build doctor human: {error}"))?;
     let human_stdout = String::from_utf8_lossy(&human_source.stdout);
     let human_result = if human_source.status.success()
-        || !human_stdout
-            .contains("! cargo not available; install Rust via rustup (https://rustup.rs)")
-        || !human_stdout
-            .contains("! rustc not available; install Rust via rustup (https://rustup.rs)")
+        || !human_stdout.contains("! cargo not available")
+        || !human_stdout.contains("! rustc not available")
+        || !human_stdout.contains("  Fix: install Rust via rustup (https://rustup.rs)")
+        || human_stdout.contains("! cargo not available; install")
         || human_stdout.contains("Start-here packet:")
         || human_stdout.contains("Recommended first command:")
         || human_stdout.contains("Recovery states:")
@@ -12722,7 +12722,7 @@ fn doctor_discloses_missing_verification_tools_but_still_checks_manifest() -> Re
         || human_stdout.contains("rustup update stable")
     {
         Err(format!(
-            "source-build human output must name the install route on each ! line and omit analysis first-run guidance:\n{human_stdout}"
+            "source-build human output must name the install route on each Fix line and omit analysis first-run guidance:\n{human_stdout}"
         ))
     } else {
         Ok(())
@@ -12943,13 +12943,24 @@ fn doctor_combined_ordinary_path_with_enablement_tip_fits_one_screen() -> Result
     let workspace = make_temp_workspace(None)?;
     std::fs::write(
         workspace.join("ripr.toml"),
-        "[analysis]\nmode = \"deep\"\n\n[lsp]\nseam_diagnostics = true\n",
+        "[analysis]\nmode = \"deep\"\n\n[lsp]\nseam_diagnostics = true\n\n[languages]\nenabled = [\"rust\", \"python\"]\n",
     )
     .map_err(|e| format!("write ripr.toml: {e}"))?;
     std::fs::write(workspace.join("index.ts"), "export const x = 1;\n")
         .map_err(|e| format!("write ts: {e}"))?;
     std::fs::write(workspace.join("index.js"), "export const y = 1;\n")
         .map_err(|e| format!("write js: {e}"))?;
+    std::fs::write(workspace.join("calc.py"), "def a():\n    return 1\n")
+        .map_err(|e| format!("write py: {e}"))?;
+    std::fs::write(workspace.join("main.go"), "package main\n")
+        .map_err(|e| format!("write go: {e}"))?;
+    std::fs::create_dir_all(workspace.join(".github/workflows"))
+        .map_err(|e| format!("mkdir workflow: {e}"))?;
+    std::fs::write(
+        workspace.join(".github/workflows/ripr.yml"),
+        "      - name: Install ripr\n        run: cargo install ripr --locked\n",
+    )
+    .map_err(|e| format!("write workflow: {e}"))?;
 
     let root = workspace.display().to_string();
     let output = run_ripr(&["doctor", "--root", &root]);
@@ -12972,6 +12983,10 @@ fn doctor_combined_ordinary_path_with_enablement_tip_fits_one_screen() -> Result
     );
     assert!(stdout.contains("Config: loaded ripr.toml"), "{stdout}");
     assert!(stdout.contains("Analysis mode default: deep"), "{stdout}");
+    assert!(
+        stdout.contains("Unanalyzed languages:") && stdout.contains("Go"),
+        "{stdout}"
+    );
 
     ignore_remove_dir_all(&workspace);
     Ok(())
@@ -13997,19 +14012,24 @@ fn doctor_without_git_names_the_fix_and_recommends_the_diff_route() -> Result<()
     let git_line = stdout
         .lines()
         .find(|line| {
-            line.contains("git was not found on PATH") || line.contains("git not available")
+            line.starts_with('!')
+                && (line.contains("git was not found on PATH")
+                    || line.contains("git not available"))
         })
         .unwrap_or("");
+    let git_fix = stdout
+        .lines()
+        .find(|line| line.starts_with("  Fix:") && line.contains("install git"))
+        .unwrap_or("");
     assert!(
-        git_line.starts_with('!'),
+        git_line.starts_with('!') && git_line.contains("git was not found on PATH"),
         "missing git must be a failing ! line:\n{stdout}"
     );
     assert!(
-        git_line.contains("git was not found on PATH")
-            && git_line.contains("install git")
-            && git_line.contains("`--diff PATH`")
-            && git_line.contains("`--diff -`"),
-        "the ! line must name the same fix as check:\n{git_line}"
+        git_fix.contains("install git")
+            && git_fix.contains("`--diff PATH`")
+            && git_fix.contains("`--diff -`"),
+        "the Fix line must name the same repair as check:\n{git_fix}\n{stdout}"
     );
     assert!(
         !git_line.contains("core.quotePath") && !git_line.contains("[\"-c\""),
