@@ -121,6 +121,7 @@ fn ranking_skips_unused_matching_while_full_evidence_retains_syntax_reuse() -> R
     );
 
     let before = OwnerPinSyntax::std_rooted_file_parse_count();
+    let workspace_before = OwnerPinSyntax::projected_workspace_counts();
     let first = evidence_for_seam_with_context_and_syntax(seam, &context, &shared);
     assert_eq!(first.related_tests.len(), 12);
     assert_eq!(first.discriminate.state, StageState::Yes);
@@ -130,7 +131,21 @@ fn ranking_skips_unused_matching_while_full_evidence_retains_syntax_reuse() -> R
         "complete evidence owns the first necessary syntax parse"
     );
     let before = OwnerPinSyntax::std_rooted_file_parse_count();
+    let workspace_first = OwnerPinSyntax::projected_workspace_counts();
+    assert!(
+        workspace_first.0 > workspace_before.0,
+        "full evidence must reach workspace binding walks"
+    );
+    assert!(
+        workspace_first.1 > workspace_before.1,
+        "full evidence must reach workspace constructor parsing"
+    );
     let repeated = evidence_for_seam_with_context_and_syntax(seam, &context, &shared);
+    assert_eq!(
+        OwnerPinSyntax::projected_workspace_counts(),
+        workspace_first,
+        "repeated full evidence must reuse both workspace resolver verdicts"
+    );
     assert_eq!(
         OwnerPinSyntax::std_rooted_file_parse_count() - before,
         0,
