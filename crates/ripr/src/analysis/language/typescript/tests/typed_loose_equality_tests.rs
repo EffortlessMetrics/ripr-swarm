@@ -476,7 +476,7 @@ fn loose_number_facts_refuse_a_shadowed_namespace_receiver() -> Result<(), Strin
     };
     let source = test(
         "import * as counts from \"../src/linecount\";\nimport { lineCount } from \"../src/linecount\";",
-        "  const counts = { lineCount: (_items: string[]) => 1 };\n  lineCount([\"a\"]);\n  assert.equal(counts.lineCount([\"a\"]), 1);",
+        "  const counts = fakeCounts();\n  lineCount([\"a\"]);\n  assert.equal(counts.lineCount([\"a\"]), 1);",
     );
     let tests = extract_tests(Path::new("tests/linecount.test.ts"), &source);
     let [parsed] = tests.as_slice() else {
@@ -495,5 +495,21 @@ fn loose_number_facts_refuse_a_shadowed_namespace_receiver() -> Result<(), Strin
     assert_eq!(facts.0, 1, "shadowed namespace: the smoke call relates");
     assert_eq!(facts.1, 1, "shadowed namespace: the assertion is marked");
     assert_eq!(facts.2, 0, "shadowed namespace: the pin must not credit");
+    let owner = extract_owners(Path::new("src/linecount.ts"), LINE_COUNT)
+        .into_iter()
+        .find(|owner| owner.name == "lineCount")
+        .ok_or("owner lineCount not extracted")?;
+    if !related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None)
+        .iter()
+        .any(|candidate| candidate.relation.uses_oracle())
+    {
+        return Err(format!(
+            "real owner smoke call must keep a trusted relation: {:?}",
+            related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None)
+                .iter()
+                .map(|candidate| candidate.relation)
+                .collect::<Vec<_>>()
+        ));
+    }
     Ok(())
 }

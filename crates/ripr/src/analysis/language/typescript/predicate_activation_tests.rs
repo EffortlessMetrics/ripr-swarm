@@ -282,7 +282,7 @@ fn shadowed_namespace_boundary_call_does_not_witness() -> Result<(), String> {
     let source = one_test(
         "shadowed namespace",
         "import * as ns from '../src/pricing';\nimport { applyDiscount } from '../src/pricing';",
-        "  const ns = { applyDiscount: (t: number) => t };\n  expect(applyDiscount(150)).toBe(135);\n  expect(ns.applyDiscount(100)).toBe(90);",
+        "  const ns = fakePricing();\n  expect(applyDiscount(150)).toBe(135);\n  expect(ns.applyDiscount(100)).toBe(90);",
     );
     let tests = extract_tests(Path::new(TEST_FILE), &source);
     assert_eq!(

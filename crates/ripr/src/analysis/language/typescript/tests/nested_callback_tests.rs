@@ -450,7 +450,7 @@ fn spread_override_needs_an_input_that_lacks_the_field() -> Result<(), String> {
     }
     // A body-local `ns` that lacks the field is not an owner call. The
     // real owner pin carries `ok`, so dropping the override stays weak.
-    let shadowed = "import * as ns from \"../src/settings\";\nimport { ready } from \"../src/settings\";\ntest(\"ready\", () => {\n  const ns = { ready: (c: { name?: string; ok?: boolean }) => ({ ...c, ok: true }) };\n  expect(ready({ ok: true })).toEqual({ ok: true });\n  expect(ns.ready({ name: \"bo\" })).toEqual({ name: \"bo\", ok: true });\n});\n";
+    let shadowed = "import * as ns from \"../src/settings\";\nimport { ready } from \"../src/settings\";\ntest(\"ready\", () => {\n  const ns = fakeReady();\n  expect(ready({ ok: true })).toEqual({ ok: true });\n  expect(ns.ready({ name: \"bo\" })).toEqual({ name: \"bo\", ok: true });\n});\n";
     let tests = extract_tests(Path::new("tests/settings.test.ts"), shadowed);
     assert_eq!(
         tests

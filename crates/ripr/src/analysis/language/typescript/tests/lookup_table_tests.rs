@@ -615,7 +615,7 @@ fn lookup_table_entry_stays_weak_without_a_changed_key_lookup() -> Result<(), St
 fn lookup_table_entry_stays_weak_through_a_shadowed_namespace() -> Result<(), String> {
     let source = vitest(
         "import * as cart from \"../src/cart\";\nimport { fetchUnitPrice } from \"../src/cart\";",
-        "  const cart = { fetchUnitPrice: async () => 95 };\n  fetchUnitPrice(\"apple\");\n  await expect(cart.fetchUnitPrice(\"pear\")).resolves.toBe(95);",
+        "  const cart = fakeCart();\n  fetchUnitPrice(\"apple\");\n  await expect(cart.fetchUnitPrice(\"pear\")).resolves.toBe(95);",
     );
     let tests = extract_tests(Path::new("test/cart.test.ts"), &source);
     assert_eq!(

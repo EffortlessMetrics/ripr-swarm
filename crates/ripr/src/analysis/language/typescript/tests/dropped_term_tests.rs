@@ -199,7 +199,7 @@ fn dropped_term_keeps_credit_only_with_a_non_zero_tested_input() -> Result<(), S
 
     // A body-local `ns` that looks up a non-zero fee is not an owner call.
     // The real owner pin uses fee 0, so dropping `fee` must stay weak.
-    let shadowed = "import * as ns from \"../src/price\";\nimport { price } from \"../src/price\";\ntest(\"price\", () => {\n  const ns = { price: (s: number, f: number) => s + f };\n  expect(price(6000, 0)).toBe(6499);\n  expect(ns.price(6000, 5)).toBe(6504);\n});\n";
+    let shadowed = "import * as ns from \"../src/price\";\nimport { price } from \"../src/price\";\ntest(\"price\", () => {\n  const ns = fakePrice();\n  expect(price(6000, 0)).toBe(6499);\n  expect(ns.price(6000, 5)).toBe(6504);\n});\n";
     let tests = extract_tests(Path::new("tests/price.test.ts"), shadowed);
     assert_eq!(
         tests
