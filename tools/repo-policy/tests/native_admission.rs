@@ -351,6 +351,7 @@ fn inline_examples_cannot_hide_dispositions_in_other_blocks() -> Result<(), Stri
         .into_iter()
         .chain(review_disposition::block_recognition_cases()?)
         .chain(review_disposition::standalone_tag_cases()?)
+        .chain(review_disposition::container_boundary_cases()?)
     {
         let review = json!({"id":1,"user":{"login":"author"},"state":"COMMENTED",
             "commit_id":"a".repeat(40),"submitted_at":"2026-10-15T01:00:00Z","body":body});

@@ -62,52 +62,96 @@ env:
         ($line | capture("^ {0,3}<(?<name>code|textarea|xmp|noembed|noframes)"; "i")) as $tag |
         {kind:"html",end:("(?i:</" + $tag.name + "[ \t]*>)")}
       else null end;
-    # Kind-7 blocks require both a complete tag and a block-start context.
-    # Track enclosing opaque blocks so their literal markup cannot open another
-    # block, and preserve paragraph continuations before applying inline masks.
-    def hide_standalone_html_blocks:
-      reduce (split("\n")[]) as $line
-        ({paragraph:false,state:null,lines:[]};
-         .emit = $line |
-         (if .state.kind == "indent" and ($line | test("^(?: {4}|\t)|^[ \t]*$") | not)
-          then .state = null else . end) |
-         if .state.kind == "tag" then
-           if ($line | test("^[ \t]*$")) then .state = null
-           else .emit = ($line | gsub("."; "\u0003")) end
-         elif .state.kind == "fence" then
-           .state as $fence |
-           if ($line | test("^ {0,3}" + $fence.char + "{" + ($fence.size|tostring) + ",}[ \t]*$")) then .state = null else . end
-         elif .state.kind == "html" then
-           .state.end as $end | if ($line | test($end)) then .state = null else . end
-         elif .state.kind == "blank" or .state.kind == "quote" then
-           if ($line | test("^[ \t]*$")) then .state = null else . end
-         elif .state.kind == "indent" then .
+    # Resolve container membership before masking inline HTML. A missing quote or
+    # list indentation is a lazy continuation only while a paragraph is open;
+    # headings, fences and HTML blocks cannot lend that continuation to a field.
+    def review_container_interrupt:
+      "^ {0,3}(?:#{1,6}(?:[ \t]|$)|" + review_fence_open + "$|(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$|>|[-+*][ \t]+\\S|1[.)][ \t]+\\S|<" + review_html_interrupt + ")";
+    def review_expand_tabs:
+      reduce (explode[]) as $c ({column:0,text:""};
+        if $c == 9 then (4 - (.column % 4)) as $n | .text += (" " * $n) | .column += $n
+        else .text += ([$c]|implode) | .column += 1 end) | .text;
+    def review_container_prefixes:
+      if (.text | test("^ {0,3}>")) then
+        .text |= sub("^ {0,3}>[ \t]?"; "") |
+        .containers += [{kind:"quote"}] | .paragraph = false | review_container_prefixes
+      elif (.text | test("^ {0,3}(?:[-+*]|[0-9]{1,9}[.)])(?:[ \t]+|$)")) and
+           ((.paragraph|not) or (.text | test("^ {0,3}(?:[-+*]|1[.)])[ \t]+\\S"))) and
+           (.text | test("^ {0,3}(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$") | not) then
+        (.text | capture("^(?<prefix> {0,3}(?:[-+*]|[0-9]{1,9}[.)])(?<space>[ \t]*))")) as $m |
+        # Five or more spaces mean one marker-padding space plus indented code.
+        (if ($m.space|length) == 0 then ($m.prefix|length) + 1
+         elif ($m.space|length) > 4 then ($m.prefix|length) - ($m.space|length) + 1
+         else ($m.prefix|length) end) as $indent |
+        .text = .text[$indent:] | .containers += [{kind:"list",indent:$indent}] | .paragraph = false |
+        review_container_prefixes
+      else . end;
+    def hide_review_containers:
+      reduce (split("\n")[]) as $source
+        ({containers:[],paragraph:false,block:null,lines:[]};
+         .opaque = false | .tagmask = false |
+         # Continue only prefixes owned by the current container stack. A partial
+         # dedent closes the inner containers, not the still-indented outer ones.
+         (reduce .containers[] as $c
+           ({text:($source|review_expand_tabs),containers:[],failed:false};
+            if .failed then .
+            elif $c.kind == "quote" and (.text | test("^ {0,3}>")) then
+              .text |= sub("^ {0,3}>[ \t]?"; "") | .containers += [$c]
+            elif $c.kind == "list" and (.text | test("^ {" + ($c.indent|tostring) + "}")) then
+              .text = .text[$c.indent:] | .containers += [$c]
+            elif $c.kind == "list" and (.text | test("^[ \t]*$")) then .containers += [$c]
+            else .failed = true end)) as $continued |
+         ($continued.failed and .paragraph and
+           ($continued.text | test("^[ \t]*$|" + review_container_interrupt) | not)) as $lazy |
+         if $lazy then
+           .lines += [(if any(.containers[]; .kind == "quote") then ($source | gsub("."; "\u0003")) else $source end)]
          else
-           review_html_context($line; (.paragraph|not)) as $html |
-           if ($line | test("^[ \t]*$")) then .paragraph = false
-           elif ($line | test("^ {0,3}" + review_fence_open + "$")) then
-             ($line | capture("^ {0,3}(?<fence>`{3,}|~{3,})")) as $fence |
-             .state = {kind:"fence",char:$fence.fence[0:1],size:($fence.fence|length)} | .paragraph = false
-           elif $html != null then
-             .state = $html | .paragraph = false |
-             if $html.kind == "html" and ($line | test($html.end)) then .state = null else . end
-           elif ($line | test("^ {0,3}>")) then .state = {kind:"quote"} | .paragraph = false
-           elif ($line | test("^ {0,3}#{1,6}(?:[ \t]|$)|^ {0,3}(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$")) then .paragraph = false
-           elif .paragraph and ($line | test("^ {0,3}(?:=+|-+)[ \t]*$")) then .paragraph = false
-           elif (.paragraph|not) and ($line | test("^(?: {4}|\t)")) then .state = {kind:"indent"}
-           elif (.paragraph|not) and ($line | test("^ {0,3}" + review_html_standalone + "[ \t]*$")) then
-             .state = {kind:"tag"} | .emit = ($line | gsub("."; "\u0003"))
-           else .paragraph = true end
-         end | .lines += [.emit]) | .lines | join("\n");
+           .containers = $continued.containers |
+           if $continued.failed then .block = null | .paragraph = false else . end |
+           $continued.text as $content |
+           # Opaque blocks consume literal markers rather than opening containers.
+           if .block != null and
+              (.block.kind != "indent" or ($content | test("^(?: {4}|\t)|^[ \t]*$"))) then
+             .opaque = true | .block as $b |
+             .tagmask = ($b.kind == "tag" and ($content | test("^[ \t]*$") | not)) |
+             if (($b.kind == "blank" or $b.kind == "tag") and ($content | test("^[ \t]*$"))) or
+                ($b.kind == "html" and ($content | test($b.end))) or
+                ($b.kind == "fence" and ($content | test("^ {0,3}" + $b.char + "{" + ($b.size|tostring) + ",}[ \t]*$")))
+             then .block = null else . end |
+             .paragraph = false
+           else
+             .block = null |
+             ({text:$content,containers:.containers,paragraph:.paragraph} | review_container_prefixes) as $opened |
+             if ($opened.containers|length) > (.containers|length) then .paragraph = false else . end |
+             .containers = $opened.containers |
+             $opened.text as $line |
+             review_html_context($line; (.paragraph|not)) as $html |
+             if ($line | test("^[ \t]*$")) then .paragraph = false
+             elif ($line | test("^ {0,3}" + review_fence_open + "$")) then
+               ($line | capture("^ {0,3}(?<fence>`{3,}|~{3,})")) as $f |
+               .block = {kind:"fence",char:$f.fence[0:1],size:($f.fence|length)} | .paragraph = false
+             elif $html != null then
+               .opaque = true | .block = $html | .paragraph = false |
+               if $html.kind == "html" and ($line | test($html.end)) then .block = null else . end
+             elif ($line | test("^ {0,3}#{1,6}(?:[ \t]|$)|^ {0,3}(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$")) then .paragraph = false
+             elif .paragraph and ($line | test("^ {0,3}(?:=+|-+)[ \t]*$")) then .paragraph = false
+             elif (.paragraph|not) and ($line | test("^(?: {4}|\t)")) then .block = {kind:"indent"}
+             elif (.paragraph|not) and ($line | test("^ {0,3}" + review_html_standalone + "[ \t]*$")) then
+               .tagmask = true | .block = {kind:"tag"} | .paragraph = false
+             else .paragraph = true end
+           end |
+           .lines += [(if .tagmask or any(.containers[]; .kind == "quote") or
+           ((.containers|length) > 0 and (.opaque or .block != null))
+           then ($source | gsub("."; "\u0003")) else $source end)]
+         end) | .lines | join("\n");
     # Match opaque regions together, in source order: syntax inside an earlier
     # code/HTML region cannot open a different region outside it. Keep newlines
     # and a nonblank sentinel so masking never invents a first-line declaration.
     def hide_review_examples:
-      hide_standalone_html_blocks | gsub("(?ms)(?<hidden>" +
+      hide_review_containers | gsub("(?ms)(?<hidden>" +
         "^ {0,3}(?<bt>`{3,})(?!`)[^`\n]*\n.*?(?:(?<bt_end>^ {0,3}\\k<bt>`*[ \t]*)(?=\n|\\z)|\\z)" +
         "|^ {0,3}(?<tilde>~{3,})(?!~)[^\n]*\n.*?(?:(?<tilde_end>^ {0,3}\\k<tilde>~*[ \t]*)(?=\n|\\z)|\\z)" +
         "|^(?: {4}|\t)[^\n]*(?:\n(?:(?: {4}|\t)[^\n]*|[ \t]*(?=\n)))*" +
-        "|^ {0,3}>[^\n]*(?:\n(?![ \t]*(?:\n|\\z))[^\n]+)*" +
         "|^ {0,3}#{1,6}(?:[ \t]+[^\n]*|(?=\n|\\z))" +
         "|(?<![\\\\`])(?:\\\\\\\\)*(?<ticks>`+)(?!`)(?:[^\n]|\n(?!" + review_inline_end + "))*?(?<!`)\\k<ticks>(?!`)" +
         "|(?<!\\\\)(?:\\\\\\\\)*(?:<!--.*?(?:-->|\\z)|<!\\[CDATA\\[.*?(?:\\]\\]>|\\z)|<\\?.*?(?:\\?>|\\z))" +
@@ -123,14 +167,12 @@ env:
       if type != "string" then error("review body must be a string") else
         (gsub("\r\n"; "\n") | hide_review_examples) as $visible |
         reduce ($visible | split("\n")[]) as $line
-          ({first:true, fence:null, quoted:false, dispositions:[]};
+          ({first:true, fence:null, dispositions:[]};
            if .fence != null then
              .fence as $fence |
              if ($line | test("^ {0,3}" + $fence.char + "{" + ($fence.size|tostring) + ",}[ \t]*$"))
              then .fence = null else . end
-           elif ($line | test("^[ \t]*$")) then .quoted = false
-           elif ($line | test("^ {0,3}>")) then .first = false | .quoted = true
-           elif .quoted then .first = false
+           elif ($line | test("^[ \t]*$")) then .
            elif ($line | test("^ {0,3}" + review_fence_open + "$")) then
              ($line | capture("^ {0,3}(?<fence>`{3,}|~{3,})")) as $match |
              .first = false | .fence = {char:$match.fence[0:1], size:($match.fence|length)}

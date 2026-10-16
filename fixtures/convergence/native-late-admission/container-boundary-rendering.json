@@ -1,0 +1,1563 @@
+{
+  "oracle": "commonmark-py0.9.1 and cmarkgfm2024.11.20/native0.29.0.gfm.13; all114 field sets agree",
+  "reference": "https://github.github.com/gfm/#container-blocks",
+  "method": "Both actual renderers; paragraph fields outside blockquotes and opaque code/HTML. Tight and loose list paragraph fields remain visible, preserving the existing column-zero field contract. The first SOURCE_REVIEW_READY paragraph supplies a direct declaration. Both conflict and positive inverses cover quote interruption, genuine lazy continuation, nested containers, list indentation/dedentation, tabs and HTML exits. Earlier 130 standalone-tag and 240 recognition cases remain unchanged; acknowledged CDATA disagreement remains explicit.",
+  "cases": [
+    {
+      "case": "list_-_span_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- item\n\n  <span>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<span>\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_-_span_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- item\n\n  <span>\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<span>\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_-_closing_span_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- item\n\n  </span>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n</span>\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_-_closing_span_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- item\n\n  </span>\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n</span>\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_-_custom_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- item\n\n  <custom attr=\"x\">\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<custom attr=\"x\">\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_-_custom_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- item\n\n  <custom attr=\"x\">\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<custom attr=\"x\">\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_*_span_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n* item\n\n  <span>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<span>\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_*_span_positive",
+      "body": "REVIEW_INCOMPLETE\n\n* item\n\n  <span>\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<span>\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_*_closing_span_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n* item\n\n  </span>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n</span>\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_*_closing_span_positive",
+      "body": "REVIEW_INCOMPLETE\n\n* item\n\n  </span>\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n</span>\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_*_custom_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n* item\n\n  <custom attr=\"x\">\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<custom attr=\"x\">\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_*_custom_positive",
+      "body": "REVIEW_INCOMPLETE\n\n* item\n\n  <custom attr=\"x\">\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<custom attr=\"x\">\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_1._span_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n1. item\n\n   <span>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ol>\n<li>\n<p>item</p>\n<span>\n</li>\n</ol>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ol>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ol>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_1._span_positive",
+      "body": "REVIEW_INCOMPLETE\n\n1. item\n\n   <span>\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ol>\n<li>\n<p>item</p>\n<span>\n</li>\n</ol>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ol>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ol>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_1._closing_span_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n1. item\n\n   </span>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ol>\n<li>\n<p>item</p>\n</span>\n</li>\n</ol>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ol>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ol>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_1._closing_span_positive",
+      "body": "REVIEW_INCOMPLETE\n\n1. item\n\n   </span>\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ol>\n<li>\n<p>item</p>\n</span>\n</li>\n</ol>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ol>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ol>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_1._custom_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n1. item\n\n   <custom attr=\"x\">\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ol>\n<li>\n<p>item</p>\n<custom attr=\"x\">\n</li>\n</ol>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ol>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ol>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_1._custom_positive",
+      "body": "REVIEW_INCOMPLETE\n\n1. item\n\n   <custom attr=\"x\">\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ol>\n<li>\n<p>item</p>\n<custom attr=\"x\">\n</li>\n</ol>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ol>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ol>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_1)_span_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n1) item\n\n   <span>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ol>\n<li>\n<p>item</p>\n<span>\n</li>\n</ol>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ol>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ol>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_1)_span_positive",
+      "body": "REVIEW_INCOMPLETE\n\n1) item\n\n   <span>\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ol>\n<li>\n<p>item</p>\n<span>\n</li>\n</ol>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ol>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ol>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_1)_closing_span_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n1) item\n\n   </span>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ol>\n<li>\n<p>item</p>\n</span>\n</li>\n</ol>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ol>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ol>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_1)_closing_span_positive",
+      "body": "REVIEW_INCOMPLETE\n\n1) item\n\n   </span>\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ol>\n<li>\n<p>item</p>\n</span>\n</li>\n</ol>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ol>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ol>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_1)_custom_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n1) item\n\n   <custom attr=\"x\">\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ol>\n<li>\n<p>item</p>\n<custom attr=\"x\">\n</li>\n</ol>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ol>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ol>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_1)_custom_positive",
+      "body": "REVIEW_INCOMPLETE\n\n1) item\n\n   <custom attr=\"x\">\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ol>\n<li>\n<p>item</p>\n<custom attr=\"x\">\n</li>\n</ol>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ol>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ol>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_then_heading_positive",
+      "body": "> quote\n# Heading\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<blockquote>\n<p>quote</p>\n</blockquote>\n<h1>Heading</h1>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<blockquote>\n<p>quote</p>\n</blockquote>\n<h1>Heading</h1>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_then_heading_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n> quote\n# Heading\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<h1>Heading</h1>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<h1>Heading</h1>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "top_level_html_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "top_level_html_positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span>\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "fields": [],
+      "gfm_fields": [],
+      "expected": false
+    },
+    {
+      "case": "indented_top_level_html",
+      "body": "SOURCE_REVIEW_READY\n\n  <span>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n  <span>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "three_space_top_level_html",
+      "body": "SOURCE_REVIEW_READY\n\n   <span>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n   <span>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_lazy_continuation",
+      "body": "SOURCE_REVIEW_READY\n\n> quote\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote\ndisposition: REPAIR_REQUIRED</p>\n</blockquote>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote\ndisposition: REPAIR_REQUIRED</p>\n</blockquote>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_explicit_heading",
+      "body": "SOURCE_REVIEW_READY\n\n> quote\n> # Heading\n> disposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote</p>\n<h1>Heading</h1>\n<p>disposition: REPAIR_REQUIRED</p>\n</blockquote>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote</p>\n<h1>Heading</h1>\n<p>disposition: REPAIR_REQUIRED</p>\n</blockquote>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_tab_html_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- item\n\n\t<span>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n  <span>\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_tab_html_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- item\n\n\t<span>\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n  <span>\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_tab_quote_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- item\n\n\t> quote\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<blockquote>\n<p>quote\ndisposition: REPAIR_REQUIRED</p>\n</blockquote>\n</li>\n</ul>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<blockquote>\n<p>quote\ndisposition: REPAIR_REQUIRED</p>\n</blockquote>\n</li>\n</ul>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_tab_quote_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- item\n\n\t> quote\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<blockquote>\n<p>quote\ndisposition: SOURCE_REVIEW_READY</p>\n</blockquote>\n</li>\n</ul>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<blockquote>\n<p>quote\ndisposition: SOURCE_REVIEW_READY</p>\n</blockquote>\n</li>\n</ul>\n",
+      "fields": [],
+      "gfm_fields": [],
+      "expected": false
+    },
+    {
+      "case": "quote_tab_heading_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n>\t# Heading\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<h1>Heading</h1>\n</blockquote>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<h1>Heading</h1>\n</blockquote>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "quote_tab_heading_positive",
+      "body": "REVIEW_INCOMPLETE\n\n>\t# Heading\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<h1>Heading</h1>\n</blockquote>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<h1>Heading</h1>\n</blockquote>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_empty_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n-\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li></li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li></li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_empty_positive",
+      "body": "REVIEW_INCOMPLETE\n\n-\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li></li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li></li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_empty_in_paragraph_conflict",
+      "body": "SOURCE_REVIEW_READY\n\nparagraph\n- \ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<h2>paragraph</h2>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<h2>paragraph</h2>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_empty_in_paragraph_positive",
+      "body": "REVIEW_INCOMPLETE\n\nparagraph\n- \ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<h2>paragraph</h2>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<h2>paragraph</h2>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_ordered2_in_paragraph_conflict",
+      "body": "SOURCE_REVIEW_READY\n\nparagraph\n2. item\n  <span>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>paragraph\n2. item\n<span>\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>paragraph\n2. item\n<!-- raw HTML omitted -->\ndisposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_ordered2_in_paragraph_positive",
+      "body": "REVIEW_INCOMPLETE\n\nparagraph\n2. item\n  <span>\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>paragraph\n2. item\n<span>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>paragraph\n2. item\n<!-- raw HTML omitted -->\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_h2_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n> quote\n## Heading\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<h2>Heading</h2>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<h2>Heading</h2>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "quote_h2_positive",
+      "body": "REVIEW_INCOMPLETE\n\n> quote\n## Heading\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<h2>Heading</h2>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<h2>Heading</h2>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_indent_heading_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n> quote\n   ### Heading\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<h3>Heading</h3>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<h3>Heading</h3>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "quote_indent_heading_positive",
+      "body": "REVIEW_INCOMPLETE\n\n> quote\n   ### Heading\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<h3>Heading</h3>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<h3>Heading</h3>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_thematic_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n> quote\n***\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<hr />\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<hr />\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "quote_thematic_positive",
+      "body": "REVIEW_INCOMPLETE\n\n> quote\n***\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<hr />\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<hr />\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_fence_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n> quote\n~~~\nexample\n~~~\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<pre><code>example\n</code></pre>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<pre><code>example\n</code></pre>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "quote_fence_positive",
+      "body": "REVIEW_INCOMPLETE\n\n> quote\n~~~\nexample\n~~~\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<pre><code>example\n</code></pre>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<pre><code>example\n</code></pre>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_html_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n> quote\n<!-- x -->\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<!-- x -->\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "quote_html_positive",
+      "body": "REVIEW_INCOMPLETE\n\n> quote\n<!-- x -->\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<!-- x -->\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<!-- raw HTML omitted -->\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_setext_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n> quote\n===\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote\n===\ndisposition: REPAIR_REQUIRED</p>\n</blockquote>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote\n===\ndisposition: REPAIR_REQUIRED</p>\n</blockquote>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_setext_positive",
+      "body": "REVIEW_INCOMPLETE\n\n> quote\n===\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<p>quote\n===\ndisposition: SOURCE_REVIEW_READY</p>\n</blockquote>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<p>quote\n===\ndisposition: SOURCE_REVIEW_READY</p>\n</blockquote>\n",
+      "fields": [],
+      "gfm_fields": [],
+      "expected": false
+    },
+    {
+      "case": "quote_blank_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n> quote\n\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "quote_blank_positive",
+      "body": "REVIEW_INCOMPLETE\n\n> quote\n\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<p>quote</p>\n</blockquote>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_lazy_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n> quote\ncontinuation\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote\ncontinuation\ndisposition: REPAIR_REQUIRED</p>\n</blockquote>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<p>quote\ncontinuation\ndisposition: REPAIR_REQUIRED</p>\n</blockquote>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_lazy_positive",
+      "body": "REVIEW_INCOMPLETE\n\n> quote\ncontinuation\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<p>quote\ncontinuation\ndisposition: SOURCE_REVIEW_READY</p>\n</blockquote>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<p>quote\ncontinuation\ndisposition: SOURCE_REVIEW_READY</p>\n</blockquote>\n",
+      "fields": [],
+      "gfm_fields": [],
+      "expected": false
+    },
+    {
+      "case": "quote_heading_inside_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n> # Heading\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<h1>Heading</h1>\n</blockquote>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<h1>Heading</h1>\n</blockquote>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "quote_heading_inside_positive",
+      "body": "REVIEW_INCOMPLETE\n\n> # Heading\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<h1>Heading</h1>\n</blockquote>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<h1>Heading</h1>\n</blockquote>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_fence_inside_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n> ~~~\n> example\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<pre><code>example\n</code></pre>\n</blockquote>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<pre><code>example\n</code></pre>\n</blockquote>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "quote_fence_inside_positive",
+      "body": "REVIEW_INCOMPLETE\n\n> ~~~\n> example\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<pre><code>example\n</code></pre>\n</blockquote>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<pre><code>example\n</code></pre>\n</blockquote>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_html_inside_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n> <div>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<div>\n</blockquote>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<!-- raw HTML omitted -->\n</blockquote>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "quote_html_inside_positive",
+      "body": "REVIEW_INCOMPLETE\n\n> <div>\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<div>\n</blockquote>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<!-- raw HTML omitted -->\n</blockquote>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_tag_inside_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n> <span>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<span>\n</blockquote>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<!-- raw HTML omitted -->\n</blockquote>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "quote_tag_inside_positive",
+      "body": "REVIEW_INCOMPLETE\n\n> <span>\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<span>\n</blockquote>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<!-- raw HTML omitted -->\n</blockquote>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_list_inside_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n> - item\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<ul>\n<li>item\ndisposition: REPAIR_REQUIRED</li>\n</ul>\n</blockquote>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<ul>\n<li>item\ndisposition: REPAIR_REQUIRED</li>\n</ul>\n</blockquote>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_list_inside_positive",
+      "body": "REVIEW_INCOMPLETE\n\n> - item\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<ul>\n<li>item\ndisposition: SOURCE_REVIEW_READY</li>\n</ul>\n</blockquote>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<ul>\n<li>item\ndisposition: SOURCE_REVIEW_READY</li>\n</ul>\n</blockquote>\n",
+      "fields": [],
+      "gfm_fields": [],
+      "expected": false
+    },
+    {
+      "case": "quote_nested_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n> > quote\n# Heading\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<blockquote>\n<p>quote</p>\n</blockquote>\n</blockquote>\n<h1>Heading</h1>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<blockquote>\n<p>quote</p>\n</blockquote>\n</blockquote>\n<h1>Heading</h1>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "quote_nested_positive",
+      "body": "REVIEW_INCOMPLETE\n\n> > quote\n# Heading\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<blockquote>\n<p>quote</p>\n</blockquote>\n</blockquote>\n<h1>Heading</h1>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<blockquote>\n<p>quote</p>\n</blockquote>\n</blockquote>\n<h1>Heading</h1>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "quote_list_html_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n> - item\n>\n>   <span>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<ul>\n<li>\n<p>item</p>\n<span>\n</li>\n</ul>\n</blockquote>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<blockquote>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n</blockquote>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "quote_list_html_positive",
+      "body": "REVIEW_INCOMPLETE\n\n> - item\n>\n>   <span>\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<ul>\n<li>\n<p>item</p>\n<span>\n</li>\n</ul>\n</blockquote>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<blockquote>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n</blockquote>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_quote_html_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- > quote\n  > <span>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<blockquote>\n<p>quote\n<span>\ndisposition: REPAIR_REQUIRED</p>\n</blockquote>\n</li>\n</ul>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<blockquote>\n<p>quote\n<!-- raw HTML omitted -->\ndisposition: REPAIR_REQUIRED</p>\n</blockquote>\n</li>\n</ul>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_quote_html_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- > quote\n  > <span>\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<blockquote>\n<p>quote\n<span>\ndisposition: SOURCE_REVIEW_READY</p>\n</blockquote>\n</li>\n</ul>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<blockquote>\n<p>quote\n<!-- raw HTML omitted -->\ndisposition: SOURCE_REVIEW_READY</p>\n</blockquote>\n</li>\n</ul>\n",
+      "fields": [],
+      "gfm_fields": [],
+      "expected": false
+    },
+    {
+      "case": "list_nested_html_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- outer\n  - inner\n\n    <span>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>outer\n<ul>\n<li>\n<p>inner</p>\n<span>\n</li>\n</ul>\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>outer\n<ul>\n<li>\n<p>inner</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_nested_html_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- outer\n  - inner\n\n    <span>\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>outer\n<ul>\n<li>\n<p>inner</p>\n<span>\n</li>\n</ul>\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>outer\n<ul>\n<li>\n<p>inner</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_nested_partial_dedent_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- outer\n  - inner\n\n    <span>\n  text\n\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>outer\n<ul>\n<li>\n<p>inner</p>\n<span>\n</li>\n</ul>\ntext</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>outer\n<ul>\n<li>\n<p>inner</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\ntext</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_nested_partial_dedent_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- outer\n  - inner\n\n    <span>\n  text\n\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>outer\n<ul>\n<li>\n<p>inner</p>\n<span>\n</li>\n</ul>\ntext</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>outer\n<ul>\n<li>\n<p>inner</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\ntext</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_lazy_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- item\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>item\ndisposition: REPAIR_REQUIRED</li>\n</ul>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>item\ndisposition: REPAIR_REQUIRED</li>\n</ul>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_lazy_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- item\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>item\ndisposition: SOURCE_REVIEW_READY</li>\n</ul>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>item\ndisposition: SOURCE_REVIEW_READY</li>\n</ul>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_blank_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- item\n\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>item</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>item</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_blank_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- item\n\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>item</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>item</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_heading_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- # Heading\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<h1>Heading</h1>\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<h1>Heading</h1>\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_heading_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- # Heading\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<h1>Heading</h1>\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<h1>Heading</h1>\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_fence_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- ~~~\n  example\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<pre><code>example\n</code></pre>\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<pre><code>example\n</code></pre>\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_fence_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- ~~~\n  example\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<pre><code>example\n</code></pre>\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<pre><code>example\n</code></pre>\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_indented_code_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- item\n\n      example\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<pre><code>example\n</code></pre>\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<pre><code>example\n</code></pre>\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_indented_code_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- item\n\n      example\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<pre><code>example\n</code></pre>\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<pre><code>example\n</code></pre>\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_tag_lazy_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- item\n  <span>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>item\n<span>\ndisposition: REPAIR_REQUIRED</li>\n</ul>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>item\n<!-- raw HTML omitted -->\ndisposition: REPAIR_REQUIRED</li>\n</ul>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_tag_lazy_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- item\n  <span>\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>item\n<span>\ndisposition: SOURCE_REVIEW_READY</li>\n</ul>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>item\n<!-- raw HTML omitted -->\ndisposition: SOURCE_REVIEW_READY</li>\n</ul>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_html6_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- item\n  <div>\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>item\n<div>\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>item\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_html6_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- item\n  <div>\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>item\n<div>\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>item\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_html_comment_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- item\n\n  <!--\n  example\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<!--\nexample\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_html_comment_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- item\n\n  <!--\n  example\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<!--\nexample\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_html_closed_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- item\n\n  <!-- example -->\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<!-- example -->\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_html_closed_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- item\n\n  <!-- example -->\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<!-- example -->\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_html_then_paragraph_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- item\n\n  <!-- example -->\n  paragraph\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<!-- example -->\n<p>paragraph\ndisposition: REPAIR_REQUIRED</p>\n</li>\n</ul>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n<p>paragraph\ndisposition: REPAIR_REQUIRED</p>\n</li>\n</ul>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_html_then_paragraph_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- item\n\n  <!-- example -->\n  paragraph\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<!-- example -->\n<p>paragraph\ndisposition: SOURCE_REVIEW_READY</p>\n</li>\n</ul>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n<p>paragraph\ndisposition: SOURCE_REVIEW_READY</p>\n</li>\n</ul>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_tag_blank_exit_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- item\n\n  <span>\n\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<span>\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_tag_blank_exit_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- item\n\n  <span>\n\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<span>\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<p>item</p>\n<!-- raw HTML omitted -->\n</li>\n</ul>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "list_nested_quote_heading_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n- > quote\n# Heading\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<blockquote>\n<p>quote</p>\n</blockquote>\n</li>\n</ul>\n<h1>Heading</h1>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<ul>\n<li>\n<blockquote>\n<p>quote</p>\n</blockquote>\n</li>\n</ul>\n<h1>Heading</h1>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "list_nested_quote_heading_positive",
+      "body": "REVIEW_INCOMPLETE\n\n- > quote\n# Heading\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<blockquote>\n<p>quote</p>\n</blockquote>\n</li>\n</ul>\n<h1>Heading</h1>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<ul>\n<li>\n<blockquote>\n<p>quote</p>\n</blockquote>\n</li>\n</ul>\n<h1>Heading</h1>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "outer_fence_literal_quote_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n~~~\n> quote\n~~~\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<pre><code>&gt; quote\n</code></pre>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<pre><code>&gt; quote\n</code></pre>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "outer_fence_literal_quote_positive",
+      "body": "REVIEW_INCOMPLETE\n\n~~~\n> quote\n~~~\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<pre><code>&gt; quote\n</code></pre>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<pre><code>&gt; quote\n</code></pre>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "outer_html_literal_list_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<div>\n- item\n\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<div>\n- item\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "outer_html_literal_list_positive",
+      "body": "REVIEW_INCOMPLETE\n\n<div>\n- item\n\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<div>\n- item\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "outer_tag_literal_list_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span>\n- item\n\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span>\n- item\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "outer_tag_literal_list_positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span>\n- item\n\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span>\n- item\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "outer_comment_literal_quote_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<!--\n> quote\n-->\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<!--\n> quote\n-->\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "outer_comment_literal_quote_positive",
+      "body": "REVIEW_INCOMPLETE\n\n<!--\n> quote\n-->\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<!--\n> quote\n-->\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    },
+    {
+      "case": "outer_code_literal_quote_conflict",
+      "body": "SOURCE_REVIEW_READY\n\n    > quote\ndisposition: REPAIR_REQUIRED",
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<pre><code>&gt; quote\n</code></pre>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<pre><code>&gt; quote\n</code></pre>\n<p>disposition: REPAIR_REQUIRED</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "expected": false
+    },
+    {
+      "case": "outer_code_literal_quote_positive",
+      "body": "REVIEW_INCOMPLETE\n\n    > quote\ndisposition: SOURCE_REVIEW_READY",
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<pre><code>&gt; quote\n</code></pre>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<pre><code>&gt; quote\n</code></pre>\n<p>disposition: SOURCE_REVIEW_READY</p>\n",
+      "fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "expected": true
+    }
+  ]
+}

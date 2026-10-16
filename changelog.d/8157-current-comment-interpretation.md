@@ -5,5 +5,6 @@
   inline examples cannot cross paragraph, heading or fence boundaries,
   and block recognition respects marker case and valid fence-info syntax,
   complete standalone-tag attribute grammar and paragraph context,
+  quote interruption and list-owned HTML/container exits,
   while retaining existing trust and native-review requirements; this is
   a partial mitigation pending the versioned evidence contract (#8157).

@@ -102,6 +102,13 @@ Enclosing fences, HTML regions, quotes and indented blocks retain their own
 boundaries; valid inline attributes cannot cross a paragraph/heading/fence break.
 `standalone-tag-rendering.json` retains 130 conflict and positive controls whose
 field sets agree in both local renderers, including malformed-tag sibling forms.
+Container membership is resolved before HTML/inline masking. A quote marker or
+list indentation can be omitted only for a genuine paragraph continuation;
+headings, fences, HTML starts and nested container exits retain their boundaries.
+HTML inside a list ends with its owning container rather than hiding a dedented
+outside disposition. Ordinary list paragraph text retains the existing column-zero
+field rule. `container-boundary-rendering.json` retains 114 bodies and both
+renderers' agreeing field sets, including both directions of each reported repair.
 A source-ready declaration may separately report overall `REVIEW_INCOMPLETE`
 while qualification remains outstanding. Both admission and the final refresh,
 including diagnostics, use the same parser.
