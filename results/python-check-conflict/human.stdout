@@ -1,0 +1,19 @@
+ripr static RIPR exposure analysis
+mode: draft
+root: .
+config: /workspace/scratch/cli-output-audit/git-cases/python/ripr.toml
+base: fc6122c9ae671d73b6497da8871481d026d52fdb fc6122c
+head: HEAD 8e92181
+
+Summary: 0 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 0 of 0 finding(s) unsuppressed
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: the input is not supported (analysis incomplete; unsupported_input)
+  Zero findings is not a clean result because the analyzed scope is incomplete.
+  Limitation: the diff has unresolved conflict markers during parsing the diff (unresolved_conflict_markers at diff_parse); file: src/discount.py; affected items: 1; recovery: resolve the conflicts (resolve_conflicts) — A conflict region holds two rival source states rather than one changed program, so its lines are not read as changes. Resolve the conflict and re-run to analyze these lines.
+  Limitation: part of the analysis failed during language analysis (producer_failure at language_adapter); file: src/discount.py; affected items: 1; recovery: inspect the failure (inspect_failure) — Fix the file so it parses as Python, then re-run the analysis.
+
+No diff-derived static exposure probes found.
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.

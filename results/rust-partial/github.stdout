@@ -1,0 +1,2 @@
+::warning title=ripr analysis incomplete::Analysis outcome: partial_with_limitations (analysis incomplete). The findings cover only the analyzed scope; behavior outside it has no finding. Limitation: diff_scope_oversized: To widen the analyzed partition, raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2, then re-run.
+::warning file=src/lib.rs,line=2,title=ripr weakly_exposed::Add boundary tests for below, equal, and above the changed threshold with exact assertions. Canonical gap: gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold

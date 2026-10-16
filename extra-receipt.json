@@ -1,0 +1,158 @@
+[
+  {
+    "case": "rust-malformed",
+    "format": "sarif",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-malformed",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-malformed/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "sarif",
+      "--quiet"
+    ],
+    "env": {}
+  },
+  {
+    "case": "rust-malformed",
+    "format": "github",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-malformed",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-malformed/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "github",
+      "--quiet"
+    ],
+    "env": {}
+  },
+  {
+    "case": "python-disabled",
+    "format": "sarif",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-disabled",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-disabled/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "sarif",
+      "--quiet"
+    ],
+    "env": {}
+  },
+  {
+    "case": "python-disabled",
+    "format": "github",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-disabled",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-disabled/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "github",
+      "--quiet"
+    ],
+    "env": {}
+  },
+  {
+    "case": "typescript-parse",
+    "format": "sarif",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript-parse",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript-parse/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "sarif",
+      "--quiet"
+    ],
+    "env": {}
+  },
+  {
+    "case": "typescript-parse",
+    "format": "github",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript-parse",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript-parse/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "github",
+      "--quiet"
+    ],
+    "env": {}
+  },
+  {
+    "case": "rust-partial",
+    "format": "sarif",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-partial",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-partial/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "sarif",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+    }
+  },
+  {
+    "case": "rust-partial",
+    "format": "github",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-partial",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-partial/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "github",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+    }
+  }
+]

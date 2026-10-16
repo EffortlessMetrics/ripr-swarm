@@ -1,0 +1,20 @@
+RIPR diff status: diff_incomplete_full_repo_limited
+root: .
+range: 56d01ceb1e4de73aa87e780dd6d0946af6aa57f2...HEAD
+mode: draft
+analysis outcome: unsupported_input (analysis incomplete).
+zero findings is not a clean result because the analyzed scope is incomplete.
+limitation: unresolved_conflict_markers at diff_parse; recovery: resolve_conflicts — A conflict region holds two rival source states rather than one changed program, so its lines are not read as changes. Resolve the conflict and re-run to analyze these lines.
+limitation: language_scope_unsupported at language_adapter; recovery: retry — Fix the TypeScript or JavaScript parse error, then re-run the analysis.
+changed files: 1
+changed seams: 1
+full repo context: full_repo_limited (full_repo_context_not_run)
+receipt path: target/ripr/receipts/diff-first-56d01ceb1e4de73aa87e780dd6d0946af6aa57f2-HEAD.json
+
+Changed files
+  - src/discount.ts (+2 -0)
+
+Changed seams
+  - probe:src_discount.ts:typescript_preview_unsupported_syntax:be1d2fde src/discount.ts:8 static_unknown
+    next action: TypeScript preview advisory: static limit `unsupported_syntax`; Repair route: fix or isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is emitted.
+    evidence: static_limit unsupported_syntax: 1 parser error(s): Encountered diff marker

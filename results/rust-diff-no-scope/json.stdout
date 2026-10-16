@@ -1,0 +1,69 @@
+{
+  "schema_version": "0.1",
+  "kind": "ripr_diff",
+  "tool": "ripr",
+  "run_status": "diff_complete_full_repo_limited",
+  "root": ".",
+  "base": "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+  "head": "HEAD",
+  "mode": "draft",
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {
+      "schema_version": "0.1",
+      "kind": "no_scope",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": null,
+        "base_revision": "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+        "input_identity": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 0,
+        "changed_line_count": 0,
+        "candidate_line_count": 0,
+        "probe_count": 0,
+        "finding_count": 0
+      },
+      "limitations": [],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    }
+  },
+  "runtime_status": {
+    "state": "diff_complete_full_repo_limited",
+    "diff": {
+      "state": "diff_complete",
+      "phase": "changed_surface_diff",
+      "changed_files": 0,
+      "changed_seams": 0,
+      "downstream_consumable": true
+    },
+    "full_repo_context": {
+      "state": "full_repo_limited",
+      "phase": "full_repo_context",
+      "limitation_category": "full_repo_context_not_run",
+      "downstream_consumable": false,
+      "repair_route": "ripr check --format repo-exposure-summary-json"
+    }
+  },
+  "receipt": {
+    "state": "not_written",
+    "path": "target/ripr/receipts/diff-first-3e128e80389b97bf1a4795f1d449ad470c2296c4-HEAD.json",
+    "outcome_hint": "diff_complete/full_repo_limited"
+  },
+  "summary": {
+    "changed_files": 0,
+    "changed_seams": 0,
+    "probes": 0,
+    "exposed": 0,
+    "weakly_exposed": 0,
+    "reachable_unrevealed": 0,
+    "no_static_path": 0,
+    "unknown": 0
+  },
+  "changed_files": [],
+  "changed_seams": []
+}

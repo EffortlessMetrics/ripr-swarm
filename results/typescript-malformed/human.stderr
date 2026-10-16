@@ -1,0 +1,3 @@
+ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).
+ripr: path-dependency graph status is unavailable: no local Cargo.toml manifest was found, so reverse-dependency diff-scope expansion did not run and the diff scope stays the changed packages
+ripr: check: analysis could not complete (unsupported_input); see the emitted report's limitations and recovery routes

@@ -1,0 +1,32 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: /workspace/scratch/cli-output-audit/cases/render-bound
+
+Summary: 2 probe(s), 2 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+Start here:
+  State: no gap selected for repair (no_actionable_gap)
+  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
+  File: ./src/lib.rs:2
+  Static exposure: exposed (info, confidence 1.00)
+  Canonical gap: gap:rust:src/lib.rs:record_mark:call_deletion:call_deletion:values.push_1
+  Changed behavior: values.push(1)
+  Related test: src/lib.rs:8 case_00
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+    - reach yes: Related tests appear to reach record_mark: case_00
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 6 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root /workspace/scratch/cli-output-audit/cases/render-bound --diff /workspace/scratch/cli-output-audit/cases/render-bound/change.patch --mode fast probe:src_lib.rs:call_deletion:184d39d1
+  ripr context --root /workspace/scratch/cli-output-audit/cases/render-bound --diff /workspace/scratch/cli-output-audit/cases/render-bound/change.patch --mode fast --at probe:src_lib.rs:call_deletion:184d39d1
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:2 (exposed)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+

@@ -1,0 +1,18 @@
+RIPR diff status: diff_incomplete_full_repo_limited
+root: .
+range: fc6122c9ae671d73b6497da8871481d026d52fdb...HEAD
+mode: draft
+analysis outcome: unsupported_input (analysis incomplete).
+zero findings is not a clean result because the analyzed scope is incomplete.
+limitation: unresolved_conflict_markers at diff_parse; recovery: resolve_conflicts — A conflict region holds two rival source states rather than one changed program, so its lines are not read as changes. Resolve the conflict and re-run to analyze these lines.
+limitation: producer_failure at language_adapter; recovery: inspect_failure — Fix the file so it parses as Python, then re-run the analysis.
+changed files: 1
+changed seams: 0
+full repo context: full_repo_limited (full_repo_context_not_run)
+receipt path: target/ripr/receipts/diff-first-fc6122c9ae671d73b6497da8871481d026d52fdb-HEAD.json
+
+Changed files
+  - src/discount.py (+2 -0)
+
+Changed seams
+  none

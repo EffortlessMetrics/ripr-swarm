@@ -1,0 +1,2404 @@
+[
+  {
+    "case": "rust",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "d5c4ab6a20e36723fd57cb3dfbd2237e9c8619f952b8cdf1c93f61a2b25556ff",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "analysis_complete": true,
+      "outcome": {
+        "schema_version": "0.1",
+        "kind": "complete_with_findings",
+        "identity": {
+          "repository_identity": null,
+          "root_identity": null,
+          "config_identity": null,
+          "base_revision": null,
+          "input_identity": "sha256:5d4572db105b9569851eb9f3a73b99059a4626019d7d43b7053c8b29c660f668",
+          "snapshot_identity": null,
+          "git_candidate_subject": null
+        },
+        "counts": {
+          "changed_file_count": 1,
+          "changed_line_count": 2,
+          "candidate_line_count": 1,
+          "probe_count": 1,
+          "finding_count": 1
+        },
+        "limitations": [],
+        "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+      }
+    },
+    "findings": 1
+  },
+  {
+    "case": "rust",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "de8d6aa015ff1058a46647b7f72a9361b576612fa17b1949460e45b853e2a7d0",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "schema_version": "0.1",
+      "kind": "complete_with_findings",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": null,
+        "base_revision": null,
+        "input_identity": "sha256:5d4572db105b9569851eb9f3a73b99059a4626019d7d43b7053c8b29c660f668",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 1,
+        "changed_line_count": 2,
+        "candidate_line_count": 1,
+        "probe_count": 1,
+        "finding_count": 1
+      },
+      "limitations": [],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "status": "warn",
+    "message": "1",
+    "warnings": [],
+    "findings": 0
+  },
+  {
+    "case": "rust",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "29b4e8ffaaadbb2ffec36f0dad8024181df25c6e720b57065009010c2cab324e",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n"
+  },
+  {
+    "case": "python",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "5b1722a8793c1839b3d56fdd2d5a2cad833fa5170c0e18aa95289c29d946c5d9",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "analysis_complete": true,
+      "outcome": {
+        "schema_version": "0.1",
+        "kind": "complete_with_findings",
+        "identity": {
+          "repository_identity": null,
+          "root_identity": null,
+          "config_identity": "fnv1a64:dc56365c2646d0d3",
+          "base_revision": null,
+          "input_identity": "sha256:324714ffd59f7c41be29b0ccc6507ae01b757a6a3162d7cb800f748f954a42e8",
+          "snapshot_identity": null,
+          "git_candidate_subject": null
+        },
+        "counts": {
+          "changed_file_count": 1,
+          "changed_line_count": 2,
+          "candidate_line_count": 1,
+          "probe_count": 1,
+          "finding_count": 1
+        },
+        "limitations": [],
+        "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+      }
+    },
+    "findings": 1
+  },
+  {
+    "case": "python",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "93f97b0277617babe6179b07875b91c921c0a1b8c716b88756fd97ef8e23c4bb",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "schema_version": "0.1",
+      "kind": "complete_with_findings",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": "fnv1a64:dc56365c2646d0d3",
+        "base_revision": null,
+        "input_identity": "sha256:324714ffd59f7c41be29b0ccc6507ae01b757a6a3162d7cb800f748f954a42e8",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 1,
+        "changed_line_count": 2,
+        "candidate_line_count": 1,
+        "probe_count": 1,
+        "finding_count": 1
+      },
+      "limitations": [],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "status": "pass",
+    "message": "0",
+    "warnings": [],
+    "findings": 0
+  },
+  {
+    "case": "python",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "2eb89d75c8288f276b7487303e97ed0b24f090453bbca2b51de1b64583707862",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n"
+  },
+  {
+    "case": "typescript",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "3f68d88cb022f741366891834e501766cf992c1df6502c01af3ee7e13ced7ed8",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "analysis_complete": true,
+      "outcome": {
+        "schema_version": "0.1",
+        "kind": "complete_with_findings",
+        "identity": {
+          "repository_identity": null,
+          "root_identity": null,
+          "config_identity": "fnv1a64:785d932166b116b7",
+          "base_revision": null,
+          "input_identity": "sha256:7a33cfdae3823724816209af2d45fa5c3162c836a6cf8f864fa33e0273116d93",
+          "snapshot_identity": null,
+          "git_candidate_subject": null
+        },
+        "counts": {
+          "changed_file_count": 1,
+          "changed_line_count": 2,
+          "candidate_line_count": 1,
+          "probe_count": 1,
+          "finding_count": 1
+        },
+        "limitations": [],
+        "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+      }
+    },
+    "findings": 1
+  },
+  {
+    "case": "typescript",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "aee67a0cb42666d8bea5fc697d8dc05822ad4dd3fef7ea52eec86a92bd4f234d",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "schema_version": "0.1",
+      "kind": "complete_with_findings",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": "fnv1a64:785d932166b116b7",
+        "base_revision": null,
+        "input_identity": "sha256:7a33cfdae3823724816209af2d45fa5c3162c836a6cf8f864fa33e0273116d93",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 1,
+        "changed_line_count": 2,
+        "candidate_line_count": 1,
+        "probe_count": 1,
+        "finding_count": 1
+      },
+      "limitations": [],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "status": "pass",
+    "message": "0",
+    "warnings": [],
+    "findings": 0
+  },
+  {
+    "case": "typescript",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "8864d8bde4b2cbc857961ebcfc21d4bff85f8f71370b8ec27de7da5145229e64",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n"
+  },
+  {
+    "case": "python-disabled",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-disabled",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-disabled/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "37531c0b1e5fc6557cbfdb8e1af3f42f916a93ca331fa0e76dabc2cfe5c030da",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: --diff produced zero findings because changed files were not analyzed: python changed 1 file(s), but the preview adapter was not enabled or available. This empty result is not a clean pass; see the analysis outcome for the recovery.\n",
+    "analysis_outcome": {
+      "analysis_complete": false,
+      "outcome": {
+        "schema_version": "0.1",
+        "kind": "partial_with_limitations",
+        "identity": {
+          "repository_identity": null,
+          "root_identity": null,
+          "config_identity": "fnv1a64:2c03b6145e7950b0",
+          "base_revision": null,
+          "input_identity": "sha256:9767509532b50c153cf48b2600d21d64e97d686a6203444a91766e468672b3d8",
+          "snapshot_identity": null,
+          "git_candidate_subject": null
+        },
+        "counts": {
+          "changed_file_count": 1,
+          "changed_line_count": 2,
+          "candidate_line_count": 0,
+          "probe_count": 0,
+          "finding_count": 0
+        },
+        "limitations": [
+          {
+            "kind": "language_adapter_unavailable",
+            "producer_stage": "language_adapter",
+            "path": null,
+            "affected_items": 1,
+            "bounded_detail": "python changed 1 file(s), but the preview adapter was not enabled or available",
+            "recovery": {
+              "kind": "enable_language",
+              "detail": "Enable the python preview adapter and re-run the analysis."
+            }
+          }
+        ],
+        "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+      }
+    },
+    "findings": 0
+  },
+  {
+    "case": "python-disabled",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-disabled",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-disabled/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "1543f6ec6e9fe591c06af2558f22c72f961655971579b5eaf1f0e67f8e66d8fd",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: --diff produced zero findings because changed files were not analyzed: python changed 1 file(s), but the preview adapter was not enabled or available. This empty result is not a clean pass; see the analysis outcome for the recovery.\n",
+    "analysis_outcome": {
+      "schema_version": "0.1",
+      "kind": "partial_with_limitations",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": "fnv1a64:2c03b6145e7950b0",
+        "base_revision": null,
+        "input_identity": "sha256:9767509532b50c153cf48b2600d21d64e97d686a6203444a91766e468672b3d8",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 1,
+        "changed_line_count": 2,
+        "candidate_line_count": 0,
+        "probe_count": 0,
+        "finding_count": 0
+      },
+      "limitations": [
+        {
+          "kind": "language_adapter_unavailable",
+          "producer_stage": "language_adapter",
+          "path": null,
+          "affected_items": 1,
+          "bounded_detail": "python changed 1 file(s), but the preview adapter was not enabled or available",
+          "recovery": {
+            "kind": "enable_language",
+            "detail": "Enable the python preview adapter and re-run the analysis."
+          }
+        }
+      ],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "status": "warn",
+    "message": "analysis-incomplete: partial_with_limitations",
+    "warnings": [],
+    "findings": 0
+  },
+  {
+    "case": "python-disabled",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-disabled",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-disabled/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "fe0f4d3bffe69dd86071e41a85dfd3bcdb4ade6e7e70fabb9db2796aebaf6e8a",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: --diff produced zero findings because changed files were not analyzed: python changed 1 file(s), but the preview adapter was not enabled or available. This empty result is not a clean pass; see the analysis outcome for the recovery.\n"
+  },
+  {
+    "case": "typescript-disabled",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript-disabled",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript-disabled/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "8a97dc3ec2e9c39e53a967f2cfc4c0784547f4e31d5ed06c7d0fe368dd81c4d6",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: --diff produced zero findings because changed files were not analyzed: typescript changed 1 file(s), but the preview adapter was not enabled or available. This empty result is not a clean pass; see the analysis outcome for the recovery.\n",
+    "analysis_outcome": {
+      "analysis_complete": false,
+      "outcome": {
+        "schema_version": "0.1",
+        "kind": "partial_with_limitations",
+        "identity": {
+          "repository_identity": null,
+          "root_identity": null,
+          "config_identity": "fnv1a64:2c03b6145e7950b0",
+          "base_revision": null,
+          "input_identity": "sha256:e1b2d6adcd50c8cb6c6829806b896726bf1ae4f46e83e3db4f620f0fda4fa198",
+          "snapshot_identity": null,
+          "git_candidate_subject": null
+        },
+        "counts": {
+          "changed_file_count": 1,
+          "changed_line_count": 2,
+          "candidate_line_count": 0,
+          "probe_count": 0,
+          "finding_count": 0
+        },
+        "limitations": [
+          {
+            "kind": "language_adapter_unavailable",
+            "producer_stage": "language_adapter",
+            "path": null,
+            "affected_items": 1,
+            "bounded_detail": "typescript changed 1 file(s), but the preview adapter was not enabled or available",
+            "recovery": {
+              "kind": "enable_language",
+              "detail": "Enable the typescript preview adapter and re-run the analysis."
+            }
+          }
+        ],
+        "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+      }
+    },
+    "findings": 0
+  },
+  {
+    "case": "typescript-disabled",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript-disabled",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript-disabled/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "e0a550856af939be487e2ed1cd2d9a27d1dd102b2a74a97f69d554f9f49064e1",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: --diff produced zero findings because changed files were not analyzed: typescript changed 1 file(s), but the preview adapter was not enabled or available. This empty result is not a clean pass; see the analysis outcome for the recovery.\n",
+    "analysis_outcome": {
+      "schema_version": "0.1",
+      "kind": "partial_with_limitations",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": "fnv1a64:2c03b6145e7950b0",
+        "base_revision": null,
+        "input_identity": "sha256:e1b2d6adcd50c8cb6c6829806b896726bf1ae4f46e83e3db4f620f0fda4fa198",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 1,
+        "changed_line_count": 2,
+        "candidate_line_count": 0,
+        "probe_count": 0,
+        "finding_count": 0
+      },
+      "limitations": [
+        {
+          "kind": "language_adapter_unavailable",
+          "producer_stage": "language_adapter",
+          "path": null,
+          "affected_items": 1,
+          "bounded_detail": "typescript changed 1 file(s), but the preview adapter was not enabled or available",
+          "recovery": {
+            "kind": "enable_language",
+            "detail": "Enable the typescript preview adapter and re-run the analysis."
+          }
+        }
+      ],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "status": "warn",
+    "message": "analysis-incomplete: partial_with_limitations",
+    "warnings": [],
+    "findings": 0
+  },
+  {
+    "case": "typescript-disabled",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript-disabled",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript-disabled/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "057a1f4b4c779c7f36d70b85f5bd749c574bb8f5dfe39d872d33866eb2b5ee8e",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: --diff produced zero findings because changed files were not analyzed: typescript changed 1 file(s), but the preview adapter was not enabled or available. This empty result is not a clean pass; see the analysis outcome for the recovery.\n"
+  },
+  {
+    "case": "typescript-parse",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript-parse",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript-parse/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "25afb920af0c8bccb566d07bdffc72c446bf6ffcb5636e6dcaa8f61bf06d8cce",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "analysis_complete": false,
+      "outcome": {
+        "schema_version": "0.1",
+        "kind": "partial_with_limitations",
+        "identity": {
+          "repository_identity": null,
+          "root_identity": null,
+          "config_identity": "fnv1a64:4fbb9720aa6abe91",
+          "base_revision": null,
+          "input_identity": "sha256:8df7e6e36206964d01b91d9155b585af6cbba1cc65f1bb43bce060a5e8b32855",
+          "snapshot_identity": null,
+          "git_candidate_subject": null
+        },
+        "counts": {
+          "changed_file_count": 1,
+          "changed_line_count": 2,
+          "candidate_line_count": 1,
+          "probe_count": 1,
+          "finding_count": 1
+        },
+        "limitations": [
+          {
+            "kind": "language_scope_unsupported",
+            "producer_stage": "language_adapter",
+            "path": "src/broken.ts",
+            "affected_items": 1,
+            "bounded_detail": "1 parser error(s): Unexpected token",
+            "recovery": {
+              "kind": "retry",
+              "detail": "Fix the TypeScript or JavaScript parse error, then re-run the analysis."
+            }
+          }
+        ],
+        "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+      }
+    },
+    "findings": 1
+  },
+  {
+    "case": "typescript-parse",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript-parse",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript-parse/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "58b00e5589c78b14c649213642245a9a7ea0882bd0b68a2ef97a0d9059240eee",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "schema_version": "0.1",
+      "kind": "partial_with_limitations",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": "fnv1a64:4fbb9720aa6abe91",
+        "base_revision": null,
+        "input_identity": "sha256:8df7e6e36206964d01b91d9155b585af6cbba1cc65f1bb43bce060a5e8b32855",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 1,
+        "changed_line_count": 2,
+        "candidate_line_count": 1,
+        "probe_count": 1,
+        "finding_count": 1
+      },
+      "limitations": [
+        {
+          "kind": "language_scope_unsupported",
+          "producer_stage": "language_adapter",
+          "path": "src/broken.ts",
+          "affected_items": 1,
+          "bounded_detail": "1 parser error(s): Unexpected token",
+          "recovery": {
+            "kind": "retry",
+            "detail": "Fix the TypeScript or JavaScript parse error, then re-run the analysis."
+          }
+        }
+      ],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "status": "warn",
+    "message": "analysis-incomplete: partial_with_limitations",
+    "warnings": [],
+    "findings": 0
+  },
+  {
+    "case": "typescript-parse",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript-parse",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript-parse/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "eb5276c840bdedb3688a3168dc01068ded28eccc6e0e92e23bd2424d522e5ef3",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n"
+  },
+  {
+    "case": "rust-malformed",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-malformed",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-malformed/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 2,
+    "stdout_sha256": "2ee41452cb31cc5bac1392d1a28a9ad4e1a9daf4f6533b0f8c7bf3202ed6d339",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: check: analysis could not complete (unsupported_input); see the emitted report's limitations and recovery routes\n",
+    "analysis_outcome": {
+      "analysis_complete": false,
+      "outcome": {
+        "schema_version": "0.1",
+        "kind": "unsupported_input",
+        "identity": {
+          "repository_identity": null,
+          "root_identity": null,
+          "config_identity": null,
+          "base_revision": null,
+          "input_identity": "sha256:0fff61f69dcf30d0010d5fc58457f4fbe38a7b9e5d8f15cf54707c2ffd15f0a0",
+          "snapshot_identity": null,
+          "git_candidate_subject": null
+        },
+        "counts": {
+          "changed_file_count": 2,
+          "changed_line_count": 2,
+          "candidate_line_count": 1,
+          "probe_count": 1,
+          "finding_count": 1
+        },
+        "limitations": [
+          {
+            "kind": "malformed_diff",
+            "producer_stage": "diff_parse",
+            "path": null,
+            "affected_items": null,
+            "bounded_detail": "1 file section(s) parsed a header but no hunk body; the diff appears truncated.",
+            "recovery": {
+              "kind": "retry",
+              "detail": "Re-run the analysis with the complete diff stream."
+            }
+          },
+          {
+            "kind": "malformed_diff",
+            "producer_stage": "diff_parse",
+            "path": "src/absent.rs",
+            "affected_items": 1,
+            "bounded_detail": null,
+            "recovery": {
+              "kind": "retry",
+              "detail": "A two-way hunk has invalid ranges or its body does not match the declared old/new line counts. Obtain the complete valid unified diff and re-run; retained changed lines are advisory only."
+            }
+          },
+          {
+            "kind": "language_scope_unsupported",
+            "producer_stage": "language_adapter",
+            "path": "src/absent.rs",
+            "affected_items": 1,
+            "bounded_detail": "No Cargo target's module tree reaches this changed Rust file: no `mod`, `#[path]` or `include!` names it, so rustc does not compile it and its change seeds no finding.",
+            "recovery": {
+              "kind": "inspect_failure",
+              "detail": "No `mod`, `#[path]` or `include!` from a Cargo target reaches src/absent.rs, so rustc does not compile it and its change was not analyzed. Declare it from a module its crate compiles, or delete it if it is dead code."
+            }
+          },
+          {
+            "kind": "changed_file_absent_from_worktree",
+            "producer_stage": "language_adapter",
+            "path": "src/absent.rs",
+            "affected_items": 1,
+            "bounded_detail": "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld",
+            "recovery": {
+              "kind": "retry",
+              "detail": "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis."
+            }
+          }
+        ],
+        "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+      }
+    },
+    "findings": 1
+  },
+  {
+    "case": "rust-malformed",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-malformed",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-malformed/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 2,
+    "stdout_sha256": "35729f33899213f8f791bb4efa3b88d2ab2d88dfd0af734becd69190943c2d86",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: check: analysis could not complete (unsupported_input); see the emitted report's limitations and recovery routes\n",
+    "analysis_outcome": {
+      "schema_version": "0.1",
+      "kind": "unsupported_input",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": null,
+        "base_revision": null,
+        "input_identity": "sha256:0fff61f69dcf30d0010d5fc58457f4fbe38a7b9e5d8f15cf54707c2ffd15f0a0",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 2,
+        "changed_line_count": 2,
+        "candidate_line_count": 1,
+        "probe_count": 1,
+        "finding_count": 1
+      },
+      "limitations": [
+        {
+          "kind": "malformed_diff",
+          "producer_stage": "diff_parse",
+          "path": null,
+          "affected_items": null,
+          "bounded_detail": "1 file section(s) parsed a header but no hunk body; the diff appears truncated.",
+          "recovery": {
+            "kind": "retry",
+            "detail": "Re-run the analysis with the complete diff stream."
+          }
+        },
+        {
+          "kind": "malformed_diff",
+          "producer_stage": "diff_parse",
+          "path": "src/absent.rs",
+          "affected_items": 1,
+          "bounded_detail": null,
+          "recovery": {
+            "kind": "retry",
+            "detail": "A two-way hunk has invalid ranges or its body does not match the declared old/new line counts. Obtain the complete valid unified diff and re-run; retained changed lines are advisory only."
+          }
+        },
+        {
+          "kind": "language_scope_unsupported",
+          "producer_stage": "language_adapter",
+          "path": "src/absent.rs",
+          "affected_items": 1,
+          "bounded_detail": "No Cargo target's module tree reaches this changed Rust file: no `mod`, `#[path]` or `include!` names it, so rustc does not compile it and its change seeds no finding.",
+          "recovery": {
+            "kind": "inspect_failure",
+            "detail": "No `mod`, `#[path]` or `include!` from a Cargo target reaches src/absent.rs, so rustc does not compile it and its change was not analyzed. Declare it from a module its crate compiles, or delete it if it is dead code."
+          }
+        },
+        {
+          "kind": "changed_file_absent_from_worktree",
+          "producer_stage": "language_adapter",
+          "path": "src/absent.rs",
+          "affected_items": 1,
+          "bounded_detail": "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld",
+          "recovery": {
+            "kind": "retry",
+            "detail": "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis."
+          }
+        }
+      ],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "status": "warn",
+    "message": "analysis-incomplete: unsupported_input",
+    "warnings": [],
+    "findings": 0
+  },
+  {
+    "case": "rust-malformed",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-malformed",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-malformed/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 2,
+    "stdout_sha256": "4f6133899f7eabb5485ff66d0542b738fcec1001f238081eb577e0dadedf2808",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: check: analysis could not complete (unsupported_input); see the emitted report's limitations and recovery routes\n"
+  },
+  {
+    "case": "rust-render-limited",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-render-limited",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-render-limited/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_CHECK_FINDINGS_BYTES": "1"
+    },
+    "exit": 0,
+    "stdout_sha256": "0ef88bcec7c84efaac5c35bed3c84aae390690c56470310b45ccade030f43a0a",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "analysis_complete": true,
+      "outcome": {
+        "schema_version": "0.1",
+        "kind": "complete_with_findings",
+        "identity": {
+          "repository_identity": null,
+          "root_identity": null,
+          "config_identity": null,
+          "base_revision": null,
+          "input_identity": "sha256:5d4572db105b9569851eb9f3a73b99059a4626019d7d43b7053c8b29c660f668",
+          "snapshot_identity": null,
+          "git_candidate_subject": null
+        },
+        "counts": {
+          "changed_file_count": 1,
+          "changed_line_count": 2,
+          "candidate_line_count": 1,
+          "probe_count": 1,
+          "finding_count": 1
+        },
+        "limitations": [],
+        "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+      }
+    },
+    "findings": 1
+  },
+  {
+    "case": "rust-render-limited",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-render-limited",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-render-limited/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_CHECK_FINDINGS_BYTES": "1"
+    },
+    "exit": 0,
+    "stdout_sha256": "de8d6aa015ff1058a46647b7f72a9361b576612fa17b1949460e45b853e2a7d0",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "schema_version": "0.1",
+      "kind": "complete_with_findings",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": null,
+        "base_revision": null,
+        "input_identity": "sha256:5d4572db105b9569851eb9f3a73b99059a4626019d7d43b7053c8b29c660f668",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 1,
+        "changed_line_count": 2,
+        "candidate_line_count": 1,
+        "probe_count": 1,
+        "finding_count": 1
+      },
+      "limitations": [],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "status": "warn",
+    "message": "1",
+    "warnings": [],
+    "findings": 0
+  },
+  {
+    "case": "rust-render-limited",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-render-limited",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-render-limited/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_CHECK_FINDINGS_BYTES": "1"
+    },
+    "exit": 0,
+    "stdout_sha256": "2e827277c1e024b40ee1205a080f2908a157e01895a68ffba5d1d35413c7b9df",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n"
+  },
+  {
+    "case": "rust-budget-invalid",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-budget-invalid",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-budget-invalid/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "nope"
+    },
+    "exit": 2,
+    "stdout_sha256": "f37ca3707013bb10814ea904f5e042eac29e859e73701eeedd0a1c0d4f220e21",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: partial_budget_invalid: RIPR_PARTIAL_DIFF_FILE_BUDGET must be a positive integer: invalid digit found in string\n",
+    "run_limitations": [
+      {
+        "basis": "analysis_failed",
+        "category": "analysis_failed",
+        "downstream_consumable": false,
+        "message": "partial_budget_invalid: RIPR_PARTIAL_DIFF_FILE_BUDGET must be a positive integer: invalid digit found in string",
+        "repair_route": "analysis/failure",
+        "run_status": "analysis_failed"
+      }
+    ],
+    "findings": 0
+  },
+  {
+    "case": "rust-budget-invalid",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-budget-invalid",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-budget-invalid/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "nope"
+    },
+    "exit": 2,
+    "stdout_sha256": "a6e4adebb8f6d020055f3f9587fa94ecfd1937b32d1f09d258a5f9f4e720d57b",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: partial_budget_invalid: RIPR_PARTIAL_DIFF_FILE_BUDGET must be a positive integer: invalid digit found in string\n",
+    "analysis_outcome": null,
+    "status": "warn",
+    "message": "refused: analysis_failed",
+    "warnings": [
+      "run refused: partial_budget_invalid: RIPR_PARTIAL_DIFF_FILE_BUDGET must be a positive integer: invalid digit found in string; repair route: analysis/failure"
+    ],
+    "findings": 0
+  },
+  {
+    "case": "rust-budget-invalid",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-budget-invalid",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-budget-invalid/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "nope"
+    },
+    "exit": 2,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: partial_budget_invalid: RIPR_PARTIAL_DIFF_FILE_BUDGET must be a positive integer: invalid digit found in string\n"
+  },
+  {
+    "case": "python-malformed",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-malformed",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-malformed/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 2,
+    "stdout_sha256": "25da9b5d13a093e2e13bbeb526a8ade087bb4d249c55a41c56c1f3762af51f69",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: path-dependency graph status is unavailable: no local Cargo.toml manifest was found, so reverse-dependency diff-scope expansion did not run and the diff scope stays the changed packages\nripr: check: analysis could not complete (unsupported_input); see the emitted report's limitations and recovery routes\n",
+    "analysis_outcome": {
+      "analysis_complete": false,
+      "outcome": {
+        "schema_version": "0.1",
+        "kind": "unsupported_input",
+        "identity": {
+          "repository_identity": null,
+          "root_identity": null,
+          "config_identity": "fnv1a64:dc56365c2646d0d3",
+          "base_revision": null,
+          "input_identity": "sha256:5e45b9f670eb1fa1da047b60322b89eaced769eba9f72cdb363b8b531acbe774",
+          "snapshot_identity": null,
+          "git_candidate_subject": null
+        },
+        "counts": {
+          "changed_file_count": 2,
+          "changed_line_count": 2,
+          "candidate_line_count": 1,
+          "probe_count": 1,
+          "finding_count": 1
+        },
+        "limitations": [
+          {
+            "kind": "malformed_diff",
+            "producer_stage": "diff_parse",
+            "path": null,
+            "affected_items": null,
+            "bounded_detail": "1 file section(s) parsed a header but no hunk body; the diff appears truncated.",
+            "recovery": {
+              "kind": "retry",
+              "detail": "Re-run the analysis with the complete diff stream."
+            }
+          },
+          {
+            "kind": "malformed_diff",
+            "producer_stage": "diff_parse",
+            "path": "src/absent.rs",
+            "affected_items": 1,
+            "bounded_detail": null,
+            "recovery": {
+              "kind": "retry",
+              "detail": "A two-way hunk has invalid ranges or its body does not match the declared old/new line counts. Obtain the complete valid unified diff and re-run; retained changed lines are advisory only."
+            }
+          },
+          {
+            "kind": "changed_file_absent_from_worktree",
+            "producer_stage": "language_adapter",
+            "path": "src/absent.rs",
+            "affected_items": 1,
+            "bounded_detail": "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld",
+            "recovery": {
+              "kind": "retry",
+              "detail": "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis."
+            }
+          }
+        ],
+        "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+      }
+    },
+    "findings": 1
+  },
+  {
+    "case": "python-malformed",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-malformed",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-malformed/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 2,
+    "stdout_sha256": "23e250f34f606d87a89006f7161f288568c0e636db8b1c5e2dab764f7bd8c120",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: path-dependency graph status is unavailable: no local Cargo.toml manifest was found, so reverse-dependency diff-scope expansion did not run and the diff scope stays the changed packages\nripr: check: analysis could not complete (unsupported_input); see the emitted report's limitations and recovery routes\n",
+    "analysis_outcome": {
+      "schema_version": "0.1",
+      "kind": "unsupported_input",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": "fnv1a64:dc56365c2646d0d3",
+        "base_revision": null,
+        "input_identity": "sha256:5e45b9f670eb1fa1da047b60322b89eaced769eba9f72cdb363b8b531acbe774",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 2,
+        "changed_line_count": 2,
+        "candidate_line_count": 1,
+        "probe_count": 1,
+        "finding_count": 1
+      },
+      "limitations": [
+        {
+          "kind": "malformed_diff",
+          "producer_stage": "diff_parse",
+          "path": null,
+          "affected_items": null,
+          "bounded_detail": "1 file section(s) parsed a header but no hunk body; the diff appears truncated.",
+          "recovery": {
+            "kind": "retry",
+            "detail": "Re-run the analysis with the complete diff stream."
+          }
+        },
+        {
+          "kind": "malformed_diff",
+          "producer_stage": "diff_parse",
+          "path": "src/absent.rs",
+          "affected_items": 1,
+          "bounded_detail": null,
+          "recovery": {
+            "kind": "retry",
+            "detail": "A two-way hunk has invalid ranges or its body does not match the declared old/new line counts. Obtain the complete valid unified diff and re-run; retained changed lines are advisory only."
+          }
+        },
+        {
+          "kind": "changed_file_absent_from_worktree",
+          "producer_stage": "language_adapter",
+          "path": "src/absent.rs",
+          "affected_items": 1,
+          "bounded_detail": "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld",
+          "recovery": {
+            "kind": "retry",
+            "detail": "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis."
+          }
+        }
+      ],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "status": "warn",
+    "message": "analysis-incomplete: unsupported_input",
+    "warnings": [],
+    "findings": 0
+  },
+  {
+    "case": "python-malformed",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-malformed",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-malformed/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 2,
+    "stdout_sha256": "2158557fb8e2e617717cf811ef6aa49987a649bd615120cfdc867525a6396054",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: path-dependency graph status is unavailable: no local Cargo.toml manifest was found, so reverse-dependency diff-scope expansion did not run and the diff scope stays the changed packages\nripr: check: analysis could not complete (unsupported_input); see the emitted report's limitations and recovery routes\n"
+  },
+  {
+    "case": "python-render-limited",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-render-limited",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-render-limited/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_CHECK_FINDINGS_BYTES": "1"
+    },
+    "exit": 0,
+    "stdout_sha256": "4abf03c3c2a3c23f39c0c2af44c9cab30c1513810e6fb5b98dfe28d1fd4a6117",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "analysis_complete": true,
+      "outcome": {
+        "schema_version": "0.1",
+        "kind": "complete_with_findings",
+        "identity": {
+          "repository_identity": null,
+          "root_identity": null,
+          "config_identity": "fnv1a64:dc56365c2646d0d3",
+          "base_revision": null,
+          "input_identity": "sha256:324714ffd59f7c41be29b0ccc6507ae01b757a6a3162d7cb800f748f954a42e8",
+          "snapshot_identity": null,
+          "git_candidate_subject": null
+        },
+        "counts": {
+          "changed_file_count": 1,
+          "changed_line_count": 2,
+          "candidate_line_count": 1,
+          "probe_count": 1,
+          "finding_count": 1
+        },
+        "limitations": [],
+        "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+      }
+    },
+    "findings": 1
+  },
+  {
+    "case": "python-render-limited",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-render-limited",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-render-limited/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_CHECK_FINDINGS_BYTES": "1"
+    },
+    "exit": 0,
+    "stdout_sha256": "93f97b0277617babe6179b07875b91c921c0a1b8c716b88756fd97ef8e23c4bb",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "schema_version": "0.1",
+      "kind": "complete_with_findings",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": "fnv1a64:dc56365c2646d0d3",
+        "base_revision": null,
+        "input_identity": "sha256:324714ffd59f7c41be29b0ccc6507ae01b757a6a3162d7cb800f748f954a42e8",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 1,
+        "changed_line_count": 2,
+        "candidate_line_count": 1,
+        "probe_count": 1,
+        "finding_count": 1
+      },
+      "limitations": [],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "status": "pass",
+    "message": "0",
+    "warnings": [],
+    "findings": 0
+  },
+  {
+    "case": "python-render-limited",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-render-limited",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-render-limited/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_CHECK_FINDINGS_BYTES": "1"
+    },
+    "exit": 0,
+    "stdout_sha256": "2b234249a8bcec83fef244037ba75541b922f19b1eabf7496691d0e7441c1eef",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n"
+  },
+  {
+    "case": "python-budget-invalid",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-budget-invalid",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-budget-invalid/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "nope"
+    },
+    "exit": 2,
+    "stdout_sha256": "03b4dc8de872c73c81840b00b2447a941e6070a9f8a0735ad1872fa0d8967b7d",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: partial_budget_invalid: RIPR_PARTIAL_DIFF_FILE_BUDGET must be a positive integer: invalid digit found in string\n",
+    "run_limitations": [
+      {
+        "basis": "analysis_failed",
+        "category": "analysis_failed",
+        "downstream_consumable": false,
+        "message": "partial_budget_invalid: RIPR_PARTIAL_DIFF_FILE_BUDGET must be a positive integer: invalid digit found in string",
+        "repair_route": "analysis/failure",
+        "run_status": "analysis_failed"
+      }
+    ],
+    "findings": 0
+  },
+  {
+    "case": "python-budget-invalid",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-budget-invalid",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-budget-invalid/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "nope"
+    },
+    "exit": 2,
+    "stdout_sha256": "a6e4adebb8f6d020055f3f9587fa94ecfd1937b32d1f09d258a5f9f4e720d57b",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: partial_budget_invalid: RIPR_PARTIAL_DIFF_FILE_BUDGET must be a positive integer: invalid digit found in string\n",
+    "analysis_outcome": null,
+    "status": "warn",
+    "message": "refused: analysis_failed",
+    "warnings": [
+      "run refused: partial_budget_invalid: RIPR_PARTIAL_DIFF_FILE_BUDGET must be a positive integer: invalid digit found in string; repair route: analysis/failure"
+    ],
+    "findings": 0
+  },
+  {
+    "case": "python-budget-invalid",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-budget-invalid",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-budget-invalid/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "nope"
+    },
+    "exit": 2,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: partial_budget_invalid: RIPR_PARTIAL_DIFF_FILE_BUDGET must be a positive integer: invalid digit found in string\n"
+  },
+  {
+    "case": "typescript-malformed",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript-malformed",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript-malformed/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 2,
+    "stdout_sha256": "1b85e574a4cb980847da84aee8fb7793a2f2975603f0ffc939f87ad5a59e88d7",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: path-dependency graph status is unavailable: no local Cargo.toml manifest was found, so reverse-dependency diff-scope expansion did not run and the diff scope stays the changed packages\nripr: check: analysis could not complete (unsupported_input); see the emitted report's limitations and recovery routes\n",
+    "analysis_outcome": {
+      "analysis_complete": false,
+      "outcome": {
+        "schema_version": "0.1",
+        "kind": "unsupported_input",
+        "identity": {
+          "repository_identity": null,
+          "root_identity": null,
+          "config_identity": "fnv1a64:785d932166b116b7",
+          "base_revision": null,
+          "input_identity": "sha256:ea7cf633fc3ffca7cd13d5c4a5de8f801bb28646a3857973d553173278d2ab2d",
+          "snapshot_identity": null,
+          "git_candidate_subject": null
+        },
+        "counts": {
+          "changed_file_count": 2,
+          "changed_line_count": 2,
+          "candidate_line_count": 1,
+          "probe_count": 1,
+          "finding_count": 1
+        },
+        "limitations": [
+          {
+            "kind": "malformed_diff",
+            "producer_stage": "diff_parse",
+            "path": null,
+            "affected_items": null,
+            "bounded_detail": "1 file section(s) parsed a header but no hunk body; the diff appears truncated.",
+            "recovery": {
+              "kind": "retry",
+              "detail": "Re-run the analysis with the complete diff stream."
+            }
+          },
+          {
+            "kind": "malformed_diff",
+            "producer_stage": "diff_parse",
+            "path": "src/absent.rs",
+            "affected_items": 1,
+            "bounded_detail": null,
+            "recovery": {
+              "kind": "retry",
+              "detail": "A two-way hunk has invalid ranges or its body does not match the declared old/new line counts. Obtain the complete valid unified diff and re-run; retained changed lines are advisory only."
+            }
+          },
+          {
+            "kind": "changed_file_absent_from_worktree",
+            "producer_stage": "language_adapter",
+            "path": "src/absent.rs",
+            "affected_items": 1,
+            "bounded_detail": "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld",
+            "recovery": {
+              "kind": "retry",
+              "detail": "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis."
+            }
+          }
+        ],
+        "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+      }
+    },
+    "findings": 1
+  },
+  {
+    "case": "typescript-malformed",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript-malformed",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript-malformed/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 2,
+    "stdout_sha256": "f01b9d0a81b2c4fb5fe7bda817b6030c64d14a334143defb1ff38cbe8f3487ee",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: path-dependency graph status is unavailable: no local Cargo.toml manifest was found, so reverse-dependency diff-scope expansion did not run and the diff scope stays the changed packages\nripr: check: analysis could not complete (unsupported_input); see the emitted report's limitations and recovery routes\n",
+    "analysis_outcome": {
+      "schema_version": "0.1",
+      "kind": "unsupported_input",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": "fnv1a64:785d932166b116b7",
+        "base_revision": null,
+        "input_identity": "sha256:ea7cf633fc3ffca7cd13d5c4a5de8f801bb28646a3857973d553173278d2ab2d",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 2,
+        "changed_line_count": 2,
+        "candidate_line_count": 1,
+        "probe_count": 1,
+        "finding_count": 1
+      },
+      "limitations": [
+        {
+          "kind": "malformed_diff",
+          "producer_stage": "diff_parse",
+          "path": null,
+          "affected_items": null,
+          "bounded_detail": "1 file section(s) parsed a header but no hunk body; the diff appears truncated.",
+          "recovery": {
+            "kind": "retry",
+            "detail": "Re-run the analysis with the complete diff stream."
+          }
+        },
+        {
+          "kind": "malformed_diff",
+          "producer_stage": "diff_parse",
+          "path": "src/absent.rs",
+          "affected_items": 1,
+          "bounded_detail": null,
+          "recovery": {
+            "kind": "retry",
+            "detail": "A two-way hunk has invalid ranges or its body does not match the declared old/new line counts. Obtain the complete valid unified diff and re-run; retained changed lines are advisory only."
+          }
+        },
+        {
+          "kind": "changed_file_absent_from_worktree",
+          "producer_stage": "language_adapter",
+          "path": "src/absent.rs",
+          "affected_items": 1,
+          "bounded_detail": "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld",
+          "recovery": {
+            "kind": "retry",
+            "detail": "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis."
+          }
+        }
+      ],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "status": "warn",
+    "message": "analysis-incomplete: unsupported_input",
+    "warnings": [],
+    "findings": 0
+  },
+  {
+    "case": "typescript-malformed",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript-malformed",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript-malformed/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 2,
+    "stdout_sha256": "de282f2c2ad730c0ed3bd29a74fcefabb8cb374924b0dd152ca2784b5017e8de",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: path-dependency graph status is unavailable: no local Cargo.toml manifest was found, so reverse-dependency diff-scope expansion did not run and the diff scope stays the changed packages\nripr: check: analysis could not complete (unsupported_input); see the emitted report's limitations and recovery routes\n"
+  },
+  {
+    "case": "typescript-render-limited",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript-render-limited",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript-render-limited/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_CHECK_FINDINGS_BYTES": "1"
+    },
+    "exit": 0,
+    "stdout_sha256": "d4e7886fee69a43cf0c95566484644c3f1f57b178213dceeb2ad6652288319d3",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "analysis_complete": true,
+      "outcome": {
+        "schema_version": "0.1",
+        "kind": "complete_with_findings",
+        "identity": {
+          "repository_identity": null,
+          "root_identity": null,
+          "config_identity": "fnv1a64:785d932166b116b7",
+          "base_revision": null,
+          "input_identity": "sha256:7a33cfdae3823724816209af2d45fa5c3162c836a6cf8f864fa33e0273116d93",
+          "snapshot_identity": null,
+          "git_candidate_subject": null
+        },
+        "counts": {
+          "changed_file_count": 1,
+          "changed_line_count": 2,
+          "candidate_line_count": 1,
+          "probe_count": 1,
+          "finding_count": 1
+        },
+        "limitations": [],
+        "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+      }
+    },
+    "findings": 1
+  },
+  {
+    "case": "typescript-render-limited",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript-render-limited",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript-render-limited/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_CHECK_FINDINGS_BYTES": "1"
+    },
+    "exit": 0,
+    "stdout_sha256": "aee67a0cb42666d8bea5fc697d8dc05822ad4dd3fef7ea52eec86a92bd4f234d",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "schema_version": "0.1",
+      "kind": "complete_with_findings",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": "fnv1a64:785d932166b116b7",
+        "base_revision": null,
+        "input_identity": "sha256:7a33cfdae3823724816209af2d45fa5c3162c836a6cf8f864fa33e0273116d93",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 1,
+        "changed_line_count": 2,
+        "candidate_line_count": 1,
+        "probe_count": 1,
+        "finding_count": 1
+      },
+      "limitations": [],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "status": "pass",
+    "message": "0",
+    "warnings": [],
+    "findings": 0
+  },
+  {
+    "case": "typescript-render-limited",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript-render-limited",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript-render-limited/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_CHECK_FINDINGS_BYTES": "1"
+    },
+    "exit": 0,
+    "stdout_sha256": "a0af097ae7e2854266b5781722e17244e3902c334bec10f572f16f69857adb40",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n"
+  },
+  {
+    "case": "typescript-budget-invalid",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript-budget-invalid",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript-budget-invalid/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "nope"
+    },
+    "exit": 2,
+    "stdout_sha256": "510ac673d96e67bec1c3e1be16b9c7af5b98b404c1202ba9d92e5808ece5722f",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: partial_budget_invalid: RIPR_PARTIAL_DIFF_FILE_BUDGET must be a positive integer: invalid digit found in string\n",
+    "run_limitations": [
+      {
+        "basis": "analysis_failed",
+        "category": "analysis_failed",
+        "downstream_consumable": false,
+        "message": "partial_budget_invalid: RIPR_PARTIAL_DIFF_FILE_BUDGET must be a positive integer: invalid digit found in string",
+        "repair_route": "analysis/failure",
+        "run_status": "analysis_failed"
+      }
+    ],
+    "findings": 0
+  },
+  {
+    "case": "typescript-budget-invalid",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript-budget-invalid",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript-budget-invalid/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "nope"
+    },
+    "exit": 2,
+    "stdout_sha256": "a6e4adebb8f6d020055f3f9587fa94ecfd1937b32d1f09d258a5f9f4e720d57b",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: partial_budget_invalid: RIPR_PARTIAL_DIFF_FILE_BUDGET must be a positive integer: invalid digit found in string\n",
+    "analysis_outcome": null,
+    "status": "warn",
+    "message": "refused: analysis_failed",
+    "warnings": [
+      "run refused: partial_budget_invalid: RIPR_PARTIAL_DIFF_FILE_BUDGET must be a positive integer: invalid digit found in string; repair route: analysis/failure"
+    ],
+    "findings": 0
+  },
+  {
+    "case": "typescript-budget-invalid",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/typescript-budget-invalid",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/typescript-budget-invalid/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "nope"
+    },
+    "exit": 2,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\nripr: partial_budget_invalid: RIPR_PARTIAL_DIFF_FILE_BUDGET must be a positive integer: invalid digit found in string\n"
+  },
+  {
+    "case": "rust-missing",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-missing",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-missing/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "f8fb7ad052cb75e7032ac919bc3e5733f5ecf5d3ca7fe47420f43a3b56af1c26",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "analysis_complete": false,
+      "outcome": {
+        "schema_version": "0.1",
+        "kind": "partial_with_limitations",
+        "identity": {
+          "repository_identity": null,
+          "root_identity": null,
+          "config_identity": null,
+          "base_revision": null,
+          "input_identity": "sha256:322e3bee81119cf905c55e26d0cc58c98c1974f217a5f9f4afab4fa9394c0ed7",
+          "snapshot_identity": null,
+          "git_candidate_subject": null
+        },
+        "counts": {
+          "changed_file_count": 2,
+          "changed_line_count": 3,
+          "candidate_line_count": 1,
+          "probe_count": 1,
+          "finding_count": 1
+        },
+        "limitations": [
+          {
+            "kind": "language_scope_unsupported",
+            "producer_stage": "language_adapter",
+            "path": "src/absent.rs",
+            "affected_items": 1,
+            "bounded_detail": "No Cargo target's module tree reaches this changed Rust file: no `mod`, `#[path]` or `include!` names it, so rustc does not compile it and its change seeds no finding.",
+            "recovery": {
+              "kind": "inspect_failure",
+              "detail": "No `mod`, `#[path]` or `include!` from a Cargo target reaches src/absent.rs, so rustc does not compile it and its change was not analyzed. Declare it from a module its crate compiles, or delete it if it is dead code."
+            }
+          },
+          {
+            "kind": "changed_file_absent_from_worktree",
+            "producer_stage": "language_adapter",
+            "path": "src/absent.rs",
+            "affected_items": 1,
+            "bounded_detail": "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld",
+            "recovery": {
+              "kind": "retry",
+              "detail": "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis."
+            }
+          }
+        ],
+        "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+      }
+    },
+    "findings": 1
+  },
+  {
+    "case": "rust-missing",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-missing",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-missing/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "921a3f540e19d811f54c0bf68092b72ea6f14498e62c6c835926377925275e4f",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "schema_version": "0.1",
+      "kind": "partial_with_limitations",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": null,
+        "base_revision": null,
+        "input_identity": "sha256:322e3bee81119cf905c55e26d0cc58c98c1974f217a5f9f4afab4fa9394c0ed7",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 2,
+        "changed_line_count": 3,
+        "candidate_line_count": 1,
+        "probe_count": 1,
+        "finding_count": 1
+      },
+      "limitations": [
+        {
+          "kind": "language_scope_unsupported",
+          "producer_stage": "language_adapter",
+          "path": "src/absent.rs",
+          "affected_items": 1,
+          "bounded_detail": "No Cargo target's module tree reaches this changed Rust file: no `mod`, `#[path]` or `include!` names it, so rustc does not compile it and its change seeds no finding.",
+          "recovery": {
+            "kind": "inspect_failure",
+            "detail": "No `mod`, `#[path]` or `include!` from a Cargo target reaches src/absent.rs, so rustc does not compile it and its change was not analyzed. Declare it from a module its crate compiles, or delete it if it is dead code."
+          }
+        },
+        {
+          "kind": "changed_file_absent_from_worktree",
+          "producer_stage": "language_adapter",
+          "path": "src/absent.rs",
+          "affected_items": 1,
+          "bounded_detail": "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld",
+          "recovery": {
+            "kind": "retry",
+            "detail": "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis."
+          }
+        }
+      ],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "status": "warn",
+    "message": "analysis-incomplete: partial_with_limitations",
+    "warnings": [],
+    "findings": 0
+  },
+  {
+    "case": "rust-missing",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-missing",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-missing/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "9813aa09a75e6c7d65aa36a6e46478f6669ebbda923a6677656ebbdde79933be",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n"
+  },
+  {
+    "case": "mixed-go",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/mixed-go",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/mixed-go/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "cdf621df86101359beaa48eb019e0c6fe836b6c2602e3c13c43240fbe8bb3326",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "analysis_complete": false,
+      "outcome": {
+        "schema_version": "0.1",
+        "kind": "partial_with_limitations",
+        "identity": {
+          "repository_identity": null,
+          "root_identity": null,
+          "config_identity": null,
+          "base_revision": null,
+          "input_identity": "sha256:1aeb7a274ef95bc781f316e63337b67334a9df985e120dac70197736f54d49e3",
+          "snapshot_identity": null,
+          "git_candidate_subject": null
+        },
+        "counts": {
+          "changed_file_count": 2,
+          "changed_line_count": 4,
+          "candidate_line_count": 1,
+          "probe_count": 1,
+          "finding_count": 1
+        },
+        "limitations": [
+          {
+            "kind": "language_scope_unsupported",
+            "producer_stage": "language_adapter",
+            "path": null,
+            "affected_items": 1,
+            "bounded_detail": "1 changed file(s) in languages ripr does not analyze (Go: 1) were not analyzed: main.go",
+            "recovery": {
+              "kind": "inspect_failure",
+              "detail": "Not analyzed (Go: 1): main.go. ripr analyzes Rust, plus TypeScript/JavaScript and Python as previews; review these changes with their own tests."
+            }
+          }
+        ],
+        "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+      }
+    },
+    "findings": 1
+  },
+  {
+    "case": "mixed-go",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/mixed-go",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/mixed-go/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "3d2839c48ed00cefad6a099590d7898c1777ef25b7497f9e534f5318ccbb0119",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "schema_version": "0.1",
+      "kind": "partial_with_limitations",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": null,
+        "base_revision": null,
+        "input_identity": "sha256:1aeb7a274ef95bc781f316e63337b67334a9df985e120dac70197736f54d49e3",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 2,
+        "changed_line_count": 4,
+        "candidate_line_count": 1,
+        "probe_count": 1,
+        "finding_count": 1
+      },
+      "limitations": [
+        {
+          "kind": "language_scope_unsupported",
+          "producer_stage": "language_adapter",
+          "path": null,
+          "affected_items": 1,
+          "bounded_detail": "1 changed file(s) in languages ripr does not analyze (Go: 1) were not analyzed: main.go",
+          "recovery": {
+            "kind": "inspect_failure",
+            "detail": "Not analyzed (Go: 1): main.go. ripr analyzes Rust, plus TypeScript/JavaScript and Python as previews; review these changes with their own tests."
+          }
+        }
+      ],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "status": "warn",
+    "message": "analysis-incomplete: partial_with_limitations",
+    "warnings": [],
+    "findings": 0
+  },
+  {
+    "case": "mixed-go",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/mixed-go",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/mixed-go/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {},
+    "exit": 0,
+    "stdout_sha256": "5fa3899daa5ffb9f2dc3013cf9e8992d3724e61e058ff2a7a1e2f6748bf1b4d2",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n"
+  },
+  {
+    "case": "rust-partial",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-partial",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-partial/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+    },
+    "exit": 0,
+    "stdout_sha256": "3bb96db001490b8e78cbead0e04b1fc8eee569988439f6fd90aa4509e606eed1",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "analysis_complete": false,
+      "outcome": {
+        "schema_version": "0.1",
+        "kind": "partial_with_limitations",
+        "identity": {
+          "repository_identity": null,
+          "root_identity": null,
+          "config_identity": null,
+          "base_revision": null,
+          "input_identity": "sha256:5325486cf6451d6521048635c6741221a51a7ce93d9bcbaf137eb8d3291e962f",
+          "snapshot_identity": null,
+          "git_candidate_subject": null
+        },
+        "counts": {
+          "changed_file_count": 2,
+          "changed_line_count": 4,
+          "candidate_line_count": 1,
+          "probe_count": 1,
+          "finding_count": 1
+        },
+        "limitations": [
+          {
+            "kind": "diff_scope_oversized",
+            "producer_stage": "analysis_pipeline",
+            "path": null,
+            "affected_items": 2,
+            "bounded_detail": "The run analyzed 2 changed line(s) and left at least 2 changed line(s) outside the selected partition.",
+            "recovery": {
+              "kind": "increase_configured_limit",
+              "detail": "To widen the analyzed partition, raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2, then re-run."
+            }
+          }
+        ],
+        "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+      }
+    },
+    "findings": 1
+  },
+  {
+    "case": "rust-partial",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-partial",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-partial/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+    },
+    "exit": 0,
+    "stdout_sha256": "36daa77416b7b7fcebd3e8aed6c9a7ab2cfa87e2f98822eff4d33916fa52e813",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n",
+    "analysis_outcome": {
+      "schema_version": "0.1",
+      "kind": "partial_with_limitations",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": null,
+        "base_revision": null,
+        "input_identity": "sha256:5325486cf6451d6521048635c6741221a51a7ce93d9bcbaf137eb8d3291e962f",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 2,
+        "changed_line_count": 4,
+        "candidate_line_count": 1,
+        "probe_count": 1,
+        "finding_count": 1
+      },
+      "limitations": [
+        {
+          "kind": "diff_scope_oversized",
+          "producer_stage": "analysis_pipeline",
+          "path": null,
+          "affected_items": 2,
+          "bounded_detail": "The run analyzed 2 changed line(s) and left at least 2 changed line(s) outside the selected partition.",
+          "recovery": {
+            "kind": "increase_configured_limit",
+            "detail": "To widen the analyzed partition, raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2, then re-run."
+          }
+        }
+      ],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "status": "warn",
+    "message": "analysis-incomplete: partial_with_limitations",
+    "warnings": [],
+    "findings": 0
+  },
+  {
+    "case": "rust-partial",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-partial",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-partial/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+    },
+    "exit": 0,
+    "stdout_sha256": "e3a0ef63ef32f5e3db27c5ac296a389c2fca51d3e0a45b254cb2350757ab1931",
+    "stderr": "ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).\n"
+  }
+]

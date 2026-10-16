@@ -1,0 +1,38 @@
+{
+  "analysis_scope": {
+    "basis": "analysis_failed",
+    "downstream_consumable": false,
+    "limitation": "analysis_failed",
+    "repair_route": "analysis/failure",
+    "run_status": "analysis_failed",
+    "scope": "diff"
+  },
+  "findings": [],
+  "mode": "fast",
+  "root": "/workspace/scratch/cli-output-audit/cases/typescript-budget-invalid",
+  "run_limitations": [
+    {
+      "basis": "analysis_failed",
+      "category": "analysis_failed",
+      "downstream_consumable": false,
+      "message": "partial_budget_invalid: RIPR_PARTIAL_DIFF_FILE_BUDGET must be a positive integer: invalid digit found in string",
+      "repair_route": "analysis/failure",
+      "run_status": "analysis_failed"
+    }
+  ],
+  "schema_version": "0.2",
+  "summary": {
+    "changed_files_by_language": [],
+    "changed_rust_files": 0,
+    "exposed": 0,
+    "findings": 0,
+    "infection_unknown": 0,
+    "no_static_path": 0,
+    "probes": 0,
+    "propagation_unknown": 0,
+    "reachable_unrevealed": 0,
+    "static_unknown": 0,
+    "weakly_exposed": 0
+  },
+  "tool": "ripr"
+}

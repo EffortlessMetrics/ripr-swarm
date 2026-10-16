@@ -1,0 +1,4 @@
+ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).
+ripr: the diff input contained no parseable file changes (0 hunks, 0 files). If this is unexpected, verify the --diff path points to a valid unified diff. The empty result may not reflect sufficient tests — it reflects an empty analysis scope.
+ripr: --diff produced zero findings. If the diff file is not a valid unified diff, this result is empty because nothing was parsed — not because all behavior is covered.
+ripr: check: analysis could not complete (unsupported_input); see the emitted report's limitations and recovery routes

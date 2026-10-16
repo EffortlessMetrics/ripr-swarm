@@ -1,0 +1,256 @@
+{
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "source": "d08c77d144c016078364fcc1fcf2fa593d21cefc",
+  "queries": [
+    {
+      "query": "\"preview\" \"analyzed\" \"partition\"",
+      "items": [
+        {
+          "number": 5545,
+          "title": "analysis(typescript): implement bounded repository-mode evidence for TypeScript and JavaScript",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5545"
+        },
+        {
+          "number": 5643,
+          "title": "analysis(dotnet): deliver bounded multi-target repository mode and per-language completeness",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5643"
+        },
+        {
+          "number": 5657,
+          "title": "analysis(jvm): deliver bounded mixed-build repository mode and per-language completeness",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5657"
+        },
+        {
+          "number": 5679,
+          "title": "analysis(spock): deliver bounded test-surface repository mode and mixed-JVM completeness",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5679"
+        },
+        {
+          "number": 5617,
+          "title": "analysis(ruby): deliver bounded repository mode and mixed-repository completeness",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5617"
+        },
+        {
+          "number": 5669,
+          "title": "analysis(clojure): deliver bounded dialect-aware repository mode and mixed-JVM completeness",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5669"
+        },
+        {
+          "number": 7205,
+          "title": "ux(lsp): a changed document of a disabled language claims clean/\"served\" while the same workspace_status names language_adapter_unavailable — #5998's not_analyzed state never engages without a budget stop",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7205"
+        },
+        {
+          "number": 4372,
+          "title": "fix(analysis): TypeScript preview note counts #3743-excluded files as analyzed — advisory built before exclusion",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/4372"
+        },
+        {
+          "number": 3554,
+          "title": "feat(analysis,py): implement bounded repo-mode evidence instead of the empty scaffold",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/3554"
+        }
+      ]
+    },
+    {
+      "query": "\"preview\" \"analyzed\" \"partition\"",
+      "items": [
+        {
+          "number": 7255,
+          "title": "fix(lsp): report disabled-language documents as not_analyzed",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7255"
+        },
+        {
+          "number": 6802,
+          "title": "fix(badge): exclude preview findings from calibrated RIPR 0 gap counts",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/6802"
+        },
+        {
+          "number": 3253,
+          "title": "fix(output): tie preview analyzed to completion",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/3253"
+        },
+        {
+          "number": 7250,
+          "title": "fix(analysis): stable seam IDs across line-ending spellings; correct outcome help canonical-gap claim",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7250"
+        },
+        {
+          "number": 2142,
+          "title": "feat(analysis): partial diff-scope analysis with disclosed limited run state (#1999)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/2142"
+        },
+        {
+          "number": 5025,
+          "title": "feat(config): recover hand-written Rust from generated-name exclusions",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/5025"
+        },
+        {
+          "number": 5046,
+          "title": "fix(vscode): surface component recovery routes and findings_trustworthy on limited status (#5004)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/5046"
+        },
+        {
+          "number": 4906,
+          "title": "fix(rust): name the unresolved #[path] a changed file is only reached through (#4435)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4906"
+        },
+        {
+          "number": 4969,
+          "title": "fix(review): admit guidance before owner indexing (#4388)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4969"
+        },
+        {
+          "number": 2905,
+          "title": "test(vscode): prove packaged diagnostic composition",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/2905"
+        }
+      ]
+    },
+    {
+      "query": "\"preview\" \"over-count\"",
+      "items": [
+        {
+          "number": 4372,
+          "title": "fix(analysis): TypeScript preview note counts #3743-excluded files as analyzed — advisory built before exclusion",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/4372"
+        },
+        {
+          "number": 1411,
+          "title": "eval(perl): govern real-repository precision and false-actionable evidence without promotion (#3216 capstone)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/1411"
+        },
+        {
+          "number": 1582,
+          "title": "lsp: bound actionable diagnostic payloads and expose deterministic overflow retrieval",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/1582"
+        },
+        {
+          "number": 1984,
+          "title": "perf(#1886): build an indexed related-test candidate set instead of scanning every test per probe",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/1984"
+        },
+        {
+          "number": 1574,
+          "title": "epic: editor/LSP usable alpha — trustworthy saved-workspace evidence to bounded repair",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/1574"
+        },
+        {
+          "number": 1123,
+          "title": "Receipt → outcome → route-quality loop: canonical receipt_command contract + close the self-improving loop",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/1123"
+        },
+        {
+          "number": 2768,
+          "title": "release(0.11.0): classify and retain the complete supplemental candidate denominator",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/2768"
+        }
+      ]
+    },
+    {
+      "query": "\"preview\" \"over-count\"",
+      "items": [
+        {
+          "number": 4472,
+          "title": "fix(analysis): preview advisory counts only files the adapter analyzes (#4372)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4472"
+        },
+        {
+          "number": 4108,
+          "title": "fix(ts): decline files past the expression-nesting parse budget (#4101)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4108"
+        },
+        {
+          "number": 4112,
+          "title": "fix(python): refuse files past the expression-nesting parse budget (#4109)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4112"
+        },
+        {
+          "number": 3668,
+          "title": "feat(analysis,py): wire repo-mode findings through analyze_repo, delete scaffold (#3554 PR C)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/3668"
+        },
+        {
+          "number": 7824,
+          "title": "test(corpus): cover RIPR-SPEC-0238 example 10 with a numpy subject (#7819)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7824"
+        },
+        {
+          "number": 4111,
+          "title": "fix(analysis): guard TypeScript oxc parses with a nesting budget and large-stack worker (#4101)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4111"
+        },
+        {
+          "number": 5068,
+          "title": "fix(analysis): bound capped-read limitation disclosure per run",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/5068"
+        },
+        {
+          "number": 7707,
+          "title": "fix(typescript): read a committed snapshot entry as strong (RIPR-SPEC-0258)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7707"
+        },
+        {
+          "number": 4094,
+          "title": "fix(analysis): handle TypeScript ESM/CJS extensions (.mts/.cts/.mjs/.cjs)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4094"
+        },
+        {
+          "number": 7496,
+          "title": "fix(typescript): RIPR-SPEC-0250 toMatchObject pins a listed returned field",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7496"
+        },
+        {
+          "number": 7513,
+          "title": "fix(typescript): RIPR-SPEC-0251 a renamed default import of the owner counts as the owner",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7513"
+        },
+        {
+          "number": 4968,
+          "title": "refactor(xtask): split eval_sweep_report into cohesive modules (#4390)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4968"
+        },
+        {
+          "number": 4339,
+          "title": "docs(0.11): remove landed limitation rows (#4232/#4233/#4281) and narrow the outcome residual",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4339"
+        },
+        {
+          "number": 4140,
+          "title": "test(ts): pin cross-extension related-test, alias and fail-closed oracle evidence",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4140"
+        },
+        {
+          "number": 5001,
+          "title": "fix(review): bound full evidence retention across seam windows (#4691)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/5001"
+        },
+        {
+          "number": 6590,
+          "title": "docs(specs): RIPR-SPEC-0235 to 0238 and 0243 for Python, TypeScript, Perl, grip class order and pilot ranking",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/6590"
+        },
+        {
+          "number": 7915,
+          "title": "ci(ub-review): surface missing advisory proof dimensions",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7915"
+        },
+        {
+          "number": 6777,
+          "title": "fix(cache,output): status/clear describe the same set; alias-truthful status; config bound into check identity (#5987 #5988 #5989)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/6777"
+        },
+        {
+          "number": 4954,
+          "title": "fix(pr-summary): give the Start Here next command its PowerShell twin (#4950)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4954"
+        },
+        {
+          "number": 5436,
+          "title": "fix(typescript): withhold Node expected-failure oracle credit",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/5436"
+        }
+      ]
+    }
+  ]
+}

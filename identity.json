@@ -1,0 +1,21 @@
+{
+  "repository": "https://github.com/EffortlessMetrics/ripr-swarm",
+  "source_sha": "d08c77d144c016078364fcc1fcf2fa593d21cefc",
+  "source_tree": "7919041763454dbf9aa275b624441af8083c0f44",
+  "observed_at_utc": "2026-10-16T05:53:07.038454+00:00",
+  "binary_path": "/workspace/ripr-swarm/target/debug/ripr",
+  "binary_sha256": "73441c38399894fd6c21f9dd1893d4eb90505b54f509033233afac781d29591c",
+  "binary_version": "ripr 0.11.0 (d08c77d144c016078364fcc1fcf2fa593d21cefc)",
+  "build_command": "RUSTUP_HOME=/workspace/.rustup CARGO_HOME=/workspace/.cargo CARGO_TARGET_DIR=/workspace/ripr-swarm/target /workspace/.cargo/bin/cargo build --locked -p ripr --bin ripr",
+  "build_exit": 0,
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "platform": "Linux 5109d24fa0be 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+  "PATH": "/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+  "production_changes": false,
+  "bounded_command_count": 130,
+  "limitations": [
+    "Development default-feature binary; Linux only. No fanout candidate tests, hosted qualification, gate evaluation or release claims.",
+    "Python unsupported_syntax fixture is valid lambda syntax, not a Python parse-failure stimulus; retained under historical case name python-parse.",
+    "Byte-budget early fixtures had only one finding and did not truncate; render-bound fixture supplies two findings and establishes truncation."
+  ]
+}

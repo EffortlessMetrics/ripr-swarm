@@ -1,0 +1,154 @@
+[
+  {
+    "case": "mixed-partial",
+    "budget": "1",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "exit": 0
+  },
+  {
+    "case": "mixed-partial",
+    "budget": "1",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "exit": 0
+  },
+  {
+    "case": "mixed-partial",
+    "budget": "3",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "exit": 0
+  },
+  {
+    "case": "mixed-partial",
+    "budget": "3",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "exit": 0
+  },
+  {
+    "case": "mixed-partial-ts",
+    "budget": "1",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "exit": 0
+  },
+  {
+    "case": "mixed-partial-ts",
+    "budget": "1",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "exit": 0
+  },
+  {
+    "case": "mixed-partial-ts",
+    "budget": "3",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "exit": 0
+  },
+  {
+    "case": "mixed-partial-ts",
+    "budget": "3",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "exit": 0
+  }
+]

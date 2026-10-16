@@ -1,0 +1,139 @@
+{
+  "schema_version": "0.1",
+  "kind": "ripr_diff",
+  "tool": "ripr",
+  "run_status": "diff_incomplete_full_repo_limited",
+  "root": ".",
+  "base": "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2",
+  "head": "HEAD",
+  "mode": "draft",
+  "analysis_outcome": {
+    "analysis_complete": false,
+    "outcome": {
+      "schema_version": "0.1",
+      "kind": "unsupported_input",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": "fnv1a64:785d932166b116b7",
+        "base_revision": "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2",
+        "input_identity": "sha256:26a6a4b0b26f8f1d15e2fb3c5ac71c7cc3051c3455756f88245e5d5f0e0494e8",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 1,
+        "changed_line_count": 2,
+        "candidate_line_count": 1,
+        "probe_count": 1,
+        "finding_count": 1
+      },
+      "limitations": [
+        {
+          "kind": "unresolved_conflict_markers",
+          "producer_stage": "diff_parse",
+          "path": "src/discount.ts",
+          "affected_items": 1,
+          "bounded_detail": null,
+          "recovery": {
+            "kind": "resolve_conflicts",
+            "detail": "A conflict region holds two rival source states rather than one changed program, so its lines are not read as changes. Resolve the conflict and re-run to analyze these lines."
+          }
+        },
+        {
+          "kind": "language_scope_unsupported",
+          "producer_stage": "language_adapter",
+          "path": "src/discount.ts",
+          "affected_items": 1,
+          "bounded_detail": "1 parser error(s): Encountered diff marker",
+          "recovery": {
+            "kind": "retry",
+            "detail": "Fix the TypeScript or JavaScript parse error, then re-run the analysis."
+          }
+        }
+      ],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    }
+  },
+  "runtime_status": {
+    "state": "diff_incomplete_full_repo_limited",
+    "diff": {
+      "state": "diff_incomplete",
+      "phase": "changed_surface_diff",
+      "changed_files": 1,
+      "changed_seams": 1,
+      "downstream_consumable": false
+    },
+    "full_repo_context": {
+      "state": "full_repo_limited",
+      "phase": "full_repo_context",
+      "limitation_category": "full_repo_context_not_run",
+      "downstream_consumable": false,
+      "repair_route": "ripr check --format repo-exposure-summary-json"
+    }
+  },
+  "receipt": {
+    "state": "not_written",
+    "path": "target/ripr/receipts/diff-first-56d01ceb1e4de73aa87e780dd6d0946af6aa57f2-HEAD.json",
+    "outcome_hint": "diff_incomplete/full_repo_limited"
+  },
+  "summary": {
+    "changed_files": 1,
+    "changed_seams": 1,
+    "probes": 1,
+    "exposed": 0,
+    "weakly_exposed": 0,
+    "reachable_unrevealed": 0,
+    "no_static_path": 0,
+    "unknown": 1
+  },
+  "changed_files": [
+    {
+      "path": "src/discount.ts",
+      "added_lines": [
+        8,
+        9
+      ],
+      "removed_lines": [],
+      "added_count": 2,
+      "removed_count": 0
+    }
+  ],
+  "changed_seams": [
+    {
+      "seam_id": "probe:src_discount.ts:typescript_preview_unsupported_syntax:be1d2fde",
+      "file": "src/discount.ts",
+      "line": 8,
+      "classification": "static_unknown",
+      "evidence": [
+        "static_limit unsupported_syntax: 1 parser error(s): Encountered diff marker",
+        "gap_state: static_limitation",
+        "actionability_category: unsupported_syntax",
+        "why_not_actionable: static limit `unsupported_syntax` prevents bounded TypeScript repair guidance: 1 parser error(s): Encountered diff marker",
+        "repair_route: fix or isolate the unsupported syntax before relying on repair guidance",
+        "evidence_needed_to_promote: resolve the named static limit and re-run TypeScript preview evidence extraction",
+        "raw_evidence_ref: file=src/discount.ts;line=8;kind=typescript_preview_probe;source_id=probe:src_discount.ts:typescript_preview_unsupported_syntax:be1d2fde",
+        "typescript_package_confidence: none",
+        "typescript_package_limitation: typescript_package_root_unresolved"
+      ],
+      "missing_discriminators": [
+        "Static limit `unsupported_syntax`: malformed TypeScript/JavaScript prevented syntax-first owner, test, and probe extraction for `src/discount.ts`. Repair route: fix or isolate the unsupported syntax before relying on repair guidance.",
+        "TypeScript preview actionability `static_limitation` / `unsupported_syntax`: static limit `unsupported_syntax` prevents bounded TypeScript repair guidance: 1 parser error(s): Encountered diff marker. Repair route: fix or isolate the unsupported syntax before relying on repair guidance"
+      ],
+      "recommended_next_step": "TypeScript preview advisory: static limit `unsupported_syntax`; Repair route: fix or isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is emitted."
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "typescript",
+      "file_count": 1,
+      "sample_paths": [
+        "src/discount.ts"
+      ],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ]
+}

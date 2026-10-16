@@ -1,0 +1,2 @@
+ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).
+ripr: partial_budget_invalid: RIPR_PARTIAL_DIFF_FILE_BUDGET must be a positive integer: invalid digit found in string

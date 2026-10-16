@@ -1,0 +1,2 @@
+::warning title=ripr analysis incomplete::Analysis outcome: partial_with_limitations (analysis incomplete). Zero findings is not a clean result because the analyzed scope is incomplete. Limitation: language_adapter_unavailable: Enable the python preview adapter and re-run the analysis.
+::warning title=ripr preview advisory::1 Python file in scope: preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; to enable add to ripr.toml: [languages] enabled = ["rust", "python"]

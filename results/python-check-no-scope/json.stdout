@@ -1,0 +1,21 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "draft",
+  "root": ".",
+  "config_path": "/workspace/scratch/cli-output-audit/git-cases/python/ripr.toml",
+  "base": "fc6122c9ae671d73b6497da8871481d026d52fdb",
+  "base_commit": "fc6122c9ae671d73b6497da8871481d026d52fdb",
+  "head": {
+    "source": "commit",
+    "commit": "fc6122c9ae671d73b6497da8871481d026d52fdb"
+  },
+  "summary": {"changed_rust_files":0,"probes":0,"findings":0,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":0},{"language":"rust","files":0}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"no_scope","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:dc56365c2646d0d3","base_revision":"fc6122c9ae671d73b6497da8871481d026d52fdb","input_identity":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":0,"changed_line_count":0,"candidate_line_count":0,"probe_count":0,"finding_count":0},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+  ],
+  "canonical_next_action": {"schema_version":"canonical_next_action.v1","producer":"check_top_result","subject":{"root":".","diff_source":{"committed":{"base":"fc6122c9ae671d73b6497da8871481d026d52fdb","head":null}},"item":"base:fc6122c9ae671d73b6497da8871481d026d52fdb"},"currentness":{"head_expected":null,"head_observed":null,"config_expected":null,"config_observed":null},"action_class":"unsupported_or_limited","stop":{"kind":"check_triage","case":"static_limited","detail_route":""},"non_claim":"Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."}
+}

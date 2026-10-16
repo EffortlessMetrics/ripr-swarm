@@ -1,0 +1,43 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: /workspace/scratch/cli-output-audit/cases/mixed-partial-ts
+config: /workspace/scratch/cli-output-audit/cases/mixed-partial-ts/ripr.toml
+
+Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+
+Changed file(s) by language: rust = 2, typescript = 1
+
+Analysis outcome: limitations below (analysis incomplete; partial_with_limitations)
+  The 2 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
+  Limitation: some changed files were not analyzed during language analysis (language_scope_unsupported at language_adapter); file: src/second.rs; affected items: 1; recovery: inspect the failure (inspect_failure) — No `mod`, `#[path]` or `include!` from a Cargo target reaches src/second.rs, so rustc does not compile it and its change was not analyzed. Declare it from a module its crate compiles, or delete it if it is dead code.
+
+Start here:
+  State: a test gap to inspect or repair (top_gap)
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  File: ./src/lib.rs:2
+  Static exposure: weak (weakly_exposed, warning, confidence 0.92)
+  Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
+  Canonical gap: gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold
+  Changed behavior: amount >= discount_threshold
+  Missing discriminator: amount == discount_threshold
+  Related test (1 of 2 matched rows): tests/pricing.rs:4 below_threshold_has_no_discount (no test input reaches `amount == discount_threshold`)
+  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
+  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
+    - reach yes: Related tests appear to reach discounted_total: below_threshold_has_no_discount, far_above_threshold_discounts
+    - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
+    - 12 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root /workspace/scratch/cli-output-audit/cases/mixed-partial-ts --diff /workspace/scratch/cli-output-audit/cases/mixed-partial-ts/change.patch --mode fast probe:src_lib.rs:predicate:c80557eb
+  ripr context --root /workspace/scratch/cli-output-audit/cases/mixed-partial-ts --diff /workspace/scratch/cli-output-audit/cases/mixed-partial-ts/change.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+Write a test for it:
+  ripr agent stub --root /workspace/scratch/cli-output-audit/cases/mixed-partial-ts --at src/lib.rs:2 --kind predicate
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
+    - src/discount.ts:2 (weakly_exposed)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

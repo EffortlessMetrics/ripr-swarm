@@ -1,0 +1,23 @@
+RIPR diff status: diff_incomplete_full_repo_limited
+root: .
+range: 3e128e80389b97bf1a4795f1d449ad470c2296c4...HEAD
+mode: draft
+analysis outcome: unsupported_input (analysis incomplete).
+zero findings is not a clean result because the analyzed scope is incomplete.
+limitation: unresolved_conflict_markers at diff_parse; recovery: resolve_conflicts — A conflict region holds two rival source states rather than one changed program, so its lines are not read as changes. Resolve the conflict and re-run to analyze these lines.
+limitation: producer_failure at language_adapter; recovery: inspect_failure — Fix the file so it parses as Rust, then re-run the analysis.
+changed files: 1
+changed seams: 2
+full repo context: full_repo_limited (full_repo_context_not_run)
+receipt path: target/ripr/receipts/diff-first-3e128e80389b97bf1a4795f1d449ad470c2296c4-HEAD.json
+
+Changed files
+  - src/lib.rs (+2 -0)
+
+Changed seams
+  - probe:src_lib.rs:static_unknown:e4b26581 src/lib.rs:9 static_unknown
+    next action: No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.
+    evidence: Changed syntax is not mapped to a high-confidence probe family
+  - probe:src_lib.rs:static_unknown:728692d0 src/lib.rs:10 static_unknown
+    next action: No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.
+    evidence: Changed syntax is not mapped to a high-confidence probe family

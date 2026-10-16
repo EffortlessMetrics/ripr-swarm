@@ -1,0 +1,15 @@
+RIPR diff status: diff_complete_full_repo_limited
+root: .
+range: fc6122c9ae671d73b6497da8871481d026d52fdb...HEAD
+mode: draft
+analysis outcome: no_scope (analysis complete).
+changed files: 0
+changed seams: 0
+full repo context: full_repo_limited (full_repo_context_not_run)
+receipt path: target/ripr/receipts/diff-first-fc6122c9ae671d73b6497da8871481d026d52fdb-HEAD.json
+
+Changed files
+  none
+
+Changed seams
+  none

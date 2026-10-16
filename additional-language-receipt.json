@@ -1,0 +1,110 @@
+[
+  {
+    "case": "python-malformed-source",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-malformed-source",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-malformed-source/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "exit": 0
+  },
+  {
+    "case": "python-malformed-source",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-malformed-source",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-malformed-source/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "exit": 0
+  },
+  {
+    "case": "python-malformed-source",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-malformed-source",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-malformed-source/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "exit": 0
+  },
+  {
+    "case": "perl-not-compiled",
+    "format": "json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/perl-not-compiled",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/perl-not-compiled/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "exit": 0
+  },
+  {
+    "case": "perl-not-compiled",
+    "format": "badge-json",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/perl-not-compiled",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/perl-not-compiled/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "exit": 0
+  },
+  {
+    "case": "perl-not-compiled",
+    "format": "human",
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/perl-not-compiled",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/perl-not-compiled/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "exit": 0
+  }
+]

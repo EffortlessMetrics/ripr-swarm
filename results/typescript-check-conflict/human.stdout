@@ -1,0 +1,50 @@
+ripr static RIPR exposure analysis
+mode: draft
+root: .
+config: /workspace/scratch/cli-output-audit/git-cases/typescript/ripr.toml
+base: 56d01ceb1e4de73aa87e780dd6d0946af6aa57f2 56d01ce
+head: HEAD 86ac4ee
+
+Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: the input is not supported (analysis incomplete; unsupported_input)
+  The 1 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
+  Limitation: the diff has unresolved conflict markers during parsing the diff (unresolved_conflict_markers at diff_parse); file: src/discount.ts; affected items: 1; recovery: resolve the conflicts (resolve_conflicts) — A conflict region holds two rival source states rather than one changed program, so its lines are not read as changes. Resolve the conflict and re-run to analyze these lines.
+  Limitation: some changed files were not analyzed during language analysis (language_scope_unsupported at language_adapter); file: src/discount.ts; affected items: 1; recovery: retry — Fix the TypeScript or JavaScript parse error, then re-run the analysis.
+
+Start here:
+  State: preview language, advisory only (preview_limited)
+  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields; resolve the limitation and rerun preview evidence before acting
+  File: src/discount.ts:8
+  Language: typescript
+  Language status: preview
+  Static exposure: unknown (static_unknown, note, confidence 0.20)
+  Why unknown: the analysis could not determine a static exposure state
+  Changed behavior: =======
+  Analyzer limit: Static limit `unsupported_syntax`: malformed TypeScript/JavaScript prevented syntax-first owner, test, and probe extraction for `src/discount.ts`. Repair route: fix or isolate the…
+  Next step — TypeScript preview advisory: static limit `unsupported_syntax`; Repair route: fix or
+    isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is
+    emitted
+  Evidence: reach unknown · infection unknown · propagation unknown · observation unknown · discriminator unknown
+    - reach unknown: TypeScript preview parser could not build syntax facts for `src/discount.ts`: 1 parser error(s): Encountered diff marker
+    - infection unknown: TypeScript preview parser could not build syntax facts for `src/discount.ts`: 1 parser error(s): Encountered diff marker
+    - 6 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root /workspace/scratch/cli-output-audit/git-cases/typescript --base 56d01ceb1e4de73aa87e780dd6d0946af6aa57f2 probe:src_discount.ts:typescript_preview_unsupported_syntax:be1d2fde
+  ripr context --root /workspace/scratch/cli-output-audit/git-cases/typescript --base 56d01ceb1e4de73aa87e780dd6d0946af6aa57f2 --at probe:src_discount.ts:typescript_preview_unsupported_syntax:be1d2fde
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
+  analyzed: 1 changed expression(s) and 0 statically linked related test(s). This is not a coverage
+  assessment. A test may already exercise these changes through macros, helper-call chains, or
+  integration tests that ripr's static model does not yet trace; if none does, add co-located tests
+  that observe the changed behavior.
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

@@ -1,0 +1,142 @@
+{
+  "schema_version": "0.1",
+  "kind": "ripr_diff",
+  "tool": "ripr",
+  "run_status": "diff_incomplete_full_repo_limited",
+  "root": ".",
+  "base": "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+  "head": "HEAD",
+  "mode": "draft",
+  "analysis_outcome": {
+    "analysis_complete": false,
+    "outcome": {
+      "schema_version": "0.1",
+      "kind": "unsupported_input",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": null,
+        "base_revision": "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+        "input_identity": "sha256:eb697eb1ef7b212ac1d8e7d6374b15ce1081582ba6b2c8d74bd25b8e8d5fc8e0",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 1,
+        "changed_line_count": 2,
+        "candidate_line_count": 2,
+        "probe_count": 2,
+        "finding_count": 2
+      },
+      "limitations": [
+        {
+          "kind": "unresolved_conflict_markers",
+          "producer_stage": "diff_parse",
+          "path": "src/lib.rs",
+          "affected_items": 1,
+          "bounded_detail": null,
+          "recovery": {
+            "kind": "resolve_conflicts",
+            "detail": "A conflict region holds two rival source states rather than one changed program, so its lines are not read as changes. Resolve the conflict and re-run to analyze these lines."
+          }
+        },
+        {
+          "kind": "producer_failure",
+          "producer_stage": "language_adapter",
+          "path": "src/lib.rs",
+          "affected_items": null,
+          "bounded_detail": "src/lib.rs: the Rust parser reported syntax errors, so the file was read lexically; lexical fallback emits no probe shapes and can lose this file's related tests, so its findings are incomplete.",
+          "recovery": {
+            "kind": "inspect_failure",
+            "detail": "Fix the file so it parses as Rust, then re-run the analysis."
+          }
+        }
+      ],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    }
+  },
+  "runtime_status": {
+    "state": "diff_incomplete_full_repo_limited",
+    "diff": {
+      "state": "diff_incomplete",
+      "phase": "changed_surface_diff",
+      "changed_files": 1,
+      "changed_seams": 2,
+      "downstream_consumable": false
+    },
+    "full_repo_context": {
+      "state": "full_repo_limited",
+      "phase": "full_repo_context",
+      "limitation_category": "full_repo_context_not_run",
+      "downstream_consumable": false,
+      "repair_route": "ripr check --format repo-exposure-summary-json"
+    }
+  },
+  "receipt": {
+    "state": "not_written",
+    "path": "target/ripr/receipts/diff-first-3e128e80389b97bf1a4795f1d449ad470c2296c4-HEAD.json",
+    "outcome_hint": "diff_incomplete/full_repo_limited"
+  },
+  "summary": {
+    "changed_files": 1,
+    "changed_seams": 2,
+    "probes": 2,
+    "exposed": 0,
+    "weakly_exposed": 0,
+    "reachable_unrevealed": 0,
+    "no_static_path": 0,
+    "unknown": 2
+  },
+  "changed_files": [
+    {
+      "path": "src/lib.rs",
+      "added_lines": [
+        9,
+        10
+      ],
+      "removed_lines": [],
+      "added_count": 2,
+      "removed_count": 0
+    }
+  ],
+  "changed_seams": [
+    {
+      "seam_id": "probe:src_lib.rs:static_unknown:e4b26581",
+      "file": "src/lib.rs",
+      "line": 9,
+      "classification": "static_unknown",
+      "evidence": [
+        "Changed syntax is not mapped to a high-confidence probe family",
+        "No assertion can discriminate the changed behavior without a reachable test",
+        "No propagation model is available for this changed syntax",
+        "No reachable test oracle found",
+        "No static test path found for the changed owner"
+      ],
+      "missing_discriminators": [
+        "No relevant oracle was detected",
+        "No strong discriminator was detected",
+        "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"
+      ],
+      "recommended_next_step": "No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+    },
+    {
+      "seam_id": "probe:src_lib.rs:static_unknown:728692d0",
+      "file": "src/lib.rs",
+      "line": 10,
+      "classification": "static_unknown",
+      "evidence": [
+        "Changed syntax is not mapped to a high-confidence probe family",
+        "No assertion can discriminate the changed behavior without a reachable test",
+        "No propagation model is available for this changed syntax",
+        "No reachable test oracle found",
+        "No static test path found for the changed owner"
+      ],
+      "missing_discriminators": [
+        "No relevant oracle was detected",
+        "No strong discriminator was detected",
+        "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"
+      ],
+      "recommended_next_step": "No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+    }
+  ]
+}

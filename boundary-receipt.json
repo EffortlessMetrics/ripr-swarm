@@ -1,0 +1,566 @@
+[
+  {
+    "case": "python-parse",
+    "format": "json",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-parse",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-parse/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {},
+    "stdout_sha256": "0f8823df8ab9a0b75d7bb9c9fcea1b7fd46ac454a3d37980658c6375d6c490fa"
+  },
+  {
+    "case": "python-parse",
+    "format": "badge-json",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-parse",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-parse/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {},
+    "stdout_sha256": "506855b1f77575bec70ce50300f50e57569c0636b55b12b35ffe6d8212fbf97d"
+  },
+  {
+    "case": "python-parse",
+    "format": "human",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/python-parse",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/python-parse/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {},
+    "stdout_sha256": "acba76dee0c354cf473b37f428fd04f9c7a3fea7c97d8be66e2639a0585b7d55"
+  },
+  {
+    "case": "rust-hard-limit",
+    "format": "json",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-hard-limit",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-hard-limit/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_MAX_DIFF_CHANGED_RUST_LINES": "1"
+    },
+    "stdout_sha256": "2db6355288e3c3782c58dc434e6606a9d798751a95654a8e0c9fff12d7873d00"
+  },
+  {
+    "case": "rust-hard-limit",
+    "format": "badge-json",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-hard-limit",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-hard-limit/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_MAX_DIFF_CHANGED_RUST_LINES": "1"
+    },
+    "stdout_sha256": "042ba35ebb639a8e216200ae75fb78eac317777b0011df9bd4767fca15b9a0fe"
+  },
+  {
+    "case": "rust-hard-limit",
+    "format": "human",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-hard-limit",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-hard-limit/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_MAX_DIFF_CHANGED_RUST_LINES": "1"
+    },
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "case": "empty",
+    "format": "json",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/empty",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/empty/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {},
+    "stdout_sha256": "1e53828e937af5848f7dae6350f5070168f6316d54bf687b1823494a120826ee"
+  },
+  {
+    "case": "empty",
+    "format": "badge-json",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/empty",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/empty/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {},
+    "stdout_sha256": "cbaa7bf6c13df83f23672a234f4a32b2f2faafd0aad3f3d7836b4e38d4c425d5"
+  },
+  {
+    "case": "empty",
+    "format": "human",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/empty",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/empty/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {},
+    "stdout_sha256": "daf7beaa589f6fafc46e7ab917586266ecab21b97c289b51da700ce405a03df0"
+  },
+  {
+    "case": "garbage",
+    "format": "json",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/garbage",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/garbage/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {},
+    "stdout_sha256": "00e035b7bc67448f795e34d0dd2e5623c7df3106bdb064623fe177c96c1f01c0"
+  },
+  {
+    "case": "garbage",
+    "format": "badge-json",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/garbage",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/garbage/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {},
+    "stdout_sha256": "338bff766ddb466e3cd0614ba16dea81b57434d8e93500d0b6d011b74c2940af"
+  },
+  {
+    "case": "garbage",
+    "format": "human",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/garbage",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/garbage/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {},
+    "stdout_sha256": "42825fc0f4bd64bc765082b57da90d9c814a867bc3171620da2e461fcba749e9"
+  },
+  {
+    "case": "perl-unavailable",
+    "format": "json",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/perl-unavailable",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/perl-unavailable/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {},
+    "stdout_sha256": "16b14186a6b2a3de53616d788a6eb7b6b04c686648210ffaaf19e3cd3cafc9f9"
+  },
+  {
+    "case": "perl-unavailable",
+    "format": "badge-json",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/perl-unavailable",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/perl-unavailable/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {},
+    "stdout_sha256": "bef27026f977a13df965dd63020053c1d36edcfa6dce8417dd6676067c7f9397"
+  },
+  {
+    "case": "perl-unavailable",
+    "format": "human",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/perl-unavailable",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/perl-unavailable/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {},
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "case": "rust-disabled",
+    "format": "json",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-disabled",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-disabled/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {},
+    "stdout_sha256": "49c5a2a3b3aa37b670077ca9ffe25b0970d311bf70d45bcef34b34d84fd0a656"
+  },
+  {
+    "case": "rust-disabled",
+    "format": "badge-json",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-disabled",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-disabled/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {},
+    "stdout_sha256": "11d6508a2ab575f628c562bf429016e66b9861940c49904c11831e7c7a30a223"
+  },
+  {
+    "case": "rust-disabled",
+    "format": "human",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/rust-disabled",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/rust-disabled/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {},
+    "stdout_sha256": "c5b1bee9b8e5d22d866e40988b2f535b63bf05d780f0abe4bbaa79ac894cd151"
+  },
+  {
+    "case": "render-bound",
+    "format": "json",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/render-bound",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/render-bound/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_CHECK_FINDINGS_BYTES": "1"
+    },
+    "stdout_sha256": "fe0371916d9ae1254bb42f5fb3abe89a04f35cbfe814ae0b77a55d7ee870316b"
+  },
+  {
+    "case": "render-bound",
+    "format": "badge-json",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/render-bound",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/render-bound/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_CHECK_FINDINGS_BYTES": "1"
+    },
+    "stdout_sha256": "df48d10ad1c5d96f33fb1824e96de72e1c5c62c1eb91b534eea87375deafcd17"
+  },
+  {
+    "case": "render-bound",
+    "format": "human",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/render-bound",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/render-bound/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_CHECK_FINDINGS_BYTES": "1"
+    },
+    "stdout_sha256": "6f9e1c842f89005394d7efa5d3d286618df62657651ac5b240948155706aeb6d"
+  },
+  {
+    "case": "render-full",
+    "format": "json",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/render-bound",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/render-bound/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_CHECK_FINDINGS_BYTES": "0"
+    },
+    "stdout_sha256": "c83170d2e0ac61dba818d002f653758cffd135dfd9bbfc6620a9c9942ac3deca"
+  },
+  {
+    "case": "render-full",
+    "format": "badge-json",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/render-bound",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/render-bound/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_CHECK_FINDINGS_BYTES": "0"
+    },
+    "stdout_sha256": "df48d10ad1c5d96f33fb1824e96de72e1c5c62c1eb91b534eea87375deafcd17"
+  },
+  {
+    "case": "render-full",
+    "format": "human",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/render-bound",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/render-bound/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_CHECK_FINDINGS_BYTES": "0"
+    },
+    "stdout_sha256": "6f9e1c842f89005394d7efa5d3d286618df62657651ac5b240948155706aeb6d"
+  },
+  {
+    "case": "mixed-partial",
+    "format": "json",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+    },
+    "stdout_sha256": "a78e993ff8b606d6d7ef3cb3494a61add25b45fb3e063e20e72c2a6e3f5f53d3"
+  },
+  {
+    "case": "mixed-partial",
+    "format": "badge-json",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "badge-json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+    },
+    "stdout_sha256": "4797436bf5f006858617215b0f6bac8c79aeb65ea8ed17b442e4c32fc64c528d"
+  },
+  {
+    "case": "mixed-partial",
+    "format": "human",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "human",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+    },
+    "stdout_sha256": "ab5a28e3437654ebc34b11b18427273f27d36d47a154352894ef84ca4d008aa9"
+  }
+]

@@ -1,0 +1,12 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: /workspace/scratch/cli-output-audit/cases/rust-disabled
+config: /workspace/scratch/cli-output-audit/cases/rust-disabled/ripr.toml
+
+Summary: 0 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 0 of 0 finding(s) unsuppressed
+
+Analysis outcome: limitations below (analysis incomplete; partial_with_limitations)
+  Zero findings is not a clean result because the analyzed scope is incomplete.
+  Limitation: no analyzer is available for a changed language during language analysis (language_adapter_unavailable at language_adapter); affected items: 1; recovery: enable the language (enable_language) — The effective [languages].enabled set is ["python"], which excludes rust; add "rust" to [languages].enabled in ripr.toml and re-run the analysis.
+
+No diff-derived static exposure probes found.

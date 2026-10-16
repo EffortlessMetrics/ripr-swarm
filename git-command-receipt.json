@@ -1,0 +1,446 @@
+[
+  {
+    "case": "rust-check-no-scope",
+    "format": "json",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      ".",
+      "--base",
+      "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+      "--json"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/rust",
+    "base": "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+    "head": "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+    "outcome": "no_scope",
+    "analysis_complete": true
+  },
+  {
+    "case": "rust-check-no-scope",
+    "format": "human",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      ".",
+      "--base",
+      "3e128e80389b97bf1a4795f1d449ad470c2296c4"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/rust",
+    "base": "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+    "head": "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+    "outcome": null,
+    "analysis_complete": null
+  },
+  {
+    "case": "rust-diff-no-scope",
+    "format": "json",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "diff",
+      "--root",
+      ".",
+      "--base",
+      "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+      "--json"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/rust",
+    "base": "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+    "head": "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+    "outcome": "no_scope",
+    "analysis_complete": true
+  },
+  {
+    "case": "rust-diff-no-scope",
+    "format": "human",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "diff",
+      "--root",
+      ".",
+      "--base",
+      "3e128e80389b97bf1a4795f1d449ad470c2296c4"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/rust",
+    "base": "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+    "head": "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+    "outcome": null,
+    "analysis_complete": null
+  },
+  {
+    "case": "rust-check-conflict",
+    "format": "json",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      ".",
+      "--base",
+      "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+      "--json"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/rust",
+    "base": "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+    "head": "ab627d6b9abf3c131197895a69778f9ca63e70a7",
+    "outcome": "unsupported_input",
+    "analysis_complete": false
+  },
+  {
+    "case": "rust-check-conflict",
+    "format": "human",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      ".",
+      "--base",
+      "3e128e80389b97bf1a4795f1d449ad470c2296c4"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/rust",
+    "base": "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+    "head": "ab627d6b9abf3c131197895a69778f9ca63e70a7",
+    "outcome": null,
+    "analysis_complete": null
+  },
+  {
+    "case": "rust-diff-conflict",
+    "format": "json",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "diff",
+      "--root",
+      ".",
+      "--base",
+      "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+      "--json"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/rust",
+    "base": "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+    "head": "ab627d6b9abf3c131197895a69778f9ca63e70a7",
+    "outcome": "unsupported_input",
+    "analysis_complete": false
+  },
+  {
+    "case": "rust-diff-conflict",
+    "format": "human",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "diff",
+      "--root",
+      ".",
+      "--base",
+      "3e128e80389b97bf1a4795f1d449ad470c2296c4"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/rust",
+    "base": "3e128e80389b97bf1a4795f1d449ad470c2296c4",
+    "head": "ab627d6b9abf3c131197895a69778f9ca63e70a7",
+    "outcome": null,
+    "analysis_complete": null
+  },
+  {
+    "case": "python-check-no-scope",
+    "format": "json",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      ".",
+      "--base",
+      "fc6122c9ae671d73b6497da8871481d026d52fdb",
+      "--json"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/python",
+    "base": "fc6122c9ae671d73b6497da8871481d026d52fdb",
+    "head": "fc6122c9ae671d73b6497da8871481d026d52fdb",
+    "outcome": "no_scope",
+    "analysis_complete": true
+  },
+  {
+    "case": "python-check-no-scope",
+    "format": "human",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      ".",
+      "--base",
+      "fc6122c9ae671d73b6497da8871481d026d52fdb"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/python",
+    "base": "fc6122c9ae671d73b6497da8871481d026d52fdb",
+    "head": "fc6122c9ae671d73b6497da8871481d026d52fdb",
+    "outcome": null,
+    "analysis_complete": null
+  },
+  {
+    "case": "python-diff-no-scope",
+    "format": "json",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "diff",
+      "--root",
+      ".",
+      "--base",
+      "fc6122c9ae671d73b6497da8871481d026d52fdb",
+      "--json"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/python",
+    "base": "fc6122c9ae671d73b6497da8871481d026d52fdb",
+    "head": "fc6122c9ae671d73b6497da8871481d026d52fdb",
+    "outcome": "no_scope",
+    "analysis_complete": true
+  },
+  {
+    "case": "python-diff-no-scope",
+    "format": "human",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "diff",
+      "--root",
+      ".",
+      "--base",
+      "fc6122c9ae671d73b6497da8871481d026d52fdb"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/python",
+    "base": "fc6122c9ae671d73b6497da8871481d026d52fdb",
+    "head": "fc6122c9ae671d73b6497da8871481d026d52fdb",
+    "outcome": null,
+    "analysis_complete": null
+  },
+  {
+    "case": "python-check-conflict",
+    "format": "json",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      ".",
+      "--base",
+      "fc6122c9ae671d73b6497da8871481d026d52fdb",
+      "--json"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/python",
+    "base": "fc6122c9ae671d73b6497da8871481d026d52fdb",
+    "head": "8e92181da3233af1bd34cd58d9010dbe29a13e0e",
+    "outcome": "unsupported_input",
+    "analysis_complete": false
+  },
+  {
+    "case": "python-check-conflict",
+    "format": "human",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      ".",
+      "--base",
+      "fc6122c9ae671d73b6497da8871481d026d52fdb"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/python",
+    "base": "fc6122c9ae671d73b6497da8871481d026d52fdb",
+    "head": "8e92181da3233af1bd34cd58d9010dbe29a13e0e",
+    "outcome": null,
+    "analysis_complete": null
+  },
+  {
+    "case": "python-diff-conflict",
+    "format": "json",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "diff",
+      "--root",
+      ".",
+      "--base",
+      "fc6122c9ae671d73b6497da8871481d026d52fdb",
+      "--json"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/python",
+    "base": "fc6122c9ae671d73b6497da8871481d026d52fdb",
+    "head": "8e92181da3233af1bd34cd58d9010dbe29a13e0e",
+    "outcome": "unsupported_input",
+    "analysis_complete": false
+  },
+  {
+    "case": "python-diff-conflict",
+    "format": "human",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "diff",
+      "--root",
+      ".",
+      "--base",
+      "fc6122c9ae671d73b6497da8871481d026d52fdb"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/python",
+    "base": "fc6122c9ae671d73b6497da8871481d026d52fdb",
+    "head": "8e92181da3233af1bd34cd58d9010dbe29a13e0e",
+    "outcome": null,
+    "analysis_complete": null
+  },
+  {
+    "case": "typescript-check-no-scope",
+    "format": "json",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      ".",
+      "--base",
+      "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2",
+      "--json"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/typescript",
+    "base": "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2",
+    "head": "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2",
+    "outcome": "no_scope",
+    "analysis_complete": true
+  },
+  {
+    "case": "typescript-check-no-scope",
+    "format": "human",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      ".",
+      "--base",
+      "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/typescript",
+    "base": "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2",
+    "head": "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2",
+    "outcome": null,
+    "analysis_complete": null
+  },
+  {
+    "case": "typescript-diff-no-scope",
+    "format": "json",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "diff",
+      "--root",
+      ".",
+      "--base",
+      "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2",
+      "--json"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/typescript",
+    "base": "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2",
+    "head": "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2",
+    "outcome": "no_scope",
+    "analysis_complete": true
+  },
+  {
+    "case": "typescript-diff-no-scope",
+    "format": "human",
+    "exit": 0,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "diff",
+      "--root",
+      ".",
+      "--base",
+      "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/typescript",
+    "base": "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2",
+    "head": "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2",
+    "outcome": null,
+    "analysis_complete": null
+  },
+  {
+    "case": "typescript-check-conflict",
+    "format": "json",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      ".",
+      "--base",
+      "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2",
+      "--json"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/typescript",
+    "base": "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2",
+    "head": "86ac4eecf307fcf06b4fcbfc13cdb36307260255",
+    "outcome": "unsupported_input",
+    "analysis_complete": false
+  },
+  {
+    "case": "typescript-check-conflict",
+    "format": "human",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      ".",
+      "--base",
+      "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/typescript",
+    "base": "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2",
+    "head": "86ac4eecf307fcf06b4fcbfc13cdb36307260255",
+    "outcome": null,
+    "analysis_complete": null
+  },
+  {
+    "case": "typescript-diff-conflict",
+    "format": "json",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "diff",
+      "--root",
+      ".",
+      "--base",
+      "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2",
+      "--json"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/typescript",
+    "base": "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2",
+    "head": "86ac4eecf307fcf06b4fcbfc13cdb36307260255",
+    "outcome": "unsupported_input",
+    "analysis_complete": false
+  },
+  {
+    "case": "typescript-diff-conflict",
+    "format": "human",
+    "exit": 2,
+    "argv": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "diff",
+      "--root",
+      ".",
+      "--base",
+      "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2"
+    ],
+    "cwd": "/workspace/scratch/cli-output-audit/git-cases/typescript",
+    "base": "56d01ceb1e4de73aa87e780dd6d0946af6aa57f2",
+    "head": "86ac4eecf307fcf06b4fcbfc13cdb36307260255",
+    "outcome": null,
+    "analysis_complete": null
+  }
+]

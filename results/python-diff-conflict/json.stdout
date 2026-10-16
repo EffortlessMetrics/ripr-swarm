@@ -1,0 +1,116 @@
+{
+  "schema_version": "0.1",
+  "kind": "ripr_diff",
+  "tool": "ripr",
+  "run_status": "diff_incomplete_full_repo_limited",
+  "root": ".",
+  "base": "fc6122c9ae671d73b6497da8871481d026d52fdb",
+  "head": "HEAD",
+  "mode": "draft",
+  "analysis_outcome": {
+    "analysis_complete": false,
+    "outcome": {
+      "schema_version": "0.1",
+      "kind": "unsupported_input",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": "fnv1a64:dc56365c2646d0d3",
+        "base_revision": "fc6122c9ae671d73b6497da8871481d026d52fdb",
+        "input_identity": "sha256:58d91e2afff8eee76e91331a9e79b7566400287ddfd866e14b277fe2b42c8e77",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 1,
+        "changed_line_count": 2,
+        "candidate_line_count": 0,
+        "probe_count": 0,
+        "finding_count": 0
+      },
+      "limitations": [
+        {
+          "kind": "unresolved_conflict_markers",
+          "producer_stage": "diff_parse",
+          "path": "src/discount.py",
+          "affected_items": 1,
+          "bounded_detail": null,
+          "recovery": {
+            "kind": "resolve_conflicts",
+            "detail": "A conflict region holds two rival source states rather than one changed program, so its lines are not read as changes. Resolve the conflict and re-run to analyze these lines."
+          }
+        },
+        {
+          "kind": "producer_failure",
+          "producer_stage": "language_adapter",
+          "path": "src/discount.py",
+          "affected_items": 1,
+          "bounded_detail": "src/discount.py: the Python parser reported a syntax error (parse_error: invalid syntax. Got unexpected token '<<' at byte offset 0), so no source facts were extracted; this file's changed lines seed no probe shapes and can lose its related tests, so its findings are incomplete.",
+          "recovery": {
+            "kind": "inspect_failure",
+            "detail": "Fix the file so it parses as Python, then re-run the analysis."
+          }
+        }
+      ],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    }
+  },
+  "runtime_status": {
+    "state": "diff_incomplete_full_repo_limited",
+    "diff": {
+      "state": "diff_incomplete",
+      "phase": "changed_surface_diff",
+      "changed_files": 1,
+      "changed_seams": 0,
+      "downstream_consumable": false
+    },
+    "full_repo_context": {
+      "state": "full_repo_limited",
+      "phase": "full_repo_context",
+      "limitation_category": "full_repo_context_not_run",
+      "downstream_consumable": false,
+      "repair_route": "ripr check --format repo-exposure-summary-json"
+    }
+  },
+  "receipt": {
+    "state": "not_written",
+    "path": "target/ripr/receipts/diff-first-fc6122c9ae671d73b6497da8871481d026d52fdb-HEAD.json",
+    "outcome_hint": "diff_incomplete/full_repo_limited"
+  },
+  "summary": {
+    "changed_files": 1,
+    "changed_seams": 0,
+    "probes": 0,
+    "exposed": 0,
+    "weakly_exposed": 0,
+    "reachable_unrevealed": 0,
+    "no_static_path": 0,
+    "unknown": 0
+  },
+  "changed_files": [
+    {
+      "path": "src/discount.py",
+      "added_lines": [
+        6,
+        7
+      ],
+      "removed_lines": [],
+      "added_count": 2,
+      "removed_count": 0
+    }
+  ],
+  "changed_seams": [],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": [
+        "src/discount.py"
+      ],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ]
+}

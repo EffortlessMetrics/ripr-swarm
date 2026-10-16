@@ -1,0 +1,16 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: /workspace/scratch/cli-output-audit/cases/python-malformed-source
+config: /workspace/scratch/cli-output-audit/cases/python-malformed-source/ripr.toml
+
+Summary: 0 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 0 of 0 finding(s) unsuppressed
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: limitations below (analysis incomplete; partial_with_limitations)
+  Zero findings is not a clean result because the analyzed scope is incomplete.
+  Limitation: part of the analysis failed during language analysis (producer_failure at language_adapter); file: src/discount.py; affected items: 1; recovery: inspect the failure (inspect_failure) — Fix the file so it parses as Python, then re-run the analysis.
+
+No diff-derived static exposure probes found.
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.

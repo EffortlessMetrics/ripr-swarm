@@ -1,0 +1,13 @@
+ripr static RIPR exposure analysis
+mode: draft
+root: .
+config: /workspace/scratch/cli-output-audit/git-cases/python/ripr.toml
+base: fc6122c9ae671d73b6497da8871481d026d52fdb fc6122c
+head: HEAD fc6122c
+
+Summary: 0 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 0 of 0 finding(s) unsuppressed
+
+Analysis outcome: nothing was in scope (analysis complete; no_scope)
+  Counts: 0 changed file(s), 0 changed line(s), 0 candidate line(s), 0 probe(s), 0 finding(s)
+
+No diff-derived static exposure probes found.

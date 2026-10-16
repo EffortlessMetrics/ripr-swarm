@@ -1,0 +1,348 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "columnKind": "unicodeCodePoints",
+      "properties": {
+        "analysis_complete": false,
+        "analysis_outcome": {
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.",
+          "counts": {
+            "candidate_line_count": 1,
+            "changed_file_count": 2,
+            "changed_line_count": 2,
+            "finding_count": 1,
+            "probe_count": 1
+          },
+          "identity": {
+            "base_revision": null,
+            "config_identity": null,
+            "git_candidate_subject": null,
+            "input_identity": "sha256:0fff61f69dcf30d0010d5fc58457f4fbe38a7b9e5d8f15cf54707c2ffd15f0a0",
+            "repository_identity": null,
+            "root_identity": null,
+            "snapshot_identity": null
+          },
+          "kind": "unsupported_input",
+          "limitations": [
+            {
+              "affected_items": null,
+              "bounded_detail": "1 file section(s) parsed a header but no hunk body; the diff appears truncated.",
+              "kind": "malformed_diff",
+              "path": null,
+              "producer_stage": "diff_parse",
+              "recovery": {
+                "detail": "Re-run the analysis with the complete diff stream.",
+                "kind": "retry"
+              }
+            },
+            {
+              "affected_items": 1,
+              "bounded_detail": null,
+              "kind": "malformed_diff",
+              "path": "src/absent.rs",
+              "producer_stage": "diff_parse",
+              "recovery": {
+                "detail": "A two-way hunk has invalid ranges or its body does not match the declared old/new line counts. Obtain the complete valid unified diff and re-run; retained changed lines are advisory only.",
+                "kind": "retry"
+              }
+            },
+            {
+              "affected_items": 1,
+              "bounded_detail": "No Cargo target's module tree reaches this changed Rust file: no `mod`, `#[path]` or `include!` names it, so rustc does not compile it and its change seeds no finding.",
+              "kind": "language_scope_unsupported",
+              "path": "src/absent.rs",
+              "producer_stage": "language_adapter",
+              "recovery": {
+                "detail": "No `mod`, `#[path]` or `include!` from a Cargo target reaches src/absent.rs, so rustc does not compile it and its change was not analyzed. Declare it from a module its crate compiles, or delete it if it is dead code.",
+                "kind": "inspect_failure"
+              }
+            },
+            {
+              "affected_items": 1,
+              "bounded_detail": "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld",
+              "kind": "changed_file_absent_from_worktree",
+              "path": "src/absent.rs",
+              "producer_stage": "language_adapter",
+              "recovery": {
+                "detail": "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis.",
+                "kind": "retry"
+              }
+            }
+          ],
+          "schema_version": "0.1"
+        },
+        "run_status": "incomplete",
+        "schema_version": "0.1",
+        "scope": "finding",
+        "tool": "ripr"
+      },
+      "results": [
+        {
+          "fingerprints": {
+            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_lib.rs:predicate:c80557eb|probe:src_lib.rs:predicate:c80557eb|src/lib.rs|2"
+          },
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 2
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "weakly_exposed static exposure for predicate probe: amount >= discount_threshold. Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions."
+          },
+          "partialFingerprints": {
+            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_lib.rs:predicate:c80557eb|probe:src_lib.rs:predicate:c80557eb|src/lib.rs|2"
+          },
+          "properties": {
+            "canonical_gap": {
+              "behavior_kind": "predicate_boundary",
+              "file": "src/lib.rs",
+              "id": "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+              "language": "rust",
+              "normalized_discriminator": "amount==discount_threshold",
+              "owner": "discounted_total",
+              "probe_kind": "predicate"
+            },
+            "canonical_gap_id": "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+            "changed_expression": "amount >= discount_threshold",
+            "classification": "weakly_exposed",
+            "confidence": 0.9200000166893005,
+            "finding_id": "probe:src_lib.rs:predicate:c80557eb",
+            "flow_sinks": [
+              {
+                "kind": "return_value",
+                "line": 3,
+                "owner": "src/lib.rs::discounted_total",
+                "text": "amount - 10"
+              }
+            ],
+            "kind": "finding",
+            "language": "rust",
+            "missing_discriminators": [
+              {
+                "flow_sink": {
+                  "kind": "return_value",
+                  "line": 3,
+                  "owner": "src/lib.rs::discounted_total",
+                  "text": "amount - 10"
+                },
+                "reason": "No related test call uses amount equal to discount_threshold; observed amount values: 10_000, 50; observed discount_threshold values: 100",
+                "value": "amount == discount_threshold"
+              }
+            ],
+            "observed_values": [
+              {
+                "context": "assertion_argument",
+                "line": 5,
+                "text": "assert_eq!(discounted_total(50, 100), 50);",
+                "value": "50"
+              },
+              {
+                "context": "function_argument",
+                "line": 5,
+                "text": "assert_eq!(discounted_total(50, 100), 50);",
+                "value": "amount = 50"
+              },
+              {
+                "context": "function_argument",
+                "line": 5,
+                "text": "assert_eq!(discounted_total(50, 100), 50);",
+                "value": "discount_threshold = 100"
+              },
+              {
+                "context": "assertion_argument",
+                "line": 10,
+                "text": "assert_eq!(discounted_total(10_000, 100), 9_990);",
+                "value": "9_990"
+              },
+              {
+                "context": "function_argument",
+                "line": 10,
+                "text": "assert_eq!(discounted_total(10_000, 100), 9_990);",
+                "value": "amount = 10_000"
+              },
+              {
+                "context": "function_argument",
+                "line": 10,
+                "text": "assert_eq!(discounted_total(10_000, 100), 9_990);",
+                "value": "discount_threshold = 100"
+              }
+            ],
+            "owner": "src/lib.rs::discounted_total",
+            "probe_delta": "control",
+            "probe_family": "predicate",
+            "probe_id": "probe:src_lib.rs:predicate:c80557eb",
+            "related_tests": [
+              {
+                "file": "tests/pricing.rs",
+                "line": 4,
+                "name": "below_threshold_has_no_discount",
+                "oracle": "assert_eq!(discounted_total(50, 100), 50);",
+                "oracle_kind": "exact_value",
+                "oracle_strength": "strong"
+              },
+              {
+                "file": "tests/pricing.rs",
+                "line": 9,
+                "name": "far_above_threshold_discounts",
+                "oracle": "assert_eq!(discounted_total(10_000, 100), 9_990);",
+                "oracle_kind": "exact_value",
+                "oracle_strength": "strong"
+              }
+            ],
+            "related_tests_total": 2,
+            "ripr": {
+              "discriminate": {
+                "confidence": "medium",
+                "state": "yes",
+                "summary": "Strong oracle found: exact value or pattern assertion"
+              },
+              "infect": {
+                "confidence": "medium",
+                "state": "weak",
+                "summary": "Related tests contain input values, but the equality-boundary discriminator is missing"
+              },
+              "observe": {
+                "confidence": "medium",
+                "state": "yes",
+                "summary": "A related test observes a value or effect near the changed behavior"
+              },
+              "propagate": {
+                "confidence": "medium",
+                "state": "yes",
+                "summary": "Changed behavior appears to influence returned value: amount - 10"
+              },
+              "reach": {
+                "confidence": "medium",
+                "state": "yes",
+                "summary": "Related tests appear to reach discounted_total: below_threshold_has_no_discount, far_above_threshold_discounts"
+              }
+            },
+            "severity": "warning",
+            "stop_reasons": [],
+            "suggested_next_action": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+            "tool": "ripr"
+          },
+          "ruleId": "ripr.finding.weakly_exposed"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "informationUri": "https://github.com/EffortlessMetrics/ripr",
+          "name": "ripr",
+          "rules": [
+            {
+              "fullDescription": {
+                "text": "Static analysis found a complete path from the changed code to a test oracle strong enough to observe the changed behavior."
+              },
+              "help": {
+                "text": "This is static evidence, not a runtime verdict: ripr did not execute any test. Next step: run the linked related test and confirm it observes the changed sink."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.exposed",
+              "name": "ripr exposed",
+              "shortDescription": {
+                "text": "Static exposure finding classified as exposed"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "A static path from the change to a related test exists, but the infection or the oracle's discrimination looks weak, so the test could pass even when the behavior is wrong."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: strengthen the nearest assertion so it observes the changed sink directly, then re-run ripr check."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.weakly_exposed",
+              "name": "ripr weakly_exposed",
+              "shortDescription": {
+                "text": "Static exposure finding classified as weakly_exposed"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Related tests appear to reach the changed code, but no meaningful oracle was found that would notice a wrong result."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: add or sharpen an assertion that discriminates the changed behavior."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.reachable_unrevealed",
+              "name": "ripr reachable_unrevealed",
+              "shortDescription": {
+                "text": "Static exposure finding classified as reachable_unrevealed"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "No static test path to the changed owner was found; static analysis could not trace any related test to this behavior."
+              },
+              "help": {
+                "text": "This is a static reachability statement, not a runtime coverage measurement. Next step: add a focused test that exercises the changed behavior."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.no_static_path",
+              "name": "ripr no_static_path",
+              "shortDescription": {
+                "text": "Static exposure finding classified as no_static_path"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Tests may reach the change, but the input or fixture evidence is opaque, so static analysis cannot tell whether a wrong result would propagate."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: make the decisive input or fixture value explicit, then re-run ripr check."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.infection_unknown",
+              "name": "ripr infection_unknown",
+              "shortDescription": {
+                "text": "Static exposure finding classified as infection_unknown"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "The changed behavior crosses a boundary static analysis cannot see through, so it is unknown whether a wrong result would reach an observable sink."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: add an assertion at an observable sink beyond the boundary."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.propagation_unknown",
+              "name": "ripr propagation_unknown",
+              "shortDescription": {
+                "text": "Static exposure finding classified as propagation_unknown"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Syntax-first analysis could not make a credible judgment for this finding, usually because parsing or symbol resolution was incomplete."
+              },
+              "help": {
+                "text": "This is an analysis limitation disclosure, not a coverage verdict. Next step: re-run with fuller analysis settings or triage the finding manually."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.static_unknown",
+              "name": "ripr static_unknown",
+              "shortDescription": {
+                "text": "Static exposure finding classified as static_unknown"
+              }
+            }
+          ],
+          "semanticVersion": "0.11.0"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

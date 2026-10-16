@@ -1,0 +1,8 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ pub fn record_mark(values: &mut Vec<u32>) {
+-    values.push(0);
++    values.push(1);
+ }
