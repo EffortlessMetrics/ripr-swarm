@@ -366,6 +366,67 @@ fn drop_unreached_test_files(
         .collect()
 }
 
+/// Drops the files that hold tests and that `cargo test` never runs although
+/// a `[[test]]` entry declares them (#8016): `test = false`, unmet
+/// `required-features`, or `harness = false` without a registered custom
+/// harness. Cargo's own metadata inventory is the authority, so a file the
+/// probe does not list, or a probe that is unavailable, keeps its tests.
+///
+/// Only a file whose owning package declares `[[test]]` entries is asked, so
+/// a workspace with none pays for no `cargo metadata` probe.
+fn drop_cargo_skipped_test_files(
+    root: &Path,
+    test_harnesses: &[crate::config::TestHarnessRegistration],
+    loaded_files: Vec<(PathBuf, Vec<u8>)>,
+) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut manifests = BTreeMap::new();
+    let mut declares_tests: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    let mut inventory = workspace::ManifestInventory::default();
+    let registered = test_harnesses
+        .iter()
+        .filter(|harness| harness.file_wide_harness_evidence())
+        .map(|harness| workspace::normalize_path(&harness.target))
+        .collect::<BTreeSet<_>>();
+    loaded_files
+        .into_iter()
+        .filter(|(path, bytes)| {
+            if !contains_bytes(bytes, b"test") {
+                return true;
+            }
+            let Some(package) = owning_manifest_dir(root, path, &mut manifests) else {
+                return true;
+            };
+            let declared = *declares_tests.entry(package.clone()).or_insert_with(|| {
+                committed_source::read_source_bytes(root, &package.join("Cargo.toml"))
+                    .ok()
+                    .flatten()
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+                    .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+                    .and_then(|manifest| {
+                        manifest
+                            .get("test")
+                            .and_then(toml::Value::as_array)
+                            .map(|tests| !tests.is_empty())
+                    })
+                    .unwrap_or(false)
+            });
+            if !declared {
+                return true;
+            }
+            if inventory.cargo_test_collection_skipped(root, path) {
+                return false;
+            }
+            // `harness = false` never collects a `#[test]` item, unless the
+            // target is a registered custom harness that runs its own.
+            let harness_off = matches!(
+                inventory.verdict(root, path),
+                workspace::CargoHarnessVerdict::HarnessDisabled
+            );
+            !harness_off || registered.contains(&workspace::normalize_path(path))
+        })
+        .collect()
+}
+
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
     // `windows(0)` panics; every haystack contains the empty needle.
     if needle.is_empty() {
@@ -2019,6 +2080,9 @@ impl RustAdapter {
             &options.test_harnesses,
             loaded_files,
         );
+        // #8016: a `[[test]]` target cargo declares but `cargo test` skips.
+        let loaded_files =
+            drop_cargo_skipped_test_files(&options.root, &options.test_harnesses, loaded_files);
         let cached = rust_index::build_analysis_index_from_loaded_files(
             &options.root,
             &loaded_files,
@@ -7256,6 +7320,87 @@ fn absent_delimiter_boundary_returns_head() {
             );
             assert_eq!(kept.len(), usize::from(opted_in), "opted_in={opted_in}");
         }
+    }
+
+    #[test]
+    fn declared_test_targets_cargo_skips_drop_and_live_ones_stay() -> Result<(), String> {
+        // #8016: `[[test]]` keys that make `cargo test` skip a target.
+        let registered = crate::config::TestHarnessRegistration {
+            registration_id: "mimic".to_string(),
+            target: PathBuf::from("tests/x.rs"),
+            kind: crate::config::TestHarnessKind::CustomHarnessTarget,
+            adapter: crate::config::TestHarnessAdapter::LibtestMimicV1,
+            marker: "libtest_mimic".to_string(),
+        };
+        // (entry keys, features table, registered, kept)
+        let cases: [(&str, &str, bool, bool); 7] = [
+            ("", "", false, true),
+            ("test = false\n", "", false, false),
+            ("harness = false\n", "", false, false),
+            ("harness = false\n", "", true, true),
+            (
+                "required-features = [\"never\"]\n",
+                "[features]\nnever = []\n",
+                false,
+                false,
+            ),
+            (
+                "required-features = [\"on\"]\n",
+                "[features]\ndefault = [\"on\"]\non = []\n",
+                false,
+                true,
+            ),
+            ("test = false\n", "", true, false),
+        ];
+        for (index, (keys, features, register, kept)) in cases.into_iter().enumerate() {
+            let root = temp_root(&format!("skipped-test-target-{index}"))?;
+            write(
+                &root.join("Cargo.toml"),
+                &format!(
+                    "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n[workspace]\n{features}\n\
+                     [[test]]\nname='x'\n{keys}"
+                ),
+            )?;
+            write(&root.join("src/lib.rs"), "pub fn total() -> i32 { 1 }\n")?;
+            let file = PathBuf::from("tests/x.rs");
+            write(
+                &root.join(&file),
+                "#[test]\nfn t() { assert_eq!(shop::total(), 1); }\n",
+            )?;
+            let loaded = vec![(
+                file.clone(),
+                fs::read(root.join(&file)).map_err(|e| e.to_string())?,
+            )];
+            let harnesses = if register {
+                vec![registered.clone()]
+            } else {
+                Vec::new()
+            };
+            let remaining = super::drop_cargo_skipped_test_files(&root, &harnesses, loaded);
+            assert_eq!(
+                remaining.len(),
+                usize::from(kept),
+                "case {index} keys={keys:?} register={register}"
+            );
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_package_without_declared_test_targets_keeps_every_test_file() -> Result<(), String> {
+        let root = temp_root("no-declared-test-targets")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub fn total() -> i32 { 1 }\n")?;
+        let file = PathBuf::from("tests/x.rs");
+        let loaded = vec![(file, b"#[test]\nfn t() {}\n".to_vec())];
+        let remaining = super::drop_cargo_skipped_test_files(&root, &[], loaded);
+        assert_eq!(remaining.len(), 1);
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
     }
 
     #[test]
