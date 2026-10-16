@@ -50,7 +50,7 @@ fn push_seam(seams: &[RepoSeam]) -> Result<&RepoSeam, String> {
 }
 
 #[test]
-fn ranking_reuses_file_syntax_and_rejects_the_fresh_per_test_control() -> Result<(), String> {
+fn ranking_skips_unused_matching_while_full_evidence_retains_syntax_reuse() -> Result<(), String> {
     let index = syntax_fixture(12, false)?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
     let seam = push_seam(&seams)?;
@@ -60,7 +60,6 @@ fn ranking_reuses_file_syntax_and_rejects_the_fresh_per_test_control() -> Result
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
     let owner = seam_owner_activation(seam, &context);
     let shared = OwnerPinSyntax::default();
-    let started = std::time::Instant::now();
     let before = OwnerPinSyntax::std_rooted_file_parse_count();
     let shared_keys: Vec<_> = related
         .iter()
@@ -76,12 +75,12 @@ fn ranking_reuses_file_syntax_and_rejects_the_fresh_per_test_control() -> Result
             )
         })
         .collect();
-    let reused_parses = OwnerPinSyntax::std_rooted_file_parse_count() - before;
-    let shared_elapsed = started.elapsed();
-    let started = std::time::Instant::now();
+    assert_eq!(
+        OwnerPinSyntax::std_rooted_file_parse_count() - before,
+        0,
+        "non-field ranking must not evaluate discarded collection matching"
+    );
     let before = OwnerPinSyntax::std_rooted_file_parse_count();
-    // Deliberately retain the previous wrong cache lifetime as an independent
-    // control. It must preserve decisions while violating the parse budget.
     let fresh_keys: Vec<_> = related
         .iter()
         .map(|(test, reason)| {
@@ -96,32 +95,50 @@ fn ranking_reuses_file_syntax_and_rejects_the_fresh_per_test_control() -> Result
             )
         })
         .collect();
-    let fresh_parses = OwnerPinSyntax::std_rooted_file_parse_count() - before;
     assert!(shared_keys == fresh_keys, "complete ranking keys changed");
-    assert_eq!(
-        reused_parses, 1,
-        "one immutable test file, one cold syntax build"
-    );
-    assert_eq!(
-        fresh_parses,
-        related.len(),
-        "negative control must reach every cold parse"
-    );
-    assert!(
-        fresh_parses > 1,
-        "the one-parse budget rejects the prior lifetime"
-    );
-    eprintln!(
-        "syntax_reuse shared_parses={reused_parses} fresh_parses={fresh_parses} shared={shared_elapsed:?} fresh={:?}",
-        started.elapsed()
-    );
-    let before = OwnerPinSyntax::std_rooted_file_parse_count();
-    let evidence = evidence_for_seam_with_context_and_syntax(seam, &context, &shared);
-    assert_eq!(evidence.related_tests.len(), 12);
     assert_eq!(
         OwnerPinSyntax::std_rooted_file_parse_count() - before,
         0,
-        "ranking and complete evidence must consume the same parsed file"
+        "ranking needs no collection admission even with fresh syntax per test"
+    );
+
+    // Keep an actual owning-path positive: avoiding ranking work must not
+    // remove the collection observer or hide an unreachable test fixture.
+    let test = related.first().ok_or("missing actual related test")?.0.test;
+    let oracle = test
+        .assertions
+        .first()
+        .ok_or("missing actual literal equality")?;
+    let direct = OwnerPinSyntax::default();
+    let before = OwnerPinSyntax::std_rooted_file_parse_count();
+    assert!(oracle_discriminates_seam_in_test(
+        seam, oracle, test, owner_fn, &index, &direct
+    ));
+    assert_eq!(
+        OwnerPinSyntax::std_rooted_file_parse_count() - before,
+        1,
+        "the real collection admission must still execute its cold file parse"
+    );
+
+    let before = OwnerPinSyntax::std_rooted_file_parse_count();
+    let first = evidence_for_seam_with_context_and_syntax(seam, &context, &shared);
+    assert_eq!(first.related_tests.len(), 12);
+    assert_eq!(first.discriminate.state, StageState::Yes);
+    assert_eq!(
+        OwnerPinSyntax::std_rooted_file_parse_count() - before,
+        1,
+        "complete evidence owns the first necessary syntax parse"
+    );
+    let before = OwnerPinSyntax::std_rooted_file_parse_count();
+    let repeated = evidence_for_seam_with_context_and_syntax(seam, &context, &shared);
+    assert_eq!(
+        OwnerPinSyntax::std_rooted_file_parse_count() - before,
+        0,
+        "repeated complete evidence reuses the invocation-local syntax"
+    );
+    assert_eq!(
+        serde_json::to_value(first).map_err(|e| e.to_string())?,
+        serde_json::to_value(repeated).map_err(|e| e.to_string())?
     );
     Ok(())
 }
