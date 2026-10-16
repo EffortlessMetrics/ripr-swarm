@@ -138,6 +138,9 @@ fn execute_review_stream(
     if let Some(label) = environment.get("LABEL").and_then(Value::as_str) {
         command.env("LABEL", label);
     }
+    if let Some(commit) = environment.get("MOCK_COMMIT") {
+        command.env("MOCK_COMMIT", commit.to_string());
+    }
     let output = command.output().map_err(|e| e.to_string())?;
     let result = output.status.success();
     if !result && script.contains("execute=true") {
@@ -291,6 +294,56 @@ fn observed_producer_review_bodies_reach_both_actual_consumers() -> Result<(), S
     }
     Ok(())
 }
+#[test]
+fn admission_rejects_event_base_that_disagrees_with_actual_merge_parent() -> Result<(), String> {
+    let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
+    let live = &vectors["live_drift_cases"][0];
+    let script = body("Reconcile native request and current readiness")?;
+    // Reproduce #8082's observed shape: event and live PR agree with one
+    // another, while the immutable merge object names a different base.
+    // A matching PR payload alone must not authorize product allocation.
+    let coherent = json!({"MOCK_COMMIT": {
+        "parents": [{"sha": "b".repeat(40)}, {"sha": "a".repeat(40)}],
+        "tree": {"sha": "d".repeat(40)}
+    }});
+    let inconsistent = json!({"MOCK_COMMIT": {
+        "parents": [{"sha": "e".repeat(40)}, {"sha": "a".repeat(40)}],
+        "tree": {"sha": "d".repeat(40)}
+    }});
+    assert!(execute(
+        &script,
+        &live["live_pull_request"],
+        &live["reviews"],
+        &coherent
+    )?);
+    assert!(!execute(
+        &script,
+        &live["live_pull_request"],
+        &live["reviews"],
+        &inconsistent
+    )?);
+    let parent_guard = "'.parents | map(.sha) == [$base, $head]'";
+    let missing_guard = script
+        .lines()
+        .filter(|line| !line.contains(parent_guard))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_ne!(
+        missing_guard, script,
+        "production parent guard must be exercised"
+    );
+    assert!(
+        execute(
+            &missing_guard,
+            &live["live_pull_request"],
+            &live["reviews"],
+            &inconsistent
+        )?,
+        "removing the parent guard must expose the false allocation"
+    );
+    Ok(())
+}
+
 #[test]
 fn final_readiness_replays_all_independent_live_drift_vectors() -> Result<(), String> {
     let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
