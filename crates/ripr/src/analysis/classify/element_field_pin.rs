@@ -1236,6 +1236,34 @@ mod tests {
                 "#[test]",
                 "        let rows = rows(30, 3);\n        let r = &rows[1 + 0];\n        assert_eq!(r.total, 33);",
             ),
+            (
+                "#[test]",
+                "        let got = rows(30, 3);\n        let rows = &got[1];\n        assert_eq!(rows.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let r: &Row = &rows[1];\n        assert_eq!(r.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let ref r = &rows[1];\n        assert_eq!(r.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let r = &&rows[1];\n        assert_eq!(r.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let r = &rows[1];\n        settle!();\n        assert_eq!(r.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let r = &rows[1];\n        let rows = rows(30, 3);\n        assert_eq!(r.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let r = &rows[1];\n        assert!(r.total == 33);",
+            ),
             ("#[test]\n    #[should_panic]", ANY),
             ("#[test]\n    #[ignore]", ANY),
         ];
