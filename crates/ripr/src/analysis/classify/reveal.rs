@@ -455,6 +455,7 @@ fn collection_observer_confirms(expression: &str, assertion: &OracleFact) -> boo
 fn field_collection_observer_confirms(
     path: &str,
     count_reads: bool,
+    insert_key_index: Option<usize>,
     owner: Option<OwnerCall<'_>>,
     test: &TestSummary,
     assertion: &OracleFact,
@@ -463,21 +464,133 @@ fn field_collection_observer_confirms(
     let Some(owner) = owner else {
         return false;
     };
+    let plain_reads = assertion_field_collection_reads(&assertion.text, path, false);
     assertion_field_collection_reads(&assertion.text, path, count_reads)
         .into_iter()
         .any(|read| {
-            owner_call_precedes_read(
-                &test.body,
-                test.start_line,
-                &read.binding,
-                owner.name(),
-                assertion.line,
-            ) && read.getter.as_deref().is_none_or(|getter| {
-                owner
-                    .impl_type()
-                    .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
-            })
+            // #8204: a count-only read of a map the owner inserts into
+            // cannot confirm deleting that insert when the test may
+            // already hold the inserted key: overwriting it leaves the
+            // count unchanged.
+            let count_only = !plain_reads.contains(&read);
+            !(count_only
+                && insert_key_index.is_some_and(|index| {
+                    insert_count_may_overwrite(
+                        test,
+                        owner,
+                        &read.binding,
+                        path,
+                        index,
+                        assertion.line,
+                    )
+                }))
+                && owner_call_precedes_read(
+                    &test.body,
+                    test.start_line,
+                    &read.binding,
+                    owner.name(),
+                    assertion.line,
+                )
+                && read.getter.as_deref().is_none_or(|getter| {
+                    owner
+                        .impl_type()
+                        .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
+                })
         })
+}
+
+/// #8204: whether the test may already hold, in `binding.path`, the key an
+/// accepted owner call passes at argument `key_index`, so the owner's
+/// insert only overwrites it and a count of the map cannot notice the
+/// insert being deleted. Positive evidence only: a direct
+/// `binding.path.insert(key, ..)` before the owner call with a matching
+/// key (literal keys compared by value, anything else by spelling), or a
+/// `binding.path = ..` seeding assignment whose right-hand side names the
+/// literal key. Any other setup keeps the count credit: no seeding
+/// evidence means the insert may be the entry that makes the count.
+fn insert_count_may_overwrite(
+    test: &TestSummary,
+    owner: OwnerCall<'_>,
+    binding: &str,
+    path: &str,
+    key_index: usize,
+    read_line: usize,
+) -> bool {
+    let masked = mask_comments_and_strings(&test.body);
+    let normalize = |text: &str| normalize_insert_key(text);
+    let call_name = format!("{binding}.{}", owner.name());
+    let seed_name = format!("{binding}.{path}.insert");
+    owner_calls_before_read(
+        &test.body,
+        test.start_line,
+        binding,
+        owner.name(),
+        read_line,
+    )
+    .into_iter()
+    .any(|at| {
+        let Some(key) = test
+            .body
+            .get(at..)
+            .and_then(|text| super::activation::call_arguments(text, &call_name))
+            .and_then(|args| args.get(key_index).map(|arg| normalize(arg)))
+        else {
+            return false;
+        };
+        masked[..at]
+            .match_indices(&format!("{seed_name}("))
+            .any(|(seed_at, _)| {
+                test.body
+                    .get(seed_at..)
+                    .and_then(|text| super::activation::call_arguments(text, &seed_name))
+                    .and_then(|args| args.first().map(|arg| normalize(arg)))
+                    .is_some_and(|seed| insert_keys_match(&key, &seed))
+            })
+            || is_literal_key(&key)
+                && test.body[..at]
+                    .match_indices(&format!("{binding}.{path}"))
+                    .any(|(seed_at, needle)| {
+                        test.body
+                            .get(seed_at + needle.len()..(seed_at + 240).min(at))
+                            .is_some_and(|segment| {
+                                segment.trim_start().starts_with('=')
+                                    && segment.contains(key.as_str())
+                            })
+                    })
+    })
+}
+
+/// An insert key as the value it names: owned-copy spellings of the same
+/// key (`"A"`, `"A".to_string()`, `String::from("A")`, `sku.clone()`)
+/// normalize to the copied value, so a seeded entry and the owner call
+/// that overwrites it compare equal.
+fn normalize_insert_key(text: &str) -> String {
+    let mut value = text.trim();
+    loop {
+        let trimmed = value.trim().trim_start_matches('&').trim();
+        let stripped = [".to_string()", ".to_owned()", ".into()", ".clone()"]
+            .iter()
+            .find_map(|suffix| trimmed.strip_suffix(suffix))
+            .or_else(|| {
+                ["String::from(", "str::to_string("]
+                    .iter()
+                    .find_map(|prefix| trimmed.strip_prefix(prefix))
+                    .and_then(|inner| inner.strip_suffix(')'))
+            });
+        match stripped {
+            Some(inner) => value = inner,
+            None => return trimmed.to_string(),
+        }
+    }
+}
+/// Whether two insert keys name the same entry: literal keys compare by
+/// value (`"A"` and `"A"` respelled), anything else by spelling, so the
+/// same variable passed twice still matches.
+fn insert_keys_match(key: &str, seed: &str) -> bool {
+    match literals_equal(key, seed) {
+        Some(equal) => equal,
+        None => key == seed,
+    }
 }
 
 /// RIPR-SPEC-0228 keyed reads: whether `assertion` reads back the entry the
@@ -1790,6 +1903,7 @@ fn analyze_related_assertions(
                     // Only a deleted write changes how many elements the
                     // collection holds; a changed argument does not.
                     matches!(probe.family, ProbeFamily::CallDeletion),
+                    insert_key_index,
                     override_owner,
                     test,
                     assertion,
@@ -4649,6 +4763,47 @@ mod tests {
         assert!(!runs(99));
     }
 
+    /// #8204: a count-only read cannot confirm a map insert the test may
+    /// already hold the key for; an empty start or another key still can.
+    #[test]
+    fn field_collection_count_read_refuses_a_preexisting_key() {
+        let owner = OwnerCall::from_symbol("src/shelf.rs::impl Shelf::restock");
+        let confirms = |body: &str, assertion_text: &str, line: usize| {
+            let test = TestSummary {
+                start_line: 1,
+                ..test_with_body_assertions(
+                    "case",
+                    body,
+                    vec![OracleFact {
+                        line,
+                        ..oracle(
+                            assertion_text,
+                            OracleKind::ExactValue,
+                            OracleStrength::Strong,
+                        )
+                    }],
+                )
+            };
+            field_collection_observer_confirms(
+                "stock",
+                true,
+                Some(0),
+                owner,
+                &test,
+                &test.assertions[0],
+                &|_, _, _| false,
+            )
+        };
+        let seeded = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock.insert(\"A\".to_string(), 1);\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 1);\n}";
+        assert!(!confirms(seeded, "assert_eq!(shelf.stock.len(), 1);", 5));
+        let empty = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 1);\n}";
+        assert!(confirms(empty, "assert_eq!(shelf.stock.len(), 1);", 4));
+        let other_key = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock.insert(\"B\".to_string(), 1);\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 2);\n}";
+        assert!(confirms(other_key, "assert_eq!(shelf.stock.len(), 2);", 5));
+        // A whole-map read of the seeded map still observes the write.
+        let whole = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock.insert(\"A\".to_string(), 1);\n    shelf.restock(\"A\", 2);\n    assert_eq!(&shelf.stock[\"A\"], &2);\n}";
+        assert!(confirms(whole, "assert_eq!(&shelf.stock[\"A\"], &2);", 5));
+    }
     /// RIPR-SPEC-0228 keyed reads: a `#[should_panic]` test passes when the
     /// compared values differ, so it never confirms a keyed read.
     #[test]

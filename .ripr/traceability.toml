@@ -14586,8 +14586,12 @@ tests = [
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::empty_collection_expectations_cannot_confirm_a_push",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::owner_may_exit_before_line_reads_everything_before_the_changed_expression",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::empty_collection_expectations_cap_effect_families_only_after_an_early_exit",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::field_collection_count_read_refuses_a_preexisting_key",
 ]
-fixtures = []
+fixtures = [
+  "fixtures/rust_map_overwrite_count",
+  "fixtures/rust_map_insert_count_empty",
+]
 code = [
   "crates/ripr/src/analysis/syntax/ra.rs",
   "crates/ripr/src/analysis/probes/diff.rs",
