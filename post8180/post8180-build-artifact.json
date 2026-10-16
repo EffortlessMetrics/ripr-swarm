@@ -1,0 +1,7 @@
+{
+  "path": "/workspace/ripr-swarm/target/debug/ripr",
+  "sha256": "5cad67bc60f34cdd8441920f5bbcc92a162731440ed849a4b041af0f828bd139",
+  "bytes": 219329736,
+  "version": "ripr 0.11.0 (7307e51c198fafe9fe674c489b6f7b6723ee6dd5)",
+  "scope": "mutable Cargo artifact observed after composition build; not copied or promoted to released artifact"
+}

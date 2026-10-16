@@ -1,0 +1,23 @@
+{
+  "observed_utc": "2026-10-16T05:32:31.159904+00:00",
+  "candidate_head": "6a47f5bf094e5b010845b544f9464333a8b90d7d",
+  "postlanding_main": "d08c77d144c016078364fcc1fcf2fa593d21cefc",
+  "local_composition_commit": "7307e51c198fafe9fe674c489b6f7b6723ee6dd5",
+  "local_composition_tree": "d07c837e4ffbff4cd21a2976dcefad4c2df0549b",
+  "parents": [
+    "d08c77d144c016078364fcc1fcf2fa593d21cefc",
+    "6a47f5bf094e5b010845b544f9464333a8b90d7d"
+  ],
+  "remote_merge_ref": "0b562e491cbb2740fccb23505641be646a5a7e83",
+  "remote_merge_ref_status": "still pre-landing; not postlanding qualification",
+  "main_delta_paths": [
+    "Cargo.lock",
+    "xtask/Cargo.toml",
+    "xtask/src/main.rs",
+    "xtask/src/reports/release_server.rs",
+    "xtask/src/tests.rs"
+  ],
+  "zip_manifest": "9",
+  "zip_lock": "9.0.3",
+  "canonical_pr8180_head": "4b80f51a8616a94a5924fb28292253f054a92db4"
+}

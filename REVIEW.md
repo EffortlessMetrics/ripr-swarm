@@ -1,5 +1,7 @@
 # Independent review of Draft PR #8201
 
+**Post-landing supplement:** [#8180 integration followup](POST8180.md) supersedes the earlier unlanded-prerequisite status. Original observations below remain bound to their original subjects.
+
 Disposition: **REVIEW_INCOMPLETE**. No actionable source or contract defect found in the inspected/executed #8169 boundary. This is an independent technical review, not merge clearance. Keep Draft. No candidate source was changed or pushed.
 
 ## Exact subjects

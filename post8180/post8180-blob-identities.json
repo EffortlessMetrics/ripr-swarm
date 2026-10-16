@@ -1,0 +1,32 @@
+{
+  "crates/ripr/src": {
+    "prelanding_composition_object": "6194765423a30e31aa3f48780d62f787ad2dcb8b",
+    "postlanding_composition_object": "6194765423a30e31aa3f48780d62f787ad2dcb8b",
+    "identical": true
+  },
+  "crates/ripr/tests": {
+    "prelanding_composition_object": "407098a1b83e34bc3ec0bc76c00864eb563c9055",
+    "postlanding_composition_object": "407098a1b83e34bc3ec0bc76c00864eb563c9055",
+    "identical": true
+  },
+  "docs/OUTPUT_SCHEMA.md": {
+    "prelanding_composition_object": "36fca2dc5c172cd41dae3251fae962bbebf32c53",
+    "postlanding_composition_object": "36fca2dc5c172cd41dae3251fae962bbebf32c53",
+    "identical": true
+  },
+  ".agents/skills/review-pr/SKILL.md": {
+    "prelanding_composition_object": "56525107201bfec3aec0c2a300516755a11d5ef3",
+    "postlanding_composition_object": "56525107201bfec3aec0c2a300516755a11d5ef3",
+    "identical": true
+  },
+  "Cargo.lock": {
+    "prelanding_composition_object": "531197c1eae385730a8c6ad5e8f4d984b4067a3c",
+    "postlanding_composition_object": "ef5d298aafe25b25107fa9c7d9aaa792016b2a7f",
+    "identical": false
+  },
+  "xtask/Cargo.toml": {
+    "prelanding_composition_object": "d7aece40fa2e0866164c3e7c7ff82c2d3a8a0130",
+    "postlanding_composition_object": "4d5bf508f299958b8af38b621cd98e3a58533f67",
+    "identical": false
+  }
+}

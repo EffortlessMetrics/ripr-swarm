@@ -1,0 +1,18 @@
+{
+  "label": "post8180-cli",
+  "args": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "cli_smoke",
+    "native_fanout"
+  ],
+  "cwd": "/workspace/review-8201-post8180",
+  "started": 1792128751.4290633,
+  "elapsed": 81.34101033210754,
+  "exit": 0,
+  "head": "7307e51c198fafe9fe674c489b6f7b6723ee6dd5"
+}

@@ -7,9 +7,14 @@
   "exclusive_evidence_branch": "codex/review-8201-6a47f5bf-independent-20261016",
   "files": [
     {
+      "path": "POST8180.md",
+      "bytes": 5101,
+      "sha256": "3b55867b6757239ed9d69b597769358eb989b53bd5bd32f4fe34f4ec1afebbf8"
+    },
+    {
       "path": "REVIEW.md",
-      "bytes": 10123,
-      "sha256": "b1810b9b85b4934286ed87053abae1c1787c39e0310f4d658011436bf4723cf0"
+      "bytes": 10317,
+      "sha256": "f6770182933639c9f1a119705faa7e77fda60f68053f9099fb740589bbcf3890"
     },
     {
       "path": "attempt1-driver.py.md",
@@ -1237,6 +1242,51 @@
       "sha256": "15f82db1ac7779702c88bb4ef79c3db9a5762e6cc58551c514acfc7f01b7de7b"
     },
     {
+      "path": "post8180/post8180-blob-identities.json",
+      "bytes": 1305,
+      "sha256": "f7bc25a7d2bbb81b05de6858a2efd652db02100d37baa51c3d5668e6d9f08692"
+    },
+    {
+      "path": "post8180/post8180-build-artifact.json",
+      "bytes": 344,
+      "sha256": "1e4dead12add52de2ef00c29381a8a4f359048a395bab45a841812dde54691a6"
+    },
+    {
+      "path": "post8180/post8180-cli.json",
+      "bytes": 336,
+      "sha256": "93451df6c4f11004cefced62338a071c582c10869fedff1faa3f90f885b78d43"
+    },
+    {
+      "path": "post8180/post8180-cli.log",
+      "bytes": 1128,
+      "sha256": "950adc1df516b08be80c31e685eb3bbc55f57ef51e022ef80477fd7f85c413e9"
+    },
+    {
+      "path": "post8180/post8180-final-refs.tsv",
+      "bytes": 180,
+      "sha256": "220f2a6a778ecfbd6f4468d091308a63e9af4f2f5948348512f7047fce857068"
+    },
+    {
+      "path": "post8180/post8180-local-commit.txt",
+      "bytes": 345,
+      "sha256": "cf9be831eaaaf133218b1215d52ebc9bf0a74309cbb6b371fa2b07d04663b1b7"
+    },
+    {
+      "path": "post8180/post8180-main-delta.tsv",
+      "bytes": 111,
+      "sha256": "b679898c3ccef2184dfb81ca8a881297451afca79f09f04925c2fff0e09a8fe5"
+    },
+    {
+      "path": "post8180/post8180-subject.json",
+      "bytes": 876,
+      "sha256": "e4f8806054727fc9feda50309ce3f5abe4a0da0204dd4df00220a0d0a5d8c3da"
+    },
+    {
+      "path": "post8180/post8180-xtask-Cargo.toml.txt",
+      "bytes": 510,
+      "sha256": "ddb21fa80bd98dd9dc6db845637de30d4ff4096c767e0ac400fc574d6d051f4e"
+    },
+    {
       "path": "python-native/badge.json",
       "bytes": 1815,
       "sha256": "fd28b0da6ddc8d13cedc969ae9717b8436454a5b36d348db0da1f60f8d772db6"
@@ -1432,6 +1482,11 @@
       "sha256": "06ca9a8d7133f8d89d7a91cb8f8fd12947e67f7667af5faeebed4f6006f7a5af"
     },
     {
+      "path": "readback.json",
+      "bytes": 505,
+      "sha256": "e0e253c8d284462a79517f1c360cbad89917d75043082cc4f2c3bd1f90891865"
+    },
+    {
       "path": "remote-observations.json",
       "bytes": 6205,
       "sha256": "944860502004b473d30ef286485187ee6234d5dec4042845c650f136af4e3123"
@@ -1440,11 +1495,6 @@
       "path": "run.py.md",
       "bytes": 780,
       "sha256": "a16cd0b231636b7f8fa1a8d937778896b3f986525481571309be6d9658d3eb1e"
-    },
-    {
-      "path": "readback.json",
-      "bytes": 505,
-      "sha256": "e0e253c8d284462a79517f1c360cbad89917d75043082cc4f2c3bd1f90891865"
     }
   ],
   "omitted": [
@@ -1453,5 +1503,6 @@
     "raw corpus directory trees; corpus-final-state.json plus drivers preserve content/creation"
   ],
   "disposition": "REVIEW_INCOMPLETE",
-  "readback_scope": "readback.json verifies the prior immutable packet commit; this manifest adds its receipt without changing earlier payloads"
+  "readback_scope": "readback.json verifies the prior immutable packet commit; this manifest adds its receipt without changing earlier payloads",
+  "post8180_local_composition": "7307e51c198fafe9fe674c489b6f7b6723ee6dd5"
 }
