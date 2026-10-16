@@ -272,6 +272,52 @@ fn skipped_closer_config_warning(invocation_root: &Path, analysis_root: &Path) -
     ))
 }
 
+/// Options that consume the next argument as a value. `help_request` skips
+/// those values so `--diff --all` names a file rather than the help modifier.
+/// `check_value_options_match_the_documented_value_taking_flags` derives the
+/// same set from the exhaustive help and fails when this list drifts.
+const CHECK_VALUE_OPTIONS: &[&str] = &[
+    "--root",
+    "--base",
+    "--diff",
+    "--candidate-tree",
+    "--candidate-base",
+    "--mode",
+    "--format",
+    "--gap-ledger",
+    "--perl-facts",
+    "--suppression-policy",
+    "--write-artifact",
+    "--git-timeout",
+];
+
+/// Value-taking options whose values are enumerated names (never flag-shaped).
+const CHECK_ENUM_OPTIONS: &[&str] = &["--mode", "--format"];
+
+/// `Some(all)` when `--help`/`-h` is a real flag among `args` (not an option's
+/// value). Help wins over every other argument, so it never fails on a later
+/// option value, and `--all` (anywhere) widens it to the full reference. On its
+/// own `--all` is not a flag and falls through to the unknown-argument error.
+fn help_request(args: &[String]) -> Option<bool> {
+    let (mut help, mut all) = (false, false);
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--help" | "-h" => help = true,
+            "--all" => all = true,
+            // An enumerated value never looks like a flag, so `--mode --help`
+            // is a help request rather than the mode `--help`.
+            option
+                if CHECK_ENUM_OPTIONS.contains(&option)
+                    && args.get(i + 1).is_some_and(|next| next.starts_with('-')) => {}
+            option if CHECK_VALUE_OPTIONS.contains(&option) => i += 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    help.then_some(all)
+}
+
 fn parse_git_timeout(value: &str) -> Result<Option<std::time::Duration>, String> {
     parse_git_timeout_from("--git-timeout", value)
 }
@@ -460,6 +506,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     let mut candidate_tree: Option<String> = None;
     let mut candidate_base: Option<String> = None;
     let mut quiet = false;
+    if let Some(all) = help_request(args) {
+        help::print_check_help(all);
+        return Ok(());
+    }
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -563,10 +613,9 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             "--quiet" => {
                 quiet = true;
             }
-            "--help" | "-h" => {
-                help::print_check_help();
-                return Ok(());
-            }
+            // `help_request` already consumed `--all` alongside `--help`; here
+            // it has no `--help` to widen, so it is still an unknown argument.
+            "--all" => return Err(unknown_argument("check", "--all")),
             other => return Err(unknown_argument("check", other)),
         }
         i += 1;
@@ -2234,6 +2283,88 @@ mod tests {
         Ok(())
     }
 
+    /// A flag documented with a value placeholder (`--root PATH`, or the
+    /// placeholder on the next line) takes a value; `CHECK_VALUE_OPTIONS` must
+    /// list exactly those, or `--newflag --all --help` would misread the value.
+    #[test]
+    fn check_value_options_match_the_documented_value_taking_flags() -> Result<(), String> {
+        let help = help::help_text_for("check").ok_or("check help must exist")?;
+        let is_placeholder = |token: &str| {
+            token.len() >= 3 && token.chars().all(|c| c.is_ascii_uppercase() || c == '_')
+        };
+        let mut documented = std::collections::BTreeSet::new();
+        let lines: Vec<&str> = help
+            .lines()
+            .skip_while(|line| *line != "Options:")
+            .take_while(|line| !line.is_empty() || *line == "Options:")
+            .collect();
+        let mut index = 0;
+        while index < lines.len() {
+            if let Some(rest) = lines[index].strip_prefix("  --") {
+                let mut words = rest.split_whitespace();
+                let flag = format!("--{}", words.next().unwrap_or_default());
+                let placeholder = match words.next() {
+                    Some(token) => Some(token),
+                    None => lines
+                        .get(index + 1)
+                        .and_then(|next| next.split_whitespace().next()),
+                };
+                if placeholder.is_some_and(is_placeholder) {
+                    documented.insert(flag);
+                }
+            }
+            index += 1;
+        }
+        let declared: std::collections::BTreeSet<String> = CHECK_VALUE_OPTIONS
+            .iter()
+            .map(|flag| (*flag).to_string())
+            .collect();
+        assert_eq!(documented, declared);
+        Ok(())
+    }
+
+    /// The value-taking flags the parser actually consumes, read from the
+    /// option `match` arms of this file. Unlike the documentation-derived test
+    /// above, this fails when a flag is dropped from BOTH `CHECK_VALUE_OPTIONS`
+    /// and the help while its parser arm still takes a value.
+    #[test]
+    fn check_value_options_match_the_parser_arms() -> Result<(), String> {
+        let source = include_str!("check.rs");
+        let start = source
+            .find("            \"--root\" => {")
+            .ok_or("option match start not found")?;
+        let end = source[start..]
+            .find("other => return Err(unknown_argument(\"check\", other))")
+            .map(|offset| start + offset)
+            .ok_or("option match end not found")?;
+        let mut parsed = std::collections::BTreeSet::new();
+        let mut arms = 0usize;
+        let mut current: Option<&str> = None;
+        for line in source[start..end].lines() {
+            let trimmed = line.trim_start();
+            let is_arm_head = line.starts_with("            \"") && trimmed.contains("=>");
+            if is_arm_head {
+                arms += 1;
+                current = trimmed
+                    .strip_prefix('"')
+                    .and_then(|rest| rest.split('"').next())
+                    .filter(|flag| flag.starts_with("--"));
+            }
+            if let Some(flag) = current
+                && line.contains("expect_value(")
+            {
+                parsed.insert(flag.to_string());
+            }
+        }
+        assert!(arms >= 15, "parser arm scan found only {arms} arms");
+        let declared: std::collections::BTreeSet<String> = CHECK_VALUE_OPTIONS
+            .iter()
+            .map(|flag| (*flag).to_string())
+            .collect();
+        assert_eq!(parsed, declared);
+        Ok(())
+    }
+
     #[test]
     fn git_timeout_cli_values_are_parsed_before_dispatch() -> Result<(), String> {
         assert_eq!(check(&args(&["--git-timeout", "0", "--help"])), Ok(()));
@@ -2378,7 +2509,7 @@ mod tests {
     fn check_rejects_unknown_argument() {
         assert_eq!(
             check(&args(&["--wat"])),
-            Err("unknown check argument \"--wat\". Run `ripr check --help`.".to_string())
+            Err("unknown check argument \"--wat\". Run `ripr check --help --all`.".to_string())
         );
     }
 
