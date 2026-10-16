@@ -707,6 +707,8 @@ mod tests {
         assert!(PILOT_HELP.contains("Usage: ripr pilot"));
         assert!(PILOT_HELP.contains("pilot-summary.json"));
         assert!(PILOT_HELP.contains("--timeout-ms MS"));
+        assert!(PILOT_HELP.contains("--format FORMAT"));
+        assert!(PILOT_HELP.contains("--format json"));
         assert!(OUTCOME_HELP.starts_with("Compare before/after static evidence"));
         assert!(OUTCOME_HELP.contains("Usage: ripr outcome"));
         assert!(OUTCOME_HELP.contains("--before PATH"));
@@ -1847,7 +1849,14 @@ mod tests {
             (
                 "pilot",
                 PILOT_HELP,
-                &["--root", "--out", "--mode", "--max-seams", "--quiet"],
+                &[
+                    "--root",
+                    "--out",
+                    "--mode",
+                    "--max-seams",
+                    "--format",
+                    "--quiet",
+                ],
             ),
         ];
 

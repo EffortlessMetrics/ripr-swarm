@@ -45,7 +45,7 @@ defaults into a file.
 "#;
 pub(super) const PILOT_HELP: &str = r#"Find the top test gap in this repo and write a packet you can act on.
 
-Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS] [--quiet]
+Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS] [--format json] [--quiet]
 
 Options:
   --root PATH       Workspace root to analyze. Defaults to current directory.
@@ -55,6 +55,9 @@ Options:
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to
                     30000; when the default passes, the same run continues for up to
                     240000 more. An explicit value is a hard limit.
+  --format FORMAT   human or json. Defaults to human. json writes the same
+                    pilot-summary.json document to stdout and suppresses the
+                    human terminal; packet files are still written.
   --quiet           Suppress analysis progress and heartbeats on stderr. Does not
                     change the pilot packet, exit codes, or error reporting.
 
