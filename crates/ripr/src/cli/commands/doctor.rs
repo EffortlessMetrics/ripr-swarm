@@ -317,6 +317,7 @@ fn check_named<'a>(
 }
 
 /// Default human doctor must fit one 80x24 screen (#8168).
+#[cfg(test)]
 const DOCTOR_HUMAN_SCREEN_BUDGET: usize = 24;
 
 struct DoctorHumanScreen<'a> {
@@ -468,6 +469,16 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
                     Some(path) => {
                         workspace.push(format!("Config: loaded {CONFIG_FILE_NAME}"));
                         lines.push(format!("- Config path: {path}"));
+                        // Init follow-ups replay bare `ripr doctor` to confirm
+                        // the written policy (#8168 keeps the rest verbose).
+                        lines.push(format!(
+                            "- Analysis mode default: {}",
+                            defaults.analysis_mode
+                        ));
+                        lines.push(format!(
+                            "- LSP seam diagnostics default: {}",
+                            defaults.lsp_seam_diagnostics
+                        ));
                     }
                     None => {
                         workspace.push("Config: not found; using built-in defaults".to_string())
@@ -569,6 +580,10 @@ Point RIPR_CACHE_DIR at a writable directory."
             // still fits 80x24 (#8168).
             if passed && packet.is_file() {
                 lines.extend(doctor_packet_status_lines(root));
+            } else if let Err(error) = first.command_line_for_root(root) {
+                lines.push(format!(
+                    "- Safe next action: {error}; restore access or select a lossless root alias, then rerun doctor."
+                ));
             } else if !passed && matches!(first, output::doctor::DoctorFirstCommand::MissingRoot) {
                 lines.push(
                     "- Safe next action: fix the selected root first (see below); no check command can run until it exists"
@@ -661,14 +676,17 @@ fn config_verbose_lines(
     let Some(defaults) = defaults else {
         return lines;
     };
-    lines.push(format!(
-        "- Analysis mode default: {}",
-        defaults.analysis_mode
-    ));
-    lines.push(format!(
-        "- LSP seam diagnostics default: {}",
-        defaults.lsp_seam_diagnostics
-    ));
+    // Compact already printed these two when a config file loaded.
+    if defaults.source_path.is_none() {
+        lines.push(format!(
+            "- Analysis mode default: {}",
+            defaults.analysis_mode
+        ));
+        lines.push(format!(
+            "- LSP seam diagnostics default: {}",
+            defaults.lsp_seam_diagnostics
+        ));
+    }
     lines.push(format!(
         "- Suppressions path: {}",
         defaults.suppressions_path

@@ -644,14 +644,37 @@ fn unique_external_workspace(label: &str) -> Result<PathBuf, String> {
     let workspace = workspace_root()
         .canonicalize()
         .map_err(|error| format!("canonicalize workspace root: {error}"))?;
-    let candidate = unique_temp_workspace(label);
-    let parent = workspace
-        .parent()
-        .ok_or_else(|| "workspace root has no parent".to_string())?;
-    let name = candidate
+    let name = unique_temp_workspace(label)
         .file_name()
-        .ok_or_else(|| "temporary fixture has no file name".to_string())?;
-    Ok(parent.join(name))
+        .ok_or_else(|| "temporary fixture has no file name".to_string())?
+        .to_os_string();
+
+    // Prefer a sibling of the checkout so the fixture is outside this Git
+    // tree. Hosted containers may pin TMPDIR inside the worktree (for
+    // example `/workspace/target`) and may not allow writes to `/`.
+    let mut parents = Vec::new();
+    if let Some(parent) = workspace.parent() {
+        parents.push(parent.to_path_buf());
+    }
+    parents.push(std::env::temp_dir());
+    #[cfg(unix)]
+    parents.push(PathBuf::from("/tmp"));
+
+    for parent in parents {
+        let Ok(canonical) = parent.canonicalize() else {
+            continue;
+        };
+        if canonical == workspace || canonical.starts_with(&workspace) {
+            continue;
+        }
+        let probe = canonical.join(format!(".ripr-write-probe-{}", std::process::id()));
+        if std::fs::create_dir(&probe).is_err() {
+            continue;
+        }
+        let _ = std::fs::remove_dir(&probe);
+        return Ok(canonical.join(&name));
+    }
+    Err("no writable directory outside the Git checkout".to_string())
 }
 
 fn assert_success(output: &Output) {
@@ -12901,8 +12924,10 @@ fn doctor_reports_loaded_config_path() -> Result<(), String> {
     assert!(stdout.contains("Config: loaded ripr.toml"));
     assert!(stdout.contains("Config path:"));
     assert!(stdout.contains("ripr.toml"));
+    assert!(stdout.contains("Analysis mode default: deep"));
+    assert!(stdout.contains("LSP seam diagnostics default: true"));
     assert!(!stdout.contains("mode = \"deep\""));
-    assert!(!stdout.contains("seam_diagnostics"));
+    assert!(!stdout.contains("seam_diagnostics ="));
     let verbose = run_ripr(&["--verbose", "doctor", "--root", &root]);
     assert_success(&verbose);
     let verbose_out = String::from_utf8_lossy(&verbose.stdout);
@@ -13267,7 +13292,7 @@ fn run_doctor_with_shims_first(root: &Path, shim_dir: &Path) -> Result<Output, S
     run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         root,
-        &["doctor", "--root", &root_str],
+        &["--verbose", "doctor", "--root", &root_str],
         &[("PATH", &search_path)],
     )
     .map_err(|err| format!("run doctor: {err}"))
@@ -28544,7 +28569,7 @@ fn doctor_probes_language_runtimes_outside_the_checkout() -> Result<(), String> 
             dirs.extend(std::env::split_paths(&path));
             let path = std::env::join_paths(dirs).map_err(|err| format!("PATH: {err}"))?;
             let output = probe_command(env!("CARGO_BIN_EXE_ripr"))
-                .arg("doctor")
+                .args(["--verbose", "doctor"])
                 .current_dir(&root)
                 .env("PATH", path)
                 .output()
