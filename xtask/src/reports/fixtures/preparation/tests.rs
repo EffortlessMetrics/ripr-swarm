@@ -177,7 +177,7 @@ fn control_environment(
     )
     .map_err(|e| e.to_string())?
     .into_string()
-    .map_err(|_| "control PATH must be UTF-8")?;
+    .map_err(|path| format!("control PATH must be UTF-8: {path:?}"))?;
     Ok(vec![
         ("PATH", search),
         ("NO_PROXY", "*".into()),
