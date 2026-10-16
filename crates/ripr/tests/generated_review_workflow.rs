@@ -802,11 +802,9 @@ fn doctor_packet_refresh_missing_root_keeps_recovery_nonwriting() -> Result<(), 
     assert_eq!(doctor.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&doctor.stderr).contains("doctor found issues"));
     let stdout = String::from_utf8(doctor.stdout)?;
-    assert!(stdout.contains("not yet generated"), "{stdout}");
     assert!(!stdout.contains("--head HEAD` refreshes it"), "{stdout}");
-    // #5252 item 3: the recovery is the recommendation now, not the old
-    // `ripr check --root <missing>` template, which failed the same way
-    // doctor just did. The non-writing half below is unchanged.
+    // Compact failing doctor names the recovery on the fail/Fix/recommended
+    // lines and omits the missing-packet dump (#8168).
     assert!(
         stdout.contains(
             "- Recommended first command: The selected root does not exist; rerun with `--root <path>` naming an existing repository directory"

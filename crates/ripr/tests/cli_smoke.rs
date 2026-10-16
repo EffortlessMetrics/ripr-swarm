@@ -11220,24 +11220,34 @@ fn doctor_reports_missing_config_defaults() -> Result<(), String> {
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().count() <= 24,
+        "default doctor must fit one 80x24 screen:\n{stdout}"
+    );
     assert!(stdout.contains("Config: not found; using built-in defaults"));
-    assert!(stdout.contains("Analysis mode default: draft"));
-    assert!(stdout.contains("LSP seam diagnostics default: true"));
-    assert!(stdout.contains("Suppressions path: .ripr/suppressions.toml"));
-    assert!(stdout.contains("Start-here packet: target/ripr/reports/start-here.md"));
-    assert!(stdout.contains("`ripr first-pr` composes it once analysis evidence exists"));
-    assert!(!stdout.contains("(present; open it first)"));
-    // On a workspace with no artifacts, `first-pr` has nothing to compose: it
-    // returns `missing_artifacts` and answers with a `ripr check` regeneration
-    // command. So the safe next action must route to the analysis command this
-    // screen already recommends, not to the compose command.
-    assert!(stdout.contains("Safe next action: run the recommended first command below"));
+    assert!(!stdout.contains("Analysis mode default: draft"), "{stdout}");
+    assert!(!stdout.contains("Start-here packet:"), "{stdout}");
+    assert!(!stdout.contains("Known limitations:"), "{stdout}");
     assert!(
         !stdout.contains("Safe next action: run `ripr first-pr"),
         "a fresh workspace must not be sent to the compose command:\n{stdout}"
     );
-    assert!(stdout.contains("Recovery states: missing artifact, stale evidence, wrong root"));
-    assert!(stdout.contains("Proof rail: verify command, receipt command, and receipt path"));
+    let verbose = run_ripr(&["--verbose", "doctor", "--root", &root]);
+    assert_success(&verbose);
+    let verbose_out = String::from_utf8_lossy(&verbose.stdout);
+    assert!(verbose_out.contains("Analysis mode default: draft"));
+    assert!(verbose_out.contains("LSP seam diagnostics default: true"));
+    assert!(verbose_out.contains("Suppressions path: .ripr/suppressions.toml"));
+    assert!(verbose_out.contains("Start-here packet: target/ripr/reports/start-here.md"));
+    assert!(verbose_out.contains("`ripr first-pr` composes it once analysis evidence exists"));
+    assert!(!verbose_out.contains("(present; open it first)"));
+    // On a workspace with no artifacts, `first-pr` has nothing to compose: it
+    // returns `missing_artifacts` and answers with a `ripr check` regeneration
+    // command. So the safe next action must route to the analysis command this
+    // screen already recommends, not to the compose command.
+    assert!(verbose_out.contains("Safe next action: run the recommended first command below"));
+    assert!(verbose_out.contains("Recovery states: missing artifact, stale evidence, wrong root"));
+    assert!(verbose_out.contains("Proof rail: verify command, receipt command, and receipt path"));
 
     ignore_remove_dir_all(&workspace);
     Ok(())
@@ -11408,10 +11418,18 @@ fn doctor_reports_present_start_here_packet() -> Result<(), String> {
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().count() <= 24,
+        "default doctor with a present packet must still fit 80x24:\n{stdout}"
+    );
     assert!(stdout.contains("Start-here packet: target/ripr/reports/start-here.md"));
     assert!(stdout.contains("(present; open it first)"));
     assert!(!stdout.contains("not yet generated"));
     assert!(!stdout.contains("stale_evidence"));
+    assert!(
+        !stdout.contains("Recovery states:") && !stdout.contains("Proof rail:"),
+        "packet recovery dump stays behind --verbose:\n{stdout}"
+    );
     // With a packet on disk `first-pr` has something to refresh, so naming it
     // here is a real route rather than a dead end.
     assert!(stdout.contains("Safe next action: open that packet"));
@@ -11434,6 +11452,10 @@ fn doctor_reports_version_mismatched_start_here_packet_as_stale() -> Result<(), 
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().count() <= 24,
+        "default doctor with a stale packet must still fit 80x24:\n{stdout}"
+    );
     assert!(stdout.contains("stale_evidence"), "{stdout}");
     assert!(stdout.contains(recorded), "{stdout}");
     assert!(stdout.contains(env!("CARGO_PKG_VERSION")), "{stdout}");
@@ -11522,7 +11544,7 @@ fn doctor_reports_directory_squatting_packet_path_as_not_generated() -> Result<(
     let squat = workspace.join("target/ripr/reports/start-here.md");
     std::fs::create_dir_all(&squat).map_err(|e| format!("create squat dir: {e}"))?;
     let root = workspace.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root]);
+    let output = run_ripr(&["--verbose", "doctor", "--root", &root]);
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -11891,8 +11913,14 @@ fn doctor_json_for(root: &Path) -> Result<serde_json::Value, String> {
 }
 
 fn doctor_human_stdout(root: &Path) -> Result<String, String> {
+    doctor_human_stdout_with_args(root, &[])
+}
+
+fn doctor_human_stdout_with_args(root: &Path, extra: &[&str]) -> Result<String, String> {
     let root_arg = root.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root_arg]);
+    let mut args = vec!["doctor", "--root", &root_arg];
+    args.extend_from_slice(extra);
+    let output = run_ripr(&args);
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
@@ -11913,7 +11941,16 @@ fn json_array<'a>(
 #[test]
 fn doctor_json_carries_every_environment_fact_the_human_screen_prints() -> Result<(), String> {
     let root = doctor_environment_fact_root("doctor-json-parity")?;
-    let human = doctor_human_stdout(&root)?;
+    let compact = doctor_human_stdout(&root)?;
+    assert!(
+        compact.lines().count() <= 24,
+        "default doctor must fit one 80x24 screen:\n{compact}"
+    );
+    assert!(
+        !compact.contains("- Perl preview:") && !compact.contains("Known limitations:"),
+        "default doctor must leave Perl preview and limitations behind --verbose:\n{compact}"
+    );
+    let human = doctor_human_stdout_with_args(&root, &["--verbose"])?;
     let report = doctor_json_for(&root)?;
     let outcome = (|| -> Result<(), String> {
         // Detected languages, with the tier the screen prints in parentheses.
@@ -12857,13 +12894,20 @@ fn doctor_reports_loaded_config_path() -> Result<(), String> {
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().count() <= 24,
+        "default doctor with a loaded config must fit 80x24:\n{stdout}"
+    );
     assert!(stdout.contains("Config: loaded ripr.toml"));
     assert!(stdout.contains("Config path:"));
     assert!(stdout.contains("ripr.toml"));
-    assert!(stdout.contains("Analysis mode default: deep"));
-    assert!(stdout.contains("LSP seam diagnostics default: true"));
     assert!(!stdout.contains("mode = \"deep\""));
     assert!(!stdout.contains("seam_diagnostics"));
+    let verbose = run_ripr(&["--verbose", "doctor", "--root", &root]);
+    assert_success(&verbose);
+    let verbose_out = String::from_utf8_lossy(&verbose.stdout);
+    assert!(verbose_out.contains("Analysis mode default: deep"));
+    assert!(verbose_out.contains("LSP seam diagnostics default: true"));
 
     ignore_remove_dir_all(&workspace);
     Ok(())
@@ -12930,20 +12974,31 @@ fn doctor_reports_language_tiers_and_limitations() -> Result<(), String> {
         "must not list typescript when no TS markers are present:\n{detected_line}"
     );
 
-    // Section 3: Known limitations.
     assert!(
-        stdout.contains("Known limitations:"),
-        "expected 'Known limitations:' in stdout:\n{stdout}"
+        stdout.lines().count() <= 24,
+        "default doctor must fit one 80x24 screen:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Known limitations:"),
+        "default doctor must leave known limitations behind --verbose:\n{stdout}"
+    );
+    let verbose = run_ripr(&["--verbose", "doctor", "--root", &root]);
+    assert_success(&verbose);
+    let verbose_out = String::from_utf8_lossy(&verbose.stdout);
+    // Section 3: Known limitations live on the verbose screen.
+    assert!(
+        verbose_out.contains("Known limitations:"),
+        "expected 'Known limitations:' in verbose stdout:\n{verbose_out}"
     );
     // TypeScript preview line.
     assert!(
-        stdout.contains("TypeScript/JavaScript/Bun analysis is preview"),
-        "expected TypeScript/JavaScript/Bun preview line in stdout:\n{stdout}"
+        verbose_out.contains("TypeScript/JavaScript/Bun analysis is preview"),
+        "expected TypeScript/JavaScript/Bun preview line in verbose stdout:\n{verbose_out}"
     );
     // Cross-language fail-closed line.
     assert!(
-        stdout.contains("cross_language_oracle_visibility_unresolved"),
-        "expected cross_language_oracle_visibility_unresolved in stdout:\n{stdout}"
+        verbose_out.contains("cross_language_oracle_visibility_unresolved"),
+        "expected cross_language_oracle_visibility_unresolved in verbose stdout:\n{verbose_out}"
     );
 
     // Section 4: Recommended first command. The exact wording is
@@ -12992,7 +13047,18 @@ fn doctor_reports_perl_preview_section_when_perl_markers_present() -> Result<(),
     .map_err(|err| err.to_string())?;
 
     let root_str = root.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root_str]);
+    let compact = run_ripr(&["doctor", "--root", &root_str]);
+    assert_success(&compact);
+    let compact_out = String::from_utf8_lossy(&compact.stdout);
+    assert!(
+        compact_out.lines().count() <= 24,
+        "default doctor must fit one 80x24 screen:\n{compact_out}"
+    );
+    assert!(
+        !compact_out.contains("- Perl preview:"),
+        "default doctor must leave the Perl preview behind --verbose:\n{compact_out}"
+    );
+    let output = run_ripr(&["--verbose", "doctor", "--root", &root_str]);
     assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -13181,7 +13247,7 @@ fn doctor_perl_stdout_with_path(
     let output = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         root,
-        &["doctor", "--root", &root_str],
+        &["--verbose", "doctor", "--root", &root_str],
         &[("PATH", search_path)],
     )
     .map_err(|err| format!("run doctor: {err}"))?;
@@ -13923,9 +13989,10 @@ fn windows_init_preview_and_doctor_use_one_separator_convention() -> Result<(), 
     let doctor = run_ripr(&["doctor", "--root", &root]);
     let doctor_stdout = String::from_utf8_lossy(&doctor.stdout);
     for line in doctor_stdout.lines().filter(|line| {
-        line.starts_with("- root:")
+        line.starts_with("Root:")
             || line.starts_with("- ripr binary:")
             || line.starts_with("- Cache location:")
+            || line.starts_with("✓ Cache:")
             || line.contains("Cargo.toml found at")
             || line.contains("root directory exists at")
     }) {

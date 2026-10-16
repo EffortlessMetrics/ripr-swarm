@@ -83,89 +83,51 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
         return doctor_json(&root, profile, &detected);
     }
 
-    // Human-readable path.
+    // Human-readable path. Gather every typed fact first, then project a
+    // compact screen (or the verbose full screen). Printing while probing
+    // used to bury failures under later passing checks (#8168).
     let core_evaluation =
         output::doctor::evaluate_doctor_core_with_config_for_profile(&root, &detected, profile);
     let mut report = core_evaluation.report;
-    let core_report = &report;
-    let mut ok = matches!(core_report.status, output::doctor::DoctorStatus::Pass);
+    let mut ok = matches!(report.status, output::doctor::DoctorStatus::Pass);
     let enabled_languages = enabled_languages(&core_evaluation.config);
     let environment = DoctorEnvironment::probe(&root, &detected, &core_evaluation.config);
-    println!("ripr doctor");
-    println!("- root: {}", output::path::human_path(&root));
-    for line in output::doctor_binary::probe_binary_identity().human_lines() {
-        println!("{line}");
-    }
-    println!(
-        "- RIPR {} (source build requires Rust {})",
-        report.ripr_version, report.ripr_build_msrv
-    );
-    let profile_name = match profile {
-        output::doctor::DoctorProfile::Analysis => "analysis",
-        output::doctor::DoctorProfile::SourceBuild => "source-build",
-    };
-    println!("- profile: {profile_name}");
-
-    ok &= report_doctor_core_check(core_report, "root_directory");
-    ok &= report_doctor_core_check(core_report, "cargo_toml");
-    ok &= report_doctor_core_check(core_report, "git_repository");
-    // #5259: advisory (never fails the run) — the work tree is real, but a
-    // repository with no commits cannot produce the diff base the default
-    // first command needs, so the state must be visible on this screen.
-    // Printed only when the evaluation recorded it: the check exists exactly
-    // when HEAD is unborn, and its absence in a normal repository is the
-    // healthy case, not a missing core check.
-    if core_report
-        .checks
-        .iter()
-        .any(|check| check.name == "git_head")
-    {
-        ok &= report_doctor_core_check(core_report, "git_head");
-    }
-    report_config_status(
-        &root,
-        &core_evaluation.config,
-        environment.facts.config_defaults.as_ref(),
-        core_report,
-        &mut ok,
-    );
-    report_cache_status(&root, &environment.facts.cache);
-    report_generated_workflow_status(&root);
-    report_detected_languages(&environment.facts);
+    let binary = output::doctor_binary::probe_binary_identity();
     ok &= add_language_runtime_probes(
         &root,
         &detected,
         &enabled_languages,
         &mut report,
-        true,
+        false,
         probe_runtime,
     );
-    suggest_preview_language_enablement(&environment);
-    report_detected_test_surfaces(&environment.facts);
-    report_perl_preview(environment.facts.perl_preview.as_ref());
-    report_known_limitations();
-    if profile == output::doctor::DoctorProfile::SourceBuild {
-        report_linker_temp_redirect_status(&root);
+    for name in ["root_directory", "cargo_toml", "git_repository"] {
+        if check_named(&report, name).is_none() {
+            ok = false;
+        }
     }
-
     for tool in output::doctor::DOCTOR_TOOLS {
-        ok &= report_doctor_core_check(&report, &format!("tool_{tool}"));
+        if check_named(&report, &format!("tool_{tool}")).is_none() {
+            ok = false;
+        }
+    }
+    let passed = ok && report.status == output::doctor::DoctorStatus::Pass;
+    for line in render_doctor_human_screen(DoctorHumanScreen {
+        root: &root,
+        profile,
+        report: &report,
+        config: &core_evaluation.config,
+        environment: &environment,
+        binary: &binary,
+        verbose: crate::is_verbose(),
+        passed,
+    }) {
+        println!("{line}");
     }
 
-    // Start-here, recovery states, the proof-rail note, and "Recommended
-    // first command: ripr check" are analysis-first-run guidance. The
-    // source-build profile exists to diagnose whether this machine can build
-    // ripr; its failing `!` lines already name the toolchain fix, so that
-    // profile must not send the reader to run analysis (#7435).
-    if profile == output::doctor::DoctorProfile::Analysis {
-        print_doctor_start_here_guidance(&root, &report, environment.preview_enablement.as_ref());
-    }
-
-    if ok && report.status == output::doctor::DoctorStatus::Pass {
-        println!("✓ doctor checks passed");
+    if passed {
         Ok(())
     } else {
-        print!("{}", output::doctor::DOCTOR_FAILED_LINE);
         Err("doctor found issues".to_string())
     }
 }
@@ -347,31 +309,465 @@ fn enabled_languages(config: &Result<RiprConfig, String>) -> Vec<LanguageId> {
         .unwrap_or_default()
 }
 
-fn report_doctor_core_check(report: &output::doctor::DoctorReport, name: &str) -> bool {
-    let Some(check) = report.checks.iter().find(|check| check.name == name) else {
-        println!("! missing doctor core check: {name}");
-        return false;
-    };
-    // A skipped check (not applicable to this root) prints as an
-    // informational `-` line carrying its reason and never fails doctor.
-    let marker = match check.status {
-        output::doctor::DoctorCheckStatus::Pass => "✓",
-        output::doctor::DoctorCheckStatus::Fail => "!",
-        output::doctor::DoctorCheckStatus::Advisory => "~",
-        output::doctor::DoctorCheckStatus::Skipped => "-",
-    };
-    println!(
-        "{marker} {}",
-        check.evidence.as_deref().unwrap_or(check.name.as_str())
-    );
-    check.status != output::doctor::DoctorCheckStatus::Fail
+fn check_named<'a>(
+    report: &'a output::doctor::DoctorReport,
+    name: &str,
+) -> Option<&'a output::doctor::DoctorCheck> {
+    report.checks.iter().find(|check| check.name == name)
 }
 
-fn print_doctor_start_here_guidance(
+/// Default human doctor must fit one 80x24 screen (#8168).
+const DOCTOR_HUMAN_SCREEN_BUDGET: usize = 24;
+
+struct DoctorHumanScreen<'a> {
+    root: &'a Path,
+    profile: output::doctor::DoctorProfile,
+    report: &'a output::doctor::DoctorReport,
+    config: &'a Result<RiprConfig, String>,
+    environment: &'a DoctorEnvironment,
+    binary: &'a output::doctor_binary::DoctorBinaryIdentity,
+    verbose: bool,
+    passed: bool,
+}
+
+fn doctor_profile_name(profile: output::doctor::DoctorProfile) -> &'static str {
+    match profile {
+        output::doctor::DoctorProfile::Analysis => "analysis",
+        output::doctor::DoctorProfile::SourceBuild => "source-build",
+    }
+}
+
+fn split_state_and_fix(evidence: &str) -> (&str, Option<&str>) {
+    match evidence.split_once("; ") {
+        Some((state, fix)) if !fix.is_empty() => (state, Some(fix)),
+        _ => (evidence, None),
+    }
+}
+
+fn failure_block(evidence: &str) -> Vec<String> {
+    let mut lines = vec![format!("! {evidence}")];
+    if let Some(fix) = split_state_and_fix(evidence).1 {
+        lines.push(format!("  Fix: {fix}"));
+    }
+    lines
+}
+
+fn join_compact(label: &str, parts: &[String]) -> Option<String> {
+    if parts.is_empty() {
+        return None;
+    }
+    Some(format!("✓ {label}: {}", parts.join(" · ")))
+}
+
+fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
+    let DoctorHumanScreen {
+        root,
+        profile,
+        report,
+        config,
+        environment,
+        binary,
+        verbose,
+        passed,
+    } = screen;
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "ripr doctor ({}) · ripr {}",
+        doctor_profile_name(profile),
+        report.ripr_version
+    ));
+    lines.push(format!(
+        "Root: {} · Rust {} MSRV",
+        output::path::human_path(root),
+        report.ripr_build_msrv
+    ));
+    lines.push(String::new());
+
+    // Failures first, each with its own fix line (#8168).
+    for name in ["root_directory", "cargo_toml", "git_repository"] {
+        match check_named(report, name) {
+            Some(check) if check.status == output::doctor::DoctorCheckStatus::Fail => {
+                let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
+                lines.extend(failure_block(evidence));
+            }
+            None => lines.push(format!("! missing doctor core check: {name}")),
+            Some(_) => {}
+        }
+    }
+    match config {
+        Err(err) => {
+            lines.push(format!("! Config: invalid {CONFIG_FILE_NAME}"));
+            lines.push(format!(
+                "- Config path: {}",
+                output::path::human_path(&root.join(CONFIG_FILE_NAME))
+            ));
+            lines.push(format!("  error: {err}"));
+        }
+        Ok(_) => {}
+    }
+    for tool in output::doctor::DOCTOR_TOOLS {
+        let name = format!("tool_{tool}");
+        match check_named(report, &name) {
+            Some(check) if check.status == output::doctor::DoctorCheckStatus::Fail => {
+                let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
+                lines.extend(failure_block(evidence));
+            }
+            None => lines.push(format!("! missing doctor core check: {name}")),
+            Some(_) => {}
+        }
+    }
+    for probe in &report.runtime_probes {
+        if probe.required && probe.status == output::doctor::DoctorStatus::Fail {
+            lines.push(language_runtime_probe_display_line(probe));
+        }
+    }
+
+    // Advisories that are themselves the repair signal stay on the compact
+    // screen: unborn HEAD, generated workflow, cache, linker temp, PATH
+    // substitution.
+    if let Some(check) = check_named(report, "git_head") {
+        let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
+        lines.push(format!("~ {evidence}"));
+    }
+    if let Some(advisory) = generated_workflow_advisory(root) {
+        lines.push(format!("~ Generated workflow: {advisory}"));
+    }
+    if profile == output::doctor::DoctorProfile::SourceBuild
+        && let Some(advisory) = linker_temp_redirect_advisory(root)
+    {
+        lines.push(format!("~ {advisory}"));
+    }
+    for warning in &binary.warnings {
+        lines.push(format!("- warning: {warning}"));
+    }
+
+    // Compact passing groups, then leftover skip/advisory lines that tests
+    // and SPEC-0007 still name by their evidence text.
+    let mut workspace = Vec::new();
+    let mut toolchains = Vec::new();
+    for name in ["root_directory", "cargo_toml", "git_repository"] {
+        if let Some(check) = check_named(report, name) {
+            match check.status {
+                output::doctor::DoctorCheckStatus::Pass => {
+                    workspace.push(check.evidence.clone().unwrap_or_else(|| check.name.clone()));
+                }
+                output::doctor::DoctorCheckStatus::Skipped => {
+                    lines.push(format!(
+                        "- {}",
+                        check.evidence.as_deref().unwrap_or(check.name.as_str())
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+    match config {
+        Ok(_) => {
+            if let Some(defaults) = environment.facts.config_defaults.as_ref() {
+                match &defaults.source_path {
+                    Some(path) => {
+                        workspace.push(format!("Config: loaded {CONFIG_FILE_NAME}"));
+                        lines.push(format!("- Config path: {path}"));
+                    }
+                    None => {
+                        workspace.push("Config: not found; using built-in defaults".to_string())
+                    }
+                }
+            } else {
+                lines.push(format!("! Config: invalid {CONFIG_FILE_NAME}"));
+                lines.push(format!(
+                    "- Config path: {}",
+                    output::path::human_path(&root.join(CONFIG_FILE_NAME))
+                ));
+                lines.push("  error: configuration loaded but produced no defaults".to_string());
+            }
+        }
+        Err(_) => {}
+    }
+    if let Some(line) = join_compact("Workspace", &workspace) {
+        lines.push(line);
+    }
+    for tool in output::doctor::DOCTOR_TOOLS {
+        let name = format!("tool_{tool}");
+        if let Some(check) = check_named(report, &name) {
+            match check.status {
+                output::doctor::DoctorCheckStatus::Pass => {
+                    toolchains.push(check.evidence.clone().unwrap_or_else(|| tool.to_string()));
+                }
+                output::doctor::DoctorCheckStatus::Skipped
+                | output::doctor::DoctorCheckStatus::Advisory => {
+                    lines.push(format!(
+                        "{} {}",
+                        if check.status == output::doctor::DoctorCheckStatus::Advisory {
+                            "~"
+                        } else {
+                            "-"
+                        },
+                        check.evidence.as_deref().unwrap_or(check.name.as_str())
+                    ));
+                }
+                output::doctor::DoctorCheckStatus::Fail => {}
+            }
+        }
+    }
+    if let Some(line) = join_compact("Toolchains", &toolchains) {
+        lines.push(line);
+    }
+    lines.extend(detected_languages_lines(
+        &environment.facts.detected_languages,
+        &environment.facts.unanalyzed_source_languages,
+    ));
+    let cache = &environment.facts.cache;
+    let cache_loc = if cache.relocated_by_env {
+        format!("{} (RIPR_CACHE_DIR active)", cache.cache_dir)
+    } else {
+        cache.cache_dir.clone()
+    };
+    lines.push(format!("✓ Cache: {cache_loc} ({})", cache.size_display));
+    // Keep the historical `- Cache location:` / `- Cache size:` spellings on
+    // verbose so JSON/human parity still names the same words.
+    if !cache.relocated_by_env && !root.is_dir() {
+        // A missing root already failed `root_directory`; do not probe.
+    } else if let Some(reason) =
+        cache_unwritable_reason(&analysis::seam_cache::cache_base_dir(root))
+    {
+        lines.push(format!(
+            "! Cache not writable: {reason}; results stay correct but every run recomputes. \
+Point RIPR_CACHE_DIR at a writable directory."
+        ));
+    }
+
+    lines.extend(preview_language_enable_suggestions(
+        environment.preview_enablement.as_ref(),
+    ));
+
+    for probe in &report.runtime_probes {
+        if probe.required && probe.status == output::doctor::DoctorStatus::Fail {
+            continue;
+        }
+        if probe.required && probe.status == output::doctor::DoctorStatus::Pass {
+            lines.push(language_runtime_probe_display_line(probe));
+        } else if verbose {
+            lines.push(language_runtime_probe_display_line(probe));
+        }
+    }
+
+    if profile == output::doctor::DoctorProfile::Analysis {
+        let packet = root.join("target/ripr/reports/start-here.md");
+        if verbose {
+            lines.extend(doctor_start_here_lines(
+                root,
+                report,
+                environment.preview_enablement.as_ref(),
+            ));
+        } else {
+            let first = output::doctor::DoctorFirstCommand::resolve_for_report(report, || {
+                analysis::working_tree_has_tracked_changes(root)
+            });
+            // A present packet is the user's next artifact, but Recovery /
+            // Proof / Refresh-scope stay behind `-v` so the default screen
+            // still fits 80x24 (#8168).
+            if passed && packet.is_file() {
+                lines.extend(doctor_packet_status_lines(root));
+            } else if !passed && matches!(first, output::doctor::DoctorFirstCommand::MissingRoot) {
+                lines.push(
+                    "- Safe next action: fix the selected root first (see below); no check command can run until it exists"
+                        .to_string(),
+                );
+            }
+            lines.extend(first.recommendation_lines_for(root));
+            if matches!(first, output::doctor::DoctorFirstCommand::Worktree) {
+                lines.push(
+                    "- Scope note: `--worktree` analyzes staged and unstaged tracked edits; untracked files remain out of scope until staged or supplied through `--diff`."
+                        .to_string(),
+                );
+            }
+            if let Some(line) =
+                enable_before_first_command_line(environment.preview_enablement.as_ref())
+            {
+                lines.push(line);
+            }
+        }
+    }
+
+    if passed {
+        lines.push("✓ doctor checks passed".to_string());
+    } else {
+        lines.push(
+            output::doctor::DOCTOR_FAILED_LINE
+                .trim_end_matches('\n')
+                .to_string(),
+        );
+    }
+
+    if verbose {
+        lines.push(String::new());
+        lines.extend(binary.human_lines());
+        lines.extend(config_verbose_lines(
+            config,
+            environment.facts.config_defaults.as_ref(),
+            report,
+        ));
+        lines.extend(cache_detail_lines(cache));
+        if !environment.facts.test_surfaces.is_empty() {
+            let evidence = environment
+                .facts
+                .test_surfaces
+                .iter()
+                .map(|surface| surface.evidence.as_str())
+                .collect::<Vec<_>>()
+                .join("; ");
+            lines.push(format!("- Detected test surfaces: {evidence}"));
+        }
+        if let Some(preview) = environment.facts.perl_preview.as_ref() {
+            lines.extend(perl_preview_lines(preview));
+        }
+        lines.extend(known_limitation_lines());
+        if profile == output::doctor::DoctorProfile::Analysis && !passed {
+            // Failures already named the repair. Verbose still shows the
+            // adapter/limitation dump above, not a second start-here wall.
+        }
+    }
+
+    lines
+}
+
+fn cache_detail_lines(cache: &output::doctor::DoctorCacheStatus) -> Vec<String> {
+    let mut lines = Vec::new();
+    if cache.relocated_by_env {
+        lines.push(format!(
+            "- Cache location: {} (RIPR_CACHE_DIR active)",
+            cache.cache_dir
+        ));
+    } else {
+        lines.push(format!("- Cache location: {}", cache.cache_dir));
+    }
+    lines.push(format!(
+        "- Cache size: {} (run `ripr cache status` for details)",
+        cache.size_display
+    ));
+    lines
+}
+
+fn config_verbose_lines(
+    config: &Result<RiprConfig, String>,
+    defaults: Option<&output::doctor::DoctorConfigDefaults>,
+    report: &output::doctor::DoctorReport,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    let Ok(_) = config else {
+        return lines;
+    };
+    let Some(defaults) = defaults else {
+        return lines;
+    };
+    lines.push(format!(
+        "- Analysis mode default: {}",
+        defaults.analysis_mode
+    ));
+    lines.push(format!(
+        "- LSP seam diagnostics default: {}",
+        defaults.lsp_seam_diagnostics
+    ));
+    lines.push(format!(
+        "- Suppressions path: {}",
+        defaults.suppressions_path
+    ));
+    lines.push(format!(
+        "- Enabled languages: {}",
+        report.languages.join(", ")
+    ));
+    if defaults.bun_ub_profile_configured {
+        lines.push("- Bun UB profile: configured (preview advisory only)".to_string());
+        lines.push(format!(
+            "- Bun UB test roots: {}",
+            defaults.bun_ub_test_roots.join(", ")
+        ));
+        lines.push(format!(
+            "- Bun UB bridge hints: {}",
+            defaults.bun_ub_bridge_hints.as_deref().unwrap_or("unknown")
+        ));
+        lines.push(
+            "- Bun UB authority: no runtime Bun, tsc, tsserver, generated tests, gates, badges, baselines, or support-tier promotion"
+                .to_string(),
+        );
+    } else {
+        lines.push("- Bun UB profile: not configured".to_string());
+    }
+    lines
+}
+
+/// Present/stale packet plus the refresh command. Recovery states, proof
+/// rail, and refresh-scope stay on the verbose dump so default doctor
+/// still fits one 80x24 screen (#8168).
+fn doctor_packet_status_lines(root: &Path) -> Vec<String> {
+    let mut lines = Vec::new();
+    let md = root.join("target/ripr/reports/start-here.md");
+    if !md.is_file() {
+        return lines;
+    }
+    // First-run honesty: name the packet as present only when it exists and
+    // was written by this ripr. An unconditional path reads as an existing
+    // artifact on a fresh workspace where `ripr first-pr` has never run
+    // (RIPR-SPEC-0051 names the path, not its existence). A packet without
+    // this ripr's `ripr_version` is stale_evidence after an upgrade: 0.10
+    // packets have no version field, so existence alone cannot be trusted
+    // (#4757). `is_file` (not `exists`) so a directory squatting the packet
+    // path cannot read as openable evidence.
+    use crate::agent::loop_commands::shell_arg;
+    let json = root.join("target/ripr/reports/start-here.json");
+    let freshness = crate::output::first_pr::start_here_json_version_freshness(&json);
+    let stale_detail = crate::output::first_pr::start_here_version_stale_detail(&freshness);
+    if let Some(detail) = &stale_detail {
+        lines.push(format!(
+            "- Start-here packet: target/ripr/reports/start-here.md ({detail})"
+        ));
+    } else {
+        lines.push(
+            "- Start-here packet: target/ripr/reports/start-here.md (present; open it first)"
+                .to_string(),
+        );
+    }
+    // Packet reads above follow filesystem path resolution. Resolve the
+    // existing selected directory the same way: lexical cleanup of a
+    // symlink followed by `..` can name a different repository. Keep the
+    // shared lexical helper unchanged for not-yet-created output paths.
+    let refresh_root = root
+        .canonicalize()
+        .map_err(|error| error.to_string())
+        .and_then(|resolved| output::doctor::doctor_command_root_display(root, &resolved));
+    match refresh_root {
+        Ok(resolved_root) => {
+            let refresh = format!(
+                "ripr first-pr --root {} --head HEAD",
+                shell_arg(&resolved_root)
+            );
+            if stale_detail.is_some() {
+                lines.push(format!("- Safe next action: `{refresh}` refreshes it"));
+            } else {
+                lines.push(format!(
+                    "- Safe next action: open that packet; `{refresh}` refreshes it"
+                ));
+            }
+            if let output::markdown::PowershellForm::Translated(powershell) =
+                output::markdown::powershell_form(&refresh)
+            {
+                lines.push(format!("- Refresh command (PowerShell): {powershell}"));
+            }
+        }
+        Err(error) => lines.push(format!(
+            "- Safe next action: refresh unavailable because the selected root could not be bound: {error}; restore access to that directory or use a lossless alias and rerun doctor."
+        )),
+    }
+    lines
+}
+
+fn doctor_start_here_lines(
     root: &Path,
     report: &output::doctor::DoctorReport,
     preview_enablement: Option<&PreviewEnablement>,
-) {
+) -> Vec<String> {
+    let mut lines = Vec::new();
     // Both the first action and the recommendation consume this one fallible
     // route. No-packet guidance must not point at a command below when its
     // selected root cannot be rendered losslessly. The report states decide
@@ -382,14 +778,6 @@ fn print_doctor_start_here_guidance(
         analysis::working_tree_has_tracked_changes(root)
     });
     let recommendation = first.command_line_for_root(root);
-    // First-run honesty: name the packet as present only when it exists and
-    // was written by this ripr. An unconditional path reads as an existing
-    // artifact on a fresh workspace where `ripr first-pr` has never run
-    // (RIPR-SPEC-0051 names the path, not its existence). A packet without
-    // this ripr's `ripr_version` is stale_evidence after an upgrade: 0.10
-    // packets have no version field, so existence alone cannot be trusted
-    // (#4757). `is_file` (not `exists`) so a directory squatting the packet
-    // path cannot read as openable evidence.
     // The safe next action follows the packet's freshness, because `first-pr`
     // composes the packet out of artifacts `ripr check` produces -- it runs no
     // analysis of its own (the boundary `help --all` states). Recommending it
@@ -400,54 +788,24 @@ fn print_doctor_start_here_guidance(
     // other, is not a route.
     let md = root.join("target/ripr/reports/start-here.md");
     if md.is_file() {
-        use crate::agent::loop_commands::shell_arg;
-        let json = root.join("target/ripr/reports/start-here.json");
-        let freshness = crate::output::first_pr::start_here_json_version_freshness(&json);
-        let stale_detail = crate::output::first_pr::start_here_version_stale_detail(&freshness);
-        if let Some(detail) = &stale_detail {
-            println!("- Start-here packet: target/ripr/reports/start-here.md ({detail})");
-        } else {
-            println!(
-                "- Start-here packet: target/ripr/reports/start-here.md (present; open it first)"
+        lines.extend(doctor_packet_status_lines(root));
+        if root
+            .canonicalize()
+            .ok()
+            .and_then(|resolved| output::doctor::doctor_command_root_display(root, &resolved).ok())
+            .is_some()
+        {
+            // First-pr owns default-base resolution; an old packet is
+            // not authority for a custom comparison.
+            lines.push(
+                "- Refresh scope: the repository's default base and HEAD; add --base REF and --head REF for a custom comparison."
+                    .to_string(),
             );
         }
-        // Packet reads above follow filesystem path resolution. Resolve the
-        // existing selected directory the same way: lexical cleanup of a
-        // symlink followed by `..` can name a different repository. Keep the
-        // shared lexical helper unchanged for not-yet-created output paths.
-        let refresh_root = root
-            .canonicalize()
-            .map_err(|error| error.to_string())
-            .and_then(|resolved| output::doctor::doctor_command_root_display(root, &resolved));
-        match refresh_root {
-            Ok(resolved_root) => {
-                let refresh = format!(
-                    "ripr first-pr --root {} --head HEAD",
-                    shell_arg(&resolved_root)
-                );
-                if stale_detail.is_some() {
-                    println!("- Safe next action: `{refresh}` refreshes it");
-                } else {
-                    println!("- Safe next action: open that packet; `{refresh}` refreshes it");
-                }
-                if let output::markdown::PowershellForm::Translated(powershell) =
-                    output::markdown::powershell_form(&refresh)
-                {
-                    println!("- Refresh command (PowerShell): {powershell}");
-                }
-                // First-pr owns default-base resolution; an old packet is
-                // not authority for a custom comparison.
-                println!(
-                    "- Refresh scope: the repository's default base and HEAD; add --base REF and --head REF for a custom comparison."
-                );
-            }
-            Err(error) => println!(
-                "- Safe next action: refresh unavailable because the selected root could not be bound: {error}; restore access to that directory or use a lossless alias and rerun doctor."
-            ),
-        }
     } else {
-        println!(
+        lines.push(
             "- Start-here packet: target/ripr/reports/start-here.md (not yet generated; `ripr first-pr` composes it once analysis evidence exists)"
+                .to_string(),
         );
         match &recommendation {
             Ok(_) => {
@@ -455,25 +813,29 @@ fn print_doctor_start_here_guidance(
                 // runnable command (#5252 item 3): sending the reader to "run"
                 // it would prescribe the failure doctor just diagnosed.
                 if matches!(first, output::doctor::DoctorFirstCommand::MissingRoot) {
-                    println!(
+                    lines.push(
                         "- Safe next action: fix the selected root first (see below); no check command can run until it exists"
+                            .to_string(),
                     );
                 } else {
-                    println!(
+                    lines.push(
                         "- Safe next action: run the recommended first command below; it produces the evidence the packet is composed from"
+                            .to_string(),
                     );
                 }
             }
-            Err(error) => println!(
+            Err(error) => lines.push(format!(
                 "- Safe next action: {error}; restore access or select a lossless root alias, then rerun doctor."
-            ),
+            )),
         }
     }
-    println!(
+    lines.push(
         "- Recovery states: missing artifact, stale evidence, wrong root, malformed artifact, no actionable gap, preview-limited evidence"
+            .to_string(),
     );
-    println!(
+    lines.push(
         "- Proof rail: verify command, receipt command, and receipt path are advisory static movement evidence"
+            .to_string(),
     );
     // First-run honesty: when the working tree has uncommitted changes,
     // a committed-history `ripr check` analyzes committed history only and would
@@ -486,13 +848,12 @@ fn print_doctor_start_here_guidance(
     // Git will not read (#4531) cannot run the diff-scoped first command, and
     // probing its working tree only prints a raw git failure for a problem the
     // checks above already name.
-    for line in first.recommendation_lines_for(root) {
-        println!("{line}");
-    }
+    lines.extend(first.recommendation_lines_for(root));
     match first {
         output::doctor::DoctorFirstCommand::Worktree => {
-            println!(
+            lines.push(
                 "- Scope note: `--worktree` analyzes staged and unstaged tracked edits; untracked files remain out of scope until staged or supplied through `--diff`."
+                    .to_string(),
             );
         }
         output::doctor::DoctorFirstCommand::DefaultCheck => {
@@ -512,8 +873,9 @@ fn print_doctor_start_here_guidance(
     // check`, so in a TypeScript-only repository the recommended command is a
     // guaranteed no-op. Name the enable step next to the command.
     if let Some(line) = enable_before_first_command_line(preview_enablement) {
-        println!("{line}");
+        lines.push(line);
     }
+    lines
 }
 
 fn enable_before_first_command_line(enablement: Option<&PreviewEnablement>) -> Option<String> {
@@ -841,15 +1203,6 @@ fn language_runtime_probes_for_detected(
 /// Appends `[adapter not compiled]` when `LanguageId::is_available()` is
 /// false for the detected language. If no markers are found, prints
 /// `none detected` rather than claiming any language.
-fn report_detected_languages(facts: &output::doctor::DoctorEnvironmentFacts) {
-    for line in detected_languages_lines(
-        &facts.detected_languages,
-        &facts.unanalyzed_source_languages,
-    ) {
-        println!("{line}");
-    }
-}
-
 /// The detected-languages line, followed by the unanalyzed-languages line
 /// whenever such source exists: a mixed Rust and Go workspace needs the Go
 /// half named as much as a Go-only one does.
@@ -916,12 +1269,6 @@ fn unanalyzed_languages_line(
 ///
 /// Emits nothing when either condition fails, when the root has no config
 /// file, or when the config cannot be loaded.
-fn suggest_preview_language_enablement(environment: &DoctorEnvironment) {
-    for line in preview_language_enable_suggestions(environment.preview_enablement.as_ref()) {
-        println!("{line}");
-    }
-}
-
 /// Pure rendering of the preview-enablement tip — the tip lines (ready to
 /// print) for each preview language that is detected, available (compiled in),
 /// and not yet enabled in `ripr.toml`.
@@ -1065,19 +1412,6 @@ fn config_entry(id: LanguageId) -> LanguageId {
 /// found — doctor never claims a framework it cannot confirm. The
 /// `<language>: …` fragment printed here is the same string the JSON
 /// `test_surfaces[].evidence` carries.
-fn report_detected_test_surfaces(facts: &output::doctor::DoctorEnvironmentFacts) {
-    if facts.test_surfaces.is_empty() {
-        return;
-    }
-    let evidence = facts
-        .test_surfaces
-        .iter()
-        .map(|surface| surface.evidence.as_str())
-        .collect::<Vec<_>>()
-        .join("; ");
-    println!("- Detected test surfaces: {evidence}");
-}
-
 /// Build the detected test surfaces for doctor (#2106). Each entry is one
 /// `<language>: …` fragment the human screen prints, plus the detected
 /// framework name typed separately for machine consumers.
@@ -1476,15 +1810,6 @@ fn path_command_candidates(
 /// Conservative throughout: every line reports only what the static layer can
 /// determine. No claim is made that the producer works end-to-end (that is the
 /// two-binary proof, item 3). Prints only when Perl markers are detected.
-fn report_perl_preview(preview: Option<&output::doctor::DoctorPerlPreview>) {
-    let Some(preview) = preview else {
-        return;
-    };
-    for line in perl_preview_lines(preview) {
-        println!("{line}");
-    }
-}
-
 /// The Perl preview lines, in the order the human screen prints them. Rendered
 /// from the same typed value the JSON `perl_preview` object serializes, so the
 /// two surfaces cannot drift.
@@ -1923,55 +2248,26 @@ fn perl_next_command(
 ///   - `StaticLimitKind::CrossLanguageOracleVisibilityUnresolved` wire string
 ///     and its doc comment.
 ///   - 0.9.0 CHANGELOG non-claims.
-fn report_known_limitations() {
-    println!("- Known limitations:");
-    println!(
+fn known_limitation_lines() -> Vec<String> {
+    vec![
+        "- Known limitations:".to_string(),
         "  TypeScript/JavaScript/Bun analysis is preview (advisory only); \
         not stable support — findings are additive, not gating"
-    );
-    println!(
+            .to_string(),
         "  Cross-language oracle visibility is fail-closed: an FFI/binding seam tested \
         from another language reads as cross_language_oracle_visibility_unresolved, \
         not a Rust gap — verify the external oracle directly"
-    );
-    println!(
-        "  Full-repo repo-exposure analysis applies a default cap of {} seams; \
+            .to_string(),
+        format!(
+            "  Full-repo repo-exposure analysis applies a default cap of {} seams; \
         set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams.",
-        analysis::DEFAULT_REPO_EXPOSURE_SEAM_LIMIT
-    );
-    println!(
+            analysis::DEFAULT_REPO_EXPOSURE_SEAM_LIMIT
+        ),
         "  Preview-language evidence is advisory and does not block by default; \
         it yields repair cards or packets only for findings that satisfy the full \
         actionability, edit, verify, and receipt contract"
-    );
-}
-
-fn report_cache_status(root: &Path, cache: &output::doctor::DoctorCacheStatus) {
-    if cache.relocated_by_env {
-        println!(
-            "- Cache location: {} (RIPR_CACHE_DIR active)",
-            cache.cache_dir
-        );
-    } else {
-        println!("- Cache location: {}", cache.cache_dir);
-    }
-    println!(
-        "- Cache size: {} (run `ripr cache status` for details)",
-        cache.size_display
-    );
-    // A missing root already fails `root_directory`; probing would walk up
-    // past it and test an unrelated ancestor.
-    if !cache.relocated_by_env && !root.is_dir() {
-        return;
-    }
-    if let Some(reason) = cache_unwritable_reason(&analysis::seam_cache::cache_base_dir(root)) {
-        // The cache is optional, so this does not fail doctor; it only
-        // explains why every run will recompute instead of reusing facts.
-        println!(
-            "! Cache not writable: {reason}; results stay correct but every run recomputes. \
-Point RIPR_CACHE_DIR at a writable directory."
-        );
-    }
+            .to_string(),
+    ]
 }
 
 /// Why a cache entry could not be created under `cache_dir`, or `None` when
@@ -2111,12 +2407,6 @@ fn generated_workflow_advisory(root: &Path) -> Option<String> {
         crate::bounded_input::read_to_string_with_limit(&path, GENERATED_WORKFLOW_MAX_BYTES)
             .ok()?;
     generated_workflow_line(&workflow, env!("CARGO_PKG_VERSION"))
-}
-
-fn report_generated_workflow_status(root: &Path) {
-    if let Some(advisory) = generated_workflow_advisory(root) {
-        println!("~ Generated workflow: {advisory}");
-    }
 }
 
 fn generated_workflow_line(workflow: &str, current_version: &str) -> Option<String> {
@@ -2346,12 +2636,6 @@ fn linker_temp_redirect_advisory(root: &Path) -> Option<String> {
     ))
 }
 
-fn report_linker_temp_redirect_status(root: &Path) {
-    if let Some(advisory) = linker_temp_redirect_advisory(root) {
-        println!("~ {advisory}");
-    }
-}
-
 /// Recursively sum file sizes under `dir`. Returns 0 when the directory
 /// does not exist or cannot be read — cache absence is not a problem.
 fn dir_size_bytes(dir: &Path) -> u64 {
@@ -2386,90 +2670,199 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
-/// Print the effective configuration state.
-///
-/// The success arm renders `defaults`, the same typed value the JSON
-/// `config_defaults` object carries, so the two surfaces cannot disagree. The
-/// failure arm prints the full local `toml` error to the user's own terminal;
-/// only the redacted `config` check evidence reaches JSON (RIPR-SPEC-0007).
-fn report_config_status(
-    root: &Path,
-    config: &Result<RiprConfig, String>,
-    defaults: Option<&output::doctor::DoctorConfigDefaults>,
-    report: &output::doctor::DoctorReport,
-    ok: &mut bool,
-) {
-    match config {
-        Ok(_) => {
-            let Some(defaults) = defaults else {
-                // The probe and the evaluator load the same configuration, so
-                // this arm is unreachable in practice. Fail loudly in the
-                // terminal rather than print a default the probe never
-                // verified.
-                println!("! Config: invalid {CONFIG_FILE_NAME}");
-                println!(
-                    "- Config path: {}",
-                    output::path::human_path(&root.join(CONFIG_FILE_NAME))
-                );
-                println!("  error: configuration loaded but produced no defaults");
-                *ok = false;
-                return;
-            };
-            match &defaults.source_path {
-                Some(path) => {
-                    println!("✓ Config: loaded {CONFIG_FILE_NAME}");
-                    println!("- Config path: {path}");
-                }
-                None => println!("✓ Config: not found; using built-in defaults"),
-            }
-            println!("- Analysis mode default: {}", defaults.analysis_mode);
-            println!(
-                "- LSP seam diagnostics default: {}",
-                defaults.lsp_seam_diagnostics
-            );
-            println!("- Suppressions path: {}", defaults.suppressions_path);
-            println!("- Enabled languages: {}", report.languages.join(", "));
-            if config
-                .as_ref()
-                .ok()
-                .and_then(|config| config.profiles().bun_ub())
-                .is_some()
-            {
-                println!("- Bun UB profile: configured (preview advisory only)");
-                println!(
-                    "- Bun UB test roots: {}",
-                    defaults.bun_ub_test_roots.join(", ")
-                );
-                // The builder sets bridge hints whenever the profile exists,
-                // so `None` here means defaults and config disagree; report
-                // that rather than a path the probe never verified.
-                println!(
-                    "- Bun UB bridge hints: {}",
-                    defaults.bun_ub_bridge_hints.as_deref().unwrap_or("unknown")
-                );
-                println!(
-                    "- Bun UB authority: no runtime Bun, tsc, tsserver, generated tests, gates, badges, baselines, or support-tier promotion"
-                );
-            } else {
-                println!("- Bun UB profile: not configured");
-            }
-        }
-        Err(err) => {
-            println!("! Config: invalid {CONFIG_FILE_NAME}");
-            println!(
-                "- Config path: {}",
-                output::path::human_path(&root.join(CONFIG_FILE_NAME))
-            );
-            println!("  error: {err}");
-            *ok = false;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::tests::{args, unique_command_test_dir};
     use super::*;
+
+    fn quiet_binary() -> output::doctor_binary::DoctorBinaryIdentity {
+        output::doctor_binary::DoctorBinaryIdentity {
+            version: "ripr 0.11.0".to_string(),
+            commit: None,
+            commit_dirty: false,
+            executable: None,
+            executable_is_cargo_build_output: false,
+            path_ripr: None,
+            path_ripr_is_cargo_build_output: false,
+            path_ripr_is_running_executable: None,
+            warnings: Vec::new(),
+        }
+    }
+
+    fn empty_environment() -> DoctorEnvironment {
+        DoctorEnvironment {
+            facts: output::doctor::DoctorEnvironmentFacts {
+                detected_languages: Vec::new(),
+                unanalyzed_source_languages: Vec::new(),
+                preview_language_gaps: Vec::new(),
+                config_defaults: Some(output::doctor::DoctorConfigDefaults {
+                    source_path: None,
+                    analysis_mode: "draft".to_string(),
+                    lsp_seam_diagnostics: true,
+                    suppressions_path: ".ripr/suppressions.toml".to_string(),
+                    bun_ub_profile_configured: false,
+                    bun_ub_test_roots: Vec::new(),
+                    bun_ub_bridge_hints: None,
+                }),
+                cache: output::doctor::DoctorCacheStatus {
+                    cache_dir: "target/ripr/cache".to_string(),
+                    relocated_by_env: false,
+                    size_bytes: 0,
+                    size_display: "0 B".to_string(),
+                },
+                test_surfaces: Vec::new(),
+                perl_preview: None,
+            },
+            preview_enablement: None,
+        }
+    }
+
+    fn passing_report() -> output::doctor::DoctorReport {
+        let mut report = output::doctor::DoctorReport::new(".");
+        report.add_check(
+            "root_directory",
+            output::doctor::DoctorStatus::Pass,
+            Some("root directory exists at .".to_string()),
+        );
+        report.add_check(
+            "cargo_toml",
+            output::doctor::DoctorStatus::Pass,
+            Some("Cargo.toml found at Cargo.toml".to_string()),
+        );
+        report.add_check(
+            "git_repository",
+            output::doctor::DoctorStatus::Pass,
+            Some("inside a Git work tree at .".to_string()),
+        );
+        for tool in ["git", "cargo", "rustc"] {
+            report.add_check(
+                &format!("tool_{tool}"),
+                output::doctor::DoctorStatus::Pass,
+                Some(format!("{tool} 1.0")),
+            );
+        }
+        report
+    }
+
+    fn render_screen(
+        report: &output::doctor::DoctorReport,
+        environment: &DoctorEnvironment,
+        verbose: bool,
+        passed: bool,
+    ) -> Vec<String> {
+        let binary = quiet_binary();
+        render_doctor_human_screen(DoctorHumanScreen {
+            root: Path::new("."),
+            profile: output::doctor::DoctorProfile::Analysis,
+            report,
+            config: &Ok(RiprConfig::default()),
+            environment,
+            binary: &binary,
+            verbose,
+            passed,
+        })
+    }
+
+    #[test]
+    fn failure_block_keeps_the_bang_line_and_adds_a_fix_line() {
+        let lines = failure_block(
+            "no Cargo.toml found at .; pass `--root <dir>` to target a crate or run `cargo init` in the selected root to create a package",
+        );
+        assert!(
+            lines[0].starts_with('!') && lines[0].contains("no Cargo.toml found at ."),
+            "{lines:?}"
+        );
+        assert_eq!(
+            lines[1],
+            "  Fix: pass `--root <dir>` to target a crate or run `cargo init` in the selected root to create a package"
+        );
+    }
+
+    #[test]
+    fn compact_passing_screen_fits_one_terminal_and_hides_verbose_detail() {
+        let report = passing_report();
+        let environment = empty_environment();
+        let lines = render_screen(&report, &environment, false, true);
+        assert!(
+            lines.len() <= DOCTOR_HUMAN_SCREEN_BUDGET,
+            "compact doctor must fit 80x24 ({} lines):\n{}",
+            lines.len(),
+            lines.join("\n")
+        );
+        let text = lines.join("\n");
+        assert!(text.contains("✓ doctor checks passed"), "{text}");
+        assert!(text.contains("Recommended first command:"), "{text}");
+        assert!(!text.contains("Known limitations:"), "{text}");
+        assert!(!text.contains("- Perl preview:"), "{text}");
+        assert!(!text.contains("- ripr binary:"), "{text}");
+        assert!(!text.contains("Analysis mode default:"), "{text}");
+        assert!(!text.contains("Start-here packet:"), "{text}");
+        assert!(!text.contains("Recovery states:"), "{text}");
+        assert!(!text.contains("Proof rail:"), "{text}");
+        assert!(!text.contains("Refresh scope:"), "{text}");
+    }
+
+    #[test]
+    fn verbose_screen_restores_limitations_and_config_defaults() {
+        let report = passing_report();
+        let environment = empty_environment();
+        let lines = render_screen(&report, &environment, true, true);
+        let text = lines.join("\n");
+        assert!(text.contains("Known limitations:"), "{text}");
+        assert!(
+            text.contains("cross_language_oracle_visibility_unresolved"),
+            "{text}"
+        );
+        assert!(text.contains("- ripr binary:"), "{text}");
+        assert!(text.contains("Analysis mode default: draft"), "{text}");
+        assert!(text.contains("Start-here packet:"), "{text}");
+        assert!(text.contains("Recovery states:"), "{text}");
+        assert!(text.contains("Proof rail:"), "{text}");
+    }
+
+    #[test]
+    fn failing_screen_puts_the_fix_before_passing_groups() {
+        let mut report = passing_report();
+        report.add_check(
+            "git_repository",
+            output::doctor::DoctorStatus::Fail,
+            Some(
+                "not inside a Git work tree at /tmp/scratch; the diff-scoped commands read committed \
+                 history and cannot run here. For a repository-free scan, run `ripr check --root /tmp/scratch --format repo-exposure-md`"
+                    .to_string(),
+            ),
+        );
+        // The second git_repository check is the fail; drop the passing one.
+        report.checks.retain(|check| {
+            check.name != "git_repository"
+                || check.status == output::doctor::DoctorCheckStatus::Fail
+        });
+        report.status = output::doctor::DoctorStatus::Fail;
+        let environment = empty_environment();
+        let lines = render_screen(&report, &environment, false, false);
+        assert!(
+            lines.len() <= DOCTOR_HUMAN_SCREEN_BUDGET,
+            "failing doctor must fit 80x24 ({} lines):\n{}",
+            lines.len(),
+            lines.join("\n")
+        );
+        let text = lines.join("\n");
+        let fail_at = text
+            .find("! not inside a Git work tree")
+            .unwrap_or_else(|| panic!("{text}"));
+        let fix_at = text.find("  Fix:").unwrap_or_else(|| panic!("{text}"));
+        let pass_at = text
+            .find("✓ Workspace:")
+            .unwrap_or_else(|| panic!("{text}"));
+        assert!(fail_at < fix_at && fix_at < pass_at, "{text}");
+        assert!(text.contains("repo-exposure-md"), "{text}");
+        assert!(!text.contains("Known limitations:"), "{text}");
+        assert!(!text.contains("Start-here packet:"), "{text}");
+        assert!(
+            !text.contains("Safe next action: run the recommended first command below"),
+            "{text}"
+        );
+    }
 
     #[test]
     fn cache_unwritable_reason_names_a_blocking_file_and_accepts_a_creatable_path()
