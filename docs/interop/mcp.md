@@ -224,8 +224,12 @@ page — an omission disclosure alone over the ceiling — fails closed with
 `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the identity
 route. Other tool responses carry the document once at full fidelity:
 `content[0].text` is the compact JSON serialization, and
-`structuredContent` repeats it only while the complete envelope stays under
-the response bound.
+`structuredContent` repeats it in every successful response. Each tool
+advertises an `outputSchema`, so a success never ships without its
+structured copy: when the complete double-carry envelope does not fit the
+id-aware response budget, the call fails closed with the typed
+`result_too_large` refusal and that tool's recovery route (#7768) instead
+of silently dropping `structuredContent`.
 
 `ripr_get_gap` (and the equivalent resource `ripr://gap/{canonical_id}`)
 returns one canonical item's complete bounded evidence bound to its snapshot

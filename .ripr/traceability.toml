@@ -12306,6 +12306,7 @@ id = "RIPR-SPEC-0193"
 name = "repair card detail references and overflow disclosure"
 spec = "docs/specs/RIPR-SPEC-0193-repair-card-detail-references.md"
 tests = [
+  "crates/ripr/src/repair_card_budget.rs::tests::detail_family_ordering_borrows_original_sources",
   "crates/ripr/src/repair_card_budget.rs::tests::default_budget_routes_every_family_in_deterministic_order",
   "crates/ripr/src/repair_card_budget.rs::tests::byte_accounting_measures_the_actual_normalized_representation",
   "crates/ripr/src/repair_card_budget.rs::tests::oversized_single_detail_stays_bounded_and_visible",
@@ -13454,8 +13455,10 @@ tests = [
   "crates/ripr/tests/mcp_stdio.rs::refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation",
   "crates/ripr/tests/mcp_stdio.rs::empty_gap_pages_keep_structured_outcomes_at_the_response_bound",
   "crates/ripr/tests/mcp_stdio.rs::long_request_ids_refuse_typed_before_the_wire_cap",
+  "crates/ripr/tests/mcp_stdio.rs::window_sized_envelope_refuses_typed_instead_of_dropping_structured_content",
   "crates/ripr/src/mcp/protocol.rs::tests::tool_result_fits_and_refuses_at_the_id_aware_envelope_budget",
   "crates/ripr/src/mcp/server_tests.rs::long_request_id_refuses_typed_at_the_id_aware_boundary",
+  "crates/ripr/src/mcp/server_tests.rs::window_sized_gap_item_refuses_typed_instead_of_dropping_structured_content",
   "crates/ripr/src/mcp/server_tests.rs::outer_envelope_budget_reserves_the_escaped_request_id",
   "crates/ripr/src/mcp/workspace.rs::tests::list_gaps_honors_the_id_aware_envelope_budget",
   "crates/ripr/src/mcp/writer.rs::tests::pinned_sdk_wraps_the_measured_envelope_within_the_outer_reserve",
