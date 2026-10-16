@@ -303,7 +303,10 @@ first and a `Fix:` line each; `-v`/`--verbose` restores the full detail dump.
 `--profile source-build` still reports enabled primary language runtimes as
 advisory lines; optional extra tools stay behind verbose. Compact still
 discloses a refused `[perl].executable` (not run). A failing `cargo_toml`
-or required runtime does not recommend `ripr check`.
+or required runtime does not recommend `ripr check`. Human path and evidence
+text spell control characters so a newline-bearing root stays within the
+line budget; JSON keeps the raw path. Verbose config failures keep
+source-free parser reasons and the allowlisted misplaced-key hint.
 
 Given a selected root with its own rustup toolchain selection,
 when doctor probes cargo or rustc,
@@ -432,6 +435,11 @@ Current tests:
 - `crates/ripr/src/cli/commands/doctor.rs::tests::required_runtime_failure_gets_a_fix_line`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::cargo_toml_failure_suppresses_check`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::compact_discloses_ignored_perl_executable`
+- `crates/ripr/src/cli/commands/doctor.rs::tests::compact_newline_root_stays_one_physical_line_per_entry`
+- `crates/ripr/src/cli/commands/doctor.rs::tests::verbose_invalid_config_keeps_parser_reasons_without_source`
+- `crates/ripr/src/config.rs::tests::config_error_display_keeps_misplaced_mode_hint_without_source`
+- `crates/ripr/src/config.rs::tests::config_error_display_keeps_unclosed_table_reason`
+- `crates/ripr/tests/cli_smoke.rs::doctor_newline_bearing_root_still_fits_one_screen`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::source_build_compact_reports_enabled_runtime_as_advisory`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::compact_hides_optional_non_primary_runtime`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::path_command_in_ignores_a_repo_local_prove_cmd`

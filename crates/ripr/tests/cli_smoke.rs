@@ -13044,6 +13044,39 @@ fn doctor_invalid_config_on_a_committed_repo_does_not_recommend_check() -> Resul
     Ok(())
 }
 
+/// #8168: a committed Cargo root whose last path component contains
+/// newlines must still print ≤24 physical lines. JSON keeps the raw path.
+#[cfg(unix)]
+#[test]
+fn doctor_newline_bearing_root_still_fits_one_screen() -> Result<(), Box<dyn std::error::Error>> {
+    let parent = unique_external_workspace("newline-root")?;
+    let root = parent.join(format!("{}界", "line\n".repeat(8)));
+    init_producer_fixture_repo(&root)?;
+    let root_str = root
+        .to_str()
+        .ok_or("newline-bearing root is not valid UTF-8")?;
+    let output = run_ripr(&["doctor", "--root", root_str]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().count() <= 24,
+        "newline-bearing --root must still fit 80x24 ({} lines):\n{stdout}",
+        stdout.lines().count()
+    );
+    assert!(
+        stdout.contains("\\u{0a}"),
+        "human doctor must spell newlines in the root:\n{stdout}"
+    );
+    let json = run_ripr(&["doctor", "--json", "--root", root_str]);
+    let parsed: serde_json::Value = serde_json::from_slice(&json.stdout)?;
+    let json_root = parsed["root"].as_str().unwrap_or("");
+    assert!(
+        json_root.contains('\n'),
+        "JSON root must keep the raw newline; got {json_root:?}"
+    );
+    let _ = std::fs::remove_dir_all(&parent);
+    Ok(())
+}
+
 #[test]
 fn doctor_reports_language_tiers_and_limitations() -> Result<(), String> {
     // A workspace with only Rust markers (Cargo.toml + src/lib.rs).

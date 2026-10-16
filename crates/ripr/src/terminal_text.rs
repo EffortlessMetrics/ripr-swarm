@@ -15,6 +15,23 @@ use crate::agent::loop_commands::needs_terminal_escape;
 /// except `\n` and `\t`, and the bidi/invisible formatting characters, renders
 /// as `\u{XX}`. Machine formats (JSON, SARIF) keep the raw value, escaped by
 /// their own encoders.
+/// Spell control and bidi characters so one logical printer entry cannot
+/// expand into extra terminal rows. Unlike [`terminal_safe`], this also
+/// escapes `\n` and `\t`. Machine formats keep the raw value.
+pub(crate) fn single_line(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut changed = false;
+    for ch in text.chars() {
+        if ch.is_control() || needs_terminal_escape(ch) {
+            changed = true;
+            out.push_str(&format!("\\u{{{:02x}}}", ch as u32));
+        } else {
+            out.push(ch);
+        }
+    }
+    if changed { out } else { text.to_string() }
+}
+
 pub(crate) fn terminal_safe(text: String) -> String {
     if !text.chars().any(needs_terminal_escape) {
         return text;

@@ -345,10 +345,19 @@ fn split_state_and_fix(evidence: &str) -> (&str, Option<&str>) {
     }
 }
 
+fn display_text(value: &str) -> String {
+    crate::terminal_text::single_line(value)
+}
+
+fn display_path(path: &Path) -> String {
+    display_text(&output::path::human_path(path))
+}
+
 fn failure_block(evidence: &str) -> Vec<String> {
-    let mut lines = vec![format!("! {evidence}")];
-    if let Some(fix) = split_state_and_fix(evidence).1 {
-        lines.push(format!("  Fix: {fix}"));
+    let (state, fix) = split_state_and_fix(evidence);
+    let mut lines = vec![format!("! {}", display_text(state))];
+    if let Some(fix) = fix {
+        lines.push(format!("  Fix: {}", display_text(fix)));
     }
     lines
 }
@@ -357,9 +366,10 @@ fn runtime_failure_block(probe: &output::doctor::DoctorRuntimeProbe) -> Vec<Stri
     vec![
         format!(
             "! {} verify-route runtime: {}",
-            probe.language, probe.evidence
+            probe.language,
+            display_text(&probe.evidence)
         ),
-        format!("  Fix: {}", probe.hint),
+        format!("  Fix: {}", display_text(&probe.hint)),
     ]
 }
 
@@ -393,7 +403,7 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     ));
     lines.push(format!(
         "Root: {} · Rust {} MSRV",
-        output::path::human_path(root),
+        display_path(root),
         report.ripr_build_msrv
     ));
     lines.push(String::new());
@@ -410,14 +420,15 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         }
     }
     if let Err(err) = config {
-        let path = output::path::human_path(&root.join(CONFIG_FILE_NAME));
+        let path = display_path(&root.join(CONFIG_FILE_NAME));
         lines.push(format!("! Config: invalid {CONFIG_FILE_NAME}"));
         lines.push(format!(
             "  Fix: correct {path} so it loads, then rerun `ripr doctor`"
         ));
         lines.push(format!("- Config path: {path}"));
-        let error = err.lines().next().unwrap_or(err.as_str());
-        lines.push(format!("  error: {error}"));
+        for error in crate::config::config_error_display_lines(err, verbose) {
+            lines.push(format!("  error: {}", display_text(&error)));
+        }
     }
     for tool in output::doctor::DOCTOR_TOOLS {
         let name = format!("tool_{tool}");
@@ -441,7 +452,7 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     // substitution.
     if let Some(check) = check_named(report, "git_head") {
         let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
-        lines.push(format!("~ {evidence}"));
+        lines.push(format!("~ {}", display_text(evidence)));
     }
     if let Some(advisory) = generated_workflow_advisory(root) {
         lines.push(format!("~ Generated workflow: {advisory}"));
@@ -452,7 +463,7 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         lines.push(format!("~ {advisory}"));
     }
     for warning in &binary.warnings {
-        lines.push(format!("- warning: {warning}"));
+        lines.push(format!("- warning: {}", display_text(warning)));
     }
 
     // Compact passing groups, then leftover skip/advisory lines that tests
@@ -463,12 +474,14 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         if let Some(check) = check_named(report, name) {
             match check.status {
                 output::doctor::DoctorCheckStatus::Pass => {
-                    workspace.push(check.evidence.clone().unwrap_or_else(|| check.name.clone()));
+                    workspace.push(display_text(
+                        check.evidence.as_deref().unwrap_or(check.name.as_str()),
+                    ));
                 }
                 output::doctor::DoctorCheckStatus::Skipped => {
                     lines.push(format!(
                         "- {}",
-                        check.evidence.as_deref().unwrap_or(check.name.as_str())
+                        display_text(check.evidence.as_deref().unwrap_or(check.name.as_str()))
                     ));
                 }
                 _ => {}
@@ -480,7 +493,7 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
             match &defaults.source_path {
                 Some(path) => {
                     workspace.push(format!("Config: loaded {CONFIG_FILE_NAME}"));
-                    lines.push(format!("- Config path: {path}"));
+                    lines.push(format!("- Config path: {}", display_text(path)));
                     // Init follow-ups replay bare `ripr doctor` to confirm
                     // the written policy (#8168 keeps the rest verbose).
                     lines.push(format!(
@@ -498,7 +511,7 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
             lines.push(format!("! Config: invalid {CONFIG_FILE_NAME}"));
             lines.push(format!(
                 "- Config path: {}",
-                output::path::human_path(&root.join(CONFIG_FILE_NAME))
+                display_path(&root.join(CONFIG_FILE_NAME))
             ));
             lines.push("  error: configuration loaded but produced no defaults".to_string());
         }
@@ -511,7 +524,7 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         if let Some(check) = check_named(report, &name) {
             match check.status {
                 output::doctor::DoctorCheckStatus::Pass => {
-                    toolchains.push(check.evidence.clone().unwrap_or_else(|| tool.to_string()));
+                    toolchains.push(display_text(check.evidence.as_deref().unwrap_or(tool)));
                 }
                 output::doctor::DoctorCheckStatus::Skipped
                 | output::doctor::DoctorCheckStatus::Advisory => {
@@ -522,7 +535,7 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
                         } else {
                             "-"
                         },
-                        check.evidence.as_deref().unwrap_or(check.name.as_str())
+                        display_text(check.evidence.as_deref().unwrap_or(check.name.as_str()))
                     ));
                 }
                 output::doctor::DoctorCheckStatus::Fail => {}
@@ -551,7 +564,11 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     } else {
         cache.cache_dir.clone()
     };
-    lines.push(format!("✓ Cache: {cache_loc} ({})", cache.size_display));
+    lines.push(format!(
+        "✓ Cache: {} ({})",
+        display_text(&cache_loc),
+        cache.size_display
+    ));
     // Keep the historical `- Cache location:` / `- Cache size:` spellings on
     // verbose so JSON/human parity still names the same words.
     if !cache.relocated_by_env && !root.is_dir() {
@@ -560,8 +577,9 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         cache_unwritable_reason(&analysis::seam_cache::cache_base_dir(root))
     {
         lines.push(format!(
-            "! Cache not writable: {reason}; results stay correct but every run recomputes. \
-Point RIPR_CACHE_DIR at a writable directory."
+            "! Cache not writable: {}; results stay correct but every run recomputes. \
+Point RIPR_CACHE_DIR at a writable directory.",
+            display_text(&reason)
         ));
     }
 
@@ -1181,13 +1199,15 @@ fn append_missing_primary_runtime_probes(
 }
 
 fn language_runtime_probe_display_line(probe: &output::doctor::DoctorRuntimeProbe) -> String {
+    let evidence = display_text(&probe.evidence);
+    let hint = display_text(&probe.hint);
     if probe.status == output::doctor::DoctorStatus::Fail && !probe.required {
         format!(
             "- {} verify-route runtime: {} — optional; {}",
-            probe.language, probe.evidence, probe.hint
+            probe.language, evidence, hint
         )
     } else {
-        language_runtime_probe_line(&probe.language, probe.status, &probe.evidence, &probe.hint)
+        language_runtime_probe_line(&probe.language, probe.status, &evidence, &hint)
     }
 }
 
@@ -1884,20 +1904,8 @@ fn path_command_candidates(
 fn ignored_perl_executable_disclosure(refused: &str) -> String {
     format!(
         "ignoring [perl].executable `{}` from ripr.toml (not run)",
-        escape_single_line_path(refused)
+        display_text(refused)
     )
-}
-
-fn escape_single_line_path(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if ch.is_control() || crate::agent::loop_commands::needs_terminal_escape(ch) {
-            out.push_str(&format!("\\u{{{:02x}}}", ch as u32));
-        } else {
-            out.push(ch);
-        }
-    }
-    out
 }
 
 fn ignored_perl_executable_compact_line(
@@ -3149,6 +3157,102 @@ mod tests {
         assert!(
             !text.contains('\u{1b}'),
             "ESC must not reach the terminal:\n{text}"
+        );
+    }
+
+    #[test]
+    fn compact_newline_root_stays_one_physical_line_per_entry() {
+        let nasty = format!("{}界", "line\n".repeat(8));
+        let mut report = passing_report();
+        for check in &mut report.checks {
+            if let Some(evidence) = &mut check.evidence {
+                *evidence = format!("{evidence} {nasty}");
+            }
+        }
+        let mut environment = empty_environment();
+        environment.facts.cache.cache_dir = format!("{nasty}/target/ripr/cache");
+        let binary = quiet_binary();
+        let lines = render_doctor_human_screen(DoctorHumanScreen {
+            root: Path::new(&nasty),
+            profile: output::doctor::DoctorProfile::Analysis,
+            report: &report,
+            config: &Ok(RiprConfig::default()),
+            environment: &environment,
+            binary: &binary,
+            verbose: false,
+            passed: true,
+        });
+        assert!(
+            lines.len() <= DOCTOR_HUMAN_SCREEN_BUDGET,
+            "newline-bearing root must still fit 80x24 ({} lines):\n{}",
+            lines.len(),
+            lines.join("\n")
+        );
+        assert!(
+            lines
+                .iter()
+                .all(|line| !line.contains('\n') && !line.contains('\r')),
+            "printer entries must stay single-line:\n{}",
+            lines.join("\n")
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("\\u{0a}")),
+            "newlines in the root must be spelled:\n{}",
+            lines.join("\n")
+        );
+    }
+
+    #[test]
+    fn verbose_invalid_config_keeps_parser_reasons_without_source() {
+        let err = match crate::config::tests_only_parse("mode = \"deep\"\n") {
+            Err(err) => err,
+            Ok(_) => "expected a parse error for top-level mode".to_string(),
+        };
+        let mut report = passing_report();
+        report.add_check(
+            "config",
+            output::doctor::DoctorStatus::Fail,
+            Some("invalid ripr.toml".to_string()),
+        );
+        report.status = output::doctor::DoctorStatus::Fail;
+        let environment = empty_environment();
+        let compact = render_screen_with_profile(
+            &report,
+            &environment,
+            output::doctor::DoctorProfile::Analysis,
+            &Err(err.clone()),
+            false,
+            false,
+        )
+        .join("\n");
+        assert!(
+            compact.contains("belongs under [analysis]"),
+            "compact must keep the allowlisted hint:\n{compact}"
+        );
+        assert!(
+            !compact.contains("mode = \"deep\""),
+            "compact must not print the source assignment:\n{compact}"
+        );
+        let verbose = render_screen_with_profile(
+            &report,
+            &environment,
+            output::doctor::DoctorProfile::Analysis,
+            &Err(err),
+            true,
+            false,
+        )
+        .join("\n");
+        assert!(
+            verbose.contains("unknown field `mode`"),
+            "verbose must keep the parser reason:\n{verbose}"
+        );
+        assert!(
+            verbose.contains("belongs under [analysis]"),
+            "verbose must keep the allowlisted hint:\n{verbose}"
+        );
+        assert!(
+            !verbose.contains("mode = \"deep\""),
+            "verbose must not restore the source excerpt:\n{verbose}"
         );
     }
 

@@ -204,7 +204,9 @@ impl DoctorFirstCommand {
             Ok(resolved) => doctor_command_root_display(root, &resolved)?,
             Err(_) => absolute_doctor_root_display(root)?,
         };
-        Ok(format!("ripr check --root {}{flags}", shell_arg(&bound)))
+        let line = format!("ripr check --root {}{flags}", shell_arg(&bound));
+        require_single_line_command(&line)?;
+        Ok(line)
     }
 
     /// The full recommendation for `root`: the runnable variants render
@@ -242,11 +244,12 @@ impl DoctorFirstCommand {
                     Ok(resolved) => doctor_command_root_display(root, &resolved),
                     Err(_) => absolute_doctor_root_display(root),
                 };
-                let bash = bound.map(|bound| {
-                    format!(
+                let bash = bound.and_then(|bound| {
+                    let bash = format!(
                         "ripr check --root {} --format repo-exposure-md",
                         shell_arg(&bound)
-                    )
+                    );
+                    require_single_line_command(&bash).map(|()| bash)
                 });
                 match bash {
                     Ok(bash) => {
@@ -278,11 +281,12 @@ impl DoctorFirstCommand {
                     Ok(resolved) => doctor_command_root_display(root, &resolved),
                     Err(_) => absolute_doctor_root_display(root),
                 };
-                let bash = bound.map(|bound| {
-                    format!(
+                let bash = bound.and_then(|bound| {
+                    let bash = format!(
                         "ripr check --root {} --format repo-exposure-md",
                         shell_arg(&bound)
-                    )
+                    );
+                    require_single_line_command(&bash).map(|()| bash)
                 });
                 match bash {
                     Ok(bash) => {
@@ -330,6 +334,17 @@ impl DoctorFirstCommand {
             ));
         }
         lines
+    }
+}
+
+fn require_single_line_command(line: &str) -> Result<(), String> {
+    if line.contains('\n') || line.contains('\r') {
+        Err(
+            "selected root cannot be represented as one pasteable command line; rerun doctor from a parent using a single-line alias"
+                .to_string(),
+        )
+    } else {
+        Ok(())
     }
 }
 

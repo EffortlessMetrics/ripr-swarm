@@ -5,4 +5,7 @@
   surfaces, Perl preview, known limitations, and start-here detail.
   Compact still names a refused `[perl].executable` and does not
   recommend `ripr check` after a config, Cargo.toml, or required-runtime
-  failure. `ripr doctor --json` is unchanged (#8168).
+  failure. Human path display spells control characters so a
+  newline-bearing root stays within 24 lines; JSON keeps the raw path.
+  Verbose config failures keep source-free parser reasons. `ripr doctor
+  --json` schema is unchanged (#8168).
