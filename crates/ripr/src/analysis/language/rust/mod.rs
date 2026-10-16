@@ -357,6 +357,12 @@ fn drop_unreached_test_files(
                 .map(|path| workspace::normalize_path(path)),
         );
     }
+    orphans.extend(cargo_skipped_test_files(
+        root,
+        test_harnesses,
+        &loaded_files,
+        holds_tests,
+    ));
     if orphans.is_empty() {
         return loaded_files;
     }
@@ -364,6 +370,83 @@ fn drop_unreached_test_files(
         .into_iter()
         .filter(|(path, _)| !orphans.contains(&workspace::normalize_path(path)))
         .collect()
+}
+
+/// Test files that Cargo lists as a `[[test]]` target but never runs under
+/// `cargo test` (#8016): `test = false`, unmet `required-features` under the
+/// default feature set, or `harness = false` with no configured custom
+/// harness for the file (libtest never collects its `#[test]` items). The
+/// verdicts are Cargo metadata's, read through the shared
+/// [`workspace::ManifestInventory`]; unavailable metadata and undeclared
+/// paths are not an established skip and keep the file (#7125).
+///
+/// A package whose manifest declares no `[[test]]` table cannot hold such a
+/// target, so only packages that do pay for the metadata probe.
+fn cargo_skipped_test_files(
+    root: &Path,
+    test_harnesses: &[crate::config::TestHarnessRegistration],
+    loaded_files: &[(PathBuf, Vec<u8>)],
+    holds_tests: impl Fn(&[u8]) -> bool,
+) -> BTreeSet<String> {
+    let mut declares_test_table: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    let mut inventory = workspace::ManifestInventory::default();
+    let mut skipped = BTreeSet::new();
+    for (path, bytes) in loaded_files {
+        if !holds_tests(bytes) {
+            continue;
+        }
+        let Some(package_dir) = nearest_package_dir(root, path) else {
+            continue;
+        };
+        let declares = *declares_test_table
+            .entry(package_dir.clone())
+            .or_insert_with(|| {
+                committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
+                    .ok()
+                    .flatten()
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+                    .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+                    .is_some_and(|manifest| {
+                        manifest
+                            .get("test")
+                            .and_then(toml::Value::as_array)
+                            .is_some_and(|tests| !tests.is_empty())
+                    })
+            });
+        if !declares {
+            continue;
+        }
+        let collection_skipped = inventory.cargo_test_collection_skipped(root, path);
+        let unrun_custom_harness = !collection_skipped
+            && inventory.verdict(root, path) == workspace::CargoHarnessVerdict::HarnessDisabled
+            && !test_harnesses.iter().any(|registration| {
+                registration.file_wide_harness_evidence()
+                    && workspace::normalize_path(&registration.target)
+                        == workspace::normalize_path(path)
+            });
+        if collection_skipped || unrun_custom_harness {
+            skipped.insert(workspace::normalize_path(path));
+        }
+    }
+    skipped
+}
+
+/// The directory of the nearest `Cargo.toml` at or above `file`, stopping at
+/// `root`. Paths are workspace-relative, as loaded files are.
+fn nearest_package_dir(root: &Path, file: &Path) -> Option<PathBuf> {
+    let mut dir = file.parent()?.to_path_buf();
+    loop {
+        if committed_source::read_source_bytes(root, &dir.join("Cargo.toml"))
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
@@ -7359,6 +7442,56 @@ fn absent_delimiter_boundary_returns_head() {
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_tests_in_targets_cargo_test_never_runs() -> Result<(), String> {
+        // #8016: `tests/gate.rs` is a declared `[[test]]` target in every
+        // case. It relates only when `cargo test` actually runs it; the
+        // `live_*` rows are the positive controls for the same fixture shape.
+        let cases = [
+            ("live_default", "", true),
+            ("test_false", "test = false\n", false),
+            ("harness_false", "harness = false\n", false),
+            (
+                "required_features_unmet",
+                "required-features = ['never']\n",
+                false,
+            ),
+            (
+                "required_features_default",
+                "required-features = ['on']\n",
+                true,
+            ),
+        ];
+        for (tag, keys, relates) in cases {
+            let root = temp_root(&format!("cargo-skipped-target-{tag}"))?;
+            write(
+                &root.join("Cargo.toml"),
+                &format!(
+                    "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n\
+                     [workspace]\n\n[features]\ndefault = ['on']\non = []\nnever = []\n\n\
+                     [[test]]\nname = 'gate'\n{keys}"
+                ),
+            )?;
+            write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+            write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+            write(
+                &root.join("tests/gate.rs"),
+                "use shop::used::discount;\n\n#[test]\nfn discount_applies_gate() {\n    assert_eq!(discount(150), 140);\n}\n\nfn main() {}\n",
+            )?;
+
+            let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+            let related = related_test_names(&root, &result, "src/used.rs");
+            assert_eq!(
+                related.iter().any(|name| name == "discount_applies_gate"),
+                relates,
+                "{tag}: cargo test running the target decides relation: {related:?}"
+            );
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
         Ok(())
     }
 
