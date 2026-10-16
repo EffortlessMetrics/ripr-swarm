@@ -1,0 +1,314 @@
+diff --git a/crates/ripr/src/analysis/classifier/finding.rs b/crates/ripr/src/analysis/classifier/finding.rs
+index 3b2258075..f283a6613 100644
+--- a/crates/ripr/src/analysis/classifier/finding.rs
++++ b/crates/ripr/src/analysis/classifier/finding.rs
+@@ -243,8 +243,13 @@ enum Unconfirmed {
+ /// boundary value, or when no assertion pins the exact error variant or field
+ /// value the change alters, and an oracle `reveal` left unconfirmed (see
+ /// [`Unconfirmed`]) is not established to observe it.
+-/// `exposed` and the unknown classes are left alone: ripr does not claim a
+-/// miss it has not established.
++/// `exposed` and the unknown classes name one established miss: a matched
++/// oracle row whose relation is proximity-only never calls the owner, so
++/// next to a reaching row its identical "uses ... oracle" line would
++/// attribute part of the discrimination to a test whose assertion is about
++/// different code (#7642). Rows without a matched oracle, and rows with no
++/// recorded relation reason, stay unannotated: ripr does not claim a miss
++/// it has not established.
+ fn annotate_related_test_misses(
+     related_tests: &mut [RelatedTest],
+     class: &ExposureClass,
+@@ -308,7 +313,27 @@ fn annotate_related_test_misses(
+                     None
+                 }
+             }
+-            _ => None,
++            _ => {
++                // #7642: on `exposed` and the unknown classes a matched row
++                // whose relation reason does not establish reach
++                // (`establishes_reach`, the rule `reach_evidence` reads,
++                // #7531) never invokes the owner, so its oracle cannot
++                // discriminate this change no matter how strong the
++                // assertion. Annotate the established fact; the verdict is
++                // untouched because `miss` is evidence-only. A row without
++                // a matched oracle or without a recorded relation reason
++                // keeps the unknown: the pass must not claim what the
++                // relation layer did not establish.
++                if test.oracle.is_some()
++                    && test
++                        .relation_reason
++                        .is_some_and(|reason| !reason.establishes_reach(owner_is_function))
++                {
++                    Some(RelatedTestMiss::NoCallPath)
++                } else {
++                    None
++                }
++            }
+         };
+     }
+ }
+@@ -601,6 +626,107 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn exposed_marks_proximity_only_oracle_rows_as_no_call_path() {
++        // #7642: on an exposed finding a matched oracle row linked by
++        // proximity only never invokes the owner, so it must not render as
++        // an unqualified oracle row next to the reaching test.
++        let row = |name: &str, reason: Option<RelationReason>| RelatedTest {
++            relation_reason: reason,
++            ..matched_row(name, OracleStrength::Strong)
++        };
++        let mut rows = vec![
++            row("reaches_owner", Some(RelationReason::DirectOwnerCall)),
++            row(
++                "sibling_asserts_elsewhere",
++                Some(RelationReason::SameTestFile),
++            ),
++            row("named_after_owner", Some(RelationReason::OwnerNamedTest)),
++            row(
++                "assertion_target",
++                Some(RelationReason::AssertionTargetAffinity),
++            ),
++            row("no_relation_recorded", None),
++        ];
++        annotate_related_test_misses(
++            &mut rows,
++            &crate::domain::ExposureClass::Exposed,
++            true,
++            &ProbeFamily::MatchArm,
++            &ActivationEvidence::default(),
++            Unconfirmed::Confirmed,
++        );
++        assert_eq!(
++            rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
++            vec![
++                None,
++                Some(crate::domain::RelatedTestMiss::NoCallPath),
++                Some(crate::domain::RelatedTestMiss::NoCallPath),
++                Some(crate::domain::RelatedTestMiss::NoCallPath),
++                None,
++            ]
++        );
++        // For an owner without a function, assertion-target affinity is how
++        // the owner is observed, so that row keeps no miss; file proximity
++        // still does not call the owner.
++        let mut module_rows = vec![
++            row(
++                "sibling_asserts_elsewhere",
++                Some(RelationReason::SameTestFile),
++            ),
++            row(
++                "assertion_target",
++                Some(RelationReason::AssertionTargetAffinity),
++            ),
++        ];
++        annotate_related_test_misses(
++            &mut module_rows,
++            &crate::domain::ExposureClass::Exposed,
++            false,
++            &ProbeFamily::MatchArm,
++            &ActivationEvidence::default(),
++            Unconfirmed::Confirmed,
++        );
++        assert_eq!(
++            module_rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
++            vec![Some(crate::domain::RelatedTestMiss::NoCallPath), None,]
++        );
++    }
++
++    #[test]
++    fn exposed_keeps_unmatched_and_oracle_free_rows_unannotated() {
++        // Rows reveal already annotated, and rows with no matched oracle,
++        // keep their existing state: the pass annotates matched oracle rows
++        // only.
++        let mut rows = vec![
++            RelatedTest {
++                miss: Some(crate::domain::RelatedTestMiss::AssertionNotObserving),
++                relation_reason: Some(RelationReason::SameTestFile),
++                ..matched_row("examined_only", OracleStrength::None)
++            },
++            RelatedTest {
++                oracle: None,
++                relation_reason: Some(RelationReason::SameTestFile),
++                ..matched_row("no_oracle_row", OracleStrength::None)
++            },
++        ];
++        annotate_related_test_misses(
++            &mut rows,
++            &crate::domain::ExposureClass::StaticUnknown,
++            true,
++            &ProbeFamily::MatchArm,
++            &ActivationEvidence::default(),
++            Unconfirmed::Confirmed,
++        );
++        assert_eq!(
++            rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
++            vec![
++                Some(crate::domain::RelatedTestMiss::AssertionNotObserving),
++                None,
++            ]
++        );
++    }
++
+     #[test]
+     fn mixed_confirmation_marks_only_the_strongest_rows_unconfirmed() {
+         // A strong unconfirmed oracle beside a medium mock that confirms:
+diff --git a/crates/ripr/src/output/human.rs b/crates/ripr/src/output/human.rs
+index 41eb897fd..3f5b9ea01 100644
+--- a/crates/ripr/src/output/human.rs
++++ b/crates/ripr/src/output/human.rs
+@@ -2027,7 +2027,8 @@ mod tests {
+     /// #5021: when a top gap is selected and the omitted set mixes
+     /// lower-ranked candidates with base-side evidence, the count line names
+     /// the mix with its own counts instead of promoting the base-side
+-    /// findings to lower-priority candidates.
++    /// findings to lower-priority candidates. #7643: the bullets append each
++    /// finding's currentness category so the two clauses connect to rows.
+     #[test]
+     fn hidden_block_selected_mixed_omitted_names_base_side_count() {
+         // Ranking ties break on file path (see `triage_rank`), so the
+@@ -2052,11 +2053,11 @@ mod tests {
+             "{rendered}"
+         );
+         assert!(
+-            rendered.contains("    - src/base.rs:1 (weakly_exposed)\n"),
++            rendered.contains("    - src/base.rs:1 (weakly_exposed, base-side)\n"),
+             "{rendered}"
+         );
+         assert!(
+-            rendered.contains("    - src/lower.rs:1 (weakly_exposed)\n"),
++            rendered.contains("    - src/lower.rs:1 (weakly_exposed, lower-priority candidate)\n"),
+             "{rendered}"
+         );
+     }
+diff --git a/crates/ripr/src/output/human/triage.rs b/crates/ripr/src/output/human/triage.rs
+index e7398b06e..2b5ac8031 100644
+--- a/crates/ripr/src/output/human/triage.rs
++++ b/crates/ripr/src/output/human/triage.rs
+@@ -371,12 +371,31 @@ pub(crate) fn render_human_triage(
+             out.push_str(&selected_hidden_line(&triage.omitted));
+         }
+         let listed = triage.omitted.len().min(HIDDEN_FINDINGS_LISTED);
++        // #7643: when the omitted set mixes currentness categories, the
++        // count line's clauses cannot be connected to individual bullets;
++        // append each finding's category so the reader can tell an
++        // outranked candidate from base-side evidence without a rerun.
++        // Single-category sets keep the legacy bullet: the count line
++        // already names the one category that applies.
++        let label_currentness = {
++            let mut categories = std::collections::BTreeSet::new();
++            for finding in &triage.omitted {
++                categories.insert(hidden_bullet_currentness(finding));
++            }
++            categories.len() > 1
++        };
+         for finding in triage.omitted.iter().take(listed) {
++            let currentness = if label_currentness {
++                format!(", {}", hidden_bullet_currentness(finding))
++            } else {
++                String::new()
++            };
+             out.push_str(&format!(
+-                "    - {}:{} ({})\n",
++                "    - {}:{} ({}{})\n",
+                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
+                 finding.probe.location.line,
+-                finding.class.as_str()
++                finding.class.as_str(),
++                currentness
+             ));
+         }
+         let remaining = triage.omitted.len() - listed;
+@@ -612,6 +631,19 @@ fn no_selection_mix(omitted: &[&Finding]) -> NoSelectionMix {
+     }
+ }
+ 
++/// #7643: the per-bullet currentness label, mirroring the categories the
++/// count line names: base-deleted or moved evidence is base-side, an
++/// unresolved subject is not established as either category, and the
++/// remainder is a lower-priority candidate.
++fn hidden_bullet_currentness(finding: &Finding) -> &'static str {
++    match finding.source_currentness {
++        crate::domain::SourceCurrentness::BaseDeleted
++        | crate::domain::SourceCurrentness::MovedOrRenamed => "base-side",
++        crate::domain::SourceCurrentness::UnresolvedSubject => "unresolved currentness",
++        _ => "lower-priority candidate",
++    }
++}
++
+ /// #5021: the `Hidden:` count line for a run where a top gap was selected.
+ /// `triage.omitted` is every considered finding except the selected one, so
+ /// it can hold base-side or unresolved-currentness evidence next to
+@@ -1559,4 +1591,70 @@ mod tests {
+         }
+         Ok(())
+     }
++
++    #[test]
++    fn hidden_bullets_label_currentness_when_categories_mix() {
++        // #7643: the count line names the mix; each bullet must connect to
++        // its clause so a base-side row is not mistaken for an outranked
++        // candidate.
++        let top = super::super::tests::sample_finding();
++        let mut candidate = super::super::tests::sample_finding();
++        candidate.id = "finding:candidate".to_string();
++        candidate.probe.id = ProbeId("finding:candidate".to_string());
++        candidate.probe.location = SourceLocation::new("src/lib.rs", 21, 1);
++        let mut base_side = super::super::tests::sample_finding();
++        base_side.id = "finding:base".to_string();
++        base_side.probe.id = ProbeId("finding:base".to_string());
++        base_side.probe.location = SourceLocation::new("src/lib.rs", 26, 1);
++        base_side.source_currentness = SourceCurrentness::BaseDeleted;
++        let mut unresolved = super::super::tests::sample_finding();
++        unresolved.id = "finding:unresolved".to_string();
++        unresolved.probe.id = ProbeId("finding:unresolved".to_string());
++        unresolved.probe.location = SourceLocation::new("src/lib.rs", 31, 1);
++        unresolved.source_currentness = SourceCurrentness::UnresolvedSubject;
++        let output = super::super::tests::bounded_output_with_findings(vec![
++            top, candidate, base_side, unresolved,
++        ]);
++        let rendered = super::super::render(&output);
++        assert!(
++            rendered.contains("    - src/sample.rs:7 (weakly_exposed, lower-priority candidate)\n"),
++            "{rendered}"
++        );
++        assert!(
++            rendered.contains("    - src/lib.rs:26 (weakly_exposed, base-side)\n"),
++            "{rendered}"
++        );
++        assert!(
++            rendered.contains("    - src/lib.rs:31 (weakly_exposed, unresolved currentness)\n"),
++            "{rendered}"
++        );
++    }
++
++    #[test]
++    fn hidden_bullets_stay_unlabeled_when_the_set_is_single_category() {
++        // A single-category omitted set keeps the legacy bullet: the count
++        // line already names the one category that applies.
++        let top = super::super::tests::sample_finding();
++        let mut omitted = super::super::tests::sample_finding();
++        omitted.id = "finding:omitted".to_string();
++        omitted.probe.id = ProbeId("finding:omitted".to_string());
++        omitted.probe.location = SourceLocation::new("src/lib.rs", 21, 1);
++        let output = super::super::tests::bounded_output_with_findings(vec![top, omitted]);
++        let rendered = super::super::render(&output);
++        // Exactly one omitted bullet, and no per-bullet currentness label:
++        // the count line already named the single category.
++        assert_eq!(rendered.matches("\n    - src/").count(), 1, "{rendered}");
++        assert!(
++            !rendered.contains("(weakly_exposed, lower-priority candidate)"),
++            "{rendered}"
++        );
++        assert!(
++            !rendered.contains("(weakly_exposed, base-side)"),
++            "{rendered}"
++        );
++        assert!(
++            !rendered.contains("(weakly_exposed, unresolved currentness)"),
++            "{rendered}"
++        );
++    }
+ }

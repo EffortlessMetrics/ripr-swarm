@@ -1,0 +1,17 @@
+{
+  "label": "final0ffd-annotations",
+  "args": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--lib",
+    "analysis::classifier::finding::tests::exposed_"
+  ],
+  "cwd": "/workspace/review-8201-final",
+  "started": 1792131410.8134754,
+  "elapsed": 0.11239385604858398,
+  "exit": 0,
+  "head": "0ffd94561c92c6dbfbcc7efcfee59d6c15cc729e"
+}

@@ -1,0 +1,8 @@
+{
+  "observed_utc": "2026-10-16T06:18:32.968412+00:00",
+  "path": "/workspace/ripr-swarm/target/debug/ripr",
+  "bytes": 219327664,
+  "sha256": "d335cae85c4605e237be814f795c5386c6f61275007ac833c8edb4076e1f462b",
+  "version": "ripr 0.11.0 (0ffd94561c92c6dbfbcc7efcfee59d6c15cc729e)",
+  "scope": "mutable Cargo artifact after final-head build; no new frozen/release witness"
+}

@@ -1,0 +1,18 @@
+{
+  "label": "final0ffd-cli",
+  "args": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "cli_smoke",
+    "native_fanout"
+  ],
+  "cwd": "/workspace/review-8201-final",
+  "started": 1792131411.2128406,
+  "elapsed": 70.23072052001953,
+  "exit": 0,
+  "head": "0ffd94561c92c6dbfbcc7efcfee59d6c15cc729e"
+}

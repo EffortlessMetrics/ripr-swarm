@@ -1,0 +1,86 @@
+{
+  "observed_utc": "2026-10-16T06:15:05.364469+00:00",
+  "head": "0ffd94561c92c6dbfbcc7efcfee59d6c15cc729e 9ccd7607ad39fb4d9650f4afed523130064ded91 0bcd78c904e7eba53a5cb0e8bd857180aa56db49 27b74d26f0b7e35a08c614b29bb7e369e7b146fd",
+  "merge": "d10fe03915af68dd3f993e3f6601905680164853 9d36aee6f1db2b780a3fced6c300a20e5245e1f1 e660a99480dc13a4ed93b131042d11506fd484b6 0ffd94561c92c6dbfbcc7efcfee59d6c15cc729e",
+  "tested_base": "27b74d26f0b7e35a08c614b29bb7e369e7b146fd",
+  "preserved_feature_blobs": {
+    "AGENTS.md": {
+      "original": "fd0bef99265368b56767dc4369272de35ef8fd94",
+      "final": "fd0bef99265368b56767dc4369272de35ef8fd94"
+    },
+    ".agents/skills/review-pr/SKILL.md": {
+      "original": "56525107201bfec3aec0c2a300516755a11d5ef3",
+      "final": "56525107201bfec3aec0c2a300516755a11d5ef3"
+    },
+    "crates/ripr/src/analysis/committed_source.rs": {
+      "original": "d4931a826fbe5a57ebff1b6e8c5340a7d02dc5f6",
+      "final": "d4931a826fbe5a57ebff1b6e8c5340a7d02dc5f6"
+    },
+    "crates/ripr/src/analysis/input_boundary.rs": {
+      "original": "d19100bbea0fe4152459db54ea94ad53dd11ade0",
+      "final": "d19100bbea0fe4152459db54ea94ad53dd11ade0"
+    },
+    "crates/ripr/src/analysis/mod.rs": {
+      "original": "0f9421b9d958590c500a0f23fc8949e4ad055a64",
+      "final": "0f9421b9d958590c500a0f23fc8949e4ad055a64"
+    },
+    "crates/ripr/src/analysis/pipeline.rs": {
+      "original": "1efa1d454842bd99b2c240081b0b62913eff1376",
+      "final": "1efa1d454842bd99b2c240081b0b62913eff1376"
+    },
+    "crates/ripr/src/analysis/workspace/module_graph.rs": {
+      "original": "5793a029c86284e78628c45cc3cc94745f423570",
+      "final": "5793a029c86284e78628c45cc3cc94745f423570"
+    },
+    "crates/ripr/src/cli/commands/check.rs": {
+      "original": "74b6c782257d9896bb434104a67350742d8e33ae",
+      "final": "74b6c782257d9896bb434104a67350742d8e33ae"
+    },
+    "crates/ripr/src/cli/commands/check_fanout.rs": {
+      "original": "d462b6835e43b6cddefe251a95e9d4237ef2afd7",
+      "final": "d462b6835e43b6cddefe251a95e9d4237ef2afd7"
+    },
+    "crates/ripr/src/cli/help/core.rs": {
+      "original": "86a15ec269db72117e2fadb831a03596aecd6496",
+      "final": "86a15ec269db72117e2fadb831a03596aecd6496"
+    },
+    "crates/ripr/tests/cli_smoke.rs": {
+      "original": "1dcad884a7570cb1dafbccaa80af6c4fc5880d97",
+      "final": "1dcad884a7570cb1dafbccaa80af6c4fc5880d97"
+    },
+    "crates/ripr/tests/cli_smoke/native_fanout.rs": {
+      "original": "426e6c5588335ff758ecb01a63f0728efb04739e",
+      "final": "426e6c5588335ff758ecb01a63f0728efb04739e"
+    }
+  },
+  "feature_delta_paths": [
+    ".ripr/traceability.toml",
+    "changelog.d/8169-native-diff-output-set.md",
+    "crates/ripr/src/analysis/committed_source.rs",
+    "crates/ripr/src/analysis/input_boundary.rs",
+    "crates/ripr/src/analysis/mod.rs",
+    "crates/ripr/src/analysis/pipeline.rs",
+    "crates/ripr/src/analysis/workspace/module_graph.rs",
+    "crates/ripr/src/cli/commands.rs",
+    "crates/ripr/src/cli/commands/check.rs",
+    "crates/ripr/src/cli/commands/check_fanout.rs",
+    "crates/ripr/src/cli/help/core.rs",
+    "crates/ripr/tests/cli_smoke.rs",
+    "crates/ripr/tests/cli_smoke/native_fanout.rs",
+    "docs/OUTPUT_SCHEMA.md",
+    "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
+  ],
+  "feature_delta_stat": "15 files changed, 1729 insertions(+), 37 deletions(-)",
+  "candidate_clean_merge_tree": "9ccd7607ad39fb4d9650f4afed523130064ded91",
+  "remote_composition_tree": "9d36aee6f1db2b780a3fced6c300a20e5245e1f1",
+  "unrelated_later_main_paths": [
+    "README.md",
+    "changelog.d/8164-canonical-first-run.md",
+    "crates/ripr/src/cli/help.rs",
+    "crates/ripr/src/cli/help/overview.rs",
+    "docs/QUICKSTART.md",
+    "xtask/tests/ripr_public_guide_contract.rs"
+  ],
+  "zip_manifest": "{ version = \"9\", default-features = false, features = [\"deflate\"] }",
+  "zip_lock_object": "ef5d298aafe25b25107fa9c7d9aaa792016b2a7f"
+}

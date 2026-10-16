@@ -1,0 +1,9 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (/workspace/ripr-swarm/target/debug/deps/ripr-a6dce9f917d6369e)
+
+running 2 tests
+test analysis::classifier::finding::tests::exposed_keeps_unmatched_and_oracle_free_rows_unannotated ... ok
+test analysis::classifier::finding::tests::exposed_marks_proximity_only_oracle_rows_as_no_call_path ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 11072 filtered out; finished in 0.00s
+

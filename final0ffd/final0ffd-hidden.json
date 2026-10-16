@@ -1,0 +1,17 @@
+{
+  "label": "final0ffd-hidden",
+  "args": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--lib",
+    "hidden_bullets_"
+  ],
+  "cwd": "/workspace/review-8201-final",
+  "started": 1792131410.9475732,
+  "elapsed": 0.11331629753112793,
+  "exit": 0,
+  "head": "0ffd94561c92c6dbfbcc7efcfee59d6c15cc729e"
+}

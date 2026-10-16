@@ -1,8 +1,8 @@
 {
   "schema": "independent-review-evidence-v1",
   "candidate_pr": 8201,
-  "candidate_head": "6a47f5bf094e5b010845b544f9464333a8b90d7d",
-  "candidate_tree": "2a15b485aa9684ff9ea05159e429641433dd550b",
+  "candidate_head": "0ffd94561c92c6dbfbcc7efcfee59d6c15cc729e",
+  "candidate_tree": "9ccd7607ad39fb4d9650f4afed523130064ded91",
   "composition_head": "0b562e491cbb2740fccb23505641be646a5a7e83",
   "exclusive_evidence_branch": "codex/review-8201-6a47f5bf-independent-20261016",
   "files": [
@@ -13,8 +13,8 @@
     },
     {
       "path": "REVIEW.md",
-      "bytes": 10317,
-      "sha256": "f6770182933639c9f1a119705faa7e77fda60f68053f9099fb740589bbcf3890"
+      "bytes": 10528,
+      "sha256": "34b4498a7822e6054fa7fe6aea64ac362093624d80d404fb85859f58a94f1ab1"
     },
     {
       "path": "attempt1-driver.py.md",
@@ -40,6 +40,86 @@
       "path": "environment.json",
       "bytes": 1681,
       "sha256": "a41cf3df07808e79e9f843022de67650b1e853e7eac60305cbe6bbedd8e853ec"
+    },
+    {
+      "path": "final0ffd/REVIEW.md",
+      "bytes": 8766,
+      "sha256": "c76e82090be24177ad87c44efdca82a4d31fd7b191be85aeab4bbd2fec2a3289"
+    },
+    {
+      "path": "final0ffd/artifact-observation.json",
+      "bytes": 374,
+      "sha256": "98732872d6718a6a2e7b18b590363135d96efe50cbcf78b1cf8c29f341c75a90"
+    },
+    {
+      "path": "final0ffd/conversations.json",
+      "bytes": 15661,
+      "sha256": "80d4cd056a27d3b4fe49604a4d02594c8fe78cb49c4fe10f3008a4fe75a9ab80"
+    },
+    {
+      "path": "final0ffd/final-refs.tsv",
+      "bytes": 180,
+      "sha256": "1be5bf7aa5869f1d49d442da6bb032f6d9cc279caba4b9c98d10646da7dc3783"
+    },
+    {
+      "path": "final0ffd/final0ffd-annotations.json",
+      "bytes": 359,
+      "sha256": "4b427b57e0247a0faa5a9d9676904d993864675c35bfa10438f48be35eff8fd9"
+    },
+    {
+      "path": "final0ffd/final0ffd-annotations.log",
+      "bytes": 502,
+      "sha256": "e44c54d87ce93436f08bda78667aa834c56c21f563138f95061d225462e0324f"
+    },
+    {
+      "path": "final0ffd/final0ffd-cli.json",
+      "bytes": 334,
+      "sha256": "7b258175ba5c73b0233e6e4bbcc56585162b32ff32ad904b0d3f04ca42fe4996"
+    },
+    {
+      "path": "final0ffd/final0ffd-cli.log",
+      "bytes": 1096,
+      "sha256": "9c10e14b7558e22cde819f82ea6159c48bb5e4aaa37edda9929d6efa5d245c34"
+    },
+    {
+      "path": "final0ffd/final0ffd-hidden-mixed.json",
+      "bytes": 371,
+      "sha256": "2577dbb12bf9435509b0657bc074aa6574d0642b75a1ea6c3ab5d8a981633781"
+    },
+    {
+      "path": "final0ffd/final0ffd-hidden-mixed.log",
+      "bytes": 379,
+      "sha256": "5c53b5de7c5ff47a7e6436b8fb43e088db61d11d5eb3a88700ac873e4d58bbe5"
+    },
+    {
+      "path": "final0ffd/final0ffd-hidden.json",
+      "bytes": 323,
+      "sha256": "9cf843a6f66bb0251051f86a61601dc70e212866827957fe8ea73bbf881af1b3"
+    },
+    {
+      "path": "final0ffd/final0ffd-hidden.log",
+      "bytes": 487,
+      "sha256": "6878f93dc7c802e3a36cf4d402d5b4383da0d6758a90cf41bdc03d8b2b89575d"
+    },
+    {
+      "path": "final0ffd/final0ffd-units.json",
+      "bytes": 313,
+      "sha256": "89869fd24a096a805abab66176ebc7d9d6d60477d0f2519c1e48f0c53db86614"
+    },
+    {
+      "path": "final0ffd/final0ffd-units.log",
+      "bytes": 1879,
+      "sha256": "0326fdeb4ae4afb596f759859168d8096a944a3b7d674453d3d3bdfb269c606c"
+    },
+    {
+      "path": "final0ffd/integration.diff",
+      "bytes": 14039,
+      "sha256": "2a8c7799415cc247154adfc76865a676a8c43d0747fccb8199a507c50f0d88fe"
+    },
+    {
+      "path": "final0ffd/subjects.json",
+      "bytes": 3935,
+      "sha256": "9be30a2fd77a88e4e73de5859676dce5f1f6abc61fecef1efc9fb307fe600384"
     },
     {
       "path": "independent.json",
@@ -1504,5 +1584,9 @@
   ],
   "disposition": "REVIEW_INCOMPLETE",
   "readback_scope": "readback.json verifies the prior immutable packet commit; this manifest adds its receipt without changing earlier payloads",
-  "post8180_local_composition": "7307e51c198fafe9fe674c489b6f7b6723ee6dd5"
+  "post8180_local_composition": "7307e51c198fafe9fe674c489b6f7b6723ee6dd5",
+  "original_reviewed_head": "6a47f5bf094e5b010845b544f9464333a8b90d7d",
+  "latest_advertised_merge": "d10fe03915af68dd3f993e3f6601905680164853",
+  "latest_review_path": "final0ffd/REVIEW.md",
+  "pre_ready_technical_prerequisites": "satisfied at named observed subjects; no Ready transition"
 }
