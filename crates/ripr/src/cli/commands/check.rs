@@ -663,7 +663,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     )
     .map_err(|err| {
         super::check_fanout::refuse(
-            output_dir.as_deref(),
+            super::check_fanout::refusal_destination(
+                fanout_custody.as_ref(),
+                output_dir.as_deref(),
+            ),
             &envelope_input,
             effective_format,
             err,
@@ -673,7 +676,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     }
     if worktree_explicitly_provided && input.diff_file.is_some() {
         return Err(super::check_fanout::refuse(
-            output_dir.as_deref(),
+            super::check_fanout::refusal_destination(
+                fanout_custody.as_ref(),
+                output_dir.as_deref(),
+            ),
             &envelope_input,
             effective_format,
             "check --worktree cannot be combined with --diff".to_string(),
@@ -682,7 +688,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     if committed_explicitly_provided {
         if worktree_explicitly_provided {
             return Err(super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 "check --committed and --worktree select different diff sources; pass one"
@@ -691,7 +700,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         }
         if input.diff_file.is_some() {
             return Err(super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 "check --committed cannot be combined with --diff".to_string(),
@@ -699,7 +711,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         }
         if candidate_tree.is_some() {
             return Err(super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 "check --committed cannot be combined with --candidate-tree".to_string(),
@@ -721,7 +736,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         )
     {
         return Err(super::check_fanout::refuse(
-            output_dir.as_deref(),
+            super::check_fanout::refusal_destination(fanout_custody.as_ref(), output_dir.as_deref()),
             &envelope_input,
             effective_format,
             "--suppression-policy applies to the findings-based check formats (human, human-full, json, github); \
@@ -739,7 +754,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             Some(explicit) => crate::domain::GitCandidateBase::Treeish(
                 crate::domain::GitTreeish::new(explicit).map_err(|error| {
                     super::check_fanout::refuse(
-                        output_dir.as_deref(),
+                        super::check_fanout::refusal_destination(
+                            fanout_custody.as_ref(),
+                            output_dir.as_deref(),
+                        ),
                         &envelope_input,
                         effective_format,
                         error.to_string(),
@@ -750,7 +768,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         };
         let candidate = crate::domain::GitObjectId::parse(tree).map_err(|error| {
             super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 error.to_string(),
@@ -766,7 +787,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // dangling input the run would silently ignore; fail closed.
     if candidate_base.is_some() && candidate_tree.is_none() {
         return Err(super::check_fanout::refuse(
-            output_dir.as_deref(),
+            super::check_fanout::refusal_destination(fanout_custody.as_ref(), output_dir.as_deref()),
             &envelope_input,
             effective_format,
             "--candidate-base requires --candidate-tree: name the candidate tree the base applies to"
@@ -786,7 +807,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     } else {
         load_for_root(&input.root).map_err(|err| {
             super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 config_load_refusal(&input.root, err),
@@ -820,7 +844,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             || format.is_repo_scope());
     if subject_bound_with_live_repo_path {
         return Err(super::check_fanout::refuse(
-            output_dir.as_deref(),
+            super::check_fanout::refusal_destination(
+                fanout_custody.as_ref(),
+                output_dir.as_deref(),
+            ),
             &envelope_input,
             effective_format,
             format!(
@@ -845,7 +872,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // never let those unrelated bytes stand in for the consumed input.
         if input.diff_file.as_deref() == Some(Path::new("-")) {
             return Err(super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 format!(
@@ -869,7 +899,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         if !crate::cli::commands_context::windows_stripped_components(path).is_empty() {
             let written = crate::cli::commands_context::windows_normalized_path(path);
             return Err(super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 format!(
@@ -889,7 +922,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // identity exists (R4 scope).
         if candidate_tree.is_some() {
             return Err(super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 format!(
@@ -900,7 +936,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         }
         if gap_ledger.is_some() {
             return Err(super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 format!(
@@ -911,7 +950,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         }
         if matches!(format, OutputFormat::RepoExposureJson) || format.is_repo_scope() {
             return Err(super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 format!(
@@ -935,7 +977,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 .is_some_and(app::is_managed_perl_producer)
         {
             return Err(super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 format!(
@@ -971,7 +1016,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                     }
                 };
                 super::check_fanout::refuse(
-                    output_dir.as_deref(),
+                    super::check_fanout::refusal_destination(
+                        fanout_custody.as_ref(),
+                        output_dir.as_deref(),
+                    ),
                     &envelope_input,
                     effective_format,
                     refusal,
@@ -985,7 +1033,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     if let Some(custody) = fanout_custody.as_mut() {
         custody.bind_config(&config).map_err(|error| {
             super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 error,
@@ -1062,7 +1113,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     if format.is_repo_scope() {
         validate_repo_scope_diff_inputs(&input, base_explicitly_provided).map_err(|err| {
             super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 err,
@@ -1072,7 +1126,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     if committed_explicitly_provided {
         if gap_ledger.is_some() {
             return Err(super::check_fanout::refuse(
-            output_dir.as_deref(),
+            super::check_fanout::refusal_destination(fanout_custody.as_ref(), output_dir.as_deref()),
                 &envelope_input,
                 effective_format,
                 "check --committed selects a diff source; --gap-ledger renders a supplied ledger and reads no diff"
@@ -1081,7 +1135,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         }
         if format.is_repo_scope() || matches!(format, OutputFormat::RepoExposureJson) {
             return Err(super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 format!(
@@ -1095,7 +1152,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         write_stdout_chunked(
             &render_check_gap_ledger_badge(gap_ledger, &format, &config).map_err(|err| {
                 super::check_fanout::refuse(
-                    output_dir.as_deref(),
+                    super::check_fanout::refusal_destination(
+                        fanout_custody.as_ref(),
+                        output_dir.as_deref(),
+                    ),
                     &envelope_input,
                     effective_format,
                     err,
@@ -1104,7 +1164,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         )
         .map_err(|err| {
             super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 err,
@@ -1179,7 +1242,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         )
         .map_err(|err| {
             super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 err,
@@ -1252,7 +1318,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         Ok(output) => output,
         Err(err) => {
             return Err(super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 err,
@@ -1292,7 +1361,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         )
         .map_err(|err| {
             super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 err,
@@ -1427,7 +1499,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     if let (Some(_destination), Some(custody)) = (output_dir.as_deref(), fanout_custody.as_ref()) {
         custody.verify().map_err(|error| {
             super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 error,
@@ -1450,7 +1525,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             )
             .map_err(|error| {
                 super::check_fanout::refuse(
-                    output_dir.as_deref(),
+                    super::check_fanout::refusal_destination(
+                        fanout_custody.as_ref(),
+                        output_dir.as_deref(),
+                    ),
                     &envelope_input,
                     effective_format,
                     error,
@@ -1485,7 +1563,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         )
         .map_err(|err| {
             super::check_fanout::refuse(
-                output_dir.as_deref(),
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 err,
@@ -1494,7 +1575,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     )
     .map_err(|err| {
         super::check_fanout::refuse(
-            output_dir.as_deref(),
+            super::check_fanout::refusal_destination(
+                fanout_custody.as_ref(),
+                output_dir.as_deref(),
+            ),
             &envelope_input,
             effective_format,
             err,

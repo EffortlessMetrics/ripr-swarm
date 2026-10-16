@@ -364,6 +364,18 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
         })
 }
 
+/// Refusal publication must respect the same custody guard as admitted sets:
+/// once custody exists, refusals publish to the captured canonical
+/// destination, never through a requested path re-resolved at write time. A
+/// destination parent retargeted mid-run would otherwise receive the refusal
+/// set in a directory identity custody never vetted.
+pub(super) fn refusal_destination<'a>(
+    custody: Option<&'a Custody>,
+    requested: Option<&'a Path>,
+) -> Option<&'a Path> {
+    custody.map(Custody::destination).or(requested)
+}
+
 pub(super) fn refuse(
     destination: Option<&Path>,
     input: &CheckInput,
@@ -707,6 +719,63 @@ mod tests {
             1,
             "fan-out must enter the actual diff pipeline exactly once"
         );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fanout_refusal_after_parent_retarget_publishes_only_to_captured_destination()
+    -> Result<(), String> {
+        for label in ["captured", "requested"] {
+            let (fixture, input, _) = custody_fixture("fanout-retarget-refusal")?;
+            let parent_a = fixture.0.join(format!("kept-{label}"));
+            let parent_b = fixture.0.join(format!("retargeted-{label}"));
+            std::fs::create_dir(&parent_a).map_err(|e| e.to_string())?;
+            std::fs::create_dir(&parent_b).map_err(|e| e.to_string())?;
+            let link = fixture.0.join(format!("link-{label}"));
+            std::os::unix::fs::symlink(&parent_a, &link).map_err(|e| e.to_string())?;
+            let custody = Custody::capture(&input, &link.join("outputs"))?;
+            std::fs::remove_file(&link).map_err(|e| e.to_string())?;
+            std::os::unix::fs::symlink(&parent_b, &link).map_err(|e| e.to_string())?;
+            let requested = link.join("outputs");
+            let message = if label == "captured" {
+                let destination = super::refusal_destination(Some(&custody), Some(&requested))
+                    .ok_or("custody refusal destination must exist")?;
+                assert_eq!(destination, custody.destination());
+                assert_ne!(destination, requested.as_path());
+                refuse(
+                    Some(destination),
+                    &input,
+                    OutputFormat::Json,
+                    "retarget refusal",
+                )
+            } else {
+                // Known-wrong control: the requested path re-resolves through
+                // the retargeted link at write time and must stay detectable.
+                refuse(
+                    Some(&requested),
+                    &input,
+                    OutputFormat::Json,
+                    "retarget control",
+                )
+            };
+            assert!(message.contains("retarget"), "{label}: {message}");
+            let manifest = if label == "captured" {
+                assert!(
+                    !parent_b.join("outputs").exists(),
+                    "retargeted parent must not receive the refusal set"
+                );
+                custody.destination().join("manifest.json")
+            } else {
+                parent_b.join("outputs").join("manifest.json")
+            };
+            let manifest: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(manifest).map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?;
+            assert_eq!(manifest["binding"], "refused_incomplete");
+            assert_eq!(manifest["complete_set"], false);
+            assert_eq!(manifest["command_success"], false);
+        }
         Ok(())
     }
 }

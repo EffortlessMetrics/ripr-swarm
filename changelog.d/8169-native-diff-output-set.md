@@ -6,3 +6,5 @@
   input-read failures are scoped to their active root boundary (#8169).
 - Reads through aliases under excluded Git metadata or Cargo target directories
   remain refused even when the alias resolves to captured source (#8169).
+- Refusal sets publish to the captured canonical output destination once custody
+  exists, so a destination parent retargeted mid-run never receives them (#8169).

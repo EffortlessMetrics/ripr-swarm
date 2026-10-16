@@ -22,6 +22,7 @@ tests = [
   "crates/ripr/src/analysis/input_boundary.rs::fanout_boundary_observes_worker_reads_and_isolates_roots",
   "crates/ripr/src/analysis/input_boundary.rs::fanout_boundary_rejects_only_exclusions_below_selected_root",
   "crates/ripr/src/cli/commands/check_fanout.rs::fanout_refuses_output_parent_identity_drift",
+  "crates/ripr/src/cli/commands/check_fanout.rs::fanout_refusal_after_parent_retarget_publishes_only_to_captured_destination",
   "crates/ripr/src/cli/commands/check_fanout.rs::fanout_refuses_input_mutations_at_the_native_analysis_boundary",
   "crates/ripr/src/cli/commands/check_fanout.rs::fanout_input_identity_keeps_non_utf8_paths_without_panicking",
   "crates/ripr/tests/cli_smoke/native_fanout.rs::fanout_python_source_stamp_and_navigation_are_native",
