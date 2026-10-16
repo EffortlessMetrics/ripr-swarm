@@ -1,0 +1,46 @@
+{
+  "verified_utc": "2026-10-16T05:50:01.389280+00:00",
+  "remote": "https://github.com/EffortlessMetrics/ripr-swarm.git",
+  "remote_commit": "82746c2b7ec1aed3b435942386231ed7f3debc33",
+  "route": "Fresh bare repository, depth-one remote fetch; each complete file compared to local publication bytes; complete archive member bytes/size/mode/inventory verified",
+  "files": [
+    {
+      "path": "evidence/8147/independent-425317d/README.md",
+      "bytes": 8224,
+      "sha256": "113bc0824559ed93ae4d7e693c37f0f4ee7249edec61ae2b4d8c2352095a1a7f"
+    },
+    {
+      "path": "evidence/8147/independent-425317d/SHA256SUMS",
+      "bytes": 479,
+      "sha256": "5b42e408d25862e67fb229c382cafd2a54a08cfd561a23999af008aeb6f72ffb"
+    },
+    {
+      "path": "evidence/8147/independent-425317d/archive-inventory.json",
+      "bytes": 35129,
+      "sha256": "ece41e1d3847cca0beefe36eb48f928a1003d37c759e41a90141574c5a31fc56"
+    },
+    {
+      "path": "evidence/8147/independent-425317d/ci.json",
+      "bytes": 6245,
+      "sha256": "4cc0d2325e335e246cde0f8d67a29743c06dbb9bfbd49c80dd8e56a7a9682fba"
+    },
+    {
+      "path": "evidence/8147/independent-425317d/controls.tar.gz",
+      "bytes": 34705,
+      "sha256": "e06996d3d79a3b7f3660c3d7b3cdb084a78b9d77505b5f5b81d03d528c60fb6e"
+    },
+    {
+      "path": "evidence/8147/independent-425317d/receipt.json",
+      "bytes": 11431,
+      "sha256": "9ab33c81b9386d0e891249f1d243da5a07b83052a2650d804b605c5026ff228f"
+    },
+    {
+      "path": "evidence/8147/independent-425317d/results.json",
+      "bytes": 65258,
+      "sha256": "784bcfadaeb87d166bbdda2a3c7b1be94d16d8ff19ff331551299ac1c4ba6daa"
+    }
+  ],
+  "verified_archive_members": 196,
+  "candidate_head_unchanged": "425317d867f4639ad5ec878c3ba44c82730d7af7",
+  "result": "all_equal"
+}
