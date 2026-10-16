@@ -274,6 +274,8 @@ fn skipped_closer_config_warning(invocation_root: &Path, analysis_root: &Path) -
 
 /// Options that consume the next argument as a value. `help_request` skips
 /// those values so `--diff --all` names a file rather than the help modifier.
+/// `check_value_options_match_the_documented_value_taking_flags` derives the
+/// same set from the exhaustive help and fails when this list drifts.
 const CHECK_VALUE_OPTIONS: &[&str] = &[
     "--root",
     "--base",
@@ -2265,6 +2267,46 @@ mod tests {
                 Some((expected?, ImplicitRootReason::GitTopLevel))
             );
         }
+        Ok(())
+    }
+
+    /// A flag documented with a value placeholder (`--root PATH`, or the
+    /// placeholder on the next line) takes a value; `CHECK_VALUE_OPTIONS` must
+    /// list exactly those, or `--newflag --all --help` would misread the value.
+    #[test]
+    fn check_value_options_match_the_documented_value_taking_flags() -> Result<(), String> {
+        let help = help::help_text_for("check").ok_or("check help must exist")?;
+        let is_placeholder = |token: &str| {
+            token.len() >= 3 && token.chars().all(|c| c.is_ascii_uppercase() || c == '_')
+        };
+        let mut documented = std::collections::BTreeSet::new();
+        let lines: Vec<&str> = help
+            .lines()
+            .skip_while(|line| *line != "Options:")
+            .take_while(|line| !line.is_empty() || *line == "Options:")
+            .collect();
+        let mut index = 0;
+        while index < lines.len() {
+            if let Some(rest) = lines[index].strip_prefix("  --") {
+                let mut words = rest.split_whitespace();
+                let flag = format!("--{}", words.next().unwrap_or_default());
+                let placeholder = match words.next() {
+                    Some(token) => Some(token),
+                    None => lines
+                        .get(index + 1)
+                        .and_then(|next| next.split_whitespace().next()),
+                };
+                if placeholder.is_some_and(is_placeholder) {
+                    documented.insert(flag);
+                }
+            }
+            index += 1;
+        }
+        let declared: std::collections::BTreeSet<String> = CHECK_VALUE_OPTIONS
+            .iter()
+            .map(|flag| (*flag).to_string())
+            .collect();
+        assert_eq!(documented, declared);
         Ok(())
     }
 
