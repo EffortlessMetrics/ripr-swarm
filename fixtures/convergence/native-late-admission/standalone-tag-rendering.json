@@ -1,0 +1,2055 @@
+{
+  "oracle": "commonmark-py0.9.1 and cmarkgfm2024.11.20/native0.29.0.gfm.13; all130 cases agree",
+  "reference": "https://github.github.com/gfm/#raw-html",
+  "method": "Actual Markdown is rendered by both tools. Direct initial SOURCE_REVIEW_READY is checked as visible paragraph text; explicit later fields are collected outside code/HTML. Valid type7 tags hide fields only in block-start context. Both malformed-tag conflict/refusal and outside-positive/admission are covered. Earlier CDATA alternate-renderer limitation remains in its original fixture.",
+  "cases": [
+    {
+      "case": "plain-open-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "plain-open-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "plain-close-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n</span>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n</span>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "plain-close-positive",
+      "body": "REVIEW_INCOMPLETE\n\n</span>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n</span>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "self-close-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span/>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span/>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "self-close-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span/>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span/>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "self-close-space-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span />\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span />\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "self-close-space-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span />\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span />\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "boolean-attribute-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span disabled>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span disabled>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "boolean-attribute-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span disabled>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span disabled>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "unquoted-value-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a=b>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span a=b>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "unquoted-value-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a=b>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span a=b>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "single-empty-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a=''>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span a=''>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "single-empty-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a=''>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span a=''>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "double-empty-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a=\"\">\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span a=\"\">\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "double-empty-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a=\"\">\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span a=\"\">\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "quoted-greater-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a='x>y'>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span a='x>y'>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "quoted-greater-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a='x>y'>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span a='x>y'>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "quoted-angle-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a=\"<x>\">\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span a=\"<x>\">\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "quoted-angle-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a=\"<x>\">\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span a=\"<x>\">\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "single-space-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a='a b'>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span a='a b'>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "single-space-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a='a b'>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span a='a b'>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "double-space-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a=\"a b\">\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span a=\"a b\">\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "double-space-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a=\"a b\">\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span a=\"a b\">\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "equals-whitespace-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a = \"x\">\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span a = \"x\">\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "equals-whitespace-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a = \"x\">\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span a = \"x\">\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "two-attributes-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a=b c=d>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span a=b c=d>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "two-attributes-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a=b c=d>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span a=b c=d>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "colon-attribute-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span :a=x>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span :a=x>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "colon-attribute-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span :a=x>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span :a=x>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "underscore-attribute-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span _a=x>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span _a=x>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "underscore-attribute-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span _a=x>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span _a=x>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "attribute-tail-name-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a.b-c:d_e=x>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span a.b-c:d_e=x>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "attribute-tail-name-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a.b-c:d_e=x>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span a.b-c:d_e=x>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "hyphen-tag-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span-x1>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span-x1>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "hyphen-tag-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span-x1>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span-x1>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "mixed-case-tag-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<SpAn>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<SpAn>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "mixed-case-tag-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<SpAn>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<SpAn>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "closing-space-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n</span  >\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n</span  >\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "closing-space-positive",
+      "body": "REVIEW_INCOMPLETE\n\n</span  >\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n</span  >\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "missing-value-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a=>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a=&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a=&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "missing-value-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a=>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a=&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a=&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "missing-value-space-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a= >\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a= &gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a= &gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "missing-value-space-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a= >\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a= &gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a= &gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "missing-value-around-equals-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a = >\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a = &gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a = &gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "missing-value-around-equals-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a = >\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a = &gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a = &gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "single-unclosed-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a='x>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a='x&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a='x&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "single-unclosed-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a='x>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a='x&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a='x&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "double-unclosed-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a=\"x>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a=&quot;x&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a=&quot;x&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "double-unclosed-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a=\"x>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a=&quot;x&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a=&quot;x&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-value-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a=`x`>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a=<code>x</code>&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a=<code>x</code>&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-value-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a=`x`>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a=<code>x</code>&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a=<code>x</code>&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "extra-equals-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a==x>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a==x&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a==x&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "extra-equals-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a==x>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a==x&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a==x&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "angle-unquoted-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a=<x>>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a=<x>&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a=<!-- raw HTML omitted -->&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "angle-unquoted-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a=<x>>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a=<x>&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a=<!-- raw HTML omitted -->&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "equals-unquoted-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a=x=y>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a=x=y&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a=x=y&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "equals-unquoted-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a=x=y>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a=x=y&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a=x=y&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "single-in-unquoted-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a=x'y>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a=x'y&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a=x'y&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "single-in-unquoted-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a=x'y>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a=x'y&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a=x'y&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "double-in-unquoted-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a=x\"y>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a=x&quot;y&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a=x&quot;y&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "double-in-unquoted-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a=x\"y>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a=x&quot;y&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a=x&quot;y&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "digit-attribute-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span 1a=x>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span 1a=x&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span 1a=x&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "digit-attribute-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span 1a=x>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span 1a=x&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span 1a=x&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "at-attribute-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span @a=x>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span @a=x&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span @a=x&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "at-attribute-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span @a=x>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span @a=x&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span @a=x&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "dash-attribute-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span -a=x>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span -a=x&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span -a=x&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "dash-attribute-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span -a=x>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span -a=x&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span -a=x&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "dot-attribute-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span .a=x>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span .a=x&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span .a=x&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "dot-attribute-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span .a=x>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span .a=x&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span .a=x&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "digit-tag-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<1span>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;1span&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;1span&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "digit-tag-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<1span>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;1span&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;1span&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "colon-tag-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<ns:span>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p><a href=\"ns:span\">ns:span</a>\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p><a href=\"ns:span\">ns:span</a>\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "colon-tag-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<ns:span>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p><a href=\"ns:span\">ns:span</a>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p><a href=\"ns:span\">ns:span</a>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "underscore-tag-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<foo_bar>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;foo_bar&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;foo_bar&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "underscore-tag-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<foo_bar>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;foo_bar&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;foo_bar&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "space-after-open-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n< span>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt; span&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt; span&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "space-after-open-positive",
+      "body": "REVIEW_INCOMPLETE\n\n< span>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt; span&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt; span&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "closing-attribute-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n</span a>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;/span a&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;/span a&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "closing-attribute-positive",
+      "body": "REVIEW_INCOMPLETE\n\n</span a>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;/span a&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;/span a&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "closing-self-close-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n</span/>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;/span/&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;/span/&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "closing-self-close-positive",
+      "body": "REVIEW_INCOMPLETE\n\n</span/>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;/span/&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;/span/&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "space-in-slash-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span / >\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span / &gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span / &gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "space-in-slash-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span / >\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span / &gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span / &gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "empty-attribute-name-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span =x>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span =x&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span =x&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "empty-attribute-name-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span =x>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span =x&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span =x&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "missing-attribute-gap-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a=\"x\"c>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a=&quot;x&quot;c&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a=&quot;x&quot;c&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "missing-attribute-gap-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a=\"x\"c>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a=&quot;x&quot;c&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a=&quot;x&quot;c&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "quoted-then-boolean-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a=\"x\" c>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span a=\"x\" c>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "quoted-then-boolean-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a=\"x\" c>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span a=\"x\" c>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "bad-close-gap-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a='x' / >\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a='x' / &gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span a='x' / &gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "bad-close-gap-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a='x' / >\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a='x' / &gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span a='x' / &gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "quoted-self-close-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a='x'/>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span a='x'/>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "quoted-self-close-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a='x'/>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span a='x'/>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "trailing-open-text-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span> text\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p><span> text\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p><!-- raw HTML omitted --> text\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "trailing-open-text-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span> text\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p><span> text\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p><!-- raw HTML omitted --> text\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "trailing-close-text-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n</span> text\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p></span> text\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p><!-- raw HTML omitted --> text\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "trailing-close-text-positive",
+      "body": "REVIEW_INCOMPLETE\n\n</span> text\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p></span> text\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p><!-- raw HTML omitted --> text\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "trailing-comment-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span> <!-- comment -->\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p><span> <!-- comment -->\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p><!-- raw HTML omitted --> <!-- raw HTML omitted -->\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "trailing-comment-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span> <!-- comment -->\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p><span> <!-- comment -->\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p><!-- raw HTML omitted --> <!-- raw HTML omitted -->\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "trailing-tab-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span>\t\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span>\t\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "trailing-tab-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span>\t\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span>\t\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "tab-value-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a=\tfoo>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span a=\tfoo>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "tab-value-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a=\tfoo>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span a=\tfoo>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "tab-attribute-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span\t_a = 'x'>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<span\t_a = 'x'>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "tab-attribute-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span\t_a = 'x'>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<span\t_a = 'x'>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "quoted-newline-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span title='\ndisposition: REVIEW_READY\n'>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p><span title='\ndisposition: REVIEW_READY\n'>\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p><!-- raw HTML omitted -->\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "quoted-newline-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span title='\ndisposition: REVIEW_READY\n'>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p><span title='\ndisposition: REVIEW_READY\n'>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p><!-- raw HTML omitted -->\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "unquoted-newline-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span a=\nfoo>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p><span a=\nfoo>\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p><!-- raw HTML omitted -->\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "unquoted-newline-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span a=\nfoo>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p><span a=\nfoo>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p><!-- raw HTML omitted -->\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "quoted-blank-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span title='\n\ndisposition: REVIEW_READY\n'>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span title='</p>\n<p>disposition: REVIEW_READY\n'&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span title='</p>\n<p>disposition: REVIEW_READY\n'&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "quoted-blank-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span title='\n\ndisposition: REVIEW_READY\n'>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span title='</p>\n<p>disposition: REVIEW_READY\n'&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span title='</p>\n<p>disposition: REVIEW_READY\n'&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "quoted-heading-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span title='\n# Heading\ndisposition: REVIEW_READY\n'>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span title='</p>\n<h1>Heading</h1>\n<p>disposition: REVIEW_READY\n'&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span title='</p>\n<h1>Heading</h1>\n<p>disposition: REVIEW_READY\n'&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "quoted-heading-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span title='\n# Heading\ndisposition: REVIEW_READY\n'>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span title='</p>\n<h1>Heading</h1>\n<p>disposition: REVIEW_READY\n'&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span title='</p>\n<h1>Heading</h1>\n<p>disposition: REVIEW_READY\n'&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "paragraph-before-open-conflict",
+      "body": "SOURCE_REVIEW_READY\n\nExample text\n<span>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>Example text\n<span>\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>Example text\n<!-- raw HTML omitted -->\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "paragraph-before-open-positive",
+      "body": "REVIEW_INCOMPLETE\n\nExample text\n<span>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>Example text\n<span>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>Example text\n<!-- raw HTML omitted -->\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "paragraph-before-close-conflict",
+      "body": "SOURCE_REVIEW_READY\n\nExample text\n</span>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>Example text\n</span>\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>Example text\n<!-- raw HTML omitted -->\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "paragraph-before-close-positive",
+      "body": "REVIEW_INCOMPLETE\n\nExample text\n</span>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>Example text\n</span>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>Example text\n<!-- raw HTML omitted -->\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "heading-before-open-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n## Heading\n<span>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<h2>Heading</h2>\n<span>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<h2>Heading</h2>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "heading-before-open-positive",
+      "body": "REVIEW_INCOMPLETE\n\n## Heading\n<span>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<h2>Heading</h2>\n<span>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<h2>Heading</h2>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "fence-before-open-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n~~~text\nexample\n~~~\n<span>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<pre><code class=\"language-text\">example\n</code></pre>\n<span>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<pre lang=\"text\"><code>example\n</code></pre>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "fence-before-open-positive",
+      "body": "REVIEW_INCOMPLETE\n\n~~~text\nexample\n~~~\n<span>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<pre><code class=\"language-text\">example\n</code></pre>\n<span>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<pre lang=\"text\"><code>example\n</code></pre>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "comment-before-open-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<!-- comment -->\n<span>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<!-- comment -->\n<span>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<!-- raw HTML omitted -->\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "comment-before-open-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<!-- comment -->\n<span>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<!-- comment -->\n<span>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<!-- raw HTML omitted -->\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "paragraph-then-blank-conflict",
+      "body": "SOURCE_REVIEW_READY\n\nExample text\n\n<span>\ndisposition: REPAIR_REQUIRED",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>Example text</p>\n<span>\ndisposition: REPAIR_REQUIRED\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>Example text</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "paragraph-then-blank-positive",
+      "body": "REVIEW_INCOMPLETE\n\nExample text\n\n<span>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>Example text</p>\n<span>\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>Example text</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "malformed-code-open-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<code a=>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;code a=&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;code a=&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "malformed-code-open-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<code a=>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;code a=&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;code a=&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "quoted-fence-conflict",
+      "body": "SOURCE_REVIEW_READY\n\n<span title='\n~~~text\nexample\n~~~\ndisposition: REVIEW_READY\n'>\ndisposition: REPAIR_REQUIRED",
+      "expected": false,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY",
+        "REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "observed": false,
+      "html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span title='</p>\n<pre><code class=\"language-text\">example\n</code></pre>\n<p>disposition: REVIEW_READY\n'&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_html": "<p>SOURCE_REVIEW_READY</p>\n<p>&lt;span title='</p>\n<pre lang=\"text\"><code>example\n</code></pre>\n<p>disposition: REVIEW_READY\n'&gt;\ndisposition: REPAIR_REQUIRED</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY",
+        "REVIEW_READY",
+        "REPAIR_REQUIRED"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "quoted-fence-positive",
+      "body": "REVIEW_INCOMPLETE\n\n<span title='\n~~~text\nexample\n~~~\ndisposition: REVIEW_READY\n'>\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span title='</p>\n<pre><code class=\"language-text\">example\n</code></pre>\n<p>disposition: REVIEW_READY\n'&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>REVIEW_INCOMPLETE</p>\n<p>&lt;span title='</p>\n<pre lang=\"text\"><code>example\n</code></pre>\n<p>disposition: REVIEW_READY\n'&gt;\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    }
+  ]
+}

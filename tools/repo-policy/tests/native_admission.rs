@@ -206,6 +206,84 @@ fn current_attestation_rejects_narrative_readiness_without_changing_native_revie
             ("\tSOURCE_REVIEW_READY", false),
             ("SOURCE_REVIEW_READY_suffix", false),
             ("SOURCE_REVIEW_READYish", false),
+            ("Example: `\ndisposition: REVIEW_READY\n`", false),
+            (
+                "Example: `\ndisposition: REPAIR_REQUIRED\n`\ndisposition: SOURCE_REVIEW_READY",
+                true,
+            ),
+            ("Example: ``\n`\ndisposition: REVIEW_READY\n``", false),
+            (
+                "Example: ``\n`\ndisposition: REPAIR_REQUIRED\n``\ndisposition: SOURCE_REVIEW_READY",
+                true,
+            ),
+            ("<!--\ndisposition: REVIEW_READY\n-->", false),
+            (
+                "<!--\ndisposition: REPAIR_REQUIRED\n-->\ndisposition: SOURCE_REVIEW_READY",
+                true,
+            ),
+            ("<pre>\ndisposition: REVIEW_READY\n</pre>", false),
+            (
+                "<pre>\ndisposition: REPAIR_REQUIRED\n</pre>\ndisposition: SOURCE_REVIEW_READY",
+                true,
+            ),
+            (
+                "<CODE class=example>\ndisposition: REVIEW_READY\n</CODE>",
+                false,
+            ),
+            (
+                "<script>\ndisposition: REPAIR_REQUIRED\n</script>\ndisposition: SOURCE_REVIEW_READY",
+                true,
+            ),
+            ("<style>\ndisposition: REVIEW_READY\n</style>", false),
+            (
+                "<textarea>\ndisposition: REPAIR_REQUIRED\n</textarea>\ndisposition: SOURCE_REVIEW_READY",
+                true,
+            ),
+            ("<![CDATA[\ndisposition: REVIEW_READY\n]]>", false),
+            (
+                "<?example\ndisposition: REPAIR_REQUIRED\n?>\ndisposition: SOURCE_REVIEW_READY",
+                true,
+            ),
+            ("<div>\ndisposition: REVIEW_READY\n</div>", false),
+            (
+                "<div>\ndisposition: REPAIR_REQUIRED\n</div>\n\ndisposition: SOURCE_REVIEW_READY",
+                true,
+            ),
+            ("<span>\ndisposition: REVIEW_READY\n</span>", false),
+            (
+                "<span>\ndisposition: REPAIR_REQUIRED\n</span>\n\ndisposition: SOURCE_REVIEW_READY",
+                true,
+            ),
+            ("```html\n<!--\n```\ndisposition: SOURCE_REVIEW_READY", true),
+            (
+                "<pre>\n```\ndisposition: REPAIR_REQUIRED\n</pre>\ndisposition: SOURCE_REVIEW_READY",
+                true,
+            ),
+            (
+                "Example: `\ndisposition: REPAIR_REQUIRED\n`\ndisposition: REPAIR_REQUIRED",
+                false,
+            ),
+            (
+                "Example: `\ndisposition: REVIEW_READY\n`\ndisposition: REPAIR_REQUIRED",
+                false,
+            ),
+            ("    <pre>\n\ndisposition: SOURCE_REVIEW_READY", true),
+            ("> <!--\n\ndisposition: SOURCE_REVIEW_READY", true),
+            ("Example: `<pre>`\ndisposition: SOURCE_REVIEW_READY", true),
+            (
+                "<!-- `\ndisposition: REPAIR_REQUIRED\n-->\ndisposition: SOURCE_REVIEW_READY\n`",
+                true,
+            ),
+            (
+                "<pre>`\ndisposition: REPAIR_REQUIRED\n</pre>\ndisposition: SOURCE_REVIEW_READY\n`",
+                true,
+            ),
+            ("Example: \\`\ndisposition: SOURCE_REVIEW_READY\n\\`", true),
+            ("Example: \\\\`\ndisposition: REVIEW_READY\n`", false),
+            ("\\<pre>\ndisposition: SOURCE_REVIEW_READY", true),
+            ("\\<!--\ndisposition: SOURCE_REVIEW_READY", true),
+            ("\\\\<pre>\ndisposition: REVIEW_READY\n</pre>", false),
+            ("&lt;pre&gt;\ndisposition: SOURCE_REVIEW_READY", true),
             ("```\ndisposition: REVIEW_READY\n```", false),
             ("~~~text\ndisposition: REVIEW_READY\n~~~", false),
             ("````text\n```\ndisposition: REVIEW_READY\n````", false),
@@ -264,6 +342,34 @@ fn current_attestation_rejects_narrative_readiness_without_changing_native_revie
             &json!([comment("", "APPROVED", 'a', 1)]),
             &json!({})
         )?);
+    }
+    Ok(())
+}
+
+#[test]
+fn inline_examples_cannot_hide_dispositions_in_other_blocks() -> Result<(), String> {
+    let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
+    let pr = &vectors["live_drift_cases"][0]["live_pull_request"];
+    for (name, body, expected) in review_disposition::block_boundary_cases()?
+        .into_iter()
+        .chain(review_disposition::block_recognition_cases()?)
+        .chain(review_disposition::standalone_tag_cases()?)
+        .chain(review_disposition::container_boundary_cases()?)
+        .chain(review_disposition::sibling_context_cases()?)
+        .chain(review_disposition::unicode_list_content_cases()?)
+        .chain(review_disposition::structural_leaf_cases()?)
+        .chain(review_disposition::html_region_cases()?)
+        .chain(review_disposition::container_instance_cases()?)
+    {
+        let review = json!({"id":1,"user":{"login":"author"},"state":"COMMENTED",
+            "commit_id":"a".repeat(40),"submitted_at":"2026-10-15T01:00:00Z","body":body});
+        for script in review_boundary_bodies()? {
+            assert_eq!(
+                execute(&script, pr, &json!([review.clone()]), &json!({}))?,
+                expected,
+                "{name}: {body}"
+            );
+        }
     }
     Ok(())
 }

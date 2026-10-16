@@ -67,9 +67,69 @@ No new GitHub approval count is required.
 
 The COMMENT parser recognizes a direct positive declaration at the start of the
 first nonblank line (`SOURCE_REVIEW_READY` or `REVIEW_READY`, optionally followed
-by an explanation), or a standalone `disposition: SOURCE_REVIEW_READY` /
-`disposition: REVIEW_READY` field at column zero. Quoted, indented-code and fenced
-examples are not declarations. An explicit conflicting disposition field refuses.
+by an explanation), or a standalone column-zero `disposition:` field with either
+positive value. An explicit conflicting field refuses. Original source columns
+and first-nonblank occupancy govern; masking an example cannot create a new first
+line or dedent a field into column zero.
+
+The static jq pipeline retains line records containing original text/position,
+container ownership, leaf identity and paragraph/opaque kind. Container matching
+and block starts precede lazy continuation, following the [CommonMark block-phase
+strategy](https://spec.commonmark.org/0.29/#phase-1-block-structure). The open
+paragraph belongs to its complete container stack, not an unmatched ancestor.
+One list-marker lexer determines content-bearing items for both block recognition
+and inline ownership; it searches the whole rest for content, including text after
+VT/FF. Only literal1 and nonempty content interrupt an ordinary paragraph, while
+any valid one-to-nine-digit marker may open a sibling after a prefix fails.
+ASCII content-whitespace behavior (SP/HT/LF/VT/FF/CR) and ASCII space/tab marker
+separators retain the existing target; non-ASCII whitespace is literal content.
+
+Markdown inline-code spans and ordinary inline tokens are masked within their
+owning paragraph leaf. Admitted preformatted/raw HTML regions retain a separate
+HTML exclusion stack across paragraph and blank-line boundaries until a real
+admitted closer. This restores the existing raw-region exclusion; an AST text
+node inside a raw HTML element is not current review evidence. Openers inside
+Markdown code, comments or quoted examples cannot create an outside raw region.
+Normal raw elements retain nested ownership; raw-text elements interpret only
+their relevant closing tokens. HTML-block container scope remains explicit.
+Each newly opened quote/list frame has an instance identity from its opening
+physical source line and nesting depth. Matching continuation lines retain that
+identity. Marker spelling/indentation describe syntax and cannot identify an
+item instance: a same-marker sibling must end the old HTML-block scope. Outer
+ancestry remains stable when only an inner sibling changes. Inline raw regions
+retain their documented separate lifetime; state is not reset at every leaf.
+`container-instance-rendering.json` retains 628 actual-consumer/diagnostic bodies,
+including all112 independent cases; the external cross-product proof covers10080
+bodies and the prior23738 inputs. Container instance identity is parser ownership
+metadata, not producer identity or a new evidence schema. Fences, indented
+code, HTML blocks, headings, list/container transitions and blank lines retain
+their boundaries even when their content is opaque. Masked lines are projected
+back in original line order with original source indentation. Parse-failure
+status for an unclosed top-level fence is separate from literal source control
+characters. CR, LF and CRLF are interpreted as physical line endings. The
+existing declaration recognition/reduction then consumes that projection.
+The `structural-leaf-rendering.json` fixture retains 785 actual-consumer/diagnostic
+controls; the external proof retains the full20567 scalar cases, including all5760
+independent bodies and3942 added spacing/nesting/leaf cross-products. Copied-workflow
+flattening, column-stripping and occupancy-erasure mutations discriminate these
+requirements. Same-leaf inline examples remain valid opaque examples.
+
+Production remains static Bash/jq before checkout and candidate execution. There
+is no new parser dependency/bootstrap or product job. Mature CommonMark/native
+cmark parsers remain independent development oracles, not production dependencies.
+This bounded compatibility path does not replace the pending structured-record
+contract or claim full Markdown conformance. Complete HTML/tag attribute grammar,
+case-sensitive declaration/CDATA starts, case-insensitive tag names and valid
+fence-info rules remain retained.
+
+Earlier renderer fixtures stay unchanged:42 block boundaries,240 recognition,
+130 standalone tags,114 containers,521 sibling contexts and978 Unicode content
+bodies. Earlier12 CDATA,16 leading-zero matrix and64 Unicode-corpus alternatives
+remain explicit. The independent5760 and added3942 matrices retain870 and960
+renderer-field alternatives respectively. They are not silently converted to
+new accepted evidence; the retained target and original-column/occupancy rules
+remain authoritative. Native GitHub rendering is not established. Adopting a
+secondary renderer's different interpretation requires a separate policy decision.
 A source-ready declaration may separately report overall `REVIEW_INCOMPLETE`
 while qualification remains outstanding. Both admission and the final refresh,
 including diagnostics, use the same parser.

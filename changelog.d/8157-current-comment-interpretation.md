@@ -1,5 +1,15 @@
 <!-- section: Internal / CI -->
 - Interpret direct current review attestations consistently in initial admission,
   final refresh and diagnostics, rejecting negated, quoted and superseded prose
-  controls while retaining existing trust and native-review requirements; this is
+  controls, including multiline code and HTML examples in either direction;
+  inline examples cannot cross paragraph, heading or fence boundaries,
+  and block recognition respects marker case and valid fence-info syntax,
+  complete standalone-tag attribute grammar and paragraph context,
+  quote interruption and list-owned HTML/container exits,
+  with block starts resolved in the last matched container before lazy text,
+  and item-content semantics shared through structural leaf ownership,
+  preserving source positions and block boundaries through inline masking,
+  setext precedence and raw-HTML exclusion state across paragraph boundaries,
+  with distinct identities for newly opened sibling container instances,
+  while retaining existing trust and native-review requirements; this is
   a partial mitigation pending the versioned evidence contract (#8157).

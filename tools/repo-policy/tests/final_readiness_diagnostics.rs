@@ -259,6 +259,9 @@ fn corrected_false_positives_report_the_same_parser_decision() -> Result<(), Str
         "REVIEW_INCOMPLETE. Example:\n```\nREVIEW_READY\n```",
         "Previous result was REVIEW_READY; current disposition: REPAIR_REQUIRED.",
         "No longer SOURCE_REVIEW_READY. REPAIR_REQUIRED.",
+        "Example: `\ndisposition: REVIEW_READY\n`",
+        "<!--\ndisposition: REVIEW_READY\n-->",
+        "<pre>\ndisposition: REVIEW_READY\n</pre>",
     ] {
         let mut case = positive();
         let mut reviews: Value = serde_json::from_str(&case.reviews).map_err(|e| e.to_string())?;
@@ -279,6 +282,54 @@ fn corrected_false_positives_report_the_same_parser_decision() -> Result<(), Str
         let detail: Value = serde_json::from_str(detail).map_err(|e| e.to_string())?;
         assert_eq!(detail["checks"]["current_head_marker"], false);
         assert!(!stderr.contains(text), "review text must not be logged");
+    }
+    Ok(())
+}
+
+#[test]
+fn quoted_negative_fields_do_not_withdraw_outside_current_disposition() -> Result<(), String> {
+    for text in [
+        "Example: `\ndisposition: REPAIR_REQUIRED\n`\ndisposition: SOURCE_REVIEW_READY",
+        "<!--\ndisposition: REPAIR_REQUIRED\n-->\ndisposition: SOURCE_REVIEW_READY",
+        "<pre>\ndisposition: REPAIR_REQUIRED\n</pre>\ndisposition: SOURCE_REVIEW_READY",
+    ] {
+        let mut case = positive();
+        let mut reviews: Value = serde_json::from_str(&case.reviews).map_err(|e| e.to_string())?;
+        reviews[0]["body"] = json!(text);
+        case.reviews = reviews.to_string();
+        paired(&case, 0, None)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn diagnostics_preserve_real_dispositions_across_block_boundaries() -> Result<(), String> {
+    for (name, text, expected) in review_disposition::block_boundary_cases()?
+        .into_iter()
+        .chain(review_disposition::block_recognition_cases()?)
+        .chain(review_disposition::standalone_tag_cases()?)
+        .chain(review_disposition::container_boundary_cases()?)
+        .chain(review_disposition::sibling_context_cases()?)
+        .chain(review_disposition::unicode_list_content_cases()?)
+        .chain(review_disposition::structural_leaf_cases()?)
+        .chain(review_disposition::html_region_cases()?)
+        .chain(review_disposition::container_instance_cases()?)
+    {
+        let mut case = positive();
+        let mut reviews: Value = serde_json::from_str(&case.reviews).map_err(|e| e.to_string())?;
+        reviews[0]["body"] = json!(text);
+        case.reviews = reviews.to_string();
+        let (result, _) = run(&body()?, &case)?;
+        assert_eq!(result.status.success(), expected, "{name}: {text}");
+        let stderr = String::from_utf8(result.stderr).map_err(|e| e.to_string())?;
+        if !expected {
+            let detail = stderr
+                .lines()
+                .find_map(|line| line.strip_prefix("readiness_detail="))
+                .ok_or("diagnostic missing")?;
+            let detail: Value = serde_json::from_str(detail).map_err(|e| e.to_string())?;
+            assert_eq!(detail["checks"]["current_head_marker"], false, "{name}");
+        }
     }
     Ok(())
 }
