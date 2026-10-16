@@ -133,7 +133,7 @@ jobs:
                 pending) [ "$attempt" = 3 ] || sleep 2 ;;
               esac
             done
-            echo 'Mergeability not proven within bounded refresh' >&2
+            echo 'Mergeability not established within bounded refresh' >&2
             return 1
           }
           read_subject() {
@@ -753,7 +753,7 @@ jobs:
                 pending) [ "$attempt" = 3 ] || sleep 2 ;;
               esac
             done
-            echo 'Mergeability not proven within bounded refresh' >&2
+            echo 'Mergeability not established within bounded refresh' >&2
             return 1
           }
           read_subject() {
