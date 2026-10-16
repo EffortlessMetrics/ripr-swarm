@@ -26,6 +26,7 @@ Linked issues:
 - #4799 — crash/retry matrix (later; not absorbed)
 - #1613 - `help --json` / workflow catalog (later; not absorbed)
 - #5744 - preserve the producer's canonical Unix manifest root
+- #7882 - separate repair path presentation from persisted identity
 
 Linked PRs:
 
@@ -83,6 +84,13 @@ Resolution law:
   normalization. Reopening still canonicalizes that declared root and requires
   equality with the selected repository. Copying authentic attempt bytes into
   a different repository does not transfer root authority.
+- Human repair artifact/manifest narration and unknown-attempt diagnostics use
+  the shared host-aware human path renderer: Windows drive-letter verbatim
+  prefixes and mixed separators normalize; UNC/volume prefixes and native Unix
+  filename characters stay intact. This presentation rule does not rewrite
+  persisted roots, JSON path fields, commands, attempt/store identities or
+  before commitments. Literal percent characters must not pass through the
+  stable-path encoding before filesystem identity validation (#7882).
 - Relative paths are root-contained. Traversal, absolute-outside-root,
   symlink/junction escape, in-tree symlink or case-fold aliases, drive-relative
   ambiguity, and unsupported UNC spelling fail closed.
@@ -149,6 +157,10 @@ Python-specific or editor-specific attempt store.
    not open the default store.
 
 ## Test Mapping
+
+- `crates/ripr/tests/task_first_facade.rs::repair_human_paths_preserve_percent_root_identity`
+- `crates/ripr/tests/task_first_facade.rs::repair_human_paths_preserve_literal_backslash_root_identity`
+- `crates/ripr/src/output/path.rs::tests::repair_path_display_preserves_literal_percent_on_both_hosts`
 
 - `crates/ripr/src/app/repair_attempt/store.rs::tests::default_store_is_the_repository_local_directory`
 - `crates/ripr/src/mcp/repair_manifest_root_tests.rs::durable_literal_unix_manifest_reopens_in_selected_root`

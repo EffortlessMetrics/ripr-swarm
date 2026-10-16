@@ -20,14 +20,29 @@ Given this changed behavior and these tests, what static exposure evidence
 should ripr report?
 ```
 
-Fixture-corpus commands may run cases in parallel in the parent. Each child
-`ripr check` with a pinned fixture cache receives `RAYON_NUM_THREADS=1`,
+The `fixtures` and `goldens` commands may run cases in parallel in the parent.
+Their child `ripr check` processes with pinned fixture caches receive `RAYON_NUM_THREADS=1`,
 overriding an inherited worker budget so nested Rayon pools do not multiply
 parent concurrency. The JSON, human, and `human-full` surfaces remain sequential
 within a case. This bounds Rayon workers, not all native helper or I/O threads;
 dogfood's real-repository children keep their existing environment.
 
 ## Required Evidence
+
+Registry-backed fixtures require their locked dependencies in the effective
+Cargo home used by the analyzer subprocess. For
+`owner_return_pin_fallible_literal`, `cargo xtask goldens prepare [--offline]`
+fetches its locked manifest and verifies offline metadata. Preparation, binary
+build and fixture analysis share an absolute Cargo home and the repository
+toolchain pin; an explicitly selected Rustup home remains bound as well.
+Readiness is checked once per runner process before this fixture executes.
+Missing dependencies must produce an actionable preparation error, without
+network access during the check or a golden blessing. Warm binary-build
+memoization and the existing fixture-cache isolation remain in force.
+Offline proxy launches set `RUSTUP_AUTO_INSTALL=0`, including version probes
+before offline preparation. Cargo's `--offline` flag alone does not prevent
+Rustup from installing a missing pin. Ordinary online preparation preserves
+the caller's Rustup installation policy.
 
 Each fixture should provide enough evidence to prove one analyzer behavior or
 output contract without relying on chat history.
