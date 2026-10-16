@@ -38,13 +38,49 @@ suite('Multi-root request diagnostic observation', () => {
       assert.strictEqual(disposed, 1);
       assert.strictEqual(cancellations, undefined);
       assert.deepStrictEqual(events.map(event => event.kind),
-        ['wire_code_action', 'wire_cancellation', failing ? 'wire_failed' : 'wire_result']);
+        ['client_request_start', 'client_token_canceled', failing ? 'client_request_failed' : 'client_request_result']);
       assert.ok(events.every(event => event.pid === 731 && event.generation === 4 && event.version === 2));
       if (failing) { assert.strictEqual(events[2].code, -32801); }
+      assert.ok(events.every(event => event.request_id === 1
+        && event.request_uri === params.textDocument.uri && event.request_range === params.range));
       restore();
       assert.strictEqual(disposed, 1, 'cleanup is idempotent');
     });
   }
+
+  test('overlapping document requests retain separate identities through reordered completion', async () => {
+    let finishA!: (value: unknown) => void;
+    let failB!: (error: unknown) => void;
+    const a = new Promise(resolve => { finishA = resolve; });
+    const b = new Promise((_resolve, reject) => { failB = reject; });
+    const paramsA = { textDocument: { uri: 'file:///alpha/src/alpha.rs' }, range: { start: 1, end: 2 } };
+    const paramsB = { textDocument: { uri: 'file:///beta/src/beta.rs' }, range: { start: 3, end: 4 } };
+    const calls: unknown[][] = [];
+    const client = { sendRequest: (...args: unknown[]) => {
+      calls.push(args); return args[1] === paramsA ? a : b;
+    } };
+    const events: Record<string, unknown>[] = [];
+    const restore = observeCodeActionRequests(client, () => ({ uri: 'selected-alpha' }), events);
+    const errorB = Object.assign(new Error('Canceled beta'), { code: -32800 });
+    try {
+      const resultA = client.sendRequest('textDocument/codeAction', paramsA);
+      const resultB = client.sendRequest('textDocument/codeAction', paramsB);
+      failB(errorB);
+      await assert.rejects(resultB, error => error === errorB);
+      const actionsA = [{ title: 'alpha action' }];
+      finishA(actionsA);
+      assert.strictEqual(await resultA, actionsA);
+      assert.strictEqual(calls.length, 2);
+      assert.strictEqual(calls[0][1], paramsA);
+      assert.strictEqual(calls[1][1], paramsB);
+      assert.deepStrictEqual(events.map(event => [event.kind, event.request_id, event.request_uri]), [
+        ['client_request_start', 1, paramsA.textDocument.uri],
+        ['client_request_start', 2, paramsB.textDocument.uri],
+        ['client_request_failed', 2, paramsB.textDocument.uri],
+        ['client_request_result', 1, paramsA.textDocument.uri],
+      ]);
+    } finally { restore(); }
+  });
 
   test('unrelated requests retain their original promise without observation', () => {
     const promise = Promise.resolve('status');
