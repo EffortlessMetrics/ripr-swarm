@@ -1,0 +1,59 @@
+{
+  "timestamp_utc": "2026-10-16T04:05:44.733844+00:00",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "source_head": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+  "packet_commit": "31c295d2f05eb3cb89e4b5cd8191d33f86267df8",
+  "network_fetch": {
+    "remote": "https://github.com/EffortlessMetrics/ripr-swarm.git",
+    "fresh_bare": "/workspace/shadow8004/readback.git",
+    "no_local_reference": true,
+    "depth": 1,
+    "fetch_head_verified": true
+  },
+  "published_files": [
+    {
+      "path": "evidence/8004/shadow-syntax-repair/MANIFEST.json",
+      "bytes": 2006384,
+      "sha256": "49023140c8bae95b2349a24a343850fdcf89093afd945000bba0b905cddb91ed",
+      "local_bytes_equal": true
+    },
+    {
+      "path": "evidence/8004/shadow-syntax-repair/PROTOCOL.md",
+      "bytes": 3552,
+      "sha256": "06bf6598c95ba1a6aa0025421344e813a12809f4c4086de7f2d71e325b9e1d97",
+      "local_bytes_equal": true
+    },
+    {
+      "path": "evidence/8004/shadow-syntax-repair/README.md",
+      "bytes": 10643,
+      "sha256": "6cb7c4be45f45bbee36935ec332c3e43dc12230a444ffb25a426378d43392cff",
+      "local_bytes_equal": true
+    },
+    {
+      "path": "evidence/8004/shadow-syntax-repair/SHA256SUMS",
+      "bytes": 390,
+      "sha256": "627a5717b53021c36699b8ad03cdb936365449dd82a957ff14f111131a96b02f",
+      "local_bytes_equal": true
+    },
+    {
+      "path": "evidence/8004/shadow-syntax-repair/raw.tar.xz",
+      "bytes": 1562260,
+      "sha256": "d382cc97af1d2297df0b4619c30388aedfb827b9c731a73f30e5be2a8c74b0fb",
+      "local_bytes_equal": true
+    },
+    {
+      "path": "evidence/8004/shadow-syntax-repair/receipt.json",
+      "bytes": 101820,
+      "sha256": "77ec0724c2d463e034b9dc41377f638b84b0ba2516df48513ad0e0fb6144145c",
+      "local_bytes_equal": true
+    }
+  ],
+  "archive": {
+    "verified": true,
+    "members": 8985,
+    "bytes": 235628395,
+    "checksums": true,
+    "full_bytes_sizes_modes": true
+  },
+  "claim": "All six published packet file bytes and every archive member byte/size/mode independently read back via new network-only bare consumer; no archive timestamp precision claim. This sibling receipt is outside the immutable packet to avoid self-reference."
+}
