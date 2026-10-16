@@ -23,17 +23,25 @@ env:
   # This does not authenticate a publisher or establish referenced proof custody.
   REVIEW_DISPOSITION_JQ: |
     def review_html_blocks:
-      "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul";
+      "(?i:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)";
+    # GFM/CommonMark 0.29 block kinds 1-6 interrupt paragraphs; kind 7
+    # (a complete standalone tag) does not. Declaration/CDATA case is exact.
+    def review_html_interrupt:
+      "(?:!--|!\\[CDATA\\[|\\?|![A-Z]|(?i:pre|script|style)(?=[\\s>]|$)|/?" + review_html_blocks + "(?=[\\s>]|/>|$))";
+    # Backtick-fence info cannot contain backticks. Tilde info may contain them.
+    # Reuse this rule for interruption and the remaining line-level fallback.
+    def review_fence_open:
+      "(?:`{3,}(?!`)[^`\n]*|~{3,}[^\n]*)";
     # Block indicators precede inline parsing. A code span can cross a soft
     # line break, never a blank line or an interrupting heading/fence/block.
     def review_inline_end:
-      "[ \t]*(?:\n|\\z)| {0,3}(?:#{1,6}(?:[ \t]|$)|`{3,}|~{3,}|(?:=+|-+)[ \t]*$|(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$|>|[-+*][ \t]+\\S|1[.)][ \t]+\\S|<(?:!--|!\\[CDATA\\[|\\?|![A-Z]|/?(?:" + review_html_blocks + "|pre|script|style|textarea)(?=[\\s/>])))";
+      "[ \t]*(?:\n|\\z)| {0,3}(?:#{1,6}(?:[ \t]|$)|" + review_fence_open + "$|(?:=+|-+)[ \t]*$|(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$|>|[-+*][ \t]+\\S|1[.)][ \t]+\\S|<" + review_html_interrupt + ")";
     # Match opaque regions together, in source order: syntax inside an earlier
     # code/HTML region cannot open a different region outside it. Keep newlines
     # and a nonblank sentinel so masking never invents a first-line declaration.
     def hide_review_examples:
-      gsub("(?ims)(?<hidden>" +
-        "^ {0,3}(?<bt>`{3,})(?!`)[^\n]*\n.*?(?:(?<bt_end>^ {0,3}\\k<bt>`*[ \t]*)(?=\n|\\z)|\\z)" +
+      gsub("(?ms)(?<hidden>" +
+        "^ {0,3}(?<bt>`{3,})(?!`)[^`\n]*\n.*?(?:(?<bt_end>^ {0,3}\\k<bt>`*[ \t]*)(?=\n|\\z)|\\z)" +
         "|^ {0,3}(?<tilde>~{3,})(?!~)[^\n]*\n.*?(?:(?<tilde_end>^ {0,3}\\k<tilde>~*[ \t]*)(?=\n|\\z)|\\z)" +
         "|^(?: {4}|\t)[^\n]*(?:\n(?:(?: {4}|\t)[^\n]*|[ \t]*(?=\n)))*" +
         "|^ {0,3}>[^\n]*(?:\n(?![ \t]*(?:\n|\\z))[^\n]+)*" +
@@ -41,9 +49,10 @@ env:
         "|(?<![\\\\`])(?:\\\\\\\\)*(?<ticks>`+)(?!`)(?:[^\n]|\n(?!" + review_inline_end + "))*?(?<!`)\\k<ticks>(?!`)" +
         "|(?<!\\\\)(?:\\\\\\\\)*(?:<!--.*?(?:-->|\\z)|<!\\[CDATA\\[.*?(?:\\]\\]>|\\z)|<\\?.*?(?:\\?>|\\z))" +
         "|(?<!\\\\)(?:\\\\\\\\)*<![A-Z].*?(?:>|\\z)" +
-        "|(?<!\\\\)(?:\\\\\\\\)*<(?<tag>pre|code|script|style|textarea|xmp|iframe|noembed|noframes)(?=[\\s>])[^>]*>.*?(?:</\\k<tag>[ \t]*>|\\z)" +
-        "|^ {0,3}</?(?:" + review_html_blocks + ")(?=[\\s/>]).*?(?=\n[ \t]*\n|\\z)" +
-        "|^ {0,3}</?[A-Z][A-Z0-9-]*(?:[ \t]+[^<>\n]*)?/?>[ \t]*(?:\n.*?(?=\n[ \t]*\n|\\z)|\\z)" +
+        "|(?<!\\\\)(?:\\\\\\\\)*<(?i:pre|script|style)(?=[\\s>]|$).*?(?:(?i:</(?:pre|script|style)>)|\\z)" +
+        "|(?<!\\\\)(?:\\\\\\\\)*(?i:<(?<tag>code|textarea|xmp|iframe|noembed|noframes)(?=[\\s>])[^>]*>.*?(?:</\\k<tag>[ \t]*>|\\z))" +
+        "|^ {0,3}</?(?:" + review_html_blocks + ")(?=[\\s>]|/>|$).*?(?=\n[ \t]*\n|\\z)" +
+        "|^ {0,3}</?[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[^<>\n]*)?/?>[ \t]*(?:\n.*?(?=\n[ \t]*\n|\\z)|\\z)" +
         ")";
         if (.bt != null and .bt_end == null) or (.tilde != null and .tilde_end == null)
         then "\u0002" else (.hidden | gsub("[^\n]"; "\u0001")) end);
@@ -59,7 +68,7 @@ env:
            elif ($line | test("^[ \t]*$")) then .quoted = false
            elif ($line | test("^ {0,3}>")) then .first = false | .quoted = true
            elif .quoted then .first = false
-           elif ($line | test("^ {0,3}(`{3,}|~{3,})")) then
+           elif ($line | test("^ {0,3}" + review_fence_open + "$")) then
              ($line | capture("^ {0,3}(?<fence>`{3,}|~{3,})")) as $match |
              .first = false | .fence = {char:$match.fence[0:1], size:($match.fence|length)}
            elif ($line | test("^( {4}|\t)")) then .first = false

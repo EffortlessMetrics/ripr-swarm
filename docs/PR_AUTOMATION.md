@@ -82,6 +82,17 @@ unclosed backtick in an earlier block cannot hide a later real disposition.
 Multiline spans inside one paragraph remain examples. The renderer-backed
 `block-boundary-rendering.json` fixture retains Markdown, visible fields and
 HTML for independent inspection of both admission and refusal controls.
+Block recognition uses the retained CommonMark target and the published GFM
+rules: declaration starts require an uppercase ASCII letter, CDATA starts are
+case-sensitive, and HTML tag names are case-insensitive. A backtick fence cannot
+have a backtick in its info string; the same opener rule governs masking and
+paragraph interruption. Standalone tags do not interrupt an existing paragraph.
+`block-recognition-rendering.json` retains 240 cases and both local renderers'
+outputs. The secondary cmark-gfm 0.29.0.gfm.13 renderer disagrees with the retained
+target on 12 lowercase/mixed-CDATA cases; those disagreements remain explicit,
+not silently relabeled as passes. This is not native GitHub rendering proof or
+a claim of full CommonMark conformance. Earlier fixture references to the newer
+CommonMark specification do not identify the renderer that actually ran.
 A source-ready declaration may separately report overall `REVIEW_INCOMPLETE`
 while qualification remains outstanding. Both admission and the final refresh,
 including diagnostics, use the same parser.

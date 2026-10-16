@@ -1,0 +1,3577 @@
+{
+  "oracle": "commonmark-py 0.9.1, retaining the existing CommonMark target; secondary cmarkgfm 2024.11.20 / cmark 0.29.0.gfm.13",
+  "reference": "https://github.github.com/gfm/#html-blocks",
+  "method": "Target expectations use visible explicit paragraph/heading fields from commonmark-py. Both renderers outputs are retained. 12 lowercase/mixed-CDATA cases intentionally record disagreement with cmark-gfm; neither complete conformance nor live GitHub rendering is claimed. Fence recognition and HTML case are checked systematically over delimiter lengths 1/2/4 in both directions.",
+  "cases": [
+    {
+      "case": "declaration-lower-1-inside-positive",
+      "body": "Example: `unclosed\n<!lower>\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;!lower&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;!lower&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-lower-1-outside-positive",
+      "body": "Example: `unclosed\n<!lower>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;!lower&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;!lower&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-lower-2-inside-positive",
+      "body": "Example: ``unclosed\n<!lower>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;!lower&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;!lower&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-lower-2-outside-positive",
+      "body": "Example: ``unclosed\n<!lower>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;!lower&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;!lower&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-lower-4-inside-positive",
+      "body": "Example: ````unclosed\n<!lower>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;!lower&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;!lower&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-lower-4-outside-positive",
+      "body": "Example: ````unclosed\n<!lower>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;!lower&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;!lower&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-mixed-1-inside-positive",
+      "body": "Example: `unclosed\n<!Lower>\ndisposition: REVIEW_READY\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<!Lower>\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-mixed-1-outside-positive",
+      "body": "Example: `unclosed\n<!Lower>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<!Lower>\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-mixed-2-inside-positive",
+      "body": "Example: ``unclosed\n<!Lower>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ``unclosed</p>\n<!Lower>\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-mixed-2-outside-positive",
+      "body": "Example: ``unclosed\n<!Lower>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<!Lower>\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-mixed-4-inside-positive",
+      "body": "Example: ````unclosed\n<!Lower>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ````unclosed</p>\n<!Lower>\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-mixed-4-outside-positive",
+      "body": "Example: ````unclosed\n<!Lower>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<!Lower>\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-upper-1-inside-positive",
+      "body": "Example: `unclosed\n<!LOWER>\ndisposition: REVIEW_READY\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<!LOWER>\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-upper-1-outside-positive",
+      "body": "Example: `unclosed\n<!LOWER>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<!LOWER>\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-upper-2-inside-positive",
+      "body": "Example: ``unclosed\n<!LOWER>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ``unclosed</p>\n<!LOWER>\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-upper-2-outside-positive",
+      "body": "Example: ``unclosed\n<!LOWER>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<!LOWER>\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-upper-4-inside-positive",
+      "body": "Example: ````unclosed\n<!LOWER>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ````unclosed</p>\n<!LOWER>\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-upper-4-outside-positive",
+      "body": "Example: ````unclosed\n<!LOWER>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<!LOWER>\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-lower-spaced-1-inside-positive",
+      "body": "Example: `unclosed\n<!lower value>\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;!lower value&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;!lower value&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-lower-spaced-1-outside-positive",
+      "body": "Example: `unclosed\n<!lower value>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;!lower value&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;!lower value&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-lower-spaced-2-inside-positive",
+      "body": "Example: ``unclosed\n<!lower value>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;!lower value&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;!lower value&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-lower-spaced-2-outside-positive",
+      "body": "Example: ``unclosed\n<!lower value>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;!lower value&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;!lower value&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-lower-spaced-4-inside-positive",
+      "body": "Example: ````unclosed\n<!lower value>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;!lower value&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;!lower value&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-lower-spaced-4-outside-positive",
+      "body": "Example: ````unclosed\n<!lower value>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;!lower value&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;!lower value&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-upper-spaced-1-inside-positive",
+      "body": "Example: `unclosed\n<!LOWER value>\ndisposition: REVIEW_READY\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<!LOWER value>\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-upper-spaced-1-outside-positive",
+      "body": "Example: `unclosed\n<!LOWER value>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<!LOWER value>\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-upper-spaced-2-inside-positive",
+      "body": "Example: ``unclosed\n<!LOWER value>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ``unclosed</p>\n<!LOWER value>\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-upper-spaced-2-outside-positive",
+      "body": "Example: ``unclosed\n<!LOWER value>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<!LOWER value>\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-upper-spaced-4-inside-positive",
+      "body": "Example: ````unclosed\n<!LOWER value>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ````unclosed</p>\n<!LOWER value>\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-upper-spaced-4-outside-positive",
+      "body": "Example: ````unclosed\n<!LOWER value>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<!LOWER value>\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "cdata-upper-1-inside-positive",
+      "body": "Example: `unclosed\n<![CDATA[fixture]]>\ndisposition: REVIEW_READY\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<![CDATA[fixture]]>\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "cdata-upper-1-outside-positive",
+      "body": "Example: `unclosed\n<![CDATA[fixture]]>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<![CDATA[fixture]]>\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "cdata-upper-2-inside-positive",
+      "body": "Example: ``unclosed\n<![CDATA[fixture]]>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ``unclosed</p>\n<![CDATA[fixture]]>\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "cdata-upper-2-outside-positive",
+      "body": "Example: ``unclosed\n<![CDATA[fixture]]>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<![CDATA[fixture]]>\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "cdata-upper-4-inside-positive",
+      "body": "Example: ````unclosed\n<![CDATA[fixture]]>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ````unclosed</p>\n<![CDATA[fixture]]>\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "cdata-upper-4-outside-positive",
+      "body": "Example: ````unclosed\n<![CDATA[fixture]]>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<![CDATA[fixture]]>\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "cdata-lower-1-inside-positive",
+      "body": "Example: `unclosed\n<![cdata[fixture]]>\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;![cdata[fixture]]&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": false,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "cdata-lower-1-outside-positive",
+      "body": "Example: `unclosed\n<![cdata[fixture]]>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;![cdata[fixture]]&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": false,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "cdata-lower-2-inside-positive",
+      "body": "Example: ``unclosed\n<![cdata[fixture]]>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;![cdata[fixture]]&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": false,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "cdata-lower-2-outside-positive",
+      "body": "Example: ``unclosed\n<![cdata[fixture]]>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;![cdata[fixture]]&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": false,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "cdata-lower-4-inside-positive",
+      "body": "Example: ````unclosed\n<![cdata[fixture]]>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;![cdata[fixture]]&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": false,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "cdata-lower-4-outside-positive",
+      "body": "Example: ````unclosed\n<![cdata[fixture]]>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;![cdata[fixture]]&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": false,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "cdata-mixed-1-inside-positive",
+      "body": "Example: `unclosed\n<![CData[fixture]]>\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;![CData[fixture]]&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": false,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "cdata-mixed-1-outside-positive",
+      "body": "Example: `unclosed\n<![CData[fixture]]>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;![CData[fixture]]&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": false,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "cdata-mixed-2-inside-positive",
+      "body": "Example: ``unclosed\n<![CData[fixture]]>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;![CData[fixture]]&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": false,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "cdata-mixed-2-outside-positive",
+      "body": "Example: ``unclosed\n<![CData[fixture]]>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;![CData[fixture]]&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": false,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "cdata-mixed-4-inside-positive",
+      "body": "Example: ````unclosed\n<![CData[fixture]]>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;![CData[fixture]]&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": false,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "cdata-mixed-4-outside-positive",
+      "body": "Example: ````unclosed\n<![CData[fixture]]>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;![CData[fixture]]&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": false,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "processing-instruction-1-inside-positive",
+      "body": "Example: `unclosed\n<?fixture?>\ndisposition: REVIEW_READY\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<?fixture?>\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "processing-instruction-1-outside-positive",
+      "body": "Example: `unclosed\n<?fixture?>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<?fixture?>\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "processing-instruction-2-inside-positive",
+      "body": "Example: ``unclosed\n<?fixture?>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ``unclosed</p>\n<?fixture?>\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "processing-instruction-2-outside-positive",
+      "body": "Example: ``unclosed\n<?fixture?>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<?fixture?>\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "processing-instruction-4-inside-positive",
+      "body": "Example: ````unclosed\n<?fixture?>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ````unclosed</p>\n<?fixture?>\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "processing-instruction-4-outside-positive",
+      "body": "Example: ````unclosed\n<?fixture?>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<?fixture?>\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "comment-1-inside-positive",
+      "body": "Example: `unclosed\n<!-- fixture -->\ndisposition: REVIEW_READY\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<!-- fixture -->\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "comment-1-outside-positive",
+      "body": "Example: `unclosed\n<!-- fixture -->\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<!-- fixture -->\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "comment-2-inside-positive",
+      "body": "Example: ``unclosed\n<!-- fixture -->\ndisposition: REVIEW_READY\nLater ``",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ``unclosed</p>\n<!-- fixture -->\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "comment-2-outside-positive",
+      "body": "Example: ``unclosed\n<!-- fixture -->\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<!-- fixture -->\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "comment-4-inside-positive",
+      "body": "Example: ````unclosed\n<!-- fixture -->\ndisposition: REVIEW_READY\nLater ````",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ````unclosed</p>\n<!-- fixture -->\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "comment-4-outside-positive",
+      "body": "Example: ````unclosed\n<!-- fixture -->\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<!-- fixture -->\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-lower-1-inside-positive",
+      "body": "Example: `unclosed\n<pre>fixture</pre>\ndisposition: REVIEW_READY\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<pre>fixture</pre>\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-lower-1-outside-positive",
+      "body": "Example: `unclosed\n<pre>fixture</pre>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<pre>fixture</pre>\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-lower-2-inside-positive",
+      "body": "Example: ``unclosed\n<pre>fixture</pre>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ``unclosed</p>\n<pre>fixture</pre>\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-lower-2-outside-positive",
+      "body": "Example: ``unclosed\n<pre>fixture</pre>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<pre>fixture</pre>\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-lower-4-inside-positive",
+      "body": "Example: ````unclosed\n<pre>fixture</pre>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ````unclosed</p>\n<pre>fixture</pre>\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-lower-4-outside-positive",
+      "body": "Example: ````unclosed\n<pre>fixture</pre>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<pre>fixture</pre>\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-upper-1-inside-positive",
+      "body": "Example: `unclosed\n<PRE>fixture</PRE>\ndisposition: REVIEW_READY\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<PRE>fixture</PRE>\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-upper-1-outside-positive",
+      "body": "Example: `unclosed\n<PRE>fixture</PRE>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<PRE>fixture</PRE>\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-upper-2-inside-positive",
+      "body": "Example: ``unclosed\n<PRE>fixture</PRE>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ``unclosed</p>\n<PRE>fixture</PRE>\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-upper-2-outside-positive",
+      "body": "Example: ``unclosed\n<PRE>fixture</PRE>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<PRE>fixture</PRE>\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-upper-4-inside-positive",
+      "body": "Example: ````unclosed\n<PRE>fixture</PRE>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ````unclosed</p>\n<PRE>fixture</PRE>\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-upper-4-outside-positive",
+      "body": "Example: ````unclosed\n<PRE>fixture</PRE>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<PRE>fixture</PRE>\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "script-1-inside-positive",
+      "body": "Example: `unclosed\n<script>fixture</script>\ndisposition: REVIEW_READY\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<script>fixture</script>\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "script-1-outside-positive",
+      "body": "Example: `unclosed\n<script>fixture</script>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<script>fixture</script>\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "script-2-inside-positive",
+      "body": "Example: ``unclosed\n<script>fixture</script>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ``unclosed</p>\n<script>fixture</script>\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "script-2-outside-positive",
+      "body": "Example: ``unclosed\n<script>fixture</script>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<script>fixture</script>\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "script-4-inside-positive",
+      "body": "Example: ````unclosed\n<script>fixture</script>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ````unclosed</p>\n<script>fixture</script>\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "script-4-outside-positive",
+      "body": "Example: ````unclosed\n<script>fixture</script>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<script>fixture</script>\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "style-upper-1-inside-positive",
+      "body": "Example: `unclosed\n<STYLE>fixture</STYLE>\ndisposition: REVIEW_READY\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<STYLE>fixture</STYLE>\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "style-upper-1-outside-positive",
+      "body": "Example: `unclosed\n<STYLE>fixture</STYLE>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<STYLE>fixture</STYLE>\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "style-upper-2-inside-positive",
+      "body": "Example: ``unclosed\n<STYLE>fixture</STYLE>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ``unclosed</p>\n<STYLE>fixture</STYLE>\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "style-upper-2-outside-positive",
+      "body": "Example: ``unclosed\n<STYLE>fixture</STYLE>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<STYLE>fixture</STYLE>\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "style-upper-4-inside-positive",
+      "body": "Example: ````unclosed\n<STYLE>fixture</STYLE>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ````unclosed</p>\n<STYLE>fixture</STYLE>\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "style-upper-4-outside-positive",
+      "body": "Example: ````unclosed\n<STYLE>fixture</STYLE>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<STYLE>fixture</STYLE>\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "block-tag-lower-1-inside-positive",
+      "body": "Example: `unclosed\n<div>fixture</div>\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<div>fixture</div>\ndisposition: REVIEW_READY\nLater `\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "block-tag-lower-1-outside-positive",
+      "body": "Example: `unclosed\n<div>fixture</div>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<div>fixture</div>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "block-tag-lower-2-inside-positive",
+      "body": "Example: ``unclosed\n<div>fixture</div>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<div>fixture</div>\ndisposition: REVIEW_READY\nLater ``\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "block-tag-lower-2-outside-positive",
+      "body": "Example: ``unclosed\n<div>fixture</div>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<div>fixture</div>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "block-tag-lower-4-inside-positive",
+      "body": "Example: ````unclosed\n<div>fixture</div>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<div>fixture</div>\ndisposition: REVIEW_READY\nLater ````\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "block-tag-lower-4-outside-positive",
+      "body": "Example: ````unclosed\n<div>fixture</div>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<div>fixture</div>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "block-tag-upper-1-inside-positive",
+      "body": "Example: `unclosed\n<DIV>fixture</DIV>\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<DIV>fixture</DIV>\ndisposition: REVIEW_READY\nLater `\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "block-tag-upper-1-outside-positive",
+      "body": "Example: `unclosed\n<DIV>fixture</DIV>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<DIV>fixture</DIV>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "block-tag-upper-2-inside-positive",
+      "body": "Example: ``unclosed\n<DIV>fixture</DIV>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<DIV>fixture</DIV>\ndisposition: REVIEW_READY\nLater ``\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "block-tag-upper-2-outside-positive",
+      "body": "Example: ``unclosed\n<DIV>fixture</DIV>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<DIV>fixture</DIV>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "block-tag-upper-4-inside-positive",
+      "body": "Example: ````unclosed\n<DIV>fixture</DIV>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<DIV>fixture</DIV>\ndisposition: REVIEW_READY\nLater ````\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "block-tag-upper-4-outside-positive",
+      "body": "Example: ````unclosed\n<DIV>fixture</DIV>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<DIV>fixture</DIV>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "complete-custom-tag-1-inside-positive",
+      "body": "Example: `unclosed\n<fixture-tag>\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;fixture-tag&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;fixture-tag&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "complete-custom-tag-1-outside-positive",
+      "body": "Example: `unclosed\n<fixture-tag>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;fixture-tag&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;fixture-tag&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "complete-custom-tag-2-inside-positive",
+      "body": "Example: ``unclosed\n<fixture-tag>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;fixture-tag&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;fixture-tag&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "complete-custom-tag-2-outside-positive",
+      "body": "Example: ``unclosed\n<fixture-tag>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;fixture-tag&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;fixture-tag&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "complete-custom-tag-4-inside-positive",
+      "body": "Example: ````unclosed\n<fixture-tag>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;fixture-tag&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;fixture-tag&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "complete-custom-tag-4-outside-positive",
+      "body": "Example: ````unclosed\n<fixture-tag>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;fixture-tag&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;fixture-tag&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "custom-inline-tag-1-inside-positive",
+      "body": "Example: `unclosed\n<fixture-tag>text</fixture-tag>\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;fixture-tag&gt;text&lt;/fixture-tag&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;fixture-tag&gt;text&lt;/fixture-tag&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "custom-inline-tag-1-outside-positive",
+      "body": "Example: `unclosed\n<fixture-tag>text</fixture-tag>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;fixture-tag&gt;text&lt;/fixture-tag&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;fixture-tag&gt;text&lt;/fixture-tag&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "custom-inline-tag-2-inside-positive",
+      "body": "Example: ``unclosed\n<fixture-tag>text</fixture-tag>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;fixture-tag&gt;text&lt;/fixture-tag&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;fixture-tag&gt;text&lt;/fixture-tag&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "custom-inline-tag-2-outside-positive",
+      "body": "Example: ``unclosed\n<fixture-tag>text</fixture-tag>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;fixture-tag&gt;text&lt;/fixture-tag&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;fixture-tag&gt;text&lt;/fixture-tag&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "custom-inline-tag-4-inside-positive",
+      "body": "Example: ````unclosed\n<fixture-tag>text</fixture-tag>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;fixture-tag&gt;text&lt;/fixture-tag&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;fixture-tag&gt;text&lt;/fixture-tag&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "custom-inline-tag-4-outside-positive",
+      "body": "Example: ````unclosed\n<fixture-tag>text</fixture-tag>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;fixture-tag&gt;text&lt;/fixture-tag&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;fixture-tag&gt;text&lt;/fixture-tag&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-valid-1-inside-positive",
+      "body": "Example: `unclosed\n```rust\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<pre><code class=\"language-rust\">disposition: REVIEW_READY\nLater `\n</code></pre>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<pre lang=\"rust\"><code>disposition: REVIEW_READY\nLater `\n</code></pre>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-valid-1-outside-positive",
+      "body": "Example: `unclosed\n```rust\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<pre><code class=\"language-rust\">disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY\n</code></pre>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<pre lang=\"rust\"><code>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY\n</code></pre>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-valid-2-inside-positive",
+      "body": "Example: ``unclosed\n```rust\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<pre><code class=\"language-rust\">disposition: REVIEW_READY\nLater ``\n</code></pre>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<pre lang=\"rust\"><code>disposition: REVIEW_READY\nLater ``\n</code></pre>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-valid-2-outside-positive",
+      "body": "Example: ``unclosed\n```rust\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<pre><code class=\"language-rust\">disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY\n</code></pre>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<pre lang=\"rust\"><code>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY\n</code></pre>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-valid-4-inside-positive",
+      "body": "Example: ````unclosed\n```rust\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<pre><code class=\"language-rust\">disposition: REVIEW_READY\nLater ````\n</code></pre>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<pre lang=\"rust\"><code>disposition: REVIEW_READY\nLater ````\n</code></pre>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-valid-4-outside-positive",
+      "body": "Example: ````unclosed\n```rust\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<pre><code class=\"language-rust\">disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY\n</code></pre>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<pre lang=\"rust\"><code>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY\n</code></pre>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-info-one-tick-1-inside-positive",
+      "body": "Example: `unclosed\n```rust`bad\ndisposition: REVIEW_READY\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ```rust</code>bad\ndisposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust</code>bad\ndisposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-info-one-tick-1-outside-positive",
+      "body": "Example: `unclosed\n```rust`bad\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ```rust</code>bad\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust</code>bad\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-info-one-tick-2-inside-positive",
+      "body": "Example: ``unclosed\n```rust`bad\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ```rust`bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust`bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-info-one-tick-2-outside-positive",
+      "body": "Example: ``unclosed\n```rust`bad\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ```rust`bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust`bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-info-one-tick-4-inside-positive",
+      "body": "Example: ````unclosed\n```rust`bad\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ```rust`bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust`bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-info-one-tick-4-outside-positive",
+      "body": "Example: ````unclosed\n```rust`bad\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ```rust`bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust`bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-info-two-ticks-1-inside-positive",
+      "body": "Example: `unclosed\n```rust``bad\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ```rust``bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust``bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-info-two-ticks-1-outside-positive",
+      "body": "Example: `unclosed\n```rust``bad\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ```rust``bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust``bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-info-two-ticks-2-inside-positive",
+      "body": "Example: ``unclosed\n```rust``bad\ndisposition: REVIEW_READY\nLater ``",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ```rust</code>bad\ndisposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust</code>bad\ndisposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-info-two-ticks-2-outside-positive",
+      "body": "Example: ``unclosed\n```rust``bad\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ```rust</code>bad\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust</code>bad\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-info-two-ticks-4-inside-positive",
+      "body": "Example: ````unclosed\n```rust``bad\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ```rust``bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust``bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-info-two-ticks-4-outside-positive",
+      "body": "Example: ````unclosed\n```rust``bad\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ```rust``bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust``bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-info-three-ticks-1-inside-positive",
+      "body": "Example: `unclosed\n```rust```bad\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ```rust```bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust```bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-info-three-ticks-1-outside-positive",
+      "body": "Example: `unclosed\n```rust```bad\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ```rust```bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust```bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-info-three-ticks-2-inside-positive",
+      "body": "Example: ``unclosed\n```rust```bad\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ```rust```bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust```bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-info-three-ticks-2-outside-positive",
+      "body": "Example: ``unclosed\n```rust```bad\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ```rust```bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust```bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-info-three-ticks-4-inside-positive",
+      "body": "Example: ````unclosed\n```rust```bad\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ```rust```bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust```bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-info-three-ticks-4-outside-positive",
+      "body": "Example: ````unclosed\n```rust```bad\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ```rust```bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust```bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-spaced-info-tick-1-inside-positive",
+      "body": "Example: `unclosed\n``` rust `bad\ndisposition: REVIEW_READY\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ``` rust </code>bad\ndisposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ``` rust </code>bad\ndisposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-spaced-info-tick-1-outside-positive",
+      "body": "Example: `unclosed\n``` rust `bad\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ``` rust </code>bad\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ``` rust </code>bad\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-spaced-info-tick-2-inside-positive",
+      "body": "Example: ``unclosed\n``` rust `bad\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ``` rust `bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ``` rust `bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-spaced-info-tick-2-outside-positive",
+      "body": "Example: ``unclosed\n``` rust `bad\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ``` rust `bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ``` rust `bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-spaced-info-tick-4-inside-positive",
+      "body": "Example: ````unclosed\n``` rust `bad\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ``` rust `bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ``` rust `bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-spaced-info-tick-4-outside-positive",
+      "body": "Example: ````unclosed\n``` rust `bad\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ``` rust `bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ``` rust `bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-indented-info-tick-1-inside-positive",
+      "body": "Example: `unclosed\n   ```rust`bad\ndisposition: REVIEW_READY\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ```rust</code>bad\ndisposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust</code>bad\ndisposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-indented-info-tick-1-outside-positive",
+      "body": "Example: `unclosed\n   ```rust`bad\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ```rust</code>bad\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust</code>bad\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-indented-info-tick-2-inside-positive",
+      "body": "Example: ``unclosed\n   ```rust`bad\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ```rust`bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust`bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-indented-info-tick-2-outside-positive",
+      "body": "Example: ``unclosed\n   ```rust`bad\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ```rust`bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust`bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-indented-info-tick-4-inside-positive",
+      "body": "Example: ````unclosed\n   ```rust`bad\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ```rust`bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust`bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-indented-info-tick-4-outside-positive",
+      "body": "Example: ````unclosed\n   ```rust`bad\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ```rust`bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ```rust`bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-four-info-tick-1-inside-positive",
+      "body": "Example: `unclosed\n````rust`bad\ndisposition: REVIEW_READY\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ````rust</code>bad\ndisposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ````rust</code>bad\ndisposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-four-info-tick-1-outside-positive",
+      "body": "Example: `unclosed\n````rust`bad\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ````rust</code>bad\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ````rust</code>bad\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-four-info-tick-2-inside-positive",
+      "body": "Example: ``unclosed\n````rust`bad\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ````rust`bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ````rust`bad disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-four-info-tick-2-outside-positive",
+      "body": "Example: ``unclosed\n````rust`bad\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ````rust`bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ````rust`bad disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-four-info-tick-4-inside-positive",
+      "body": "Example: ````unclosed\n````rust`bad\ndisposition: REVIEW_READY\nLater ````",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed </code>rust`bad\ndisposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed </code>rust`bad\ndisposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "backtick-fence-four-info-tick-4-outside-positive",
+      "body": "Example: ````unclosed\n````rust`bad\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed </code>rust`bad\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed </code>rust`bad\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "source-block-1-inside-positive",
+      "body": "Example: `unclosed\n<source>fixture</source>\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<source>fixture</source>\ndisposition: REVIEW_READY\nLater `\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "source-block-1-outside-positive",
+      "body": "Example: `unclosed\n<source>fixture</source>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<source>fixture</source>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "source-block-2-inside-positive",
+      "body": "Example: ``unclosed\n<source>fixture</source>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<source>fixture</source>\ndisposition: REVIEW_READY\nLater ``\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "source-block-2-outside-positive",
+      "body": "Example: ``unclosed\n<source>fixture</source>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<source>fixture</source>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "source-block-4-inside-positive",
+      "body": "Example: ````unclosed\n<source>fixture</source>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<source>fixture</source>\ndisposition: REVIEW_READY\nLater ````\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "source-block-4-outside-positive",
+      "body": "Example: ````unclosed\n<source>fixture</source>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<source>fixture</source>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "dialog-nonblock-1-inside-positive",
+      "body": "Example: `unclosed\n<dialog>fixture</dialog>\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<dialog>fixture</dialog>\ndisposition: REVIEW_READY\nLater `\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "dialog-nonblock-1-outside-positive",
+      "body": "Example: `unclosed\n<dialog>fixture</dialog>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<dialog>fixture</dialog>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "dialog-nonblock-2-inside-positive",
+      "body": "Example: ``unclosed\n<dialog>fixture</dialog>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<dialog>fixture</dialog>\ndisposition: REVIEW_READY\nLater ``\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "dialog-nonblock-2-outside-positive",
+      "body": "Example: ``unclosed\n<dialog>fixture</dialog>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<dialog>fixture</dialog>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "dialog-nonblock-4-inside-positive",
+      "body": "Example: ````unclosed\n<dialog>fixture</dialog>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<dialog>fixture</dialog>\ndisposition: REVIEW_READY\nLater ````\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "dialog-nonblock-4-outside-positive",
+      "body": "Example: ````unclosed\n<dialog>fixture</dialog>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<dialog>fixture</dialog>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "search-nonblock-1-inside-positive",
+      "body": "Example: `unclosed\n<search>fixture</search>\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;search&gt;fixture&lt;/search&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;search&gt;fixture&lt;/search&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "search-nonblock-1-outside-positive",
+      "body": "Example: `unclosed\n<search>fixture</search>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;search&gt;fixture&lt;/search&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;search&gt;fixture&lt;/search&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "search-nonblock-2-inside-positive",
+      "body": "Example: ``unclosed\n<search>fixture</search>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;search&gt;fixture&lt;/search&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;search&gt;fixture&lt;/search&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "search-nonblock-2-outside-positive",
+      "body": "Example: ``unclosed\n<search>fixture</search>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;search&gt;fixture&lt;/search&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;search&gt;fixture&lt;/search&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "search-nonblock-4-inside-positive",
+      "body": "Example: ````unclosed\n<search>fixture</search>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;search&gt;fixture&lt;/search&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;search&gt;fixture&lt;/search&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "search-nonblock-4-outside-positive",
+      "body": "Example: ````unclosed\n<search>fixture</search>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;search&gt;fixture&lt;/search&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;search&gt;fixture&lt;/search&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-self-closing-1-inside-positive",
+      "body": "Example: `unclosed\n<pre/>\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;pre/&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;pre/&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-self-closing-1-outside-positive",
+      "body": "Example: `unclosed\n<pre/>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;pre/&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;pre/&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-self-closing-2-inside-positive",
+      "body": "Example: ``unclosed\n<pre/>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;pre/&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;pre/&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-self-closing-2-outside-positive",
+      "body": "Example: ``unclosed\n<pre/>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;pre/&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;pre/&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-self-closing-4-inside-positive",
+      "body": "Example: ````unclosed\n<pre/>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;pre/&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;pre/&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-self-closing-4-outside-positive",
+      "body": "Example: ````unclosed\n<pre/>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;pre/&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;pre/&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-end-tag-1-inside-positive",
+      "body": "Example: `unclosed\n</pre>\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;/pre&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;/pre&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-end-tag-1-outside-positive",
+      "body": "Example: `unclosed\n</pre>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;/pre&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;/pre&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-end-tag-2-inside-positive",
+      "body": "Example: ``unclosed\n</pre>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;/pre&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;/pre&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-end-tag-2-outside-positive",
+      "body": "Example: ``unclosed\n</pre>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;/pre&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;/pre&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-end-tag-4-inside-positive",
+      "body": "Example: ````unclosed\n</pre>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;/pre&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;/pre&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-end-tag-4-outside-positive",
+      "body": "Example: ````unclosed\n</pre>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;/pre&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;/pre&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-invalid-slash-1-inside-positive",
+      "body": "Example: `unclosed\n<pre/invalid>\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;pre/invalid&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;pre/invalid&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-invalid-slash-1-outside-positive",
+      "body": "Example: `unclosed\n<pre/invalid>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;pre/invalid&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;pre/invalid&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-invalid-slash-2-inside-positive",
+      "body": "Example: ``unclosed\n<pre/invalid>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;pre/invalid&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;pre/invalid&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-invalid-slash-2-outside-positive",
+      "body": "Example: ``unclosed\n<pre/invalid>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;pre/invalid&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;pre/invalid&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-invalid-slash-4-inside-positive",
+      "body": "Example: ````unclosed\n<pre/invalid>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;pre/invalid&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;pre/invalid&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-invalid-slash-4-outside-positive",
+      "body": "Example: ````unclosed\n<pre/invalid>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;pre/invalid&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;pre/invalid&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "div-invalid-slash-1-inside-positive",
+      "body": "Example: `unclosed\n<div/invalid>\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;div/invalid&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;div/invalid&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "div-invalid-slash-1-outside-positive",
+      "body": "Example: `unclosed\n<div/invalid>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;div/invalid&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;div/invalid&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "div-invalid-slash-2-inside-positive",
+      "body": "Example: ``unclosed\n<div/invalid>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;div/invalid&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;div/invalid&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "div-invalid-slash-2-outside-positive",
+      "body": "Example: ``unclosed\n<div/invalid>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;div/invalid&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;div/invalid&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "div-invalid-slash-4-inside-positive",
+      "body": "Example: ````unclosed\n<div/invalid>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;div/invalid&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;div/invalid&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "div-invalid-slash-4-outside-positive",
+      "body": "Example: ````unclosed\n<div/invalid>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;div/invalid&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;div/invalid&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-cross-close-1-inside-positive",
+      "body": "Example: `unclosed\n<pre>fixture</style>\ndisposition: REVIEW_READY\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<pre>fixture</style>\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-cross-close-1-outside-positive",
+      "body": "Example: `unclosed\n<pre>fixture</style>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<pre>fixture</style>\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-cross-close-2-inside-positive",
+      "body": "Example: ``unclosed\n<pre>fixture</style>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ``unclosed</p>\n<pre>fixture</style>\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-cross-close-2-outside-positive",
+      "body": "Example: ``unclosed\n<pre>fixture</style>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<pre>fixture</style>\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-cross-close-4-inside-positive",
+      "body": "Example: ````unclosed\n<pre>fixture</style>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ````unclosed</p>\n<pre>fixture</style>\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-cross-close-4-outside-positive",
+      "body": "Example: ````unclosed\n<pre>fixture</style>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<pre>fixture</style>\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-open-eol-1-inside-positive",
+      "body": "Example: `unclosed\n<pre\nfixture</pre>\ndisposition: REVIEW_READY\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<pre\nfixture</pre>\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-open-eol-1-outside-positive",
+      "body": "Example: `unclosed\n<pre\nfixture</pre>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<pre\nfixture</pre>\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-open-eol-2-inside-positive",
+      "body": "Example: ``unclosed\n<pre\nfixture</pre>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ``unclosed</p>\n<pre\nfixture</pre>\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-open-eol-2-outside-positive",
+      "body": "Example: ``unclosed\n<pre\nfixture</pre>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<pre\nfixture</pre>\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-open-eol-4-inside-positive",
+      "body": "Example: ````unclosed\n<pre\nfixture</pre>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ````unclosed</p>\n<pre\nfixture</pre>\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-open-eol-4-outside-positive",
+      "body": "Example: ````unclosed\n<pre\nfixture</pre>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<pre\nfixture</pre>\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-attributes-1-inside-positive",
+      "body": "Example: `unclosed\n<PrE class=x>fixture</pRE>\ndisposition: REVIEW_READY\nLater `",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: `unclosed</p>\n<PrE class=x>fixture</pRE>\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater `</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-attributes-1-outside-positive",
+      "body": "Example: `unclosed\n<PrE class=x>fixture</pRE>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<PrE class=x>fixture</pRE>\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-attributes-2-inside-positive",
+      "body": "Example: ``unclosed\n<PrE class=x>fixture</pRE>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ``unclosed</p>\n<PrE class=x>fixture</pRE>\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-attributes-2-outside-positive",
+      "body": "Example: ``unclosed\n<PrE class=x>fixture</pRE>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<PrE class=x>fixture</pRE>\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-attributes-4-inside-positive",
+      "body": "Example: ````unclosed\n<PrE class=x>fixture</pRE>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: ````unclosed</p>\n<PrE class=x>fixture</pRE>\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REVIEW_READY\nLater ````</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "pre-attributes-4-outside-positive",
+      "body": "Example: ````unclosed\n<PrE class=x>fixture</pRE>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<PrE class=x>fixture</pRE>\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<!-- raw HTML omitted -->\n<p>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-non-letter-1-inside-positive",
+      "body": "Example: `unclosed\n<!1invalid>\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;!1invalid&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;!1invalid&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-non-letter-1-outside-positive",
+      "body": "Example: `unclosed\n<!1invalid>\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;!1invalid&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;!1invalid&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-non-letter-2-inside-positive",
+      "body": "Example: ``unclosed\n<!1invalid>\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;!1invalid&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;!1invalid&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-non-letter-2-outside-positive",
+      "body": "Example: ``unclosed\n<!1invalid>\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;!1invalid&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;!1invalid&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-non-letter-4-inside-positive",
+      "body": "Example: ````unclosed\n<!1invalid>\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed &lt;!1invalid&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;!1invalid&gt; disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "declaration-non-letter-4-outside-positive",
+      "body": "Example: ````unclosed\n<!1invalid>\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed &lt;!1invalid&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed &lt;!1invalid&gt; disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "tilde-fence-valid-1-inside-positive",
+      "body": "Example: `unclosed\n~~~rust\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<pre><code class=\"language-rust\">disposition: REVIEW_READY\nLater `\n</code></pre>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<pre lang=\"rust\"><code>disposition: REVIEW_READY\nLater `\n</code></pre>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "tilde-fence-valid-1-outside-positive",
+      "body": "Example: `unclosed\n~~~rust\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<pre><code class=\"language-rust\">disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY\n</code></pre>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<pre lang=\"rust\"><code>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY\n</code></pre>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "tilde-fence-valid-2-inside-positive",
+      "body": "Example: ``unclosed\n~~~rust\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<pre><code class=\"language-rust\">disposition: REVIEW_READY\nLater ``\n</code></pre>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<pre lang=\"rust\"><code>disposition: REVIEW_READY\nLater ``\n</code></pre>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "tilde-fence-valid-2-outside-positive",
+      "body": "Example: ``unclosed\n~~~rust\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<pre><code class=\"language-rust\">disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY\n</code></pre>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<pre lang=\"rust\"><code>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY\n</code></pre>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "tilde-fence-valid-4-inside-positive",
+      "body": "Example: ````unclosed\n~~~rust\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<pre><code class=\"language-rust\">disposition: REVIEW_READY\nLater ````\n</code></pre>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<pre lang=\"rust\"><code>disposition: REVIEW_READY\nLater ````\n</code></pre>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "tilde-fence-valid-4-outside-positive",
+      "body": "Example: ````unclosed\n~~~rust\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<pre><code class=\"language-rust\">disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY\n</code></pre>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<pre lang=\"rust\"><code>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY\n</code></pre>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "tilde-fence-info-tick-1-inside-positive",
+      "body": "Example: `unclosed\n~~~rust`bad\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<pre><code class=\"language-rust`bad\">disposition: REVIEW_READY\nLater `\n</code></pre>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<pre lang=\"rust`bad\"><code>disposition: REVIEW_READY\nLater `\n</code></pre>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "tilde-fence-info-tick-1-outside-positive",
+      "body": "Example: `unclosed\n~~~rust`bad\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: `unclosed</p>\n<pre><code class=\"language-rust`bad\">disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY\n</code></pre>\n",
+      "gfm_html": "<p>Example: `unclosed</p>\n<pre lang=\"rust`bad\"><code>disposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY\n</code></pre>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "tilde-fence-info-tick-2-inside-positive",
+      "body": "Example: ``unclosed\n~~~rust`bad\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<pre><code class=\"language-rust`bad\">disposition: REVIEW_READY\nLater ``\n</code></pre>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<pre lang=\"rust`bad\"><code>disposition: REVIEW_READY\nLater ``\n</code></pre>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "tilde-fence-info-tick-2-outside-positive",
+      "body": "Example: ``unclosed\n~~~rust`bad\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ``unclosed</p>\n<pre><code class=\"language-rust`bad\">disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY\n</code></pre>\n",
+      "gfm_html": "<p>Example: ``unclosed</p>\n<pre lang=\"rust`bad\"><code>disposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY\n</code></pre>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "tilde-fence-info-tick-4-inside-positive",
+      "body": "Example: ````unclosed\n~~~rust`bad\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<pre><code class=\"language-rust`bad\">disposition: REVIEW_READY\nLater ````\n</code></pre>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<pre lang=\"rust`bad\"><code>disposition: REVIEW_READY\nLater ````\n</code></pre>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "tilde-fence-info-tick-4-outside-positive",
+      "body": "Example: ````unclosed\n~~~rust`bad\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: ````unclosed</p>\n<pre><code class=\"language-rust`bad\">disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY\n</code></pre>\n",
+      "gfm_html": "<p>Example: ````unclosed</p>\n<pre lang=\"rust`bad\"><code>disposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY\n</code></pre>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "short-backticks-1-inside-positive",
+      "body": "Example: `unclosed\n``rust\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ``rust disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ``rust disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "short-backticks-1-outside-positive",
+      "body": "Example: `unclosed\n``rust\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ``rust disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ``rust disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "short-backticks-2-inside-positive",
+      "body": "Example: ``unclosed\n``rust\ndisposition: REVIEW_READY\nLater ``",
+      "expected": true,
+      "rendered_fields": [
+        "REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed </code>rust\ndisposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed </code>rust\ndisposition: REVIEW_READY\nLater ``</p>\n",
+      "gfm_fields": [
+        "REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "short-backticks-2-outside-positive",
+      "body": "Example: ``unclosed\n``rust\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": false,
+      "rendered_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed </code>rust\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed </code>rust\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "REPAIR_REQUIRED",
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "short-backticks-4-inside-positive",
+      "body": "Example: ````unclosed\n``rust\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ``rust disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ``rust disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "short-backticks-4-outside-positive",
+      "body": "Example: ````unclosed\n``rust\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ``rust disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ``rust disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "short-tildes-1-inside-positive",
+      "body": "Example: `unclosed\n~~rust\ndisposition: REVIEW_READY\nLater `",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ~~rust disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ~~rust disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "short-tildes-1-outside-positive",
+      "body": "Example: `unclosed\n~~rust\ndisposition: REPAIR_REQUIRED\nLater `\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ~~rust disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ~~rust disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "short-tildes-2-inside-positive",
+      "body": "Example: ``unclosed\n~~rust\ndisposition: REVIEW_READY\nLater ``",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ~~rust disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ~~rust disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "short-tildes-2-outside-positive",
+      "body": "Example: ``unclosed\n~~rust\ndisposition: REPAIR_REQUIRED\nLater ``\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ~~rust disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ~~rust disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "short-tildes-4-inside-positive",
+      "body": "Example: ````unclosed\n~~rust\ndisposition: REVIEW_READY\nLater ````",
+      "expected": false,
+      "rendered_fields": [],
+      "observed": false,
+      "html": "<p>Example: <code>unclosed ~~rust disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ~~rust disposition: REVIEW_READY Later </code></p>\n",
+      "gfm_fields": [],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    },
+    {
+      "case": "short-tildes-4-outside-positive",
+      "body": "Example: ````unclosed\n~~rust\ndisposition: REPAIR_REQUIRED\nLater ````\ndisposition: SOURCE_REVIEW_READY",
+      "expected": true,
+      "rendered_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "observed": true,
+      "html": "<p>Example: <code>unclosed ~~rust disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_html": "<p>Example: <code>unclosed ~~rust disposition: REPAIR_REQUIRED Later </code>\ndisposition: SOURCE_REVIEW_READY</p>\n",
+      "gfm_fields": [
+        "SOURCE_REVIEW_READY"
+      ],
+      "renderer_agrees": true,
+      "cmark_version": "0.29.0.gfm.13"
+    }
+  ]
+}

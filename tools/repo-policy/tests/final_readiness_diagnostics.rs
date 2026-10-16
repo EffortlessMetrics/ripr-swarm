@@ -304,7 +304,10 @@ fn quoted_negative_fields_do_not_withdraw_outside_current_disposition() -> Resul
 
 #[test]
 fn diagnostics_preserve_real_dispositions_across_block_boundaries() -> Result<(), String> {
-    for (name, text, expected) in review_disposition::block_boundary_cases()? {
+    for (name, text, expected) in review_disposition::block_boundary_cases()?
+        .into_iter()
+        .chain(review_disposition::block_recognition_cases()?)
+    {
         let mut case = positive();
         let mut reviews: Value = serde_json::from_str(&case.reviews).map_err(|e| e.to_string())?;
         reviews[0]["body"] = json!(text);
