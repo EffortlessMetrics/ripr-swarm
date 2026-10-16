@@ -2794,7 +2794,7 @@ mod tests {
             "+++ b/target/ripr/cache/repo-seam-facts/1.61/abc.json\n",
             "@@ -1,1 +1,1 @@\n",
             "-{}\n",
-            "{\"cached\": true}\n",
+            "+{\"cached\": true}\n",
         );
         let result = run_pipeline_for_diff_text(
             &sample_rust_diff_options(root),
