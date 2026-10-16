@@ -1,3 +1,6 @@
+#[path = "common/executable_index.rs"]
+mod executable_index;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -74,15 +77,7 @@ impl Fixture {
     }
     fn executable() -> Result<Self, String> {
         let fixture = Self::new()?;
-        fixture.git(&["init", "--quiet"])?;
-        for name in ["allowed", "demoted", "ordinary", "unregistered"] {
-            std::fs::write(fixture.0.join(name), format!("{name}\n")).map_err(|e| e.to_string())?;
-            fixture.git(&["-c", "core.filemode=false", "add", name])?;
-            fixture.git(&["update-index", "--chmod=-x", name])?;
-        }
-        for name in ["allowed", "demoted", "unregistered"] {
-            fixture.git(&["update-index", "--chmod=+x", name])?;
-        }
+        executable_index::initialize(&fixture.0, |args| fixture.git(args).map(|_| ()))?;
         Ok(fixture)
     }
     fn command(&self, argument: &str) -> Command {
