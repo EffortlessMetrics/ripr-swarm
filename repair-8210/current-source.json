@@ -1,0 +1,295 @@
+{
+  "observed_main": "e660a99480dc13a4ed93b131042d11506fd484b6",
+  "tested_basis": "d08c77d144c016078364fcc1fcf2fa593d21cefc",
+  "candidate": "67dc5af9a15590fc8476d09217232831a0009952",
+  "delta": {
+    "repository_full_name": "EffortlessMetrics/ripr-swarm",
+    "base": "d08c77d144c016078364fcc1fcf2fa593d21cefc",
+    "head": "e660a99480dc13a4ed93b131042d11506fd484b6",
+    "status": "ahead",
+    "ahead_by": 2,
+    "behind_by": 0,
+    "total_commits": 2,
+    "too_large": null,
+    "base_commit": {
+      "sha": "d08c77d144c016078364fcc1fcf2fa593d21cefc",
+      "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/commits/d08c77d144c016078364fcc1fcf2fa593d21cefc",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/commit/d08c77d144c016078364fcc1fcf2fa593d21cefc"
+    },
+    "merge_base_commit": {
+      "sha": "d08c77d144c016078364fcc1fcf2fa593d21cefc",
+      "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/commits/d08c77d144c016078364fcc1fcf2fa593d21cefc",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/commit/d08c77d144c016078364fcc1fcf2fa593d21cefc"
+    },
+    "files": [
+      {
+        "filename": "README.md",
+        "status": "modified",
+        "additions": 15,
+        "deletions": 4,
+        "changes": 19,
+        "previous_filename": null
+      },
+      {
+        "filename": "changelog.d/7642-proximity-oracle-rows-no-call-path.md",
+        "status": "added",
+        "additions": 3,
+        "deletions": 0,
+        "changes": 3,
+        "previous_filename": null
+      },
+      {
+        "filename": "changelog.d/7643-hidden-bullet-currentness.md",
+        "status": "added",
+        "additions": 2,
+        "deletions": 0,
+        "changes": 2,
+        "previous_filename": null
+      },
+      {
+        "filename": "changelog.d/8164-canonical-first-run.md",
+        "status": "added",
+        "additions": 4,
+        "deletions": 0,
+        "changes": 4,
+        "previous_filename": null
+      },
+      {
+        "filename": "crates/ripr/src/analysis/classifier/finding.rs",
+        "status": "modified",
+        "additions": 129,
+        "deletions": 3,
+        "changes": 132,
+        "previous_filename": null
+      },
+      {
+        "filename": "crates/ripr/src/cli/help.rs",
+        "status": "modified",
+        "additions": 31,
+        "deletions": 0,
+        "changes": 31,
+        "previous_filename": null
+      },
+      {
+        "filename": "crates/ripr/src/cli/help/overview.rs",
+        "status": "modified",
+        "additions": 3,
+        "deletions": 1,
+        "changes": 4,
+        "previous_filename": null
+      },
+      {
+        "filename": "crates/ripr/src/output/human.rs",
+        "status": "modified",
+        "additions": 4,
+        "deletions": 3,
+        "changes": 7,
+        "previous_filename": null
+      },
+      {
+        "filename": "crates/ripr/src/output/human/triage.rs",
+        "status": "modified",
+        "additions": 100,
+        "deletions": 2,
+        "changes": 102,
+        "previous_filename": null
+      },
+      {
+        "filename": "docs/QUICKSTART.md",
+        "status": "modified",
+        "additions": 12,
+        "deletions": 1,
+        "changes": 13,
+        "previous_filename": null
+      },
+      {
+        "filename": "fixtures/evidence-promotion-honesty-corpus/corpus.json",
+        "status": "modified",
+        "additions": 30,
+        "deletions": 0,
+        "changes": 30,
+        "previous_filename": null
+      },
+      {
+        "filename": "fixtures/human_full_shared_parse_port/expected/CHANGELOG.md",
+        "status": "modified",
+        "additions": 13,
+        "deletions": 0,
+        "changes": 13,
+        "previous_filename": null
+      },
+      {
+        "filename": "fixtures/human_full_shared_parse_port/expected/human.txt",
+        "status": "modified",
+        "additions": 6,
+        "deletions": 6,
+        "changes": 12,
+        "previous_filename": null
+      },
+      {
+        "filename": "fixtures/match_arm_proximity_wrapper_confirms/expected/CHANGELOG.md",
+        "status": "modified",
+        "additions": 13,
+        "deletions": 0,
+        "changes": 13,
+        "previous_filename": null
+      },
+      {
+        "filename": "fixtures/match_arm_proximity_wrapper_confirms/expected/check.json",
+        "status": "modified",
+        "additions": 6,
+        "deletions": 2,
+        "changes": 8,
+        "previous_filename": null
+      },
+      {
+        "filename": "fixtures/match_arm_proximity_wrapper_confirms/expected/human-full.txt",
+        "status": "modified",
+        "additions": 2,
+        "deletions": 2,
+        "changes": 4,
+        "previous_filename": null
+      },
+      {
+        "filename": "fixtures/multi_hunk_removed_line_wrong_target/expected/CHANGELOG.md",
+        "status": "modified",
+        "additions": 12,
+        "deletions": 0,
+        "changes": 12,
+        "previous_filename": null
+      },
+      {
+        "filename": "fixtures/multi_hunk_removed_line_wrong_target/expected/human.txt",
+        "status": "modified",
+        "additions": 4,
+        "deletions": 4,
+        "changes": 8,
+        "previous_filename": null
+      },
+      {
+        "filename": "fixtures/owner_return_pin_identity_traps/expected/CHANGELOG.md",
+        "status": "modified",
+        "additions": 24,
+        "deletions": 0,
+        "changes": 24,
+        "previous_filename": null
+      },
+      {
+        "filename": "fixtures/owner_return_pin_identity_traps/expected/check.json",
+        "status": "modified",
+        "additions": 6,
+        "deletions": 2,
+        "changes": 8,
+        "previous_filename": null
+      },
+      {
+        "filename": "fixtures/owner_return_pin_identity_traps/expected/human.txt",
+        "status": "modified",
+        "additions": 5,
+        "deletions": 5,
+        "changes": 10,
+        "previous_filename": null
+      },
+      {
+        "filename": "fixtures/rust_slice_table_call_exit/expected/CHANGELOG.md",
+        "status": "modified",
+        "additions": 13,
+        "deletions": 0,
+        "changes": 13,
+        "previous_filename": null
+      },
+      {
+        "filename": "fixtures/rust_slice_table_call_exit/expected/check.json",
+        "status": "modified",
+        "additions": 12,
+        "deletions": 4,
+        "changes": 16,
+        "previous_filename": null
+      },
+      {
+        "filename": "fixtures/rust_slice_table_call_exit/expected/human-full.txt",
+        "status": "modified",
+        "additions": 3,
+        "deletions": 3,
+        "changes": 6,
+        "previous_filename": null
+      },
+      {
+        "filename": "fixtures/rust_slice_table_try_exit/expected/CHANGELOG.md",
+        "status": "modified",
+        "additions": 13,
+        "deletions": 0,
+        "changes": 13,
+        "previous_filename": null
+      },
+      {
+        "filename": "fixtures/rust_slice_table_try_exit/expected/check.json",
+        "status": "modified",
+        "additions": 12,
+        "deletions": 4,
+        "changes": 16,
+        "previous_filename": null
+      },
+      {
+        "filename": "fixtures/rust_slice_table_try_exit/expected/human-full.txt",
+        "status": "modified",
+        "additions": 3,
+        "deletions": 3,
+        "changes": 6,
+        "previous_filename": null
+      },
+      {
+        "filename": "xtask/src/evidence_promotion.rs",
+        "status": "modified",
+        "additions": 74,
+        "deletions": 1,
+        "changes": 75,
+        "previous_filename": null
+      },
+      {
+        "filename": "xtask/src/tests.rs",
+        "status": "modified",
+        "additions": 2,
+        "deletions": 0,
+        "changes": 2,
+        "previous_filename": null
+      },
+      {
+        "filename": "xtask/src/tests/discarded_matcher_honesty.rs",
+        "status": "modified",
+        "additions": 1,
+        "deletions": 0,
+        "changes": 1,
+        "previous_filename": null
+      },
+      {
+        "filename": "xtask/tests/ripr_public_guide_contract.rs",
+        "status": "modified",
+        "additions": 145,
+        "deletions": 6,
+        "changes": 151,
+        "previous_filename": null
+      }
+    ]
+  },
+  "producer": {
+    "content": "        .iter()\n        .filter(|limitation| {\n            limitation.kind == AnalysisLimitationKind::ChangedFileAbsentFromWorktree\n        })\n        .filter_map(|limitation| limitation.path.as_deref())\n        .collect::<BTreeSet<_>>();\n    let preview_paths: Vec<&diff::ChangedFile> = analysis_changed_files\n        .iter()\n        .filter(|changed| {\n            !absent_changed_paths.contains(super::workspace::normalize_path(&changed.path).as_str())\n        })\n        .collect();\n    let preview_advisories =\n        detect_preview_advisories(languages, preview_paths.into_iter(), language_config);\n    for advisory in &preview_advisories {\n        if !advisory.enabled {\n            // An adapter that is not compiled in cannot be enabled through\n            // `ripr.toml`; the shared owner names the real prerequisites.\n            let recovery = match advisory.unavailable_adapter_recovery() {\n                Some(recovery) => recovery,\n                None => format!(\n                    \"Enable the {} preview adapter and re-run the analysis.\",\n                    advisory.language",
+    "encoding": "utf-8",
+    "sha": "370c3e8f12d11d26fc3ff18b0e88860c2c5bf4cd",
+    "display_url": "https://github.com/EffortlessMetrics/ripr-swarm/blob/e660a99480dc13a4ed93b131042d11506fd484b6/crates/ripr/src/analysis/pipeline.rs",
+    "display_title": "pipeline.rs"
+  },
+  "consumer": {
+    "content": "///   preview adapter is not enabled in `ripr.toml`; the empty result must not\n///   be read as clean. A copy-paste-ready TOML block is appended so enabling\n///   the adapter is a single edit.\nfn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {\n    for advisory in &output.preview_language_advisories {\n        let (language, file_language) = advisory_language_names(advisory);\n        let file_label = if advisory.file_count == 1 {\n            format!(\"{file_language} file\")\n        } else {\n            format!(\"{file_language} files\")\n        };\n        if advisory.analyzed(&output.language_runs) {\n            // The empty-result caveat only applies when there is no finding.\n            let caveat = if output.findings.is_empty() {\n                \"An empty result here is NOT a clean Rust-grade result.\"\n            } else {\n                \"Treat its findings as advisory, not Rust-grade.\"\n            };\n            out.push_str(&format!(\n                \"\\nNote: {} {} analyzed under preview support — preview evidence is advisory and may be incomplete. {caveat}\\n\",\n                advisory.file_count, file_label,\n            ));\n        } else if let Some(recovery) = advisory.unavailable_adapter_recovery() {\n            // The adapter is not compiled into this binary: a `ripr.toml`\n            // edit cannot enable it (config load rejects it), so name the\n            // real prerequisites instead of the TOML block.\n            out.push_str(&format!(\n                \"\\nNote: this diff contains {} {}. The {} adapter is not compiled into this ripr binary, so these files were not analyzed — this is NOT a clean Rust-grade result. {recovery}.\\n\",\n                advisory.file_count, file_label, language,\n            ));\n        } else if !advisory.enabled {\n            let enabled_line = preview_enablement_toml(&output.root, &advisory.language);\n            out.push_str(&format!(\n                \"\\nNote: this diff contains {} {}. The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\\n\\nTo enable, add to ripr.toml:\\n\\n[languages]\\n{enabled_line}\\n\",\n                advisory.file_count, file_label, language,\n            ));\n            if advisory.language == \"typescript\" && advisory.javascript_file_count > 0 {",
+    "encoding": "utf-8",
+    "sha": "3f5b9ea01dd81b4a856887bd2fd1147aed65d188",
+    "display_url": "https://github.com/EffortlessMetrics/ripr-swarm/blob/e660a99480dc13a4ed93b131042d11506fd484b6/crates/ripr/src/output/human.rs",
+    "display_title": "human.rs"
+  },
+  "fanout_patch": {
+    "patch": {
+      "filename": "crates/ripr/src/analysis/pipeline.rs",
+      "patch": "@@ -38,6 +38,19 @@ fn is_preview_language(language: LanguageId) -> bool {\n     )\n }\n \n+#[cfg(test)]\n+static DIFF_PIPELINE_ENTRIES: std::sync::Mutex<\n+    std::collections::BTreeMap<std::path::PathBuf, usize>,\n+> = std::sync::Mutex::new(std::collections::BTreeMap::new());\n+\n+#[cfg(test)]\n+pub(crate) fn diff_pipeline_entry_count(root: &std::path::Path) -> Result<usize, String> {\n+    let counts = DIFF_PIPELINE_ENTRIES\n+        .lock()\n+        .map_err(|_poisoned| \"diff pipeline counter lock poisoned\")?;\n+    Ok(counts.get(root).copied().unwrap_or(0))\n+}\n+\n pub(crate) fn run_diff_pipeline_with_oracle_policy(\n     options: &AnalysisOptions,\n     oracle_policy: &OraclePolicy,\n@@ -59,6 +72,13 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(\n     rust_config: &crate::config::RustLanguageConfig,\n     language_config: &crate::config::LanguagesConfig,\n ) -> Result<AnalysisResult, CoreError> {\n+    #[cfg(test)]\n+    {\n+        let mut counts = DIFF_PIPELINE_ENTRIES\n+            .lock()\n+            .map_err(|_poisoned| \"diff pipeline counter lock poisoned\".to_string())?;\n+        *counts.entry(options.root.clone()).or_default() += 1;\n+    }\n     // Immutable Git candidate subject (#3237 / #3277): resolve the\n     // bound identity through object plumbing, derive the exact\n     // base→candidate diff, and analyze the materialized candidate root."
+    }
+  }
+}

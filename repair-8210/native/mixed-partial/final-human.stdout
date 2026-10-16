@@ -1,0 +1,44 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: /workspace/scratch/cli-output-audit/cases/mixed-partial
+config: /workspace/scratch/cli-output-audit/cases/mixed-partial/ripr.toml
+
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Analysis outcome: limitations below (analysis incomplete; partial_with_limitations)
+  The 1 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
+  Limitation: the diff is larger than the configured limit during the analysis pipeline (diff_scope_oversized at analysis_pipeline); affected items: 4; recovery: raise the configured limit (increase_configured_limit) — To widen the analyzed partition, raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2, then re-run.
+
+Partial scope: run state limited_partial_scope — analysis stopped at the file budget of 1 changed file(s) (RIPR_PARTIAL_DIFF_FILE_BUDGET=1); analyzed 1 changed file(s) (2 changed line(s)) of the diff; stop reason: file_budget.
+  Found 1 finding(s) before stopping. NOT inspected: at least 2 changed file(s) and at least 4 changed line(s); more findings may exist beyond the budget.
+  selected: src/lib.rs
+  This partial result is not eligible as a gate, baseline, badge, or RIPR Zero input (gate_eligibility: ineligible).
+  To widen the analyzed partition, raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2, then re-run. Overrides above the analysis-cost limit are clamped, the budget cannot be switched off, and named partition continuation is not available.
+  partition_identity: c1430c824ec22afd0e6ee62a4c98b44593f10153681975e45b5bdb8f2fe1152b
+
+Start here:
+  State: a test gap to inspect or repair (top_gap)
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  File: ./src/lib.rs:2
+  Static exposure: weak (weakly_exposed, warning, confidence 0.92)
+  Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
+  Canonical gap: gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold
+  Changed behavior: amount >= discount_threshold
+  Missing discriminator: amount == discount_threshold
+  Related test (1 of 2 matched rows): tests/pricing.rs:4 below_threshold_has_no_discount (no test input reaches `amount == discount_threshold`)
+  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
+  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
+    - reach yes: Related tests appear to reach discounted_total: below_threshold_has_no_discount, far_above_threshold_discounts
+    - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
+    - 12 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root /workspace/scratch/cli-output-audit/cases/mixed-partial --diff /workspace/scratch/cli-output-audit/cases/mixed-partial/change.patch --mode fast probe:src_lib.rs:predicate:c80557eb
+  ripr context --root /workspace/scratch/cli-output-audit/cases/mixed-partial --diff /workspace/scratch/cli-output-audit/cases/mixed-partial/change.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+Write a test for it:
+  ripr agent stub --root /workspace/scratch/cli-output-audit/cases/mixed-partial --at src/lib.rs:2 --kind predicate
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+

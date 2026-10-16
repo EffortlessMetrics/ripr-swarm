@@ -1,0 +1,80 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_boundary_gap/input
+config: <cwd>/fixtures/python_boundary_gap/input/ripr.toml
+
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+WARNING src/discount.py:2
+  id: probe:src_discount.py:python_preview:d1182145
+
+Changed
+  after:      if amount >= threshold:
+
+Probe
+  family: predicate
+  delta:  control
+  owner:  python:src/discount.py::apply_discount
+  canonical gap: gap:python:src/discount.py:apply_discount:predicate_boundary:predicate:amount>=threshold
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `apply_discount`
+  - infection yes: Changed Python predicate can alter branch selection: `if amount >= threshold:`
+  - propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink
+  - observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)
+  - discriminator weak: Python preview adapter found no strong discriminator; missing proof: `amount == threshold`
+  - local flow reaches unknown sink: if amount >= threshold: (line 2)
+  - related test tests/test_discount.py:4 test_apply_discount_smoke uses unknown unknown oracle
+
+Weakness
+  - Related Python test reaches `apply_discount` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the changed boundary
+  - missing discriminator amount == threshold: changed Python equality-boundary at line 2 lacks a concrete repair discriminator
+
+Python repair card (preview/advisory)
+  card version: python_repair_card.v1
+  canonical gap: gap:python:src/discount.py:apply_discount:predicate_boundary:predicate:amount>=threshold
+  authority: preview_advisory_only (python/preview)
+  repair action: strengthen_existing_test
+  changed owner: apply_discount
+  changed behavior: predicate_boundary changed at src/discount.py:2: `if amount >= threshold:`
+  current test evidence: tests/test_discount.py:4 test_apply_discount_smoke currently has oracle_strength=unknown, oracle_kind=unknown
+  missing discriminator: amount == threshold
+  recommended test shape: Strengthen the existing pytest boundary assertion for `amount == threshold`. Keep the equality case as the minimum repair; optional pytest parameterization can add `threshold - 1`, `threshold`, and `threshold + 1` rows when expected values are clear.
+  suggested assertion: Assert the owner result or effect at `amount == threshold` first. Optional pytest shape: @pytest.mark.parametrize("amount, expected", [(threshold - 1, ...), (threshold, ...), (threshold + 1, ...)]); fill expected values from domain behavior only.
+  suggested file: tests/test_discount.py
+  suggested test: test_apply_discount_smoke
+  pytest node: tests/test_discount.py::test_apply_discount_smoke
+  verify: python -m pytest tests/test_discount.py::test_apply_discount_smoke (high)
+  receipt: unavailable_until_python_gap_ledger
+  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
+  stop conditions:
+    - Stop if imports, fixtures, or test setup cannot call the changed owner.
+    - Stop if the expected value for the missing discriminator is ambiguous.
+    - Stop if adding the test appears to require a production-code edit.
+    - Stop before adding parametrized below/above rows if their expected values are not clear; keep only the equality-boundary assertion.
+  limits:
+    - Syntax-first Python preview evidence only.
+    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
+    - Verify success alone is not a gap-closure receipt.
+
+Next step
+  Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `amount == threshold`
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_boundary_gap/input --diff <cwd>/fixtures/python_boundary_gap/diff.patch --mode fast probe:src_discount.py:python_preview:d1182145
+  ripr context --root <cwd>/fixtures/python_boundary_gap/input --diff <cwd>/fixtures/python_boundary_gap/diff.patch --mode fast --at probe:src_discount.py:python_preview:d1182145
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

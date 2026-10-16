@@ -1,0 +1,33 @@
+   Compiling ripr v0.11.0 (/workspace/8210-repair/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 26.50s
+     Running tests/cli_smoke.rs (/workspace/ripr-swarm/target/debug/deps/cli_smoke-d8dac6927274a71e)
+
+running 2 tests
+test partial_preview_disclosure::typescript_partial_preview_claims_follow_selected_files ... FAILED
+test partial_preview_disclosure::python_partial_preview_claims_follow_selected_files ... FAILED
+
+failures:
+
+---- partial_preview_disclosure::typescript_partial_preview_claims_follow_selected_files stdout ----
+
+thread 'partial_preview_disclosure::typescript_partial_preview_claims_follow_selected_files' (7835) panicked at crates/ripr/tests/cli_smoke/partial_preview_disclosure.rs:131:13:
+assertion `left == right` failed: typescript/enabled=true/budget=2
+  left: Array [String("src/lib.rs"), String("src/discount.ts")]
+ right: Array [String("src/discount.ts"), String("src/lib.rs")]
+
+---- partial_preview_disclosure::python_partial_preview_claims_follow_selected_files stdout ----
+
+thread 'partial_preview_disclosure::python_partial_preview_claims_follow_selected_files' (7834) panicked at crates/ripr/tests/cli_smoke/partial_preview_disclosure.rs:131:13:
+assertion `left == right` failed: python/enabled=true/budget=2
+  left: Array [String("src/lib.rs"), String("src/discount.py")]
+ right: Array [String("src/discount.py"), String("src/lib.rs")]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    partial_preview_disclosure::python_partial_preview_claims_follow_selected_files
+    partial_preview_disclosure::typescript_partial_preview_claims_follow_selected_files
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 532 filtered out; finished in 0.08s
+
+error: test failed, to rerun pass `-p ripr --test cli_smoke`

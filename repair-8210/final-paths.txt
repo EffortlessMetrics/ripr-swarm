@@ -1,0 +1,7 @@
+.ripr/traceability.toml
+changelog.d/8210-partial-preview-disclosure.md
+crates/ripr/src/analysis/pipeline.rs
+crates/ripr/tests/cli_smoke.rs
+crates/ripr/tests/cli_smoke/partial_preview_disclosure.rs
+docs/OUTPUT_SCHEMA.md
+docs/specs/RIPR-SPEC-0082-preview-language-disclosure.md

@@ -1,0 +1,44 @@
+{
+  "schema_version": "0.8",
+  "kind": "ripr",
+  "scope": "diff",
+  "basis": "finding_exposure",
+  "label": "ripr",
+  "message": "analysis-incomplete: unsupported_input",
+  "status": "warn",
+  "color": "yellow",
+  "analysis_complete": false,
+  "analysis_outcome": {"schema_version":"0.1","kind":"unsupported_input","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:0fff61f69dcf30d0010d5fc58457f4fbe38a7b9e5d8f15cf54707c2ffd15f0a0","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":2,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[{"kind":"malformed_diff","producer_stage":"diff_parse","path":null,"affected_items":null,"bounded_detail":"1 file section(s) parsed a header but no hunk body; the diff appears truncated.","recovery":{"kind":"retry","detail":"Re-run the analysis with the complete diff stream."}},{"kind":"malformed_diff","producer_stage":"diff_parse","path":"src/absent.rs","affected_items":1,"bounded_detail":null,"recovery":{"kind":"retry","detail":"A two-way hunk has invalid ranges or its body does not match the declared old/new line counts. Obtain the complete valid unified diff and re-run; retained changed lines are advisory only."}},{"kind":"language_scope_unsupported","producer_stage":"language_adapter","path":"src/absent.rs","affected_items":1,"bounded_detail":"No Cargo target's module tree reaches this changed Rust file: no `mod`, `#[path]` or `include!` names it, so rustc does not compile it and its change seeds no finding.","recovery":{"kind":"inspect_failure","detail":"No `mod`, `#[path]` or `include!` from a Cargo target reaches src/absent.rs, so rustc does not compile it and its change was not analyzed. Declare it from a module its crate compiles, or delete it if it is dead code."}},{"kind":"changed_file_absent_from_worktree","producer_stage":"language_adapter","path":"src/absent.rs","affected_items":1,"bounded_detail":"changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld","recovery":{"kind":"retry","detail":"Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis."}}],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."},
+  "counts": {
+    "unsuppressed_exposure_gaps": 1,
+    "unsuppressed_test_efficiency_findings": 0,
+    "intentional_test_efficiency_findings": 0,
+    "suppressed_exposure_gaps": 0,
+    "suppressed_test_efficiency_findings": 0,
+    "unknowns": 0,
+    "unknowns_test_efficiency": 0,
+    "analyzed_findings": 1,
+    "analyzed_seams": 0,
+    "analyzed_gap_records": 0,
+    "analyzed_tests": 2
+  },
+  "reason_counts": {
+    "no_assertion_detected": 0,
+    "smoke_oracle_only": 0,
+    "relational_oracle": 0,
+    "broad_oracle": 0,
+    "assertion_may_not_match_detected_owner": 0,
+    "opaque_helper_or_fixture_boundary": 0,
+    "no_activation_literal_detected": 0,
+    "expected_value_computed_from_detected_owner_path": 0,
+    "duplicate_activation_and_oracle_shape": 0
+  },
+  "policy": {
+    "include_unknowns": false,
+    "fail_on_nonzero": false,
+    "test_intent_path": ".ripr/test_intent.toml",
+    "suppressions_path": ".ripr/suppressions.toml"
+  },
+  "warnings": [],
+  "preview_skipped": []
+}

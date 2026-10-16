@@ -1,0 +1,10 @@
+   Compiling ripr v0.11.0 (/workspace/8210-repair/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 18.62s
+     Running tests/cli_smoke.rs (/workspace/ripr-swarm/target/debug/deps/cli_smoke-d8dac6927274a71e)
+
+running 2 tests
+test partial_preview_disclosure::python_partial_preview_claims_follow_selected_files ... ok
+test partial_preview_disclosure::typescript_partial_preview_claims_follow_selected_files ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 532 filtered out; finished in 0.25s
+

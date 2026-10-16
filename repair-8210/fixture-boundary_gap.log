@@ -1,0 +1,5 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+     Running `/workspace/ripr-swarm/target/debug/xtask fixtures boundary_gap`
+$ cargo build -p ripr
+   Compiling ripr v0.11.0 (/workspace/8210-repair/crates/ripr)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 29s

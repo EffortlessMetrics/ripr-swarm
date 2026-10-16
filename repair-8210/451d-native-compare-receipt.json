@@ -1,0 +1,1507 @@
+{
+  "rows": [
+    {
+      "case": "rust",
+      "variant": "base",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/rust",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/rust/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "d5c4ab6a20e36723fd57cb3dfbd2237e9c8619f952b8cdf1c93f61a2b25556ff"
+    },
+    {
+      "case": "rust",
+      "variant": "final",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/rust",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/rust/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "d5c4ab6a20e36723fd57cb3dfbd2237e9c8619f952b8cdf1c93f61a2b25556ff"
+    },
+    {
+      "case": "rust",
+      "variant": "base",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/rust",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/rust/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "29b4e8ffaaadbb2ffec36f0dad8024181df25c6e720b57065009010c2cab324e"
+    },
+    {
+      "case": "rust",
+      "variant": "final",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/rust",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/rust/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "29b4e8ffaaadbb2ffec36f0dad8024181df25c6e720b57065009010c2cab324e"
+    },
+    {
+      "case": "rust",
+      "variant": "base",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/rust",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/rust/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "de8d6aa015ff1058a46647b7f72a9361b576612fa17b1949460e45b853e2a7d0"
+    },
+    {
+      "case": "rust",
+      "variant": "final",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/rust",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/rust/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "de8d6aa015ff1058a46647b7f72a9361b576612fa17b1949460e45b853e2a7d0"
+    },
+    {
+      "case": "python",
+      "variant": "base",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/python",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/python/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "5b1722a8793c1839b3d56fdd2d5a2cad833fa5170c0e18aa95289c29d946c5d9"
+    },
+    {
+      "case": "python",
+      "variant": "final",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/python",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/python/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "5b1722a8793c1839b3d56fdd2d5a2cad833fa5170c0e18aa95289c29d946c5d9"
+    },
+    {
+      "case": "python",
+      "variant": "base",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/python",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/python/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "2eb89d75c8288f276b7487303e97ed0b24f090453bbca2b51de1b64583707862"
+    },
+    {
+      "case": "python",
+      "variant": "final",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/python",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/python/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "2eb89d75c8288f276b7487303e97ed0b24f090453bbca2b51de1b64583707862"
+    },
+    {
+      "case": "python",
+      "variant": "base",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/python",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/python/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "93f97b0277617babe6179b07875b91c921c0a1b8c716b88756fd97ef8e23c4bb"
+    },
+    {
+      "case": "python",
+      "variant": "final",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/python",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/python/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "93f97b0277617babe6179b07875b91c921c0a1b8c716b88756fd97ef8e23c4bb"
+    },
+    {
+      "case": "typescript",
+      "variant": "base",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/typescript",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/typescript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "3f68d88cb022f741366891834e501766cf992c1df6502c01af3ee7e13ced7ed8"
+    },
+    {
+      "case": "typescript",
+      "variant": "final",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/typescript",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/typescript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "3f68d88cb022f741366891834e501766cf992c1df6502c01af3ee7e13ced7ed8"
+    },
+    {
+      "case": "typescript",
+      "variant": "base",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/typescript",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/typescript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "8864d8bde4b2cbc857961ebcfc21d4bff85f8f71370b8ec27de7da5145229e64"
+    },
+    {
+      "case": "typescript",
+      "variant": "final",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/typescript",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/typescript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "8864d8bde4b2cbc857961ebcfc21d4bff85f8f71370b8ec27de7da5145229e64"
+    },
+    {
+      "case": "typescript",
+      "variant": "base",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/typescript",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/typescript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "aee67a0cb42666d8bea5fc697d8dc05822ad4dd3fef7ea52eec86a92bd4f234d"
+    },
+    {
+      "case": "typescript",
+      "variant": "final",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/typescript",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/typescript/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "aee67a0cb42666d8bea5fc697d8dc05822ad4dd3fef7ea52eec86a92bd4f234d"
+    },
+    {
+      "case": "python-disabled",
+      "variant": "base",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/python-disabled",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/python-disabled/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "37531c0b1e5fc6557cbfdb8e1af3f42f916a93ca331fa0e76dabc2cfe5c030da"
+    },
+    {
+      "case": "python-disabled",
+      "variant": "final",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/python-disabled",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/python-disabled/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "37531c0b1e5fc6557cbfdb8e1af3f42f916a93ca331fa0e76dabc2cfe5c030da"
+    },
+    {
+      "case": "python-disabled",
+      "variant": "base",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/python-disabled",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/python-disabled/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "fe0f4d3bffe69dd86071e41a85dfd3bcdb4ade6e7e70fabb9db2796aebaf6e8a"
+    },
+    {
+      "case": "python-disabled",
+      "variant": "final",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/python-disabled",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/python-disabled/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "fe0f4d3bffe69dd86071e41a85dfd3bcdb4ade6e7e70fabb9db2796aebaf6e8a"
+    },
+    {
+      "case": "python-disabled",
+      "variant": "base",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/python-disabled",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/python-disabled/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "1543f6ec6e9fe591c06af2558f22c72f961655971579b5eaf1f0e67f8e66d8fd"
+    },
+    {
+      "case": "python-disabled",
+      "variant": "final",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/python-disabled",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/python-disabled/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "1543f6ec6e9fe591c06af2558f22c72f961655971579b5eaf1f0e67f8e66d8fd"
+    },
+    {
+      "case": "typescript-disabled",
+      "variant": "base",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/typescript-disabled",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/typescript-disabled/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "8a97dc3ec2e9c39e53a967f2cfc4c0784547f4e31d5ed06c7d0fe368dd81c4d6"
+    },
+    {
+      "case": "typescript-disabled",
+      "variant": "final",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/typescript-disabled",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/typescript-disabled/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "8a97dc3ec2e9c39e53a967f2cfc4c0784547f4e31d5ed06c7d0fe368dd81c4d6"
+    },
+    {
+      "case": "typescript-disabled",
+      "variant": "base",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/typescript-disabled",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/typescript-disabled/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "057a1f4b4c779c7f36d70b85f5bd749c574bb8f5dfe39d872d33866eb2b5ee8e"
+    },
+    {
+      "case": "typescript-disabled",
+      "variant": "final",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/typescript-disabled",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/typescript-disabled/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "057a1f4b4c779c7f36d70b85f5bd749c574bb8f5dfe39d872d33866eb2b5ee8e"
+    },
+    {
+      "case": "typescript-disabled",
+      "variant": "base",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/typescript-disabled",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/typescript-disabled/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "e0a550856af939be487e2ed1cd2d9a27d1dd102b2a74a97f69d554f9f49064e1"
+    },
+    {
+      "case": "typescript-disabled",
+      "variant": "final",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/typescript-disabled",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/typescript-disabled/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 0,
+      "stdout_sha256": "e0a550856af939be487e2ed1cd2d9a27d1dd102b2a74a97f69d554f9f49064e1"
+    },
+    {
+      "case": "rust-malformed",
+      "variant": "base",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/rust-malformed",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/rust-malformed/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 2,
+      "stdout_sha256": "2ee41452cb31cc5bac1392d1a28a9ad4e1a9daf4f6533b0f8c7bf3202ed6d339"
+    },
+    {
+      "case": "rust-malformed",
+      "variant": "final",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/rust-malformed",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/rust-malformed/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 2,
+      "stdout_sha256": "2ee41452cb31cc5bac1392d1a28a9ad4e1a9daf4f6533b0f8c7bf3202ed6d339"
+    },
+    {
+      "case": "rust-malformed",
+      "variant": "base",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/rust-malformed",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/rust-malformed/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 2,
+      "stdout_sha256": "4f6133899f7eabb5485ff66d0542b738fcec1001f238081eb577e0dadedf2808"
+    },
+    {
+      "case": "rust-malformed",
+      "variant": "final",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/rust-malformed",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/rust-malformed/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 2,
+      "stdout_sha256": "4f6133899f7eabb5485ff66d0542b738fcec1001f238081eb577e0dadedf2808"
+    },
+    {
+      "case": "rust-malformed",
+      "variant": "base",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/rust-malformed",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/rust-malformed/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 2,
+      "stdout_sha256": "35729f33899213f8f791bb4efa3b88d2ab2d88dfd0af734becd69190943c2d86"
+    },
+    {
+      "case": "rust-malformed",
+      "variant": "final",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/rust-malformed",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/rust-malformed/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 2,
+      "stdout_sha256": "35729f33899213f8f791bb4efa3b88d2ab2d88dfd0af734becd69190943c2d86"
+    },
+    {
+      "case": "python-malformed",
+      "variant": "base",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/python-malformed",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/python-malformed/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 2,
+      "stdout_sha256": "25da9b5d13a093e2e13bbeb526a8ade087bb4d249c55a41c56c1f3762af51f69"
+    },
+    {
+      "case": "python-malformed",
+      "variant": "final",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/python-malformed",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/python-malformed/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 2,
+      "stdout_sha256": "25da9b5d13a093e2e13bbeb526a8ade087bb4d249c55a41c56c1f3762af51f69"
+    },
+    {
+      "case": "python-malformed",
+      "variant": "base",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/python-malformed",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/python-malformed/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 2,
+      "stdout_sha256": "2158557fb8e2e617717cf811ef6aa49987a649bd615120cfdc867525a6396054"
+    },
+    {
+      "case": "python-malformed",
+      "variant": "final",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/python-malformed",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/python-malformed/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 2,
+      "stdout_sha256": "2158557fb8e2e617717cf811ef6aa49987a649bd615120cfdc867525a6396054"
+    },
+    {
+      "case": "python-malformed",
+      "variant": "base",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/python-malformed",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/python-malformed/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 2,
+      "stdout_sha256": "23e250f34f606d87a89006f7161f288568c0e636db8b1c5e2dab764f7bd8c120"
+    },
+    {
+      "case": "python-malformed",
+      "variant": "final",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/python-malformed",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/python-malformed/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 2,
+      "stdout_sha256": "23e250f34f606d87a89006f7161f288568c0e636db8b1c5e2dab764f7bd8c120"
+    },
+    {
+      "case": "typescript-malformed",
+      "variant": "base",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/typescript-malformed",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/typescript-malformed/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 2,
+      "stdout_sha256": "1b85e574a4cb980847da84aee8fb7793a2f2975603f0ffc939f87ad5a59e88d7"
+    },
+    {
+      "case": "typescript-malformed",
+      "variant": "final",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/typescript-malformed",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/typescript-malformed/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 2,
+      "stdout_sha256": "1b85e574a4cb980847da84aee8fb7793a2f2975603f0ffc939f87ad5a59e88d7"
+    },
+    {
+      "case": "typescript-malformed",
+      "variant": "base",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/typescript-malformed",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/typescript-malformed/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 2,
+      "stdout_sha256": "de282f2c2ad730c0ed3bd29a74fcefabb8cb374924b0dd152ca2784b5017e8de"
+    },
+    {
+      "case": "typescript-malformed",
+      "variant": "final",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/typescript-malformed",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/typescript-malformed/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 2,
+      "stdout_sha256": "de282f2c2ad730c0ed3bd29a74fcefabb8cb374924b0dd152ca2784b5017e8de"
+    },
+    {
+      "case": "typescript-malformed",
+      "variant": "base",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/typescript-malformed",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/typescript-malformed/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 2,
+      "stdout_sha256": "f01b9d0a81b2c4fb5fe7bda817b6030c64d14a334143defb1ff38cbe8f3487ee"
+    },
+    {
+      "case": "typescript-malformed",
+      "variant": "final",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/typescript-malformed",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/typescript-malformed/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {},
+      "exit": 2,
+      "stdout_sha256": "f01b9d0a81b2c4fb5fe7bda817b6030c64d14a334143defb1ff38cbe8f3487ee"
+    },
+    {
+      "case": "mixed-partial",
+      "variant": "base",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {
+        "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+      },
+      "exit": 0,
+      "stdout_sha256": "a78e993ff8b606d6d7ef3cb3494a61add25b45fb3e063e20e72c2a6e3f5f53d3"
+    },
+    {
+      "case": "mixed-partial",
+      "variant": "final",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {
+        "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+      },
+      "exit": 0,
+      "stdout_sha256": "03d2b6174b976eb1759a332aeaa97b06ab47e730747854445dc356cc8d3ac5f9"
+    },
+    {
+      "case": "mixed-partial",
+      "variant": "base",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {
+        "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+      },
+      "exit": 0,
+      "stdout_sha256": "ab5a28e3437654ebc34b11b18427273f27d36d47a154352894ef84ca4d008aa9"
+    },
+    {
+      "case": "mixed-partial",
+      "variant": "final",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {
+        "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+      },
+      "exit": 0,
+      "stdout_sha256": "74bd0b2ccad76cc31311367ebef6b281083ebc473a70379741b8d7f817220582"
+    },
+    {
+      "case": "mixed-partial",
+      "variant": "base",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {
+        "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+      },
+      "exit": 0,
+      "stdout_sha256": "4797436bf5f006858617215b0f6bac8c79aeb65ea8ed17b442e4c32fc64c528d"
+    },
+    {
+      "case": "mixed-partial",
+      "variant": "final",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {
+        "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+      },
+      "exit": 0,
+      "stdout_sha256": "4797436bf5f006858617215b0f6bac8c79aeb65ea8ed17b442e4c32fc64c528d"
+    },
+    {
+      "case": "mixed-partial-ts",
+      "variant": "base",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {
+        "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+      },
+      "exit": 0,
+      "stdout_sha256": "f0472dabe8828ceaad030f4e453f7666e76835f936a2d60b8ab118834b7b9a7a"
+    },
+    {
+      "case": "mixed-partial-ts",
+      "variant": "final",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {
+        "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+      },
+      "exit": 0,
+      "stdout_sha256": "897976d6ecc1473410ff76d68c06f9f8114e843c980c7498e8759051f00a06ee"
+    },
+    {
+      "case": "mixed-partial-ts",
+      "variant": "base",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {
+        "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+      },
+      "exit": 0,
+      "stdout_sha256": "11c3283991f686235391d44f76ab2e80c4659a8f6a80d475ff18b14e1ffa3bb9"
+    },
+    {
+      "case": "mixed-partial-ts",
+      "variant": "final",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {
+        "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+      },
+      "exit": 0,
+      "stdout_sha256": "9952599ec2f9cbf4459faa4d0d38f45c1d4ed9fb9668ffdc7441311407b9004d"
+    },
+    {
+      "case": "mixed-partial-ts",
+      "variant": "base",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {
+        "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+      },
+      "exit": 0,
+      "stdout_sha256": "d11c20060adfae3f62b8f8682ca37ab87b4fd7f5f320ab3278b4b9120d8c71e5"
+    },
+    {
+      "case": "mixed-partial-ts",
+      "variant": "final",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {
+        "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+      },
+      "exit": 0,
+      "stdout_sha256": "d11c20060adfae3f62b8f8682ca37ab87b4fd7f5f320ab3278b4b9120d8c71e5"
+    },
+    {
+      "case": "render-bound",
+      "variant": "base",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/render-bound",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/render-bound/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {
+        "RIPR_CHECK_FINDINGS_BYTES": "1"
+      },
+      "exit": 0,
+      "stdout_sha256": "fe0371916d9ae1254bb42f5fb3abe89a04f35cbfe814ae0b77a55d7ee870316b"
+    },
+    {
+      "case": "render-bound",
+      "variant": "final",
+      "format": "json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/render-bound",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/render-bound/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "env": {
+        "RIPR_CHECK_FINDINGS_BYTES": "1"
+      },
+      "exit": 0,
+      "stdout_sha256": "fe0371916d9ae1254bb42f5fb3abe89a04f35cbfe814ae0b77a55d7ee870316b"
+    },
+    {
+      "case": "render-bound",
+      "variant": "base",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/render-bound",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/render-bound/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {
+        "RIPR_CHECK_FINDINGS_BYTES": "1"
+      },
+      "exit": 0,
+      "stdout_sha256": "6f9e1c842f89005394d7efa5d3d286618df62657651ac5b240948155706aeb6d"
+    },
+    {
+      "case": "render-bound",
+      "variant": "final",
+      "format": "human",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/render-bound",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/render-bound/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "env": {
+        "RIPR_CHECK_FINDINGS_BYTES": "1"
+      },
+      "exit": 0,
+      "stdout_sha256": "6f9e1c842f89005394d7efa5d3d286618df62657651ac5b240948155706aeb6d"
+    },
+    {
+      "case": "render-bound",
+      "variant": "base",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/base-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/render-bound",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/render-bound/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {
+        "RIPR_CHECK_FINDINGS_BYTES": "1"
+      },
+      "exit": 0,
+      "stdout_sha256": "df48d10ad1c5d96f33fb1824e96de72e1c5c62c1eb91b534eea87375deafcd17"
+    },
+    {
+      "case": "render-bound",
+      "variant": "final",
+      "format": "badge-json",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/cli-output-audit/cases/render-bound",
+        "--diff",
+        "/workspace/scratch/cli-output-audit/cases/render-bound/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "badge-json",
+        "--quiet"
+      ],
+      "env": {
+        "RIPR_CHECK_FINDINGS_BYTES": "1"
+      },
+      "exit": 0,
+      "stdout_sha256": "df48d10ad1c5d96f33fb1824e96de72e1c5c62c1eb91b534eea87375deafcd17"
+    },
+    {
+      "case": "javascript",
+      "format": "json",
+      "budget": "1",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/8210-proof/js-case",
+        "--diff",
+        "/workspace/scratch/8210-proof/js-case/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0
+    },
+    {
+      "case": "javascript",
+      "format": "human",
+      "budget": "1",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/8210-proof/js-case",
+        "--diff",
+        "/workspace/scratch/8210-proof/js-case/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "exit": 0
+    },
+    {
+      "case": "javascript",
+      "format": "json",
+      "budget": "3",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/8210-proof/js-case",
+        "--diff",
+        "/workspace/scratch/8210-proof/js-case/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json",
+        "--quiet"
+      ],
+      "exit": 0
+    },
+    {
+      "case": "javascript",
+      "format": "human",
+      "budget": "3",
+      "argv": [
+        "/workspace/scratch/8210-proof/final-ripr",
+        "check",
+        "--root",
+        "/workspace/scratch/8210-proof/js-case",
+        "--diff",
+        "/workspace/scratch/8210-proof/js-case/change.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "human",
+        "--quiet"
+      ],
+      "exit": 0
+    }
+  ],
+  "native_invocations": 70,
+  "comparisons": 33,
+  "unaffected_comparisons_byte_equal": 29,
+  "scoped_JSON_human_pairs": 4,
+  "javascript_controls": 4
+}

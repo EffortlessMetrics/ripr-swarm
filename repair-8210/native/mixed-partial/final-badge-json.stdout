@@ -1,0 +1,44 @@
+{
+  "schema_version": "0.8",
+  "kind": "ripr",
+  "scope": "diff",
+  "basis": "finding_exposure",
+  "label": "ripr",
+  "message": "analysis-incomplete: partial_with_limitations",
+  "status": "warn",
+  "color": "yellow",
+  "analysis_complete": false,
+  "analysis_outcome": {"schema_version":"0.1","kind":"partial_with_limitations","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:6865f76b1f82dc2a","base_revision":null,"input_identity":"sha256:2921ae46363f33f1590fb10ef252b69ca017e75d650fb9d149302cb2d48839c5","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":3,"changed_line_count":6,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[{"kind":"diff_scope_oversized","producer_stage":"analysis_pipeline","path":null,"affected_items":4,"bounded_detail":"The run analyzed 2 changed line(s) and left at least 4 changed line(s) outside the selected partition.","recovery":{"kind":"increase_configured_limit","detail":"To widen the analyzed partition, raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2, then re-run."}}],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."},
+  "counts": {
+    "unsuppressed_exposure_gaps": 1,
+    "unsuppressed_test_efficiency_findings": 0,
+    "intentional_test_efficiency_findings": 0,
+    "suppressed_exposure_gaps": 0,
+    "suppressed_test_efficiency_findings": 0,
+    "unknowns": 0,
+    "unknowns_test_efficiency": 0,
+    "analyzed_findings": 1,
+    "analyzed_seams": 0,
+    "analyzed_gap_records": 0,
+    "analyzed_tests": 2
+  },
+  "reason_counts": {
+    "no_assertion_detected": 0,
+    "smoke_oracle_only": 0,
+    "relational_oracle": 0,
+    "broad_oracle": 0,
+    "assertion_may_not_match_detected_owner": 0,
+    "opaque_helper_or_fixture_boundary": 0,
+    "no_activation_literal_detected": 0,
+    "expected_value_computed_from_detected_owner_path": 0,
+    "duplicate_activation_and_oracle_shape": 0
+  },
+  "policy": {
+    "include_unknowns": false,
+    "fail_on_nonzero": false,
+    "test_intent_path": ".ripr/test_intent.toml",
+    "suppressions_path": ".ripr/suppressions.toml"
+  },
+  "warnings": [],
+  "preview_skipped": []
+}

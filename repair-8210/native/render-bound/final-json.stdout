@@ -1,0 +1,106 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "/workspace/scratch/cli-output-audit/cases/render-bound",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":2,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:aa780726f0473dc9021033772eec01f7d7119d2d2755bce78ce20e700f29516a","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:call_deletion:184d39d1",
+      "canonical_gap_id": "gap:rust:src/lib.rs:record_mark:call_deletion:call_deletion:values.push_1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:record_mark:call_deletion:call_deletion:values.push_1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "record_mark",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "values.push_1"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:call_deletion:184d39d1",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "values.push(1)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach record_mark: case_00"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches state write: values.push(1)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach record_mark: case_00", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches state write: values.push(1)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches state write: values.push(1) (line 2)", "related test src/lib.rs:8 case_00 uses strong exact value oracle: assert_eq!(values, vec![1]);", "source assertion argument value 1 at line 11"],
+      "flow_sinks": [
+        {"kind":"state_write","text":"values.push(1)","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches state write: values.push(1)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach record_mark: case_00", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "11": "assert_eq!(values, vec![1]);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 11,
+            "value": "1",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 11,
+          "value": "1",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "case_00",
+          "file": "src/lib.rs",
+          "line": 8,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(values, vec![1]);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "run_limitations": [
+    {
+      "category": "limited_findings_bound",
+      "run_status": "limited_findings_bound",
+      "basis": "check_findings_byte_budget",
+      "downstream_consumable": false,
+      "message": "rendered 1 of 2 findings within the findings-array byte budget (RIPR_CHECK_FINDINGS_BYTES=1; raise it or set =0 for the full set)",
+      "repair_route": "output/check-findings-budget"
+    }
+  ],
+  "canonical_next_action": {"schema_version":"canonical_next_action.v1","producer":"check_top_result","subject":{"root":"/workspace/scratch/cli-output-audit/cases/render-bound","diff_source":{"committed":{"base":null,"head":null}},"item":"probe:src_lib.rs:call_deletion:184d39d1"},"currentness":{"head_expected":null,"head_observed":null,"config_expected":null,"config_observed":null},"action_class":"terminal_no_action","stop":{"kind":"check_triage","case":"no_diff_finding","detail_route":"ripr explain --root /workspace/scratch/cli-output-audit/cases/render-bound --diff /workspace/scratch/cli-output-audit/cases/render-bound/change.patch --mode fast probe:src_lib.rs:call_deletion:184d39d1"},"alternatives":[{"label":"considered finding probe:src_lib.rs:side_effect:70a75cef","route":"ripr explain --root /workspace/scratch/cli-output-audit/cases/render-bound --diff /workspace/scratch/cli-output-audit/cases/render-bound/change.patch --mode fast probe:src_lib.rs:side_effect:70a75cef"}],"non_claim":"Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."}
+}

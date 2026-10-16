@@ -1,0 +1,47 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: /workspace/scratch/cli-output-audit/cases/python-malformed
+config: /workspace/scratch/cli-output-audit/cases/python-malformed/ripr.toml
+
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: python = 1, rust = 1
+
+Analysis outcome: the input is not supported (analysis incomplete; unsupported_input)
+  The 1 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
+  Limitation: the diff could not be parsed during parsing the diff (malformed_diff at diff_parse); recovery: retry — Re-run the analysis with the complete diff stream.
+  Limitation: the diff could not be parsed during parsing the diff (malformed_diff at diff_parse); file: src/absent.rs; affected items: 1; recovery: retry — A two-way hunk has invalid ranges or its body does not match the declared old/new line counts. Obtain the complete valid unified diff and re-run; retained changed lines are advisory only.
+  Limitation: a changed file is absent from the working tree during language analysis (changed_file_absent_from_worktree at language_adapter); file: src/absent.rs; affected items: 1; recovery: retry — Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis.
+
+Start here:
+  State: preview language, advisory only (preview_limited)
+  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it
+  File: src/discount.py:2
+  Language: python
+  Language status: preview
+  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:python:src/discount.py:apply_discount:predicate_boundary:predicate:amount>=threshold
+  Changed behavior: if amount >= threshold:
+  Missing discriminator (1 of 2): Related Python test reaches `apply_discount` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the changed boundary
+  Related test: tests/test_discount.py:4 test_apply_discount_smoke
+  Suggested test file: tests/test_discount.py
+  Suggested test: test_apply_discount_smoke
+  Test node: tests/test_discount.py::test_apply_discount_smoke
+  Verify command: python -m pytest tests/test_discount.py::test_apply_discount_smoke (high)
+  Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `amount == threshold`
+  Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+    - reach yes: 1 related Python test(s) found for owner `apply_discount`
+    - infection yes: Changed Python predicate can alter branch selection: `if amount >= threshold:`
+    - 5 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root /workspace/scratch/cli-output-audit/cases/python-malformed --diff /workspace/scratch/cli-output-audit/cases/python-malformed/change.patch --mode fast probe:src_discount.py:python_preview:d1182145
+  ripr context --root /workspace/scratch/cli-output-audit/cases/python-malformed --diff /workspace/scratch/cli-output-audit/cases/python-malformed/change.patch --mode fast --at probe:src_discount.py:python_preview:d1182145
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

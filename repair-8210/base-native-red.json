@@ -1,0 +1,44 @@
+[
+  {
+    "argv": [
+      "/workspace/scratch/8210-proof/base-ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+    },
+    "native_exit": 0,
+    "expected_omitted_advisory_absent": false,
+    "intended_behavioral_red_observed": true
+  },
+  {
+    "argv": [
+      "/workspace/scratch/8210-proof/base-ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts",
+      "--diff",
+      "/workspace/scratch/cli-output-audit/cases/mixed-partial-ts/change.patch",
+      "--mode",
+      "fast",
+      "--format",
+      "json",
+      "--quiet"
+    ],
+    "env": {
+      "RIPR_PARTIAL_DIFF_FILE_BUDGET": "1"
+    },
+    "native_exit": 0,
+    "expected_omitted_advisory_absent": false,
+    "intended_behavioral_red_observed": true
+  }
+]
