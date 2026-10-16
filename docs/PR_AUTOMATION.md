@@ -84,7 +84,14 @@ any valid one-to-nine-digit marker may open a sibling after a prefix fails.
 ASCII content-whitespace behavior (SP/HT/LF/VT/FF/CR) and ASCII space/tab marker
 separators retain the existing target; non-ASCII whitespace is literal content.
 
-Inline code/HTML is masked within its owning paragraph leaf. Fences, indented
+Markdown inline-code spans and ordinary inline tokens are masked within their
+owning paragraph leaf. Admitted preformatted/raw HTML regions retain a separate
+HTML exclusion stack across paragraph and blank-line boundaries until a real
+admitted closer. This restores the existing raw-region exclusion; an AST text
+node inside a raw HTML element is not current review evidence. Openers inside
+Markdown code, comments or quoted examples cannot create an outside raw region.
+Normal raw elements retain nested ownership; raw-text elements interpret only
+their relevant closing tokens. HTML-block container scope remains explicit. Fences, indented
 code, HTML blocks, headings, list/container transitions and blank lines retain
 their boundaries even when their content is opaque. Masked lines are projected
 back in original line order with original source indentation. Parse-failure

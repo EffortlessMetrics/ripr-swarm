@@ -9,5 +9,6 @@
   with block starts resolved in the last matched container before lazy text,
   and item-content semantics shared through structural leaf ownership,
   preserving source positions and block boundaries through inline masking,
+  setext precedence and raw-HTML exclusion state across paragraph boundaries,
   while retaining existing trust and native-review requirements; this is
   a partial mitigation pending the versioned evidence contract (#8157).

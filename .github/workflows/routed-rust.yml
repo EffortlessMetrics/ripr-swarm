@@ -102,7 +102,7 @@ env:
     def review_document:
       reduce (split("\n")[]) as $source
         ({containers:[],paragraph:false,block:null,records:[],leaf:0};
-         .cut = false | .kind = "paragraph" |
+         .cut = false | .kind = "paragraph" | .html = false |
          (reduce .containers[] as $c
            ({text:($source|review_expand_tabs),containers:[],failed:false};
             if .failed then .
@@ -124,6 +124,7 @@ env:
            if .block != null and
               (.block.kind != "indent" or ($content | test("^(?: {4}|\t)|^[ \t]*$"))) then
              .kind = "opaque" | .paragraph = false | .block as $b |
+             .html = ($b.kind == "html" or $b.kind == "blank" or $b.kind == "tag") |
              if (($b.kind == "blank" or $b.kind == "tag") and ($content | test("^[ \t]*$"))) or
                 ($b.kind == "html" and ($content | test($b.end))) or
                 ($b.kind == "fence" and ($content | test("^ {0,3}" + $b.char + "{" + ($b.size|tostring) + ",}[ \t]*$")))
@@ -141,46 +142,82 @@ env:
                .block = {kind:"fence",char:$f.fence[0:1],size:($f.fence|length)} |
                .paragraph = false | .kind = "opaque" | .cut = true
              elif $html != null then
-               .block = $html | .paragraph = false | .kind = "opaque" | .cut = true |
+               .block = $html | .html = true | .paragraph = false | .kind = "opaque" | .cut = true |
                if $html.kind == "html" and ($line | test($html.end)) then .block = null else . end
-             elif ($line | test("^ {0,3}#{1,6}(?:[ \t]|$)|^ {0,3}(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$")) then
-               .paragraph = false | .kind = "opaque" | .cut = true
              elif .paragraph and ($line | test("^ {0,3}(?:=+|-+)[ \t]*$")) then
                .leaf as $heading | .records |= map(if .leaf == $heading then .kind = "opaque" else . end) |
+               .paragraph = false | .kind = "opaque" | .cut = true
+             elif ($line | test("^ {0,3}#{1,6}(?:[ \t]|$)|^ {0,3}(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$")) then
                .paragraph = false | .kind = "opaque" | .cut = true
              elif (.paragraph|not) and ($line | test("^(?: {4}|\t)")) then
                .block = {kind:"indent"} | .kind = "opaque" | .cut = true
              elif (.paragraph|not) and ($line | test("^ {0,3}" + review_html_standalone + "[ \t]*$")) then
-               .block = {kind:"tag"} | .kind = "opaque" | .cut = true
+               .block = {kind:"tag"} | .html = true | .kind = "opaque" | .cut = true
              else
                if (.paragraph|not) then .cut = true else . end | .paragraph = true
              end
            end
          end |
          if .cut then .leaf += 1 else . end |
-         .records += [{source:$source,content:.content,leaf:.leaf,kind:.kind,
+         .records += [{source:$source,content:.content,leaf:.leaf,kind:.kind,html:.html,
            containers:.containers,position:{line:(.records|length),column:0},
            quoted:any(.containers[]; .kind == "quote")}]) |
       {records:.records,unclosed:(.block.kind == "fence" and (.containers|length) == 0)};
-    def review_inline_leaf:
-      gsub("(?ms)(?<hidden>" +
-        "(?<![\\\\`])(?:\\\\\\\\)*(?<ticks>`+)(?!`)[\\s\\S]*?(?<!`)\\k<ticks>(?!`)" +
-        "|(?<!\\\\)(?:\\\\\\\\)*(?:<!--.*?(?:-->|\\z)|<!\\[CDATA\\[.*?(?:\\]\\]>|\\z)|<\\?.*?(?:\\?>|\\z))" +
-        "|(?<!\\\\)(?:\\\\\\\\)*<![A-Z].*?(?:>|\\z)" +
-        "|(?<!\\\\)(?:\\\\\\\\)*<(?i:pre|script|style)(?=[\\s>]|$).*?(?:(?i:</(?:pre|script|style)>)|\\z)" +
-        "|(?<!\\\\)(?:\\\\\\\\)*" + review_html_open("(?i:(?<tag>code|textarea|xmp|iframe|noembed|noframes))"; "[ \t\u000b\u000c]"; "[^'\n]"; "[^\"\n]") + ".*?(?:(?i:</\\k<tag>[ \t]*>)|\\z)" +
-        "|(?<!\\\\)(?:\\\\\\\\)*" + review_html_inline + ")";
-        .hidden | review_line_mask);
+    # Raw HTML example regions have their own lifetime across paragraph leaves.
+    # Markdown code spans remain leaf-local; raw text is not reinterpreted as Markdown.
+    def review_raw_open:
+      "(?:" + review_html_open("(?i:(?<raw_name>code|textarea|xmp|iframe|noembed|noframes))"; "[ \t\u000b\u000c]"; "[^'\n]"; "[^\"\n]") +
+      "|<(?i:(?<raw_pre>pre|script|style))(?=[\\s>]|$))";
+    def review_html_tokens:
+      "(?s)(?:<!--.*?(?:-->|\\z)|<!\\[CDATA\\[.*?(?:\\]\\]>|\\z)|<\\?.*?(?:\\?>|\\z)|<![A-Z].*?(?:>|\\z)|" +
+      review_raw_open + "|</(?i:(?<raw_close>code|textarea|xmp|iframe|noembed|noframes|pre|script|style))[ \t]*>|" + review_html_inline + ")";
+    def review_inline_tokens:
+      "(?ms)(?:(?<![\\\\`])(?:\\\\\\\\)*(?<ticks>`+)(?!`)[\\s\\S]*?(?<!`)\\k<ticks>(?!`)|(?<!\\\\)(?:\\\\\\\\)*" + review_html_tokens + ")";
+    def review_inline_region($state; $owner; $markdown):
+      {text:.,cursor:0,output:"",stack:$state.stack,scope:$state.scope} |
+      until(.cursor >= (.text|length);
+        (.stack|length > 0) as $inside |
+        (if $inside and (.stack[-1] | test("^(?:textarea|xmp|iframe|noembed|noframes|script|style)$")) then
+           "(?i:</(?<raw_close>" + (if (.stack[-1]|test("^(?:pre|script|style)$")) then "pre|script|style" else .stack[-1] end) + ")[ \t]*>)"
+         elif $inside or ($markdown|not) then review_html_tokens
+         else review_inline_tokens end) as $pattern |
+        (.text[.cursor:] | first(match($pattern; "g")) // null) as $token |
+        if $token == null then
+          .output += (if $inside then (.text[.cursor:]|review_line_mask) else .text[.cursor:] end) |
+          .cursor = (.text|length)
+        else
+          (.cursor + $token.offset) as $start |
+          .output += (if $inside then (.text[.cursor:$start]|review_line_mask) else .text[.cursor:$start] end) |
+          .output += ($token.string|review_line_mask) |
+          ($token.captures | map(select((.name == "raw_name" or .name == "raw_pre") and .string != null) | .string | ascii_downcase) | .[0]) as $open |
+          ($token.captures | map(select(.name == "raw_close" and .string != null) | .string | ascii_downcase) | .[0]) as $close |
+          if $open != null then
+            if (.stack|length) == 0 then .scope = $owner else . end | .stack += [$open]
+          elif $close != null and $inside then
+            # The retained type-1 Markdown rule ends at any pre/script/style closer.
+            .stack as $stack | ([range(0;($stack|length)) |
+              select($stack[.] == $close or (($close|test("^(?:pre|script|style)$")) and ($stack[.]|test("^(?:pre|script|style)$"))))] | last) as $end |
+            if $end != null then .stack = .stack[:$end] else . end
+          else . end |
+          .cursor = ($start + $token.length)
+        end) | {visible:.output,stack:.stack,scope:.scope};
     def hide_review_examples:
-      review_document |
-      .visible = ([.records | group_by(.leaf)[] | sort_by(.position.line) |
-        . as $lines |
-        (if .[0].kind == "paragraph" then (map(.source)|join("\n")|review_inline_leaf|split("\n")) else map(.source|review_line_mask) end) as $masked |
-        if ($masked|length) != ($lines|length) then error("inline masking changed source line positions")
-        else range(0;length) as $i | .[$i] |
-          {position:.position,visible:(if .quoted or .kind != "paragraph" then
-            if (.source|test("^[ \t]*$")) then .source else (.source|review_line_mask) end
-          else $masked[$i] end)} end] | sort_by(.position.line) | map(.visible) | join("\n"));
+      review_document as $document |
+      reduce ($document.records | group_by(.leaf)[] | sort_by(.position.line)) as $lines
+        ({stack:[],scope:[],records:[],unclosed:$document.unclosed};
+         if (.stack|length) > 0 and .scope != $lines[0].containers[:(.scope|length)] then .stack = [] else . end |
+         (if (.stack|length) > 0 or ($lines[0].quoted|not) and ($lines[0].kind == "paragraph" or $lines[0].html) then
+            (if $lines[0].kind == "paragraph" then [] else $lines[0].containers end) as $owner |
+            . as $state | ($lines|map(.source)|join("\n")|review_inline_region($state; $owner; $lines[0].kind == "paragraph"))
+          else {visible:($lines|map(.source)|join("\n")),stack:.stack,scope:.scope} end) as $region |
+         .stack = $region.stack | .scope = $region.scope |
+         ($region.visible | if . == "" then [""] else split("\n") end) as $masked |
+         if ($masked|length) != ($lines|length) then error("inline masking changed source line positions")
+         else .records += [range(0;($lines|length)) as $i | $lines[$i] |
+           . + {visible:(if .quoted or .kind != "paragraph" then
+             if (.source|test("^[ \t]*$")) then .source else (.source|review_line_mask) end
+            else $masked[$i] end)}] end) |
+      .visible = (.records | sort_by(.position.line) | map(.visible) | join("\n"));
     def current_comment_ready:
       if type != "string" then error("review body must be a string") else
         (gsub("\r\n?"; "\n") | hide_review_examples) as $document |
