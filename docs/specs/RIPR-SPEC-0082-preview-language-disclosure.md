@@ -185,13 +185,14 @@ including in other CI environments; this does not create a GitHub artifact recei
 
 ### Three honesty cases
 
-When a diff returns `limited_partial_scope`, an enabled advisory counts and
-samples only paths in the existing selected partition (#8210). If no path of
-an enabled preview language was selected, its advisory is absent; a successful
-adapter invocation with no selected preview source cannot advertise omitted
-files as analyzed. Disabled-language advisories retain routed presence and
-enablement guidance. The partition, raw input counts, partial outcome,
-advisory exit status and gate ineligibility are unchanged.
+When a diff returns `limited_partial_scope`, enabled Python and
+TypeScript/JavaScript advisories count and sample only paths in the existing
+selected partition (#8210). If none of that language's paths was selected,
+its advisory is absent; a successful adapter invocation with no selected
+preview source cannot advertise omitted files as analyzed. Disabled-language
+advisories retain routed presence and enablement guidance. Perl retains its
+caller-supplied packet scope (#5421). The partition, raw input counts, partial
+outcome, advisory exit status and gate ineligibility are unchanged.
 
 1. **Adapter ENABLED + completed + preview files in scope** (`enabled == true`,
    no matching non-success `language_runs` entry) — the adapter ran to
