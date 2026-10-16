@@ -1,0 +1,23 @@
+    Blocking waiting for file lock on artifact directory
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3m 17s
+     Running unittests src/lib.rs (target/debug/deps/ripr-a6dce9f917d6369e)
+
+running 1 test
+test cli::commands::check_fanout::tests::fanout_enters_diff_pipeline_once ... FAILED
+
+failures:
+
+---- cli::commands::check_fanout::tests::fanout_enters_diff_pipeline_once stdout ----
+
+thread 'cli::commands::check_fanout::tests::fanout_enters_diff_pipeline_once' (3591) panicked at crates/ripr/src/cli/commands/check_fanout.rs:25:9:
+native output set must run: Err("unknown check argument \"--output-dir\". Run `ripr check --help`.")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    cli::commands::check_fanout::tests::fanout_enters_diff_pipeline_once
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 11056 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p ripr --lib`

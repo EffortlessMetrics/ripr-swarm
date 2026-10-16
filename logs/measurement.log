@@ -1,0 +1,68 @@
+completed workload 1
+completed workload 64
+[
+  {
+    "size": 1,
+    "condition": "cold",
+    "separate": {
+      "wall_median": 0.09577495000030467,
+      "cpu_median": 0.07408699999999999,
+      "member_bytes": 16105,
+      "manifest_bytes": 0
+    },
+    "fanout": {
+      "wall_median": 0.031876315999397775,
+      "cpu_median": 0.031629000000000004,
+      "member_bytes": 16105,
+      "manifest_bytes": 5655
+    }
+  },
+  {
+    "size": 1,
+    "condition": "warm",
+    "separate": {
+      "wall_median": 0.09565782300069259,
+      "cpu_median": 0.07009899999999997,
+      "member_bytes": 16105,
+      "manifest_bytes": 0
+    },
+    "fanout": {
+      "wall_median": 0.03184709700053645,
+      "cpu_median": 0.031559000000000004,
+      "member_bytes": 16105,
+      "manifest_bytes": 5655
+    }
+  },
+  {
+    "size": 64,
+    "condition": "cold",
+    "separate": {
+      "wall_median": 9.521361091999097,
+      "cpu_median": 9.945846000000001,
+      "member_bytes": 634355,
+      "manifest_bytes": 0
+    },
+    "fanout": {
+      "wall_median": 3.1786313640004664,
+      "cpu_median": 3.398234999999999,
+      "member_bytes": 634355,
+      "manifest_bytes": 18636
+    }
+  },
+  {
+    "size": 64,
+    "condition": "warm",
+    "separate": {
+      "wall_median": 9.32409295799971,
+      "cpu_median": 9.694823999999997,
+      "member_bytes": 634355,
+      "manifest_bytes": 0
+    },
+    "fanout": {
+      "wall_median": 3.124383221000244,
+      "cpu_median": 3.2603370000000016,
+      "member_bytes": 634355,
+      "manifest_bytes": 18636
+    }
+  }
+]

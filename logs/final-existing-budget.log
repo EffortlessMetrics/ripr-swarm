@@ -1,0 +1,9 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running tests/cli_smoke.rs (target/debug/deps/cli_smoke-544169fd588b0e87)
+
+running 2 tests
+test findings_byte_budget::check_findings_byte_budget_bounds_array_with_disclosed_totals ... ok
+test findings_byte_budget::pr_evidence_internal_check_ignores_findings_byte_budget ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 539 filtered out; finished in 0.20s
+

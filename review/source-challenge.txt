@@ -1,0 +1,10 @@
+Read-only source challenge by /root/fanout_contract
+Reviewed committed head: 9ace0ec5f4b2d5299553e90bedf4348072baff88
+Disposition: no material current defects found within inspected scope.
+Inspected destination binding, .git/Cargo-target read admission, lossless input-path identity, auxiliary inventory extension, member-plus-manifest size limits, manifest-last publication, refusal status, separate human/machine navigation.
+Earlier findings: destination parent and .git read-custody gaps; repaired before frozen head.
+No builds or tests run by this agent. Scoped pre-publication design feedback, not independent merge clearance.
+
+Read-only followup: 6a47f5bf094e5b010845b544f9464333a8b90d7d / tree 2a15b485aa9684ff9ea05159e429641433dd550b confirmed.
+All seven replacements preserve behavior and oracle strength: four name ignored closure arguments; three replace successful-result assertions with ?, which still fails the test on errors.
+The scoped 9ace source challenge remains applicable. No material defects found in this delta. No builds/tests run; no independent merge clearance claimed.

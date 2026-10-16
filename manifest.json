@@ -1,0 +1,193 @@
+{
+  "schema": "ripr-technical-evidence-archive-v1",
+  "created_utc": "2026-10-16T05:07:29.482220+00:00",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "evidence_branch": "codex/8169-technical-evidence-6a47f5bf",
+  "candidate_pr": 8201,
+  "candidate_head": "6a47f5bf094e5b010845b544f9464333a8b90d7d",
+  "candidate_tree": "2a15b485aa9684ff9ea05159e429641433dd550b",
+  "validation_base": "b772d9e13cafcdc84a19ea77d9b90fbc6cb91ecc",
+  "preservation_only": true,
+  "no_new_execution": true,
+  "file_cap_bytes": 65536,
+  "payload_bytes": 216922,
+  "files": [
+    {
+      "path": "receipts/evidence.json",
+      "source_path": "/workspace/scratch/8169-proof/evidence.json",
+      "bytes": 17730,
+      "sha256": "5dafe74746b601e87743c5167873b6d0babb2a05c3ff280cc8181469fe41b624",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "receipts/measurement.json",
+      "source_path": "/workspace/scratch/8169-measurements/receipt.json",
+      "bytes": 32663,
+      "sha256": "9d4c34f9fa623a39a4c43f022df52a0973cc5d2ae6d691ed72e6d47e8a369408",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "receipts/publication.json",
+      "source_path": "/workspace/scratch/8169-proof/publication.json",
+      "bytes": 3938,
+      "sha256": "36a39f3e43e6e1c88a68cc87161abeb5cfb9003089995fd486d5e10a68a57773",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "scripts/measure.py",
+      "source_path": "/workspace/scratch/8169-measure.py",
+      "bytes": 5988,
+      "sha256": "7f7e05961e1076c4224c732288dcdbb6fa86b3673598f1f3225371c81769d06c",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "review/source-challenge.txt",
+      "source_path": "/workspace/scratch/8169-source-challenge.txt",
+      "bytes": 1096,
+      "sha256": "b44de4f8e5f23f5faf581f9c2738a34b3b76abc67644c11c143746db43d24c5f",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "logs/measurement.log",
+      "source_path": "/workspace/scratch/8169-measure.log",
+      "bytes": 1542,
+      "sha256": "7576443c397897e18a3aa8b49604e3dc3de3fe2a80ec58f5fb211884c78062b9",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "logs/final2-check-fast.log",
+      "source_path": "/workspace/scratch/8169-final2-check-fast.log",
+      "bytes": 39222,
+      "sha256": "fa465c135d4c3e2d656136eebb9ab573c5194c8277d8d06e89418332f539f095",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "logs/final2-unit.log",
+      "source_path": "/workspace/scratch/8169-final2-unit.log",
+      "bytes": 1850,
+      "sha256": "dd51d727796f8551a04d2a82bef138647c429544e5595269ca98e78c7b0c2d10",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "logs/final2-cli.log",
+      "source_path": "/workspace/scratch/8169-final2-cli.log",
+      "bytes": 1066,
+      "sha256": "be8e7323371a69c79f3ddf0abcb605fc50f69240d065c116fab036768146d5e5",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "logs/final2-precommit.log",
+      "source_path": "/workspace/scratch/8169-final2-precommit.log",
+      "bytes": 42180,
+      "sha256": "dbfd33066306b0fe74c9d739741e5996c67e1bb94af29efd888ec6fa1d9dc77b",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "logs/final2-rust-only.log",
+      "source_path": "/workspace/scratch/8169-final2-rust-only.log",
+      "bytes": 8236,
+      "sha256": "efdd20da37088325c262b122a9a7f1d0f990a4cdf85126b8266fce2c9150ba34",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "logs/base-check.log",
+      "source_path": "/workspace/scratch/8169-base-check.log",
+      "bytes": 1495,
+      "sha256": "79695a779ab1cd9f79345ce0196519337b41523eb1c2c192c024746951b5d252",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "logs/base-check-fast.log",
+      "source_path": "/workspace/scratch/8169-base-check-fast.log",
+      "bytes": 674,
+      "sha256": "48709f47571e9b59d742ce8ecb0926d68abe048806988214e83685a02a86e84e",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "logs/red-fixed-instrument.log",
+      "source_path": "/workspace/scratch/8169-red-fixed-instrument.log",
+      "bytes": 1035,
+      "sha256": "7b9bd5068cfeea56da8780cc4fe53544c118b6a4fae83404546eecc45404ce3d",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "logs/final-check-fast.log",
+      "source_path": "/workspace/scratch/8169-final-check-fast.log",
+      "bytes": 43031,
+      "sha256": "73d92e9a5c6bb093498f10fde2033120e35bee7d2344636feefd32d722b8b946",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "logs/final-single-format.log",
+      "source_path": "/workspace/scratch/8169-final-single-format.log",
+      "bytes": 356,
+      "sha256": "431f46fe8c619b10c067e1bbbad2722c1ec6022c967666e61b2b935ba31e2de4",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "logs/final-existing-budget.log",
+      "source_path": "/workspace/scratch/8169-final-existing-budget.log",
+      "bytes": 453,
+      "sha256": "52b4f4a741f3d07315f1fee30bb38a1e5894c211adc9e59afdeba8ee9a989d46",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "reports/check-fast-selector.md",
+      "source_path": "/workspace/scratch/8169-proof/check-fast-selector.md",
+      "bytes": 145,
+      "sha256": "1cfbdf120f749d96bde13f82d74a2bb37ff1a6b6818f3edae772ab4b7e9aca84",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "reports/check-fast.md",
+      "source_path": "/workspace/scratch/8169-proof/check-fast.md",
+      "bytes": 1499,
+      "sha256": "a68f1337d660c9d5856570796cd1b9d4a3f79f4c6fa6d8d0fe6df66d508de5de",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "reports/precommit.md",
+      "source_path": "/workspace/scratch/8169-proof/precommit.md",
+      "bytes": 1653,
+      "sha256": "2f2fc891c631a7f8aa4aea53bfb34388e90c19e027108fe9290fa7a35c8b5643",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "reports/output-contracts.md",
+      "source_path": "/workspace/scratch/8169-proof/output-contracts.md",
+      "bytes": 262,
+      "sha256": "ed6852374fde7d751c34e03493bf2356aa1c8a40518e2e7c651143563ed002fb",
+      "kind": "verbatim retained evidence"
+    },
+    {
+      "path": "reports/traceability-fanout-excerpt.md",
+      "source_path": "/workspace/scratch/8169-proof/traceability.md",
+      "source_sha256": "3f23d2889c304843bf35bfc8a1e72e84a71b318b5302eb3eea2a856b7673e434",
+      "source_bytes": 1871846,
+      "bytes": 6570,
+      "sha256": "69cdfeb8399f1fa2e13aeb0c0838145e5a062ffc467ce2766e683661b14c7e1c",
+      "kind": "bounded excerpt: first 19 lines and all SPEC-0001 fanout advisory lines; not the full report"
+    },
+    {
+      "path": "measurements/paired-samples.csv",
+      "derived_from": "receipts/measurement.json rows; no new runs",
+      "bytes": 2037,
+      "sha256": "da9ae9d4c1713573bbc8d5335b507b055391f1ffe6fac11e6278be4423b20146",
+      "kind": "lossless CSV projection of existing 20 paired samples"
+    },
+    {
+      "path": "README.md",
+      "kind": "archive scope and limits, authored during preservation",
+      "bytes": 2201,
+      "sha256": "e1ea8c4069a28e58ceaa739d61397f2a7dc76087ad08471464ced697357edd3b"
+    }
+  ],
+  "omissions": [
+    "large binary (only recorded identity preserved)",
+    "all caches and credentials/secret stores",
+    "raw native member payloads and synthetic input corpus (hashes remain in raw receipts)",
+    "full traceability report (bounded relevant excerpt and source hash preserved)",
+    "all unlisted scratch files and unrelated source"
+  ],
+  "verification": "Compare every listed payload byte count and SHA-256; SHA256SUMS binds manifest.json. Git commit object binds entire archive tree. Immutable commit URL identifies evidence; candidate head identifies product. Remote readback is recorded separately after push."
+}

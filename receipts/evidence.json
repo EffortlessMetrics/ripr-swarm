@@ -1,0 +1,261 @@
+{
+  "head": "6a47f5bf094e5b010845b544f9464333a8b90d7d",
+  "tree": "2a15b485aa9684ff9ea05159e429641433dd550b",
+  "base": "b772d9e13cafcdc84a19ea77d9b90fbc6cb91ecc",
+  "binary": {
+    "path": "/workspace/scratch/8169-proof/ripr",
+    "sha256": "7d44305f188778ce3e85e0f950847e8f432d857b46502db897c68a73e42827f3",
+    "bytes": 219336312
+  },
+  "retained_files": {
+    "/workspace/scratch/8169-final2-check-fast.log": {
+      "sha256": "fa465c135d4c3e2d656136eebb9ab573c5194c8277d8d06e89418332f539f095",
+      "bytes": 39222
+    },
+    "/workspace/scratch/8169-final2-unit.log": {
+      "sha256": "dd51d727796f8551a04d2a82bef138647c429544e5595269ca98e78c7b0c2d10",
+      "bytes": 1850
+    },
+    "/workspace/scratch/8169-final2-cli.log": {
+      "sha256": "be8e7323371a69c79f3ddf0abcb605fc50f69240d065c116fab036768146d5e5",
+      "bytes": 1066
+    },
+    "/workspace/scratch/8169-final2-precommit.log": {
+      "sha256": "dbfd33066306b0fe74c9d739741e5996c67e1bb94af29efd888ec6fa1d9dc77b",
+      "bytes": 42180
+    },
+    "/workspace/scratch/8169-final2-rust-only.log": {
+      "sha256": "efdd20da37088325c262b122a9a7f1d0f990a4cdf85126b8266fce2c9150ba34",
+      "bytes": 8236
+    },
+    "/workspace/scratch/8169-final-single-format.log": {
+      "sha256": "431f46fe8c619b10c067e1bbbad2722c1ec6022c967666e61b2b935ba31e2de4",
+      "bytes": 356
+    },
+    "/workspace/scratch/8169-final-existing-budget.log": {
+      "sha256": "52b4f4a741f3d07315f1fee30bb38a1e5894c211adc9e59afdeba8ee9a989d46",
+      "bytes": 453
+    },
+    "/workspace/scratch/8169-final-check-fast.log": {
+      "sha256": "73d92e9a5c6bb093498f10fde2033120e35bee7d2344636feefd32d722b8b946",
+      "bytes": 43031
+    },
+    "/workspace/scratch/8169-measure.py": {
+      "sha256": "7f7e05961e1076c4224c732288dcdbb6fa86b3673598f1f3225371c81769d06c",
+      "bytes": 5988
+    },
+    "/workspace/scratch/8169-source-challenge.txt": {
+      "sha256": "b44de4f8e5f23f5faf581f9c2738a34b3b76abc67644c11c143746db43d24c5f",
+      "bytes": 1096
+    },
+    "/workspace/scratch/8169-measurements/receipt.json": {
+      "sha256": "9d4c34f9fa623a39a4c43f022df52a0973cc5d2ae6d691ed72e6d47e8a369408",
+      "bytes": 32663
+    },
+    "/workspace/scratch/8169-proof/output-contracts.md": {
+      "sha256": "ed6852374fde7d751c34e03493bf2356aa1c8a40518e2e7c651143563ed002fb",
+      "bytes": 262
+    },
+    "/workspace/scratch/8169-proof/check-fast.md": {
+      "sha256": "a68f1337d660c9d5856570796cd1b9d4a3f79f4c6fa6d8d0fe6df66d508de5de",
+      "bytes": 1499
+    },
+    "/workspace/scratch/8169-proof/precommit.md": {
+      "sha256": "2f2fc891c631a7f8aa4aea53bfb34388e90c19e027108fe9290fa7a35c8b5643",
+      "bytes": 1653
+    },
+    "/workspace/scratch/8169-proof/check-fast-selector.md": {
+      "sha256": "1cfbdf120f749d96bde13f82d74a2bb37ff1a6b6818f3edae772ab4b7e9aca84",
+      "bytes": 145
+    },
+    "/workspace/scratch/8169-proof/traceability.md": {
+      "sha256": "3f23d2889c304843bf35bfc8a1e72e84a71b318b5302eb3eea2a856b7673e434",
+      "bytes": 1871846
+    },
+    "/workspace/scratch/8169-proof/capabilities.md": {
+      "sha256": "d42164d043293a2b1c9fadaf1fafeeba18abda26b48982ab8b56aac6eff468a7",
+      "bytes": 254
+    }
+  },
+  "source_inventory": {
+    "1": {
+      "/workspace/scratch/8169-measurements/input-1/Cargo.toml": "eab83478876d3a36ae7d0dc70a80697b231dc39c8c1120f2346aee0c459766f5",
+      "/workspace/scratch/8169-measurements/input-1/ripr.toml": "df576f431b21e85225241f33ff5e97ebfba1642b81cac9b8214af3c233b9991c",
+      "/workspace/scratch/8169-measurements/input-1/src/lib.rs": "5bd879fd35950cd649c83f2b2e666bb0130c5e598bdb509327c591db229160f9",
+      "/workspace/scratch/8169-measurements/input-1/src/owner0.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445"
+    },
+    "64": {
+      "/workspace/scratch/8169-measurements/input-64/Cargo.toml": "eab83478876d3a36ae7d0dc70a80697b231dc39c8c1120f2346aee0c459766f5",
+      "/workspace/scratch/8169-measurements/input-64/ripr.toml": "df576f431b21e85225241f33ff5e97ebfba1642b81cac9b8214af3c233b9991c",
+      "/workspace/scratch/8169-measurements/input-64/src/lib.rs": "17bcd86c38660f206db91d2130af2985da616f096790c369596d168addb9ece1",
+      "/workspace/scratch/8169-measurements/input-64/src/owner0.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner1.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner2.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner3.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner4.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner5.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner6.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner7.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner8.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner9.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner10.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner11.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner12.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner13.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner14.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner15.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner16.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner17.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner18.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner19.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner20.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner21.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner22.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner23.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner24.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner25.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner26.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner27.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner28.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner29.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner30.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner31.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner32.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner33.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner34.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner35.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner36.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner37.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner38.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner39.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner40.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner41.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner42.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner43.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner44.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner45.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner46.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner47.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner48.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner49.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner50.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner51.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner52.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner53.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner54.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner55.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner56.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner57.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner58.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner59.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner60.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner61.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner62.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445",
+      "/workspace/scratch/8169-measurements/input-64/src/owner63.rs": "88e4f43af8798f6277cf04c9e8412297359927c6f61d317f8d80927bae5c3445"
+    }
+  },
+  "verified_manifests": [
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-1-cold-0-fanout/manifest.json",
+      "sha256": "aee7c79b1a5b4da7f16dbdc4685722782f0338d01608080552b00d79c4fee637"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-1-cold-1-fanout/manifest.json",
+      "sha256": "aee7c79b1a5b4da7f16dbdc4685722782f0338d01608080552b00d79c4fee637"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-1-cold-2-fanout/manifest.json",
+      "sha256": "aee7c79b1a5b4da7f16dbdc4685722782f0338d01608080552b00d79c4fee637"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-1-cold-3-fanout/manifest.json",
+      "sha256": "aee7c79b1a5b4da7f16dbdc4685722782f0338d01608080552b00d79c4fee637"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-1-cold-4-fanout/manifest.json",
+      "sha256": "aee7c79b1a5b4da7f16dbdc4685722782f0338d01608080552b00d79c4fee637"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-1-warm-0-fanout/manifest.json",
+      "sha256": "aee7c79b1a5b4da7f16dbdc4685722782f0338d01608080552b00d79c4fee637"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-1-warm-1-fanout/manifest.json",
+      "sha256": "aee7c79b1a5b4da7f16dbdc4685722782f0338d01608080552b00d79c4fee637"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-1-warm-2-fanout/manifest.json",
+      "sha256": "aee7c79b1a5b4da7f16dbdc4685722782f0338d01608080552b00d79c4fee637"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-1-warm-3-fanout/manifest.json",
+      "sha256": "aee7c79b1a5b4da7f16dbdc4685722782f0338d01608080552b00d79c4fee637"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-1-warm-4-fanout/manifest.json",
+      "sha256": "aee7c79b1a5b4da7f16dbdc4685722782f0338d01608080552b00d79c4fee637"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-64-cold-0-fanout/manifest.json",
+      "sha256": "62abb62c132d1338fdd3c68d002612e1184342824a33bea914d049e79387c521"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-64-cold-1-fanout/manifest.json",
+      "sha256": "62abb62c132d1338fdd3c68d002612e1184342824a33bea914d049e79387c521"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-64-cold-2-fanout/manifest.json",
+      "sha256": "62abb62c132d1338fdd3c68d002612e1184342824a33bea914d049e79387c521"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-64-cold-3-fanout/manifest.json",
+      "sha256": "62abb62c132d1338fdd3c68d002612e1184342824a33bea914d049e79387c521"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-64-cold-4-fanout/manifest.json",
+      "sha256": "62abb62c132d1338fdd3c68d002612e1184342824a33bea914d049e79387c521"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-64-warm-0-fanout/manifest.json",
+      "sha256": "62abb62c132d1338fdd3c68d002612e1184342824a33bea914d049e79387c521"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-64-warm-1-fanout/manifest.json",
+      "sha256": "62abb62c132d1338fdd3c68d002612e1184342824a33bea914d049e79387c521"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-64-warm-2-fanout/manifest.json",
+      "sha256": "62abb62c132d1338fdd3c68d002612e1184342824a33bea914d049e79387c521"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-64-warm-3-fanout/manifest.json",
+      "sha256": "62abb62c132d1338fdd3c68d002612e1184342824a33bea914d049e79387c521"
+    },
+    {
+      "manifest": "/workspace/scratch/8169-measurements/set-64-warm-4-fanout/manifest.json",
+      "sha256": "62abb62c132d1338fdd3c68d002612e1184342824a33bea914d049e79387c521"
+    }
+  ],
+  "measurement_pairs": 20,
+  "measured_processes": 80,
+  "unmeasured_warmups": 4,
+  "selector_paths": [
+    ".ripr/traceability.toml",
+    "changelog.d/8169-native-diff-output-set.md",
+    "crates/ripr/src/analysis/committed_source.rs",
+    "crates/ripr/src/analysis/input_boundary.rs",
+    "crates/ripr/src/analysis/mod.rs",
+    "crates/ripr/src/analysis/pipeline.rs",
+    "crates/ripr/src/analysis/workspace/module_graph.rs",
+    "crates/ripr/src/cli/commands.rs",
+    "crates/ripr/src/cli/commands/check.rs",
+    "crates/ripr/src/cli/commands/check_fanout.rs",
+    "crates/ripr/src/cli/help/core.rs",
+    "crates/ripr/tests/cli_smoke.rs",
+    "crates/ripr/tests/cli_smoke/native_fanout.rs",
+    "docs/OUTPUT_SCHEMA.md",
+    "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
+  ],
+  "toolchain": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "review": "REVIEW_INCOMPLETE; source challenge retained; parent independent review pending"
+}

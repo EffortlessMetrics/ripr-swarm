@@ -1,0 +1,8 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running unittests src/lib.rs (target/debug/deps/ripr-a6dce9f917d6369e)
+
+running 1 test
+test cli::commands::check::tests::select_output_format_accepts_a_repeated_selection ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 11067 filtered out; finished in 0.00s
+

@@ -1,0 +1,128 @@
+{
+  "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8201",
+  "number": 8201,
+  "draft": true,
+  "head_sha": "6a47f5bf094e5b010845b544f9464333a8b90d7d",
+  "base_sha": "fbc8f7e58f11f25a8196495dfb88e7b393a5f4c4",
+  "mergeable": true,
+  "merge_commit_sha": "0b562e491cbb2740fccb23505641be646a5a7e83",
+  "body_matches": true,
+  "author_review": {
+    "success": true,
+    "review_id": 5543280625
+  },
+  "ownership_checks": [
+    {
+      "query_index": 0,
+      "status": "fulfilled",
+      "isError": false,
+      "comments": []
+    },
+    {
+      "query_index": 1,
+      "status": "fulfilled",
+      "isError": false,
+      "issues": [
+        {
+          "number": 2040,
+          "title": "deps(deps): bump the cargo-minor-patch group with 3 updates"
+        }
+      ]
+    },
+    {
+      "query_index": 2,
+      "status": "fulfilled",
+      "isError": false,
+      "issues": []
+    },
+    {
+      "query_index": 3,
+      "status": "fulfilled",
+      "isError": false,
+      "issues": [
+        {
+          "number": 7601,
+          "title": "fix(dx): preserve native output destination identity"
+        },
+        {
+          "number": 7917,
+          "title": "test(cli): make panic backtrace branches discriminate output removal"
+        },
+        {
+          "number": 5121,
+          "title": "fix(output): retain rooted Bash literal argument forms (#5119)"
+        },
+        {
+          "number": 7836,
+          "title": "fix(rust): admit bounded real terminal tuple projection (#1728)"
+        },
+        {
+          "number": 3662,
+          "title": "fix(output): withhold multiline command-list PowerShell translations"
+        },
+        {
+          "number": 7423,
+          "title": "fix(tests): keep coverage profiles out of wheel fixture history"
+        },
+        {
+          "number": 2880,
+          "title": "feat(output): disclose incomplete analysis in SARIF and badges"
+        },
+        {
+          "number": 8030,
+          "title": "fix(test-host): compare paths in one spelling at the shared owners (#7937)"
+        },
+        {
+          "number": 8105,
+          "title": "docs(spec-index): align six accepted disposition cells"
+        },
+        {
+          "number": 4151,
+          "title": "docs(config): align badge defaults and ripr+ intent wording (#4130)"
+        },
+        {
+          "number": 5187,
+          "title": "fix(xtask): retain actionable child failures in PR-evidence diagnostics"
+        },
+        {
+          "number": 4021,
+          "title": "fix(receipt): name the changed test and stop reporting movement between equal states"
+        },
+        {
+          "number": 7589,
+          "title": "perf(diff): extract library imports once per export query"
+        },
+        {
+          "number": 7411,
+          "title": "ci: select Python wheel work by workflow record ownership"
+        },
+        {
+          "number": 7779,
+          "title": "fix(config): reject unknown [perl].producer values at parse"
+        },
+        {
+          "number": 3667,
+          "title": "feat(analysis,py): repo-mode native evidence producer over the selected working set (#3554 PR B)"
+        },
+        {
+          "number": 4129,
+          "title": "docs(badges): align policy with governed diff identity (#4003)"
+        },
+        {
+          "number": 5034,
+          "title": "perf(index): reduce preparation work and propagate request cancellation"
+        },
+        {
+          "number": 7561,
+          "title": "fix(python): require a crediting assertion for empty-token owners (#7526)"
+        },
+        {
+          "number": 4340,
+          "title": "ux(cli): document parsed flags and revive the flag/help parity gate (#4317)"
+        }
+      ]
+    }
+  ],
+  "status": "PR_IN_FLIGHT / REVIEW_INCOMPLETE",
+  "next": "Parent fresh independent exact-head review; keep Draft. Hosted/integration/native Windows/UB qualification not established. No Ready or merge."
+}
