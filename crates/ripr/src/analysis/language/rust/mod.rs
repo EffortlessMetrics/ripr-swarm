@@ -357,6 +357,12 @@ fn drop_unreached_test_files(
                 .map(|path| workspace::normalize_path(path)),
         );
     }
+    orphans.extend(cargo_skipped_test_files(
+        root,
+        &loaded_files,
+        &holds_tests,
+        &mut manifests,
+    ));
     if orphans.is_empty() {
         return loaded_files;
     }
@@ -364,6 +370,68 @@ fn drop_unreached_test_files(
         .into_iter()
         .filter(|(path, _)| !orphans.contains(&workspace::normalize_path(path)))
         .collect()
+}
+
+/// Test files that sit in a `[[test]]` target `cargo test` never runs: the
+/// entry sets `test = false` or `harness = false`, or its `required-features`
+/// are unmet under cargo defaults (#8016). The file compiles but its tests do
+/// not execute, so they cannot discriminate. Cargo's metadata owns the verdict
+/// (the same inventory the integration-helper credit consults); the manifest
+/// read only gates the metadata probe so a package without such an entry
+/// never pays for it. Unavailable metadata and unlisted paths are not an
+/// established skip, so nothing is dropped on a missing premise.
+fn cargo_skipped_test_files(
+    root: &Path,
+    loaded_files: &[(PathBuf, Vec<u8>)],
+    holds_tests: &dyn Fn(&[u8]) -> bool,
+    manifests: &mut BTreeMap<PathBuf, bool>,
+) -> BTreeSet<String> {
+    let mut gated: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    let mut inventory = workspace::ManifestInventory::default();
+    let mut skipped = BTreeSet::new();
+    for (path, bytes) in loaded_files {
+        if !holds_tests(bytes) {
+            continue;
+        }
+        let Some(dir) = owning_manifest_dir(root, path, manifests) else {
+            continue;
+        };
+        let may_skip = *gated.entry(dir.clone()).or_insert_with(|| {
+            committed_source::read_source_bytes(root, &dir.join("Cargo.toml"))
+                .ok()
+                .flatten()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+                .is_some_and(|manifest| declares_skippable_test_target(&manifest))
+        });
+        if !may_skip {
+            continue;
+        }
+        if inventory.cargo_test_collection_skipped(root, path)
+            || matches!(
+                inventory.verdict(root, path),
+                workspace::CargoHarnessVerdict::HarnessDisabled
+            )
+        {
+            skipped.insert(workspace::normalize_path(path));
+        }
+    }
+    skipped
+}
+
+/// Whether a manifest has a `[[test]]` entry that can keep `cargo test` from
+/// running its file: `test = false`, `harness = false` or `required-features`.
+fn declares_skippable_test_target(manifest: &toml::Value) -> bool {
+    manifest
+        .get("test")
+        .and_then(toml::Value::as_array)
+        .is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                entry.get("test").and_then(toml::Value::as_bool) == Some(false)
+                    || entry.get("harness").and_then(toml::Value::as_bool) == Some(false)
+                    || entry.get("required-features").is_some()
+            })
+        })
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
@@ -7319,6 +7387,51 @@ fn absent_delimiter_boundary_returns_head() {
                 "registered={registered}"
             );
         }
+    }
+
+    #[test]
+    fn diff_analysis_ignores_declared_test_targets_cargo_test_never_runs() -> Result<(), String> {
+        // #8016: a declared `[[test]]` with `test = false`, `harness = false`
+        // or unmet `required-features` compiles (or is skipped) but its
+        // `#[test]` fns never run. `met` is the discriminating control: same
+        // shape, default-enabled feature, so cargo runs it.
+        let root = temp_root("module-graph-skipped-targets")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n\n\
+             [features]\ndefault=['on']\non=[]\nnever=[]\n\n\
+             [[test]]\nname='off'\ntest=false\n\n\
+             [[test]]\nname='bare'\nharness=false\n\n\
+             [[test]]\nname='unmet'\nrequired-features=['never']\n\n\
+             [[test]]\nname='met'\nrequired-features=['on']\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        for name in ["off", "bare", "unmet", "met"] {
+            write(
+                &root.join(format!("tests/{name}.rs")),
+                &format!(
+                    "use shop::used::discount;\n\n#[test]\nfn discount_applies_{name}() {{\n    assert_eq!(discount(150), 140);\n}}\n"
+                ),
+            )?;
+        }
+
+        let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+        let related = related_test_names(&root, &result, "src/used.rs");
+        assert!(
+            related.iter().any(|name| name == "discount_applies_met"),
+            "a target cargo test runs must relate: {related:?}"
+        );
+        for skipped in ["off", "bare", "unmet"] {
+            let name = format!("discount_applies_{skipped}");
+            assert!(
+                !related.contains(&name),
+                "`{skipped}` is never run by cargo test and must not relate: {related:?}"
+            );
+        }
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
     }
 
     #[test]
