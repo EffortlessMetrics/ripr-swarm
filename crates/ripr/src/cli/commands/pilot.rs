@@ -270,8 +270,27 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // A snapshot holding seams `ripr check` never classifies is not the same
     // population as its after snapshot, so it is written without identity.
     let change_seams_added = folded.added > 0;
+    // Source admission is independent of the inventory cap. Without a
+    // supplement (or after a failed one), an absent changed source still
+    // needs the shared disclosure; observing file presence does not clear
+    // the failed supplement's classification caveat.
+    let absent_file_limitations = if let Some(limitations) = folded.absent_file_limitations {
+        Some(limitations)
+    } else if rust_enabled {
+        if current_change.changed_rust_files().is_empty() {
+            None
+        } else {
+            Some(analysis::absent_changed_rust_file_limitations(
+                &input.root,
+                &config,
+                &current_change.changed_files(),
+            )?)
+        }
+    } else {
+        None
+    };
     let current_change = current_change
-        .with_absent_file_limitations(folded.absent_file_limitations)
+        .with_absent_file_limitations(absent_file_limitations)
         .with_seams_counted(&classified, folded.caveat_limit);
     let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)

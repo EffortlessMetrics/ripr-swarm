@@ -2948,7 +2948,7 @@ fn load_repair_attempt_by_id(
         return Err(format!(
             "repair attempt manifest not found for {} at {}",
             attempt_id.as_str(),
-            path.display()
+            crate::output::path::human_path(&path)
         ));
     }
     let manifest = read_repair_attempt_manifest_at(store, &path)?;
@@ -2974,7 +2974,7 @@ fn load_repair_attempt_snapshot_by_id(
         return Err(format!(
             "repair attempt manifest not found for {} at {}",
             attempt_id.as_str(),
-            path.display()
+            crate::output::path::human_path(&path)
         ));
     }
     let raw =
