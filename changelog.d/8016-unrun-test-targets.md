@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A `#[test]` in a `tests/` target that a `[[test]]` entry keeps `cargo test` from running (`test = false`, `required-features` unmet under cargo's default features, or `harness = false` without a registered harness) is no longer credited as evidence, so a changed behavior it appears to pin reads `no_static_path` instead of a false `exposed`. Cargo's own metadata decides; unavailable metadata keeps the file (#8016).

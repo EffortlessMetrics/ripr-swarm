@@ -357,6 +357,29 @@ fn drop_unreached_test_files(
                 .map(|path| workspace::normalize_path(path)),
         );
     }
+    // A target root `cargo test` never runs (#8016): a `[[test]]` entry with
+    // `test = false`, unmet `required-features`, or `harness = false` (whose
+    // `#[test]` functions sit beside a `fn main`). Cargo's own metadata is
+    // the authority; unavailable metadata establishes nothing and keeps the
+    // file. A registered harness may collect a `harness = false` target
+    // itself, so only a package without registrations drops that one.
+    let mut gated = BTreeMap::new();
+    let mut inventory = workspace::ManifestInventory::default();
+    for (path, bytes) in &loaded_files {
+        let Some(package_dir) = target_root_package_dir(path) else {
+            continue;
+        };
+        if !holds_tests(bytes) || !manifest_gates_test_targets(root, package_dir, &mut gated) {
+            continue;
+        }
+        let skipped = inventory.cargo_test_collection_skipped(root, path)
+            || (test_harnesses.is_empty()
+                && inventory.verdict(root, path)
+                    == workspace::CargoHarnessVerdict::HarnessDisabled);
+        if skipped {
+            orphans.insert(workspace::normalize_path(path));
+        }
+    }
     if orphans.is_empty() {
         return loaded_files;
     }
@@ -467,6 +490,59 @@ fn mentioned_module_names(
     mentioned
 }
 
+/// The directory beside a Cargo target directory when `path` is a target
+/// root: `tests/x.rs`, or `tests/x/main.rs` (and the bench and example
+/// twins). `None` for any other file.
+fn target_root_package_dir(path: &Path) -> Option<&Path> {
+    let file_name = path.file_name().and_then(|name| name.to_str())?;
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    let parent_name = parent.file_name().and_then(|name| name.to_str());
+    let grandparent_name = parent
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str());
+    let is_target_dir = |name: Option<&str>| matches!(name, Some("tests" | "benches" | "examples"));
+    if is_target_dir(parent_name) {
+        Some(parent.parent().unwrap_or(Path::new("")))
+    } else if file_name == "main.rs" && is_target_dir(grandparent_name) {
+        parent.parent().and_then(Path::parent)
+    } else {
+        None
+    }
+}
+
+/// Whether the manifest in `package_dir` declares a `[[test]]` entry that
+/// can keep `cargo test` from running its target: `test`, `harness` or
+/// `required-features` (#8016). Cheap gate in front of the Cargo metadata
+/// probe, so a package without such a key never pays for it. An unreadable
+/// or unparsable manifest gates nothing.
+fn manifest_gates_test_targets(
+    root: &Path,
+    package_dir: &Path,
+    cache: &mut BTreeMap<PathBuf, bool>,
+) -> bool {
+    *cache.entry(package_dir.to_path_buf()).or_insert_with(|| {
+        committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
+            .ok()
+            .flatten()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+            .and_then(|manifest| {
+                manifest
+                    .get("test")
+                    .and_then(toml::Value::as_array)
+                    .map(|entries| {
+                        entries.iter().any(|entry| {
+                            ["test", "harness", "required-features"]
+                                .iter()
+                                .any(|key| entry.get(*key).is_some())
+                        })
+                    })
+            })
+            .unwrap_or(false)
+    })
+}
+
 /// Whether `path` could be a file no target reaches: a module file whose
 /// name nothing mentions, or a target root (`tests/x.rs`) in a package whose
 /// manifest sets `autotests`, `autobenches` or `autoexamples = false`.
@@ -492,16 +568,7 @@ fn may_be_unreached(
         .parent()
         .and_then(Path::file_name)
         .and_then(|name| name.to_str());
-    let is_target_dir = |name: Option<&str>| matches!(name, Some("tests" | "benches" | "examples"));
-    // A target root: `tests/x.rs`, or `tests/x/main.rs` (and the bench and
-    // example twins).
-    let package_dir = if is_target_dir(parent_name) {
-        Some(parent.parent().unwrap_or(Path::new("")))
-    } else if file_name == "main.rs" && is_target_dir(grandparent_name) {
-        parent.parent().and_then(Path::parent)
-    } else {
-        None
-    };
+    let package_dir = target_root_package_dir(path);
     // `src/tests/x.rs` sits under a module directory named `tests`, not a
     // target directory: with no manifest beside it, it is an ordinary module
     // file and takes the module-name check below (#6979).
@@ -7358,6 +7425,57 @@ fn absent_delimiter_boundary_returns_head() {
                 .any(|name| name == "discount_applies_unbuilt"),
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_declared_test_targets_cargo_test_never_runs() -> Result<(), String> {
+        // #8016: `test = false`, unmet `required-features` and
+        // `harness = false` keep `cargo test` from running a declared
+        // target, so its `#[test]` functions are not evidence. `live`
+        // (default-enabled feature) and `plain` (no gating key) still
+        // relate, which keeps the drop from over-reaching.
+        let root = temp_root("declared-test-targets-not-run")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n\n\
+             [features]\ndefault=['on']\non=[]\nnever=[]\n\n\
+             [[test]]\nname='off'\ntest=false\n\n\
+             [[test]]\nname='gated'\nrequired-features=['never']\n\n\
+             [[test]]\nname='nohar'\nharness=false\n\n\
+             [[test]]\nname='live'\nrequired-features=['on']\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        for name in ["off", "gated", "nohar", "live", "plain"] {
+            write(
+                &root.join(format!("tests/{name}.rs")),
+                &format!(
+                    "use shop::used::discount;\n\n#[test]\nfn discount_applies_{name}() {{\n    assert_eq!(discount(150), 140);\n}}\n"
+                ),
+            )?;
+        }
+
+        let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+        let related = related_test_names(&root, &result, "src/used.rs");
+        for kept in ["live", "plain"] {
+            assert!(
+                related
+                    .iter()
+                    .any(|name| *name == format!("discount_applies_{kept}")),
+                "{kept} is run by cargo test and must relate: {related:?}"
+            );
+        }
+        for dropped in ["off", "gated", "nohar"] {
+            assert!(
+                !related
+                    .iter()
+                    .any(|name| *name == format!("discount_applies_{dropped}")),
+                "{dropped} is never run by cargo test and must not relate: {related:?}"
+            );
+        }
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
