@@ -31,6 +31,9 @@ pub(in crate::analysis) struct PropagationWitnessV1 {
     /// Exact rule-7a observer provenance; absent preserves existing digests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(in crate::analysis) fallible_check: Option<super::FallibleCheckReceipt>,
+    /// Exact one-hop field/observer receipt; absent preserves previous digests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::analysis) field_projection: Option<super::FieldProjectionReceipt>,
     pub(in crate::analysis) sink: PropagationEndpoint,
     pub(in crate::analysis) completeness: PathCompleteness,
     pub(in crate::analysis) limitations: Vec<String>,
@@ -235,6 +238,7 @@ pub(in crate::analysis) fn current_path_witness_with(
         },
         selected_helper_calls: Vec::new(),
         fallible_check: None,
+        field_projection: None,
         edges: vec![PropagationEdge {
             kind: edge_kind.clone(),
             status: edge_status,
@@ -292,6 +296,7 @@ pub(in crate::analysis) fn fallible_literal_witness(
         }],
         selected_helper_calls: Vec::new(),
         fallible_check: Some(receipt.clone()),
+        field_projection: None,
         sink: PropagationEndpoint {
             kind: sink.kind.as_str().into(),
             identity,
@@ -379,6 +384,7 @@ pub(in crate::analysis) fn constant_tail_witness(
         }],
         selected_helper_calls: Vec::new(),
         fallible_check: None,
+        field_projection: None,
         sink: PropagationEndpoint {
             kind: sink.kind.as_str().into(),
             identity,
@@ -508,6 +514,7 @@ pub(in crate::analysis) fn format_tail_witness(
         }],
         selected_helper_calls: Vec::new(),
         fallible_check: None,
+        field_projection: None,
         sink: PropagationEndpoint {
             kind: sink.kind.as_str().into(),
             identity,
@@ -635,6 +642,7 @@ pub(in crate::analysis) fn returned_ledger_witness(
         },
         selected_helper_calls: Vec::new(),
         fallible_check: None,
+        field_projection: None,
         edges: vec![PropagationEdge {
             kind: PropagationEdgeKind::StructField,
             status: EdgeStatus::Candidate,
@@ -828,6 +836,10 @@ pub(in crate::analysis) fn complete_direct_witness(
             .fallible_check
             .as_ref()
             .is_none_or(|receipt| receipt.valid_for(probe))
+        && witness
+            .field_projection
+            .as_ref()
+            .is_none_or(|receipt| receipt.valid_for(probe))
         && witness.schema_version == SCHEMA_VERSION
         && witness.behavior.owner == *owner
         && witness.behavior.family == probe.family.as_str()
@@ -874,6 +886,7 @@ pub(in crate::analysis) fn valid_owner_bound_partial_witness(
     };
     witness.digest_matches()
         && witness.fallible_check.is_none()
+        && witness.field_projection.is_none()
         && witness.schema_version == SCHEMA_VERSION
         && witness.behavior.owner == *owner
         && witness.behavior.family == probe.family.as_str()
@@ -2481,6 +2494,10 @@ impl PropagationWitnessV1 {
         append_canonical_section_header(&mut canonical, "sink", 2);
         if let Some(receipt) = &self.fallible_check {
             append_canonical_section_header(&mut canonical, "fallible-check", 1);
+            append_canonical_field(&mut canonical, &receipt.semantic_digest);
+        }
+        if let Some(receipt) = &self.field_projection {
+            append_canonical_section_header(&mut canonical, "field-projection", 1);
             append_canonical_field(&mut canonical, &receipt.semantic_digest);
         }
         append_canonical_field(&mut canonical, &self.sink.kind);

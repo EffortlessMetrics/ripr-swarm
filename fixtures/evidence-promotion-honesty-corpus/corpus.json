@@ -9108,10 +9108,94 @@
       "control": "must_stay_weakly_exposed",
       "probe_family": "field_construction",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_one_hop_field_projection",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/one_hop_field_projection",
+      "vector": "exact_one_hop_field_observer_identity_projected_positive_two_fields",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_one_hop_field_projection_wrong_sink",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/one_hop_field_projection_wrong_sink",
+      "vector": "exact_one_hop_field_observer_identity_wrong_sink_strong",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_one_hop_field_projection_discarded",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/one_hop_field_projection_discarded",
+      "vector": "exact_one_hop_field_observer_identity_discarded_owner_result",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_one_hop_field_projection_sibling",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/one_hop_field_projection_sibling",
+      "vector": "exact_one_hop_field_observer_identity_sibling_field",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
       ]
     },
     {
