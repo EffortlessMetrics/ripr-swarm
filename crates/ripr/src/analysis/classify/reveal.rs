@@ -547,16 +547,53 @@ fn insert_count_may_overwrite(
                     .is_some_and(|seed| insert_keys_match(&key, &seed))
             })
             || is_literal_key(&key)
-                && test.body[..at]
+                && masked[..at]
                     .match_indices(&format!("{binding}.{path}"))
                     .any(|(seed_at, needle)| {
+                        // Only the right-hand side of this assignment
+                        // statement can seed the map: bound the search at
+                        // its terminating `;` and require the key in key
+                        // position, so a later statement or a value-side
+                        // mention of the literal cannot demote the count.
+                        let Some(after) = masked.get(seed_at + needle.len()..at) else {
+                            return false;
+                        };
+                        if after
+                            .chars()
+                            .next()
+                            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+                        {
+                            return false;
+                        }
+                        let Some(rhs) = after
+                            .trim_start()
+                            .strip_prefix('=')
+                            .filter(|rest| !rest.starts_with('=') && !rest.starts_with('>'))
+                        else {
+                            return false;
+                        };
+                        // The masked text fixes the statement span (a `;`
+                        // inside a string cannot end it early); the key
+                        // itself is matched in the unmasked text.
+                        let rhs_end = rhs.find(';').unwrap_or(rhs.len());
+                        let rhs_start = at - rhs.len();
                         test.body
-                            .get(seed_at + needle.len()..(seed_at + 240).min(at))
-                            .is_some_and(|segment| {
-                                segment.trim_start().starts_with('=')
-                                    && segment.contains(key.as_str())
-                            })
+                            .get(rhs_start..rhs_start + rhs_end)
+                            .is_some_and(|rhs| key_in_key_position(rhs, key.as_str()))
                     })
+    })
+}
+
+/// Whether `rhs` (one assignment right-hand side) names `key` as a map key:
+/// the literal appears where an entry key belongs, followed by `,`, `:`,
+/// or `=>` and preceded by an opening bracket or the start. A literal in
+/// value position (`from([("B", "A")])`) does not seed the key.
+fn key_in_key_position(rhs: &str, key: &str) -> bool {
+    rhs.match_indices(key).any(|(at, _)| {
+        let before = rhs[..at].trim_end();
+        let after = rhs[at + key.len()..].trim_start();
+        (before.is_empty() || before.ends_with(['(', '[', '{', ',']))
+            && (after.starts_with(',') || after.starts_with(':') || after.starts_with("=>"))
     })
 }
 
@@ -4803,6 +4840,22 @@ mod tests {
         // A whole-map read of the seeded map still observes the write.
         let whole = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock.insert(\"A\".to_string(), 1);\n    shelf.restock(\"A\", 2);\n    assert_eq!(&shelf.stock[\"A\"], &2);\n}";
         assert!(confirms(whole, "assert_eq!(&shelf.stock[\"A\"], &2);", 5));
+        // #8204: an assignment seeding names the key in its own right-hand
+        // side; a later statement or a value-side literal cannot demote.
+        let assign_seeded = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock = BTreeMap::from([(\"A\", 1)]);\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 1);\n}";
+        assert!(!confirms(
+            assign_seeded,
+            "assert_eq!(shelf.stock.len(), 1);",
+            5
+        ));
+        let later_mention = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock = BTreeMap::new();\n    let label = \"A\";\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 1);\n}";
+        assert!(confirms(
+            later_mention,
+            "assert_eq!(shelf.stock.len(), 1);",
+            6
+        ));
+        let value_side = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock = BTreeMap::from([(\"B\", \"A\")]);\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 2);\n}";
+        assert!(confirms(value_side, "assert_eq!(shelf.stock.len(), 2);", 5));
     }
     /// RIPR-SPEC-0228 keyed reads: a `#[should_panic]` test passes when the
     /// compared values differ, so it never confirms a keyed read.
