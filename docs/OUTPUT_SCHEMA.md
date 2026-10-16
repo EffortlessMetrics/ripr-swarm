@@ -16238,8 +16238,10 @@ shared diff parser.
 
 When no successful supplement supplied the observation, pilot applies the shared
 diff-aware generated-source exclusions before checking presence, including exact
-handwritten opt-ins and changed vendor checksum markers. Deliberately excluded
-source is not named as absent by that fallback.
+handwritten opt-ins and changed vendor checksum markers. Source known to be
+excluded is not named as absent by that fallback. Header-only exclusions require
+available worktree bytes or an active committed-source overlay; pilot creates
+no new overlay and does not establish the header of a sparse missing file.
 
 The terminal and Markdown "Inspected" block names each absent path, the
 `changed_file_absent_from_worktree` category, and the producer's recovery

@@ -245,8 +245,10 @@ classification succeeded. It retains the producer's existing
 `changed_file_absent_from_worktree` limitations for absent requested files.
 The fallback observation applies the shared diff-aware generated-source policy
 before admission, including handwritten opt-ins, explicit patterns and changed
-vendor checksum markers, so deliberately excluded source gains no restoration
-warning from that fallback.
+vendor checksum markers, so source known to be excluded gains no restoration
+warning from that fallback. Header-only exclusions still depend on available
+worktree bytes or an active committed-source overlay; pilot creates no new
+overlay to determine the header of a sparse missing file.
 The terminal and Markdown name each path and its recovery action under
 "Inspected", even when a present changed seam is the top recommendation.
 `current_change.absent_changed_files` in the JSON summary records those portable
