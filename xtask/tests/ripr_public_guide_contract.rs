@@ -368,6 +368,73 @@ fn first_run_guard_does_not_credit_a_later_correct_example() -> Result<(), Strin
     Ok(())
 }
 
+/// First-run usability: a clean checkout needs a tracked source edit, and a
+/// new file needs `git add -N PATH`. Command-only checks stay green if this
+/// note is deleted (#8179 review 5543109598).
+fn assert_clean_checkout_guidance(surface: &str, text: &str) -> Result<(), String> {
+    let n = normalized(text);
+    for needle in ["tracked source", "git add -N PATH"] {
+        assert_contains(surface, &n, needle)?;
+    }
+    if !(n.contains("clean base") || n.contains("clean checkout")) {
+        return Err(format!(
+            "{surface} lost clean-base-branch first-run guidance"
+        ));
+    }
+    for forbidden in ["clean bill of health", "commit your changes first"] {
+        if n.contains(forbidden) {
+            return Err(format!(
+                "{surface} presents `{forbidden}` as first-run guidance"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn without_clean_checkout_note(text: &str) -> String {
+    text.replace("git add -N PATH", "")
+        .replace("tracked source", "")
+}
+
+#[test]
+fn first_run_surfaces_require_clean_checkout_guidance() -> Result<(), String> {
+    let readme = doc_section(ROOT_README, "## The first useful run")?;
+    let quickstart = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
+    let mut surfaces = vec![
+        ("README first useful run".to_string(), readme),
+        ("Quickstart CLI First Hour".to_string(), quickstart),
+    ];
+    for args in [
+        [].as_slice(),
+        ["--help"].as_slice(),
+        ["-h"].as_slice(),
+        ["help"].as_slice(),
+    ] {
+        surfaces.push((
+            format!("rendered default help {args:?}"),
+            rendered_help(args)?,
+        ));
+    }
+    for (surface, text) in &surfaces {
+        assert_clean_checkout_guidance(surface, text)?;
+        let removed = without_clean_checkout_note(text);
+        if assert_clean_checkout_guidance(surface, &removed).is_ok() {
+            return Err(format!(
+                "{surface} still passed after removing tracked-edit / git add -N PATH guidance"
+            ));
+        }
+        let wrong = format!("{text}\nAn empty diff is a clean bill of health.\n");
+        if assert_clean_checkout_guidance(surface, &wrong).is_ok() {
+            return Err(format!(
+                "{surface} accepted empty-diff-as-clean-bill-of-health guidance"
+            ));
+        }
+    }
+    let help = rendered_help(&["--help"])?;
+    canonical_first_run_command(&without_clean_checkout_note(&help))?;
+    Ok(())
+}
+
 /// #7661: troubleshooting report links must open the swarm templates that
 /// exist in this repo. The README already routes problem reports to
 /// EffortlessMetrics/ripr-swarm/issues; QUICKSTART must not send the same
