@@ -44,7 +44,10 @@ constructor that is the single source of truth for that family:
 - delivery-limitation codes: `ripr-diagnostic-budget-omitted` (#2596) names
   current diagnostics withheld by the passive push budget;
   `ripr-diagnostic-quarantine-withdrawn` (#7771) names a dirty-buffer
-  document whose saved-state diagnostics were withdrawn. These are not
+  document whose saved-state diagnostics were withdrawn;
+  `ripr-diagnostic-analysis-pending` (#7774) names a workspace no analysis
+  snapshot exists for yet, served on both pull paths in place of an empty
+  report that would claim a clean workspace. These are not
   analyzer findings or actionable repairs.
 
 Each catalog entry carries the code identity used today: the stable `code` and

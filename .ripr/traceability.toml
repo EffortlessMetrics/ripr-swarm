@@ -808,6 +808,7 @@ name = "mutation calibration reports"
 spec = "docs/specs/RIPR-SPEC-0006-mutation-calibration.md"
 tests = [
   "crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_summarizes_static_runtime_agreement",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::agreement_buckets_disclose_counting_units_and_unmatched_overlap",
   "crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_joins_by_seam_id_then_file_line_and_keeps_ambiguous",
   "crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_parses_repo_exposure_and_cargo_mutants_json",
   "crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_merges_mutants_and_outcomes_by_id",
@@ -1139,6 +1140,7 @@ tests = [
   "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_mixed_missing_changed_file_without_inventory_limit",
   "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_uncapped_absence_honors_generated_policy_and_handwritten_opt_in",
   "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_uncapped_absence_retains_changed_missing_vendor_marker_context",
+  "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_capped_absence_matches_uncapped_generated_policy_and_recovers",
   "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_does_not_name_intentionally_deleted_file_as_absent",
   "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_does_not_probe_absent_rust_source_when_rust_is_disabled",
   "crates/ripr/src/output/pilot/tests.rs::pilot_current_change_preserves_absent_file_coverage_through_empty_and_mixed_supplements",
@@ -1171,6 +1173,8 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::init_ci_github_refuses_existing_workflow_without_force",
   "crates/ripr/tests/cli_smoke.rs::init_writes_conservative_config_and_doctor_loads_it",
   "crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_the_selected_root_from_foreign_cwd",
+  "crates/ripr/tests/cli_smoke/init_followups.rs::init_refusal_retries_replay_the_selected_root",
+  "crates/ripr/tests/cli_smoke/init_followups.rs::init_refusal_omits_retries_for_an_unrepresentable_root",
   "crates/ripr/tests/cli_smoke/init_followups.rs::init_omits_followups_for_an_unrepresentable_implicit_root",
   "crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_a_utf8_alias_to_a_non_utf8_root",
   "crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_utf8_targets_from_a_non_utf8_cwd",
@@ -2068,6 +2072,8 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::baseline_create_writes_reviewed_ledger_and_refuses_overwrite",
   "crates/ripr/tests/cli_smoke.rs::baseline_create_warns_when_source_predates_build_identity",
   "crates/ripr/tests/cli_smoke.rs::baseline_diff_writes_debt_delta_json_and_markdown",
+  "crates/ripr/tests/cli_smoke/baseline_path_values.rs::missing_path_values_refuse_option_tokens_before_writing_reports",
+  "crates/ripr/tests/cli_smoke/baseline_path_values.rs::explicit_option_named_paths_and_unreadable_inputs_keep_advisory_reports",
   "crates/ripr/tests/cli_smoke.rs::baseline_update_removes_resolved_without_adopting_new_debt",
   "crates/ripr/src/output/baseline.rs::tests::baseline_create_persists_producing_analyzer_version_from_subject",
   "crates/ripr/src/output/baseline.rs::tests::baseline_create_discloses_missing_producing_analyzer_version",
@@ -2086,6 +2092,7 @@ fixtures = [
 code = [
   "crates/ripr/src/cli/command.rs",
   "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/baseline.rs",
   "crates/ripr/src/cli/execute.rs",
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/src/output/baseline.rs",
@@ -6781,6 +6788,7 @@ id = "RIPR-SPEC-0084"
 name = "default base resolution"
 spec = "docs/specs/RIPR-SPEC-0084-default-base-resolution.md"
 tests = [
+  "crates/ripr/tests/hostile_repos.rs::submodule_ignore_settings_cannot_hide_pointer_changes",
   "crates/ripr/src/analysis/diff/load.rs::tests::resolve_default_base_uses_origin_master_when_symbolic_ref_points_there",
   "crates/ripr/src/analysis/diff/load.rs::tests::resolve_default_base_uses_local_main_when_no_remote",
   "crates/ripr/src/analysis/diff/load.rs::tests::resolve_default_base_returns_named_error_when_nothing_resolves",
@@ -6824,6 +6832,7 @@ tests = [
 fixtures = []
 code = [
   "crates/ripr/src/analysis/diff/load.rs",
+  "crates/ripr/src/app/pr_evidence.rs",
   "crates/ripr/src/analysis/diff/parse.rs",
   "crates/ripr/src/analysis/diff/parse/stream.rs",
   "crates/ripr/src/output/first_pr.rs",
@@ -8311,6 +8320,9 @@ tests = [
   "crates/ripr/src/analysis/diff/path.rs::tests::named_c_control_escapes_keep_native_path_identity",
   "crates/ripr/src/analysis/diff/path.rs::tests::quoted_whitespace_old_headers_keep_plain_file_sections_separate",
   "crates/ripr/src/analysis/diff/path.rs::tests::quoted_control_header_pair_inside_declared_hunk_stays_source_payload",
+  "crates/ripr/src/analysis/diff/path.rs::tests::tab_delimited_plain_headers_keep_paths_and_line_coordinates",
+  "crates/ripr/src/analysis/diff/path.rs::tests::tab_delimited_header_pair_inside_declared_hunk_stays_source",
+  "crates/ripr/tests/cli_smoke/portable_diff_paths.rs::plain_patch_json_keeps_portable_locations_and_exact_crlf_provenance",
   "crates/ripr/tests/cli_smoke/diff_selection.rs::git_named_control_paths_select_the_live_predicate_from_root_and_subdirectory",
 ]
 fixtures = []
@@ -9009,6 +9021,7 @@ id = "RIPR-SPEC-0116"
 name = "check worktree mode"
 spec = "docs/specs/RIPR-SPEC-0116-check-worktree-mode.md"
 tests = [
+  "crates/ripr/tests/hostile_repos.rs::submodule_ignore_settings_cannot_hide_pointer_changes",
   "crates/ripr/tests/cli_smoke.rs::check_worktree_base_head_analyzes_uncommitted_tracked_edit",
   "crates/ripr/tests/cli_smoke.rs::check_worktree_drill_in_commands_reach_the_uncommitted_finding",
   "crates/ripr/src/app/navigation.rs::tests::finding_navigation_carries_worktree_scope_after_the_base",
@@ -10177,6 +10190,9 @@ id = "RIPR-SPEC-0140"
 name = "check-artifact reuse for explain/context"
 spec = "docs/specs/RIPR-SPEC-0140-check-artifact-reuse.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/unsupported_artifact.rs::unsupported_artifact_preserves_destinations_and_incomplete_report",
+  "crates/ripr/tests/cli_smoke/unsupported_artifact.rs::unsupported_artifact_preserves_valid_artifact_and_its_context",
+  "crates/ripr/tests/cli_smoke/unsupported_artifact.rs::unsupported_artifact_keeps_advisory_partial_write_and_reuse",
   "crates/ripr/tests/cli_smoke/artifact_mode_precedence.rs::context_artifact_navigation_preserves_mode_precedence",
   "crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::python_stdin_artifact_refusal_preserves_named_recovery",
   "crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::javascript_stdin_artifact_refusal_preserves_named_recovery",
@@ -14623,8 +14639,13 @@ tests = [
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::empty_collection_expectations_cannot_confirm_a_push",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::owner_may_exit_before_line_reads_everything_before_the_changed_expression",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::empty_collection_expectations_cap_effect_families_only_after_an_early_exit",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::assertion_field_collection_reads_name_binding_and_getter",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::collection_subject_must_end_after_root_index_or_value_read",
 ]
-fixtures = []
+fixtures = [
+  "fixtures/rust_preseeded_first_element",
+  "fixtures/rust_pushed_element_last",
+]
 code = [
   "crates/ripr/src/analysis/syntax/ra.rs",
   "crates/ripr/src/analysis/probes/diff.rs",
@@ -15531,6 +15552,8 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_refusal_site_lookup_matches_the_replaced_scan_for_every_name_and_root",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::refusal_site_lookups_pay_at_most_two_full_index_passes",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_relations_stop_crediting_beside_a_reach_bearing_one",
   "crates/ripr/src/analysis/classifier/evidence.rs::tests::preferred_refusal_note_puts_a_non_limit_owner_call_first",
   "crates/ripr/src/analysis/classifier/finding.rs::tests::refused_assertion_next_step_offers_a_static_limit_only_for_a_limit_refusal",
