@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A test in a `[[test]]` target that `cargo test` never runs no longer reads as an `exposed` discriminator: an entry with `test = false`, or with `required-features` the manifest's default features do not enable, is no test root, so its tests earn no credit and the changed behavior reads `no_static_path`. `harness = false`, dependency-qualified feature items (`dep:x`, `pkg/feat`) and workspace-inherited features keep their previous reading (#8016).

@@ -51,7 +51,7 @@ use rayon::prelude::*;
 
 use super::cargo_targets::{
     collect_explicit_paths, declared_targets_from_manifest, lexical, nearest_manifest_dir,
-    normalize, owning_package_dir,
+    nonrunning_test_roots_from_manifest, normalize, owning_package_dir,
 };
 use super::source_role::SourceRoleContext;
 use crate::analysis::syntax::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
@@ -698,9 +698,14 @@ fn evidence_roots(
             roots.extend(named_default_roots(manifest.get(section), &dir));
         }
     }
+    // A `[[test]]` target `cargo test` never runs (`test = false`, unmet
+    // `required-features`) is no evidence root: its tests execute nowhere
+    // (#8016). A file another root still reaches by `mod` stays reached.
+    let skipped = nonrunning_test_roots_from_manifest(manifest, package_dir);
     roots
         .into_iter()
         .map(|root| lexical(&normalize(&root)))
+        .filter(|root| !skipped.contains(root))
         .collect()
 }
 

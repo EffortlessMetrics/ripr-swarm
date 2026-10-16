@@ -67,6 +67,91 @@ pub(crate) struct DeclaredCargoTargets {
     pub(crate) production_roots: BTreeSet<PathBuf>,
 }
 
+/// Test roots of one parsed package manifest that `cargo test` never runs
+/// (#8016): a `[[test]]` entry with `test = false`, or whose
+/// `required-features` name a plain local feature the manifest's default
+/// set does not enable. The path is the entry's `path` or Cargo's default
+/// `<tests>/<name>.rs` / `<tests>/<name>/main.rs`, lexically resolved like
+/// the other declared roots.
+///
+/// Manifest-only: it reads no `cargo metadata`, so it answers the same way
+/// for the diff loop and the LSP partition. Anything it cannot decide
+/// (`dep:`/`pkg/feat` items, a non-boolean `test`, a non-array
+/// `required-features`) keeps the target running, so the answer only ever
+/// removes credit from a target the manifest itself proves is skipped.
+/// `harness = false` is deliberately not read here: a registered custom
+/// harness collects such a file through a different route.
+pub(crate) fn nonrunning_test_roots_from_manifest(
+    manifest: &toml::Value,
+    manifest_dir: &Path,
+) -> BTreeSet<PathBuf> {
+    let mut roots = BTreeSet::new();
+    let Some(entries) = manifest.get("test").and_then(toml::Value::as_array) else {
+        return roots;
+    };
+    let enabled = manifest_default_features(manifest);
+    let tests_dir = manifest_dir.join("tests");
+    for entry in entries {
+        let disabled = entry.get("test").and_then(toml::Value::as_bool) == Some(false);
+        let unmet = entry
+            .get("required-features")
+            .and_then(toml::Value::as_array)
+            .is_some_and(|items| {
+                items.iter().filter_map(toml::Value::as_str).any(|item| {
+                    local_feature_enable(item)
+                        .is_some_and(|name| name == item.trim() && !enabled.contains(&name))
+                })
+            });
+        if !disabled && !unmet {
+            continue;
+        }
+        let explicit = entry
+            .get("path")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty());
+        let named = entry
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty());
+        match (explicit, named) {
+            (Some(path), _) => {
+                roots.insert(lexical(&normalize(&manifest_dir.join(path))));
+            }
+            (None, Some(name)) => {
+                roots.insert(lexical(&normalize(&tests_dir.join(format!("{name}.rs")))));
+                roots.insert(lexical(&normalize(&tests_dir.join(name).join("main.rs"))));
+            }
+            (None, None) => {}
+        }
+    }
+    roots
+}
+
+/// The default-enabled features a package manifest's `[features]` table
+/// names, transitively through local features.
+fn manifest_default_features(manifest: &toml::Value) -> BTreeSet<String> {
+    let Some(table) = manifest.get("features").and_then(toml::Value::as_table) else {
+        return BTreeSet::new();
+    };
+    let map = table
+        .iter()
+        .filter_map(|(name, enables)| {
+            let items = enables.as_array()?;
+            Some((
+                name.clone(),
+                items
+                    .iter()
+                    .filter_map(toml::Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>(),
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
+    expand_default_features(&map)
+}
+
 /// Read `path = ...` entries from the `[[test]]` and `[[bench]]` arrays
 /// of one manifest. `manifest_dir` is the directory containing the
 /// `Cargo.toml`; declared paths resolve relative to it.
