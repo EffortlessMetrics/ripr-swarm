@@ -1,0 +1,50 @@
+[
+  {
+    "label": "physical",
+    "args": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/8201-evidence/final0ffd/symlink-experiment/real",
+      "--diff",
+      "/workspace/8201-evidence/final0ffd/symlink-experiment/input.diff",
+      "--quiet",
+      "--output-dir",
+      "/workspace/8201-evidence/final0ffd/symlink-experiment/physical-output"
+    ],
+    "exit": 0,
+    "stderr": ""
+  },
+  {
+    "label": "alias",
+    "args": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/8201-evidence/final0ffd/symlink-experiment/alias",
+      "--diff",
+      "/workspace/8201-evidence/final0ffd/symlink-experiment/input.diff",
+      "--quiet",
+      "--output-dir",
+      "/workspace/8201-evidence/final0ffd/symlink-experiment/alias-output"
+    ],
+    "exit": 2,
+    "stderr": "ripr: --output-dir cannot bind module reads outside the root or under Git metadata/Cargo target directories; use standalone formats for this input\n"
+  },
+  {
+    "label": "alias-native",
+    "args": [
+      "/workspace/ripr-swarm/target/debug/ripr",
+      "check",
+      "--root",
+      "/workspace/8201-evidence/final0ffd/symlink-experiment/alias",
+      "--diff",
+      "/workspace/8201-evidence/final0ffd/symlink-experiment/input.diff",
+      "--quiet",
+      "--format",
+      "json"
+    ],
+    "exit": 0,
+    "stderr": ""
+  }
+]

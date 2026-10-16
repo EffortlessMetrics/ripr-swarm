@@ -1,0 +1,34 @@
+{
+  "command_success": false,
+  "complete_set": false,
+  "error": "--output-dir requires regular input files: /workspace/8201-evidence/final0ffd/symlink-experiment/real/src/linked.rs",
+  "identity": {
+    "available_languages": [
+      "rust",
+      "python",
+      "typescript",
+      "javascript"
+    ],
+    "binding": "refused_incomplete",
+    "producer": "0.11.0+0ffd94561c92c6dbfbcc7efcfee59d6c15cc729e",
+    "requested_input": "CheckInput { root: \"/workspace/8201-evidence/final0ffd/symlink-experiment/real\", base: None, diff_file: Some(\"/workspace/8201-evidence/final0ffd/symlink-experiment/input.diff\"), mode: Draft, format: Human, include_unchanged_tests: true, perl_facts_path: None, suppression_policy: None, git_timeout: Some(300s), git_candidate: None }"
+  },
+  "members": [
+    {
+      "bytes": 1070,
+      "file": "badge.json",
+      "sha256": "b7a8d422157dda3fe20f0ec0fd8f54286e326032fa12bff84c29ef175187af14"
+    },
+    {
+      "bytes": 1054,
+      "file": "detail.json",
+      "sha256": "53ee2651d734c9af39fe062895efcd54e2905b92cd6a306ccc456eb1c3536209"
+    },
+    {
+      "bytes": 0,
+      "file": "human.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "schema_version": "ripr-native-diff-output-set-v1"
+}

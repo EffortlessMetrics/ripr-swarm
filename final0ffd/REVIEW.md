@@ -1,6 +1,28 @@
 # Fresh independent review of integrated #8201 head 0ffd9456
 
-Assigned exact-head source/oracle/integration review: **COMPLETE; no actionable source or contract defect found and no unresolved substantive requirement within this assigned review**. Merge disposition remains **REVIEW_INCOMPLETE**, with missing hosted qualification explicitly separate from review completion or readiness to request checks. No Ready or other PR-state transition is performed by this review.
+Assigned exact-head source/oracle/integration review: **COMPLETE, with a verified blocking source finding**. Final disposition: **REPAIR_REQUIRED**. The earlier pre-Ready assessment in commentary and evidence commit `422a558ed1ffcb0a358fadd8f5ef19e89f55f852` is withdrawn: the final conversation refresh returned two newly posted substantive threads, and independent counterexamples below changed the judgment. No Ready transition occurred.
+
+## Verified findings and late-thread reconciliation
+
+### [P1] A symlink-selected root is falsely refused by fan-out
+
+Status: verified_current at exact `0ffd9456...`. Existing thread/comment `4291492134` concerns `analysis/input_boundary.rs` lines55-81. Physical selected root fan-out exits0; the identical stable root through a directory symlink exits2 with the outside-root/Git/target diagnostic; standalone JSON through that alias exits0. All fixture files below the physical root are regular and unchanged. The selected root is canonicalized successfully by capture, but observed paths use `std::path::absolute`, retaining the alias. Comparing that lexical spelling with the canonical root falsely marks an ordinary in-root read escaped.
+
+Why material: the new native output-set adapter cannot handle an otherwise valid native selected root and gives a false outside-root explanation. Neither help/schema explicitly excludes a symlink spelling of the selected root; the regular-file inventory below that selected root succeeds. This is a fail-closed compatibility/correctness defect, not an observed outside-root read or false-success admission.
+
+Fix direction: reconcile requested/canonical root and observed-file identities at their existing boundary owner; for absent probes preserve identity using a resolved existing prefix, or consistently rebase reads to the captured canonical selected root. Preserve the existing nonregular-input and excluded-directory refusals. Add a real native CLI root-alias positive plus physical-root and outside/excluded negative controls; rerun focused fanout units/CLI parity after the source-owner repair.
+
+Validation: `symlink-experiment/receipt.json` and raw streams retain three real exact-head CLI executions, physical fanout0 / alias fanout2 / alias standalone0. Confidence: high. This blocks the pre-Ready source-review predicate until repair or an explicit evidence-backed supported-scope decision by the owner.
+
+The same bot comment's reverse, stable in-root-symlink escape premise is **refuted within the documented stable-filesystem boundary**: independently adding an in-root symlink to an external regular file causes custody capture to refuse before analysis with `requires regular input files`, exit2. This covers the existing symlink case; hostile concurrent replacement remains outside the contract. The finding is the root-alias false refusal, not a demonstrated custody escape.
+
+### [P2] Process-wide FAILED remains sticky across internal boundary lifecycles
+
+Status: confirmed helper behavior; current external product impact bounded. Existing comment `4291492127` concerns lines8-10. A tiny Rust harness imports the exact unchanged input_boundary module, creates a boundary, removes its owned empty root and observes a failed read, drops that boundary, then creates a fresh boundary on a separate stable root. Its verify still returns the old failure because FAILED is process-wide and never cleared. The harness exits0 only because it asserts this unwanted observed Err; it is a defect witness, not a product pass.
+
+Fix direction: scope failure to the active State/root, or synchronize registration/failure/lifecycle consistently; do not introduce an unsynchronized last-ACTIVE reset. Confidence: high for internal state behavior. The boundary is currently instantiated only in the private CLI adapter; no public repeated-command-in-one-process route was established. This is a nonblocking lifecycle hardening concern for the current one-command CLI surface, independently of the P1 above. Owner disposition of the still-open thread remains required before merge; this review does not resolve it or contact bots.
+
+Both comments appeared in the completion-time thread refresh after the initial empty inventory. Their text was treated as leads; the findings/refutation above come from current source and independent execution. The earlier empty-thread observation and tests remain accurate for their original times/subjects, but do not clear these counterexamples.
 
 ## Exact subject and preservation
 
@@ -38,17 +60,17 @@ No broad benchmark, full workspace/golden, check-fast/precommit, fresh-registry/
 
 ## Current substantive discussion
 
-Read integration handoff comment6209316951, all returned review submissions, substantive comments and current inline-thread inventory. No actionable adapter finding remains pending in those records. Original source review and additional publication/interruption review explicitly reported their assigned technical scopes complete; their overall REVIEW_INCOMPLETE dispositions reflected later qualification gaps. Earlier stale-subject hold6209166006/review5543487059 is refuted as a current blocker by the new actual merge identity containing #8180.
+Read integration handoff6209316951, review submissions and substantive discussion. Completion-time refresh returned two new unresolved current-head threads (4291492127 and4291492134); independent adjudication is above. The original source/publication reviews and their earlier missing-qualification dispositions remain historical scope evidence. Earlier stale-subject hold6209166006/review5543487059 is superseded by the new actual merge containing #8180. The new P1 is a separate source predicate and is not hidden by that integration success.
 
-Comment6209124827 coordinates #8210's existing standalone preview-advisory/partial-partition repair, explicitly separate from the fanout interface and its classifiers/exit/completeness semantics. This integrated candidate does not implement or alter that lane; its native adapter byte parity follows the shared existing projections. That coordination is not being treated as an unresolved candidate-introduced fanout defect, nor is this review claiming the standalone advisory issue repaired. Permitted inline-thread reader returned no threads; no threads were resolved. Empty threads are not used as a substitute for substantive review.
+Comment6209124827 coordinates #8210's existing standalone preview-advisory/partial-partition repair, explicitly separate from the fanout interface and its classifiers/exit/completeness semantics. This integrated candidate does not implement or alter that lane; its native adapter byte parity follows the shared existing projections. That coordination is not being treated as an unresolved candidate-introduced fanout defect, nor is this review claiming the standalone advisory issue repaired. Initial permitted inline-thread read returned no threads; the completion-time read returned the two current unresolved threads above. No threads were replied to or resolved. Empty threads are not used as a substitute for substantive review.
 
 ## Ready and merge judgments
 
-**Pre-Ready technical prerequisites are satisfied at the observed unchanged candidate and verified advertised merge subjects.** Independent substantive review is complete, available applicable focused local proof passed, no candidate-introduced material finding remains unresolved, the dependency migration is incorporated, and the actual advertised merge identity now includes the material prerequisite. This supersedes the earlier stale-ref hold. Required hosted checks need not already pass before Ready; Ready is the request for that qualification. The parent owns the permitted Ready decision; this reviewer did not perform the transition.
+**Pre-Ready prerequisites are not currently satisfied because the independently reproduced P1 source defect remains unresolved.** The new integration/remote-subject prerequisite is satisfied and all selected exact-head controls passed, but the root-alias counterexample fails. Required checks need not already pass before Ready; neither the historical cargo-deny failure nor the denied check inventory is being used as a blanket pre-Ready blocker. The source owner must repair the boundary or explicitly settle the supported-root contract, then obtain affected exact-new-head review. This reviewer makes no candidate edit or Ready transition.
 
 Merge remains unqualified: REVIEW_READY plus applicable required checks, protection/conversation requirements and actual hosted checkout binding still govern merge. The configured required context was named in parent coordination as `Ripr Rust Small Result`; this review does not independently claim its current result or an exhaustive required-check inventory. The previously Forbidden paginated check-run operation was not retried through any route. Complete hosted coverage remains unavailable, not all-green. Expected Ready-triggered missing proof does not itself require keeping Draft after the technical prerequisites above are satisfied.
 
-No source changes, Ready/merge, thread resolution, bot contact, release/deploy, denied archive retry, UB consumer/pin edit or PR-body mutation occurred. Candidate owner/parent retains qualification decisions. The source review here is complete only for its named exact-head/integration scope; no release or adoption clearance follows.
+No source changes, Ready/merge, thread resolution, bot contact, release/deploy, denied archive retry, UB consumer/pin edit or PR-body mutation occurred. Candidate owner/parent retains qualification decisions. The assigned review is complete with REPAIR_REQUIRED; source repair belongs to the candidate owner. No release or adoption clearance follows.
 
 ## Retention
 

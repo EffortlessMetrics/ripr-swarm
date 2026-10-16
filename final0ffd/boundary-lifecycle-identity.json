@@ -1,0 +1,12 @@
+{
+  "source_module": "crates/ripr/src/analysis/input_boundary.rs",
+  "source_head": "0ffd94561c92c6dbfbcc7efcfee59d6c15cc729e",
+  "module_sha256": "1c4a2d3487f55925828038eebb6da4ed4010da2e4b02c656440341384c3ce271",
+  "compile": "rustc --edition=2024 boundary-lifecycle.rs -o boundary-lifecycle",
+  "binary_sha256": "700425bdad83baf00ca617c8226c2c5d7bc46b052e24a806d09768042a86bc5f",
+  "compile_exit": 0,
+  "witness_exit": 0,
+  "observed_fresh_stable_boundary": "Err",
+  "desired_independent_boundary": "Ok",
+  "scope": "internal exact-module reproduction, not a public repeated CLI invocation"
+}

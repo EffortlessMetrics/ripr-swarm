@@ -1,0 +1,15 @@
+{
+  "args": [
+    "/workspace/ripr-swarm/target/debug/ripr",
+    "check",
+    "--root",
+    "/workspace/8201-evidence/final0ffd/symlink-experiment/real",
+    "--diff",
+    "/workspace/8201-evidence/final0ffd/symlink-experiment/input.diff",
+    "--quiet",
+    "--output-dir",
+    "/workspace/8201-evidence/final0ffd/symlink-experiment/inroot-link-output"
+  ],
+  "exit": 2,
+  "stderr": "ripr: --output-dir requires regular input files: /workspace/8201-evidence/final0ffd/symlink-experiment/real/src/linked.rs\n"
+}

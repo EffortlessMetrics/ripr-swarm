@@ -13,8 +13,8 @@
     },
     {
       "path": "REVIEW.md",
-      "bytes": 10528,
-      "sha256": "34b4498a7822e6054fa7fe6aea64ac362093624d80d404fb85859f58a94f1ab1"
+      "bytes": 10601,
+      "sha256": "dcea343d055ff73e93367f77d836c31499c37cee1e74d9d80c5a669a7d707fb9"
     },
     {
       "path": "attempt1-driver.py.md",
@@ -43,13 +43,28 @@
     },
     {
       "path": "final0ffd/REVIEW.md",
-      "bytes": 8766,
-      "sha256": "c76e82090be24177ad87c44efdca82a4d31fd7b191be85aeab4bbd2fec2a3289"
+      "bytes": 12927,
+      "sha256": "664ce620369dbf8d71688f0a29fdbdd58404760ec30ac2ba6531c6107c7d6e04"
     },
     {
       "path": "final0ffd/artifact-observation.json",
       "bytes": 374,
       "sha256": "98732872d6718a6a2e7b18b590363135d96efe50cbcf78b1cf8c29f341c75a90"
+    },
+    {
+      "path": "final0ffd/boundary-lifecycle-identity.json",
+      "bytes": 596,
+      "sha256": "45935c16a61721fa0ae6a246fb4b9eeede9205bd045a3d97a61e3c22fd9f2ac8"
+    },
+    {
+      "path": "final0ffd/boundary-lifecycle-source.md",
+      "bytes": 962,
+      "sha256": "f060ddf62e9b9596bbbd38a0c14bd1c16c509c7723596f20b9e8adec216afc1c"
+    },
+    {
+      "path": "final0ffd/boundary-lifecycle.log",
+      "bytes": 198,
+      "sha256": "665f17e92af4e78acb4e62fb0450aeab4d6b6a847f38ab599aa41a4850f27cd1"
     },
     {
       "path": "final0ffd/conversations.json",
@@ -120,6 +135,146 @@
       "path": "final0ffd/subjects.json",
       "bytes": 3935,
       "sha256": "9be30a2fd77a88e4e73de5859676dce5f1f6abc61fecef1efc9fb307fe600384"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/alias-native.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/alias-native.stdout",
+      "bytes": 9722,
+      "sha256": "c36dba91ba2d72b24c0f36b74fdc3873f1a9c81fb532a7432afa5d8db79f16dd"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/alias-output/badge.json",
+      "bytes": 1095,
+      "sha256": "e0c49f1339fb0a9c9af10d71fb5a7ebd0b8aa800c43e24b36d2d277ca9b6eb4e"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/alias-output/detail.json",
+      "bytes": 1080,
+      "sha256": "77dadfedad0e2585daa19c2ae3c56dd8be6e8d1cbceb8dd2f8703c0a8644fc3f"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/alias-output/human.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/alias-output/manifest.json",
+      "bytes": 1308,
+      "sha256": "ef2adb5a41be55636b5874131ecda8c9be85cbcfab1f2f75bfa114397626e327"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/alias.stderr",
+      "bytes": 147,
+      "sha256": "121342f0d566da5da43f149158ad415f21df7ed6f8d70616158c244fff8b94ea"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/alias.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/external.rs",
+      "bytes": 21,
+      "sha256": "9988ff037ac724b43b586657322c9ac94789b1e8ece523a137e81ba5117752ed"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/input.diff",
+      "bytes": 127,
+      "sha256": "c5116be1712e3d4fc6190121567d965238037a180f2b03f39c97d7de02e325fc"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/inroot-link-output/badge.json",
+      "bytes": 1070,
+      "sha256": "b7a8d422157dda3fe20f0ec0fd8f54286e326032fa12bff84c29ef175187af14"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/inroot-link-output/detail.json",
+      "bytes": 1054,
+      "sha256": "53ee2651d734c9af39fe062895efcd54e2905b92cd6a306ccc456eb1c3536209"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/inroot-link-output/human.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/inroot-link-output/manifest.json",
+      "bytes": 1282,
+      "sha256": "188e63e9e587d34641eabdc9a54f9f1e945f41e83c3820a23aeeb25dcc86f23d"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/inroot-link-receipt.json",
+      "bytes": 511,
+      "sha256": "00047cabf5ba940968d058c3be9c5a7112c24164b96d77990aa4c204a72e492f"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/inroot-link.stderr",
+      "bytes": 122,
+      "sha256": "4240a5eca12136abc859b97192d68f054276aad2c7df0b288def8405e03fb395"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/inroot-link.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/physical-output/badge.json",
+      "bytes": 1810,
+      "sha256": "66d8b3a63e79ccb5f874c85b0fce0be80abcdf6d48b2ec90f421bb322c4c933b"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/physical-output/detail.json",
+      "bytes": 9718,
+      "sha256": "a7c102450bfd0d5f1cc5404f484a735a7acb82c48ce8e2ff3dc36edaa3c21f8e"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/physical-output/human.txt",
+      "bytes": 2945,
+      "sha256": "806f0fb7cb21000deeb20a28af418873d3a4399e56edf3c1a6a146035a959b8d"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/physical-output/manifest.json",
+      "bytes": 6020,
+      "sha256": "7ceea98d35ac7f0a4de47f3ba37df4dafd705a19169e3f73901d601902acc6bd"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/physical.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/physical.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/real/Cargo.toml",
+      "bytes": 84,
+      "sha256": "39a0c95162e2928393d35486cadb3c602e83411ea2f07a0bd83e5dcace554a1b"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/real/ripr.toml",
+      "bytes": 29,
+      "sha256": "9630f624ff94ac92f148398529560d61e64351d5f413c8792ec4c49622757cec"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/real/src/lib.rs",
+      "bytes": 39,
+      "sha256": "ae9c7bf77922169c3f634deb18ea39d3f63540f0a52e3f21661705436b7cabbb"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/real/target/ripr/cache/repo-file-facts/1.41/0c427cfd112918b7.json",
+      "bytes": 2298,
+      "sha256": "9d65f039533511b662ecdf96bbffc5e362da437982ca86ca089f6a447d4ce8f7"
+    },
+    {
+      "path": "final0ffd/symlink-experiment/receipt.json",
+      "bytes": 1407,
+      "sha256": "682a08c4a3a564a3d6f2f88eecc6fe8c74d63dd4403ee1584997e3c58f176bb6"
     },
     {
       "path": "independent.json",
@@ -1582,11 +1737,11 @@
     "build caches",
     "raw corpus directory trees; corpus-final-state.json plus drivers preserve content/creation"
   ],
-  "disposition": "REVIEW_INCOMPLETE",
+  "disposition": "REPAIR_REQUIRED",
   "readback_scope": "readback.json verifies the prior immutable packet commit; this manifest adds its receipt without changing earlier payloads",
   "post8180_local_composition": "7307e51c198fafe9fe674c489b6f7b6723ee6dd5",
   "original_reviewed_head": "6a47f5bf094e5b010845b544f9464333a8b90d7d",
   "latest_advertised_merge": "d10fe03915af68dd3f993e3f6601905680164853",
   "latest_review_path": "final0ffd/REVIEW.md",
-  "pre_ready_technical_prerequisites": "satisfied at named observed subjects; no Ready transition"
+  "pre_ready_technical_prerequisites": "not satisfied: verified root-alias false-refusal source defect; integration prerequisite satisfied"
 }
