@@ -475,7 +475,7 @@ impl OwnerSignature {
     /// owner, unbound type/const generics, or an owner that cannot be named
     /// and called from a test (`OwnerContainer::Unsupported` / `GenericImpl`)
     /// decline with `None` (#7796, #8259). An `async fn` call yields a
-    /// future, not the declared output; projecting `fetch(input: u8) -> u8`
+    /// future, not the declared output; projecting `advance(input: u8) -> u8`
     /// would make explain/context look like a direct call returns `u8`.
     pub(crate) fn call_shape(&self) -> Option<String> {
         if self.receiver == Some(OwnerReceiver::Typed) || self.has_type_generics || self.is_async {
@@ -974,15 +974,15 @@ mod tests {
     #[test]
     fn call_shape_declines_async_owners_instead_of_projecting_a_sync_shape() -> Result<(), String> {
         // #8259: `is_async` was parsed and then dropped. The sync-looking
-        // projection `fetch(input: u8) -> u8` is the residual this test
+        // projection `advance(input: u8) -> u8` is the residual this test
         // rejects; a direct call of an async owner yields a future.
-        let async_source = "pub async fn fetch(input: u8) -> u8 {\n    input + 2\n}\n";
+        let async_source = "pub async fn advance(input: u8) -> u8 {\n    input + 2\n}\n";
         let offset = async_source
             .find("input + 2")
             .ok_or("async fixture has a body")?;
         let signature = owner_signature_at(async_source, offset).ok_or("async signature parses")?;
         assert!(signature.is_async, "producer still records the async token");
-        assert_eq!(signature.name, "fetch");
+        assert_eq!(signature.name, "advance");
         assert_eq!(signature.container, OwnerContainer::Free);
         assert_eq!(signature.call_shape(), None);
         // The same line lookup feeds explain/context; it must decline too.
@@ -990,15 +990,18 @@ mod tests {
         assert!(at_line.is_async);
         assert_eq!(at_line.call_shape(), None);
 
-        let sync_source = "pub fn fetch(input: u8) -> u8 {\n    input + 2\n}\n";
+        let sync_source = "pub fn advance(input: u8) -> u8 {\n    input + 2\n}\n";
         let offset = sync_source
             .find("input + 2")
             .ok_or("sync fixture has a body")?;
         let sync = owner_signature_at(sync_source, offset).ok_or("sync signature parses")?;
         assert!(!sync.is_async);
-        assert_eq!(sync.call_shape().as_deref(), Some("fetch(input: u8) -> u8"));
+        assert_eq!(
+            sync.call_shape().as_deref(),
+            Some("advance(input: u8) -> u8")
+        );
 
-        let async_method = "struct Client;\nimpl Client {\n    pub async fn fetch(&self, input: u8) -> u8 {\n        input + 2\n    }\n}\n";
+        let async_method = "struct Client;\nimpl Client {\n    pub async fn advance(&self, input: u8) -> u8 {\n        input + 2\n    }\n}\n";
         let offset = async_method
             .find("input + 2")
             .ok_or("method fixture has a body")?;
@@ -1014,20 +1017,21 @@ mod tests {
         Ok(())
     }
 
-    /// Compiler control for #8259: a direct `fetch(1)` compared to `3u8`
+    /// Compiler control for #8259: a direct `advance(1)` compared to `3u8`
     /// does not type-check for an async owner, so projecting
-    /// `fetch(input: u8) -> u8` would imply a result shape rustc rejects.
+    /// `advance(input: u8) -> u8` would imply a result shape rustc rejects.
     /// `.await` and the synchronous-function control both compile. This is
     /// a discriminator of the implied result, not text printed by ripr.
     #[test]
     fn async_owner_direct_call_does_not_compare_as_the_declared_output() -> Result<(), String> {
-        let async_owner = "pub async fn fetch(input: u8) -> u8 { input + 2 }\n";
-        let direct =
-            format!("{async_owner}async fn assertion_control() {{ assert_eq!(fetch(1), 3u8); }}\n");
-        let awaited = format!(
-            "{async_owner}async fn assertion_control() {{ assert_eq!(fetch(1).await, 3u8); }}\n"
+        let async_owner = "pub async fn advance(input: u8) -> u8 { input + 2 }\n";
+        let direct = format!(
+            "{async_owner}async fn assertion_control() {{ assert_eq!(advance(1), 3u8); }}\n"
         );
-        let sync = "pub fn fetch(input: u8) -> u8 { input + 2 }\nfn assertion_control() { assert_eq!(fetch(1), 3u8); }\n";
+        let awaited = format!(
+            "{async_owner}async fn assertion_control() {{ assert_eq!(advance(1).await, 3u8); }}\n"
+        );
+        let sync = "pub fn advance(input: u8) -> u8 { input + 2 }\nfn assertion_control() { assert_eq!(advance(1), 3u8); }\n";
         if rustc_lib_compiles(&direct)? {
             return Err(
                 "direct async call compared to u8 compiled; the implied sync result is gone"
@@ -1038,7 +1042,7 @@ mod tests {
             return Err("awaited async call compared to u8 should compile".to_string());
         }
         if !rustc_lib_compiles(sync)? {
-            return Err("synchronous fetch compared to u8 should compile".to_string());
+            return Err("synchronous advance compared to u8 should compile".to_string());
         }
         Ok(())
     }
