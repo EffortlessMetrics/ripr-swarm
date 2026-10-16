@@ -883,7 +883,17 @@ fn run_pipeline_for_diff_text_with_language_config(
     diff_text: &str,
 ) -> Result<AnalysisResult, String> {
     let parsed_diff = diff::parse_unified_diff_bounded_with_metadata(diff_text)?;
-    let changed_files = parsed_diff.changed_files;
+    // #7663: ripr's own reports and caches under `target/ripr` are tool
+    // artifacts, not user source. Standard Python `.gitignore` templates do
+    // not cover `target/`, so `git add -A` can commit them; once committed,
+    // the next analysis would count ripr's own output as changed scope and
+    // inflate every downstream count. Partition them out at the intake so
+    // counts, adapter dispatch, and disclosures all see the same user
+    // scope, and disclose the exclusion by name below.
+    let (changed_files, own_artifact_files): (Vec<_>, Vec<_>) = parsed_diff
+        .changed_files
+        .into_iter()
+        .partition(|file| !diff::is_ripr_artifact_path(&file.path));
     let mut limitations = parsed_diff
         .limitations
         .into_iter()
@@ -1247,6 +1257,12 @@ fn run_pipeline_for_diff_text_with_language_config(
         eprintln!("{message}");
     });
 
+    // #7663: name every ripr-artifact file the intake dropped, so the counts
+    // below never silently disagree with the commit the diff came from.
+    if !own_artifact_files.is_empty() {
+        eprintln!("{}", ripr_artifact_disclosure(&own_artifact_files));
+    }
+
     if findings.is_empty()
         && rust_changed_files == 0
         && changed_files_by_language
@@ -1263,9 +1279,13 @@ fn run_pipeline_for_diff_text_with_language_config(
     // "0 probe(s)" output looks like a clean bill of health when the input
     // was garbage. This is the honesty complement to #2304: #2304 handles
     // "diff had files but no source"; this handles "diff had no files at all."
+    // A diff whose only files were ripr's own artifacts is not garbage: the
+    // artifact disclosure above already named it, so the garbage reading
+    // stays off (#7663).
     if findings.is_empty()
         && rust_changed_files == 0
         && changed_files.is_empty()
+        && own_artifact_files.is_empty()
         && deleted_file_count == 0
         && submodule_file_count == 0
         && renamed_file_count == 0
@@ -1294,6 +1314,7 @@ fn run_pipeline_for_diff_text_with_language_config(
 
     if !diff_text.trim().is_empty()
         && changed_files.is_empty()
+        && own_artifact_files.is_empty()
         && deleted_file_count == 0
         && submodule_file_count == 0
         && renamed_file_count == 0
@@ -1969,6 +1990,26 @@ fn bounded_path_listing(paths: &[String]) -> String {
     } else {
         listed
     }
+}
+
+/// The stderr line naming the ripr-artifact files the intake dropped from
+/// changed-scope accounting (#7663). Pure so the disclosure contract is
+/// testable without capturing stderr. The recovery names the exact
+/// `.gitignore` entry because the common trigger is a Python repo whose
+/// template `.gitignore` does not cover Rust-conventional `target/`.
+fn ripr_artifact_disclosure(own_artifact_files: &[diff::ChangedFile]) -> String {
+    let listed = bounded_path_listing(
+        &own_artifact_files
+            .iter()
+            .map(|file| file.path.to_string_lossy().replace('\\', "/"))
+            .collect::<Vec<_>>(),
+    );
+    format!(
+        "ripr: {count} ripr artifact file(s) under target/ripr are tool output, not user \
+         source, and were not counted as changed scope: {listed}. Add `/target/ripr/` to \
+         `.gitignore` to keep ripr's reports and caches out of commits.",
+        count = own_artifact_files.len()
+    )
 }
 
 /// Whether a changed preview-language path is refused by its adapter's own
@@ -2712,6 +2753,125 @@ mod tests {
             "{outcome:?}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn ripr_artifact_files_are_not_counted_as_changed_scope() -> Result<(), String> {
+        // #7663: a commit that swept ripr's own reports under target/ripr
+        // into history (Python .gitignore templates do not cover target/)
+        // must not inflate the changed-scope counts of the next analysis.
+        let root = temp_root("outcome-own-artifacts")?;
+        write(
+            root.join("src/lib.rs").as_path(),
+            "pub fn f(x: i32) -> bool { x >= 1 }\n",
+        )?;
+        write(
+            root.join("target/ripr/pilot/pilot-summary.md").as_path(),
+            "# pilot summary\nprevious run output\n",
+        )?;
+        write(
+            root.join("target/ripr/cache/repo-seam-facts/1.61/abc.json")
+                .as_path(),
+            "{}\n",
+        )?;
+        let diff = concat!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n",
+            "--- a/src/lib.rs\n",
+            "+++ b/src/lib.rs\n",
+            "@@ -1,1 +1,1 @@\n",
+            "-pub fn f(x: i32) -> bool { x > 1 }\n",
+            "+pub fn f(x: i32) -> bool { x >= 1 }\n",
+            "diff --git a/target/ripr/pilot/pilot-summary.md b/target/ripr/pilot/pilot-summary.md\n",
+            "--- a/target/ripr/pilot/pilot-summary.md\n",
+            "+++ b/target/ripr/pilot/pilot-summary.md\n",
+            "@@ -1,2 +1,2 @@\n",
+            "-# pilot summary\n",
+            "-previous run output\n",
+            "+# pilot summary\n",
+            "+new run output\n",
+            "diff --git a/target/ripr/cache/repo-seam-facts/1.61/abc.json b/target/ripr/cache/repo-seam-facts/1.61/abc.json\n",
+            "--- a/target/ripr/cache/repo-seam-facts/1.61/abc.json\n",
+            "+++ b/target/ripr/cache/repo-seam-facts/1.61/abc.json\n",
+            "@@ -1,1 +1,1 @@\n",
+            "-{}\n",
+            "{\"cached\": true}\n",
+        );
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &crate::config::RustLanguageConfig::default(),
+            diff,
+        )?;
+        let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
+        assert_eq!(
+            outcome.counts.changed_file_count, 1,
+            "only src/lib.rs is user changed scope: {outcome:?}"
+        );
+        assert_eq!(
+            outcome.counts.changed_line_count, 2,
+            "artifact lines must not count: {outcome:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_artifact_only_diff_stays_a_no_scope_run_not_garbage() -> Result<(), String> {
+        // #7663: when the whole diff is ripr's own artifacts, the run is an
+        // honest no-scope result; the garbage/malformed-diff readings must
+        // stay off, and the artifact disclosure names the files.
+        let root = temp_root("outcome-artifacts-only")?;
+        write(
+            root.join("target/ripr/pilot/pilot-summary.md").as_path(),
+            "# pilot summary\nnew run output\n",
+        )?;
+        let diff = concat!(
+            "diff --git a/target/ripr/pilot/pilot-summary.md b/target/ripr/pilot/pilot-summary.md\n",
+            "--- a/target/ripr/pilot/pilot-summary.md\n",
+            "+++ b/target/ripr/pilot/pilot-summary.md\n",
+            "@@ -1,2 +1,2 @@\n",
+            "-# pilot summary\n",
+            "-previous run output\n",
+            "+# pilot summary\n",
+            "+new run output\n",
+        );
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &crate::config::RustLanguageConfig::default(),
+            diff,
+        )?;
+        let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
+        assert_eq!(outcome.counts.changed_file_count, 0, "{outcome:?}");
+        assert_eq!(
+            outcome.kind,
+            AnalysisOutcomeKind::NoScope,
+            "artifact-only diff is no scope, not malformed: {outcome:?}"
+        );
+        assert!(
+            !outcome
+                .limitations
+                .iter()
+                .any(|limitation| limitation.kind == AnalysisLimitationKind::MalformedDiff),
+            "artifact-only diff must not read as garbage: {outcome:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_artifact_disclosure_names_files_and_gitignore_entry() {
+        let files = [
+            changed_file("target/ripr/pilot/pilot-summary.md"),
+            changed_file("target/ripr/cache/repo-seam-facts/1.61/abc.json"),
+        ];
+        let message = ripr_artifact_disclosure(&files);
+        assert!(message.contains("2 ripr artifact file(s)"), "{message}");
+        assert!(
+            message.contains("target/ripr/pilot/pilot-summary.md"),
+            "{message}"
+        );
+        assert!(message.contains("/target/ripr/"), "{message}");
     }
 
     #[test]

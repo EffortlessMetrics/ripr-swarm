@@ -397,9 +397,40 @@ where
     u8::try_from(value).unwrap_or(0)
 }
 
+/// Whether a repository-relative diff path names one of ripr's own artifact
+/// roots — `target/ripr/...` — in either separator family (#7663). Python
+/// `.gitignore` templates do not cover `target/`, so a routine `git add -A`
+/// can commit ripr's reports and caches; once committed, the next analysis
+/// would count ripr's own output as changed user scope. Tool artifacts are
+/// not user source at any position of the diff, so the pipeline excludes
+/// them from changed-scope accounting even when tracked. Matching anchors
+/// at the repository-relative start: a hand-written `target/ripr` directory
+/// at any other depth is not an artifact path.
+pub(crate) fn is_ripr_artifact_path(path: &Path) -> bool {
+    let mut components = path.components();
+    matches!(components.next(), Some(Component::Normal(head)) if head == "target")
+        && matches!(components.next(), Some(Component::Normal(head)) if head == "ripr")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_ripr_artifact_path_matches_the_artifact_root_only() {
+        assert!(is_ripr_artifact_path(Path::new("target/ripr/cache/x.json")));
+        assert!(is_ripr_artifact_path(Path::new(
+            "target/ripr/pilot/pilot-summary.md"
+        )));
+        assert!(is_ripr_artifact_path(Path::new(
+            "target\\ripr\\reports\\gap.json"
+        )));
+        assert!(is_ripr_artifact_path(Path::new("target/ripr")));
+        assert!(!is_ripr_artifact_path(Path::new("target/other/x.json")));
+        assert!(!is_ripr_artifact_path(Path::new("src/target/ripr/x.json")));
+        assert!(!is_ripr_artifact_path(Path::new("target.rs")));
+        assert!(!is_ripr_artifact_path(Path::new("targeted/ripr/x.json")));
+    }
 
     #[test]
     fn named_c_control_escapes_keep_native_path_identity() {

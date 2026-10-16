@@ -1964,6 +1964,9 @@ fn report_cache_status(root: &Path, cache: &output::doctor::DoctorCacheStatus) {
     if !cache.relocated_by_env && !root.is_dir() {
         return;
     }
+    if let Some(warning) = ripr_artifact_unignored_warning(root) {
+        println!("{warning}");
+    }
     if let Some(reason) = cache_unwritable_reason(&analysis::seam_cache::cache_base_dir(root)) {
         // The cache is optional, so this does not fail doctor; it only
         // explains why every run will recompute instead of reusing facts.
@@ -1972,6 +1975,40 @@ fn report_cache_status(root: &Path, cache: &output::doctor::DoctorCacheStatus) {
 Point RIPR_CACHE_DIR at a writable directory."
         );
     }
+}
+
+/// The doctor warning when ripr's artifact root exists under the root but
+/// git does not ignore it (#7663). Standard Python `.gitignore` templates
+/// cover `__pycache__/` and `.pytest_cache/` but never Rust-conventional
+/// `target/`, so a routine `git add -A` commits ripr's own reports and
+/// caches into the user's history; the next `ripr check` then diffs them.
+/// `git check-ignore` applies the full ignore semantics (nested
+/// `.gitignore` files, `.git/info/exclude`, global excludes), so it — not a
+/// line-by-line reimplementation — decides coverage. Exit 1 means the path
+/// is positively not ignored; exit 0 means covered (no warning); any other
+/// outcome (not a repository, git unavailable, deadline) keeps doctor
+/// honest by staying quiet instead of claiming a checked fact it could not
+/// establish.
+fn ripr_artifact_unignored_warning(root: &Path) -> Option<String> {
+    let artifact_root = root.join("target").join("ripr");
+    if !artifact_root.is_dir() {
+        return None;
+    }
+    let probe = crate::git::run_git_output_with_deadline(
+        root,
+        &["check-ignore", "-q", "--", "target/ripr"],
+        Some(std::time::Duration::from_secs(5)),
+    )
+    .ok()?;
+    if probe.status.code() != Some(1) {
+        return None;
+    }
+    Some(
+        "! ripr artifacts under target/ripr are not covered by git ignore rules; \
+         `git add -A` would commit ripr's own reports into your history. \
+         Add this line to .gitignore: /target/ripr/"
+            .to_string(),
+    )
 }
 
 /// Why a cache entry could not be created under `cache_dir`, or `None` when
@@ -2536,6 +2573,63 @@ mod tests {
             cache_unwritable_reason(Path::new("ripr-cache-nonexistent")),
             None
         );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_artifact_unignored_warning_names_the_gitignore_entry() -> Result<(), String> {
+        let root = unique_command_test_dir("artifact-unignored");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        // No artifact root: nothing to warn about, and no git probe needed.
+        assert_eq!(ripr_artifact_unignored_warning(&root), None);
+
+        let artifact = root.join("target").join("ripr").join("pilot");
+        std::fs::create_dir_all(&artifact).map_err(|error| error.to_string())?;
+        // No git repository at all: coverage is not established, so doctor
+        // stays quiet rather than claiming an unchecked fact.
+        assert_eq!(ripr_artifact_unignored_warning(&root), None);
+
+        for args in [
+            vec!["init".to_string()],
+            vec![
+                "config".to_string(),
+                "user.email".to_string(),
+                "ripr@example.invalid".to_string(),
+            ],
+            vec![
+                "config".to_string(),
+                "user.name".to_string(),
+                "ripr tests".to_string(),
+            ],
+        ] {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(&args)
+                .output()
+                .map_err(|error| error.to_string())?;
+            if !output.status.success() {
+                return Err(format!(
+                    "git {:?} failed: {}",
+                    args,
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+        }
+        // A repository whose ignore rules do not cover target/ripr warns and
+        // names the exact entry to add (#7663).
+        let warning = ripr_artifact_unignored_warning(&root);
+        assert!(
+            warning
+                .as_deref()
+                .is_some_and(|text| text.contains("/target/ripr/")),
+            "{warning:?}"
+        );
+        // The covering entry silences it.
+        std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ripr_artifact_unignored_warning(&root), None);
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
