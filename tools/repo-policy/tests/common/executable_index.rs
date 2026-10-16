@@ -46,16 +46,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn setup_stops_at_the_first_git_failure() {
+    fn setup_stops_at_the_first_git_failure() -> Result<(), String> {
         let root = std::env::temp_dir().join(format!(
             "executable-index-failures-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .map_err(|error| error.to_string())?
                 .as_nanos()
         ));
-        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
         for failure in 1..=4 {
             let mut calls = 0;
             let result = initialize(&root, |_| {
@@ -69,6 +69,6 @@ mod tests {
             assert_eq!(result, Err(format!("git failure control {failure}")));
             assert_eq!(calls, failure, "no commands after the failed setup phase");
         }
-        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
     }
 }
