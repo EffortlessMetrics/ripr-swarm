@@ -133,6 +133,56 @@ mod tests {
         assert!(!is_assertion_macro("other::assert_eq"));
     }
 
+    /// #8051 item 1: `debug_assert*` runs under `cargo test`'s debug profile,
+    /// so it is an assertion in a test body, with the same authority gates as
+    /// its `assert*` twin.
+    #[test]
+    fn debug_assert_macros_carry_assertion_authority() {
+        for name in [
+            "debug_assert",
+            "debug_assert_eq",
+            "debug_assert_ne",
+            "debug_assert_matches",
+            "std::debug_assert_eq",
+            "assert_matches::debug_assert_matches",
+        ] {
+            assert!(is_assertion_macro(name), "{name}");
+        }
+        for name in ["debug_assert", "debug_assert_eq", "debug_assert_ne"] {
+            assert!(is_assertion_macro_leaf(name), "{name}");
+        }
+        for name in [
+            "other::debug_assert_eq",
+            "debug_assert_helper",
+            "debug_assertions",
+        ] {
+            assert!(!is_assertion_macro(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn debug_assert_eq_in_a_test_classifies_like_assert_eq() -> Result<(), String> {
+        let classified = |macro_name: &str| -> Result<_, String> {
+            let source = format!(
+                "#[test]\nfn pins() {{\n    let mut c = make();\n    c.beat();\n    {macro_name}!(c.count, 1);\n}}\n"
+            );
+            let facts = summarize_file_with_parser(Path::new("src/lib.rs"), &source)?;
+            let [test] = facts.tests.as_slice() else {
+                return Err(format!("expected one test in {source}"));
+            };
+            let [assertion] = test.assertions.as_slice() else {
+                return Err(format!("expected one assertion in {source}"));
+            };
+            Ok((assertion.kind.clone(), assertion.strength.clone()))
+        };
+        assert_eq!(classified("debug_assert_eq")?, classified("assert_eq")?);
+        // An unknown crate path never gains authority from the `debug_` leaf.
+        let source = "#[test]\nfn pins() {\n    other::debug_assert_eq!(make().count, 1);\n}\n";
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
+        assert!(facts.tests[0].assertions.is_empty());
+        Ok(())
+    }
+
     #[test]
     fn drop_in_assertion_crate_paths_keep_assertion_authority() {
         for name in [

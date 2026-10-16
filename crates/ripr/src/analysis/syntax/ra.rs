@@ -2672,18 +2672,31 @@ fn uncompared_unwrap_err_statement(method_call: &ast::MethodCallExpr, text: &str
 pub(crate) fn is_assertion_macro_leaf(name: &str) -> bool {
     // `matches!` computes a bool. Only an asserting wrapper observes it;
     // admitting the computation itself credits discarded values (#5713).
+    is_builtin_assertion_name(name) || name.ends_with("snapshot")
+}
+
+/// Built-in assertion macro names. `debug_assert*` runs under `cargo test`'s
+/// default debug profile, so a test that checks its result with one observes
+/// the value like the `assert*` twin (#8051). Production-side `debug_assert!`
+/// never reaches here: these names are read only from test oracle bodies.
+fn is_builtin_assertion_name(name: &str) -> bool {
     matches!(
         name,
-        "assert" | "assert_eq" | "assert_ne" | "assert_matches"
-    ) || name.ends_with("snapshot")
+        "assert"
+            | "assert_eq"
+            | "assert_ne"
+            | "assert_matches"
+            | "debug_assert"
+            | "debug_assert_eq"
+            | "debug_assert_ne"
+            | "debug_assert_matches"
+    )
 }
 
 pub(crate) fn is_assertion_macro(macro_name: &str) -> bool {
     let macro_name = drop_in_assertion_leaf(macro_name).unwrap_or(macro_name);
-    matches!(
-        macro_name,
-        "assert" | "assert_eq" | "assert_ne" | "assert_matches"
-    ) || macro_name.starts_with("insta::assert")
+    is_builtin_assertion_name(macro_name)
+        || macro_name.starts_with("insta::assert")
         || macro_name.contains("snapshot")
 }
 
