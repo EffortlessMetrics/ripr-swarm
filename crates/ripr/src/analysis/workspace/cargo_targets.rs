@@ -447,6 +447,26 @@ impl ManifestInventory {
         }
     }
 
+    /// True only when Cargo's metadata establishes that `cargo test` never
+    /// runs the `#[test]` items of this file (#8016): every owning target is
+    /// skipped (`test = false`, unmet `required-features`), or the target
+    /// sets `harness = false` and `registered_custom_harness` does not name
+    /// the file (a registered custom harness runs its own entry point).
+    /// Unavailable metadata, undeclared paths and ambiguous owners are not an
+    /// established skip: the file keeps its credit.
+    pub(crate) fn cargo_test_never_runs_file(
+        &mut self,
+        workspace_root: &Path,
+        file: &Path,
+        registered_custom_harness: bool,
+    ) -> bool {
+        if self.cargo_test_collection_skipped(workspace_root, file) {
+            return true;
+        }
+        !registered_custom_harness
+            && self.verdict(workspace_root, file) == CargoHarnessVerdict::HarnessDisabled
+    }
+
     /// Resolve the registration path against cargo's inventory keys.
     /// Two forms are tried: the as-given absolute path, and the real
     /// path behind any symlinks. Cargo echoes the path family it was

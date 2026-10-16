@@ -346,6 +346,36 @@ fn drop_unreached_test_files(
             })
         })
         .collect::<BTreeSet<_>>();
+    // A `[[test]]` target cargo never runs (`test = false`, unmet
+    // `required-features`, or `harness = false` with no registered custom
+    // harness) is reached by its own root, yet its tests never execute
+    // (#8016). The manifest pre-check keeps repositories without such a key
+    // from paying for the `cargo metadata` probe.
+    let never_run = {
+        let mut inventory = workspace::ManifestInventory::default();
+        let mut declares_skip = BTreeMap::new();
+        loaded_files
+            .iter()
+            .filter(|(path, bytes)| {
+                !changed.contains(&workspace::normalize_path(path)) && holds_tests(bytes)
+            })
+            .filter(|(path, _)| {
+                owning_manifest_dir(root, path, &mut manifests).is_some_and(|dir| {
+                    *declares_skip
+                        .entry(dir.clone())
+                        .or_insert_with(|| manifest_declares_test_target_skip(&root.join(&dir)))
+                })
+            })
+            .filter(|(path, _)| {
+                let normalized = workspace::normalize_path(path);
+                let registered = test_harnesses
+                    .iter()
+                    .any(|harness| workspace::normalize_path(&harness.target) == normalized);
+                inventory.cargo_test_never_runs_file(root, path, registered)
+            })
+            .map(|(path, _)| workspace::normalize_path(path))
+            .collect::<BTreeSet<_>>()
+    };
     if !suspects.is_empty() {
         let mut probe = source_role_context.clone();
         probe.module_graph_orphans.clear();
@@ -357,6 +387,7 @@ fn drop_unreached_test_files(
                 .map(|path| workspace::normalize_path(path)),
         );
     }
+    orphans.extend(never_run);
     if orphans.is_empty() {
         return loaded_files;
     }
@@ -364,6 +395,28 @@ fn drop_unreached_test_files(
         .into_iter()
         .filter(|(path, _)| !orphans.contains(&workspace::normalize_path(path)))
         .collect()
+}
+
+/// Whether the manifest in `dir` has a `[[test]]` entry that can stop
+/// `cargo test` from running its target: `test`, `harness` or
+/// `required-features` (#8016). Unreadable manifests declare nothing.
+fn manifest_declares_test_target_skip(dir: &Path) -> bool {
+    std::fs::read_to_string(dir.join("Cargo.toml"))
+        .ok()
+        .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+        .and_then(|manifest| {
+            manifest
+                .get("test")
+                .and_then(toml::Value::as_array)
+                .cloned()
+        })
+        .is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                ["test", "harness", "required-features"]
+                    .iter()
+                    .any(|key| entry.get(*key).is_some())
+            })
+        })
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
@@ -7358,6 +7411,61 @@ fn absent_delimiter_boundary_returns_head() {
                 .any(|name| name == "discount_applies_unbuilt"),
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_test_targets_cargo_test_never_runs() -> Result<(), String> {
+        // #8016: a `[[test]]` target with `test = false`, `harness = false`
+        // or unmet `required-features` is reached by its own root, yet
+        // `cargo test` never runs its `#[test]` items. `live` (met feature,
+        // default harness) and `autodiscovered` keep their credit.
+        let root = temp_root("module-graph-test-targets-never-run")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n\n\
+             [features]\ndefault=['on']\non=[]\nnever=[]\n\n\
+             [[test]]\nname='off'\ntest=false\n\n\
+             [[test]]\nname='bare'\nharness=false\n\n\
+             [[test]]\nname='gated'\nrequired-features=['never']\n\n\
+             [[test]]\nname='live'\nrequired-features=['on']\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        for name in ["off", "bare", "gated", "live", "autodiscovered"] {
+            let main = if name == "bare" {
+                "\nfn main() {}\n"
+            } else {
+                ""
+            };
+            write(
+                &root.join(format!("tests/{name}.rs")),
+                &format!(
+                    "use shop::used::discount;\n\n#[test]\nfn discount_applies_{name}() {{\n    assert_eq!(discount(150), 140);\n}}\n{main}"
+                ),
+            )?;
+        }
+
+        let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+        let related = related_test_names(&root, &result, "src/used.rs");
+        for kept in ["live", "autodiscovered"] {
+            assert!(
+                related
+                    .iter()
+                    .any(|name| *name == format!("discount_applies_{kept}")),
+                "{kept} is run by cargo test and must relate: {related:?}"
+            );
+        }
+        for dropped in ["off", "bare", "gated"] {
+            assert!(
+                !related
+                    .iter()
+                    .any(|name| *name == format!("discount_applies_{dropped}")),
+                "{dropped} is never run by cargo test and must not relate: {related:?}"
+            );
+        }
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
