@@ -117,6 +117,14 @@ impl DoctorFirstCommand {
                 .iter()
                 .any(|check| check.name == name && check.status == DoctorCheckStatus::Pass)
         };
+        let failed_prerequisites = report
+            .checks
+            .iter()
+            .any(|check| check.name == "cargo_toml" && check.status == DoctorCheckStatus::Fail)
+            || report
+                .runtime_probes
+                .iter()
+                .any(|probe| probe.required && probe.status == DoctorStatus::Fail);
         if !passed("root_directory") {
             // #5010 renders the lossless root spelling for recovery, and the
             // work-tree probe stays withheld (#4531). No `--diff` route is
@@ -130,7 +138,15 @@ impl DoctorFirstCommand {
         {
             Self::InvalidConfig
         } else if !git_tool_can_run(report) {
-            Self::SavedDiff
+            // `--diff PATH` still loads the same crate and required
+            // runtimes. A named cargo_toml / runtime failure outranks the
+            // git-recovery command (#8168). OutsideGit stays later so an
+            // empty or non-git root still gets the repository-free scan.
+            if failed_prerequisites {
+                Self::FailedPrerequisites
+            } else {
+                Self::SavedDiff
+            }
         } else if !passed("git_repository") {
             Self::OutsideGit
         } else if report
@@ -141,15 +157,7 @@ impl DoctorFirstCommand {
             // #5259: the work tree is real but `HEAD` is unborn, so no base
             // can resolve; the diff-scoped first commands would all fail.
             Self::UnbornHead
-        } else if report
-            .checks
-            .iter()
-            .any(|check| check.name == "cargo_toml" && check.status == DoctorCheckStatus::Fail)
-            || report
-                .runtime_probes
-                .iter()
-                .any(|probe| probe.required && probe.status == DoctorStatus::Fail)
-        {
+        } else if failed_prerequisites {
             // Missing Cargo.toml and a required runtime are named on the
             // bang lines. DefaultCheck / Worktree would still print
             // `ripr check`, which hits the same failure (#8168).
@@ -5067,6 +5075,42 @@ mod tests {
             DoctorFirstCommand::resolve_for_report(&runtime_fail, || false),
             DoctorFirstCommand::FailedPrerequisites,
             "a required runtime failure must not recommend ripr check"
+        );
+
+        let mut gitless_missing_manifest = DoctorReport::new(".");
+        pass(&mut gitless_missing_manifest, "root_directory");
+        gitless_missing_manifest.add_check(
+            "tool_git",
+            DoctorStatus::Fail,
+            Some("not found".to_string()),
+        );
+        gitless_missing_manifest.add_check(
+            "cargo_toml",
+            DoctorStatus::Fail,
+            Some("no Cargo.toml found".to_string()),
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&gitless_missing_manifest, || true),
+            DoctorFirstCommand::FailedPrerequisites,
+            "a cargo_toml failure outranks SavedDiff: check --diff still needs the crate"
+        );
+        let mut non_git_missing_manifest = DoctorReport::new(".");
+        pass(&mut non_git_missing_manifest, "root_directory");
+        pass(&mut non_git_missing_manifest, "tool_git");
+        non_git_missing_manifest.add_check(
+            "git_repository",
+            DoctorStatus::Fail,
+            Some("refused".to_string()),
+        );
+        non_git_missing_manifest.add_check(
+            "cargo_toml",
+            DoctorStatus::Fail,
+            Some("no Cargo.toml found".to_string()),
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&non_git_missing_manifest, || false),
+            DoctorFirstCommand::OutsideGit,
+            "empty/non-git roots keep the repository-free scan even when cargo_toml failed"
         );
     }
 

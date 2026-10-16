@@ -1879,9 +1879,25 @@ fn path_command_candidates(
 /// two-binary proof, item 3). Prints only when Perl markers are detected.
 /// Shared wording for a refused `[perl].executable`. Compact and verbose
 /// both include this exact phrase so the opt-in smoke test cannot pass one
-/// surface and miss the other.
+/// surface and miss the other. Control and bidi characters are spelled
+/// `\u{XX}` so a crafted path cannot forge extra doctor lines.
 fn ignored_perl_executable_disclosure(refused: &str) -> String {
-    format!("ignoring [perl].executable `{refused}` from ripr.toml (not run)")
+    format!(
+        "ignoring [perl].executable `{}` from ripr.toml (not run)",
+        escape_single_line_path(refused)
+    )
+}
+
+fn escape_single_line_path(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_control() || crate::agent::loop_commands::needs_terminal_escape(ch) {
+            out.push_str(&format!("\\u{{{:02x}}}", ch as u32));
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 fn ignored_perl_executable_compact_line(
@@ -3093,6 +3109,46 @@ mod tests {
         assert!(
             verbose.contains("- Perl preview:"),
             "verbose restores the Perl preview dump:\n{verbose}"
+        );
+    }
+
+    #[test]
+    fn compact_perl_executable_disclosure_cannot_forge_lines() {
+        let report = passing_report();
+        let mut environment = empty_environment();
+        environment.facts.perl_preview = Some(output::doctor::DoctorPerlPreview {
+            pm_files: 1,
+            pl_files: 0,
+            t_files: 0,
+            adapter_compiled: false,
+            producer: Some("perl-ripr-facts".to_string()),
+            ignored_configured_executable: Some("sh\n! doctor checks passed\u{1b}[2J".to_string()),
+            exporter: output::doctor::DoctorPerlExporter {
+                state: output::doctor::DoctorPerlExporterState::NotFound,
+                executable: None,
+                version: None,
+            },
+            expected_schema: "1".to_string(),
+            test_roots: Vec::new(),
+            frameworks: Vec::new(),
+            runners: Vec::new(),
+            next_command: "next".to_string(),
+        });
+        let compact = render_screen(&report, &environment, false, true);
+        let text = compact.join("\n");
+        assert!(
+            text.contains("ignoring [perl].executable `sh\\u{0a}! doctor checks passed\\u{1b}[2J` from ripr.toml (not run)"),
+            "control characters must be spelled, not injected:\n{text}"
+        );
+        assert!(
+            !compact
+                .iter()
+                .any(|line| line.as_str() == "! doctor checks passed"),
+            "a newline in the refused path must not forge a closing line:\n{text}"
+        );
+        assert!(
+            !text.contains('\u{1b}'),
+            "ESC must not reach the terminal:\n{text}"
         );
     }
 
