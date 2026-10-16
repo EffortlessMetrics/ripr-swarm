@@ -12656,6 +12656,51 @@ fn report_status_parser_reads_markdown_and_json() {
 }
 
 #[test]
+fn report_index_preserves_test_efficiency_not_run_with_explanation() -> Result<(), String> {
+    with_temp_cwd("report-index-efficiency-not-run", |root| {
+        write(
+            &root.join("target/ripr/reports/test-efficiency.json"),
+            r#"{
+  "schema_version": "0.1",
+  "status": "not_run",
+  "advisory": true,
+  "explanation": "No tests were selected; test-efficiency evidence was not established for this report. Run the report from the workspace root containing the Rust test sources.",
+  "tests": [],
+  "metrics": {"tests_scanned": 0}
+}"#,
+        );
+        write(
+            &root.join("target/ripr/reports/test-efficiency.md"),
+            "# ripr test efficiency\n\nStatus: not_run\n\nTests scanned: 0\n\nExplanation: No tests were selected; test-efficiency evidence was not established for this report. Run the report from the workspace root containing the Rust test sources.\n",
+        );
+        let reports = super::report_index_entries()?;
+        assert_eq!(reports.len(), 2);
+        for entry in &reports {
+            assert_eq!(entry.status, "not_run", "{}", entry.file);
+        }
+        let json: Value =
+            serde_json::from_str(&super::report_index_json("pass", &reports, &[], &[], &[]))
+                .map_err(|err| err.to_string())?;
+        let indexed = json["reports"]
+            .as_array()
+            .ok_or("missing indexed reports")?;
+        assert_eq!(indexed.len(), 2);
+        for entry in indexed {
+            assert_eq!(entry["status"], "not_run");
+        }
+        let markdown = super::report_index_markdown("pass", &reports, &[], &[], &[]);
+        for file in ["test-efficiency.json", "test-efficiency.md"] {
+            assert!(
+                markdown
+                    .lines()
+                    .any(|line| line.contains(file) && line.contains("not_run"))
+            );
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn report_index_missing_expected_tracks_changed_surfaces() {
     let reports = vec![ReportIndexEntry {
         file: "pr-summary.md".to_string(),
