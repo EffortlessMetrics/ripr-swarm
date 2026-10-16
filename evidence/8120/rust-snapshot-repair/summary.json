@@ -1,0 +1,624 @@
+{
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "source_pr": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8251",
+  "candidate": {
+    "branch": "fix/8120-field-snapshot-admission",
+    "head": "014238d1256fa283fece5679d520e511bcd460d0",
+    "tree": "4e6847a9336fa1488884a886b2b7c1882ec5fa30",
+    "base": "0b8dad52d85dc7271e4ddfeef8b6d375dc02784c",
+    "working_tree_clean": true
+  },
+  "claim": "Conservative repository field-construction snapshot discrimination; raw snapshot syntax and a field spelling cannot close the owner field without existing expected-value/receiver admission. Preserve independent literal and existing expect-test equality credit.",
+  "ownership": {
+    "issues": [
+      8120,
+      8121
+    ],
+    "broader_issues_remain_open": true,
+    "single_source_candidate": 8251,
+    "existing_distinct_owner": 8004,
+    "full_snapshot_reader_or_projection_implemented": false
+  },
+  "baseline": {
+    "doctor_exit": 0,
+    "selector_verified_check_fast_exit": 0,
+    "cargo_check_ripr_all_targets_exit": 0,
+    "selector_base": "0b8dad52d85dc7271e4ddfeef8b6d375dc02784c"
+  },
+  "red": {
+    "base": "0b8dad52d85dc7271e4ddfeef8b6d375dc02784c",
+    "test_source_sha256": "e065c3db3c7a1c625092e5824d80c2146390b4f180fd169ff395d76c8ab367e6",
+    "native_exit": 101,
+    "passed": 2,
+    "failed": 4,
+    "ignored": 0,
+    "limitation": "Original red test file predates later literal-positive strengthening/formatting. Original executable and hash retained; do not equate whole final test-source bytes with red file. The four negative stimuli stayed unchanged. Independent same-input base/head CLI pairs additionally confirm final counterexamples."
+  },
+  "committed_focused_tests": {
+    "execution_head": "8f5f0de72eaba77b743258757c0bf7681190a882",
+    "integration": {
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "exit": 0
+    },
+    "changed_unit": {
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 11062,
+      "exit": 0
+    },
+    "compatibility_units": {
+      "exact_literal_passed": 1,
+      "expect_test_passed": 1
+    },
+    "corrected_head_applicability": "Only the two captured corpus reports differ between 8f5f0de and 014238d; production/test/spec/manifest blobs are unchanged. These executions remain attributed to 8f5f0de."
+  },
+  "independent_review": {
+    "head": "014238d1256fa283fece5679d520e511bcd460d0",
+    "rendered_controls_passed": 15,
+    "paired_base_head_cases": 2,
+    "record": "review-evidence/review-014238d.md",
+    "remaining": "Hosted qualification and actual checkout/integration execution remain pending.",
+    "disposition": "REVIEW_INCOMPLETE only for hosted/current integration proof and final delivery-owner remote handling; no local semantic or validation blocker remains.",
+    "qualification_expectation": "Reasonably expected green after fresh remote subject check and source-backed disposition of late review."
+  },
+  "native_literal": [
+    {
+      "state": "baseline",
+      "exit": 0,
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--message-format=json-render-diagnostics",
+        "--",
+        "--test-threads=1"
+      ],
+      "source_sha256": "41a7760ea6724cbd7d91e4d32c68f22bd97f321f8abbd44faea76579517fa76f",
+      "test_executable": "/workspace/scratch/snapshot-audit/native-literal-target/debug/deps/field_snapshot_admission-890be359ca6e1fa2",
+      "frozen_binary": "/workspace/scratch/snapshot-audit/repair-evidence/bin/native-literal-baseline",
+      "sha256": "a0dfebfbcc29d65f56c79a160d2a76a8836000eda1286111acf00017b9c4954d",
+      "compiler_artifact": {
+        "reason": "compiler-artifact",
+        "package_id": "path+file:///workspace/scratch/snapshot-audit/repair-native/independent-literal#field_snapshot_admission@0.0.0",
+        "manifest_path": "/workspace/scratch/snapshot-audit/repair-native/independent-literal/Cargo.toml",
+        "target": {
+          "kind": [
+            "lib"
+          ],
+          "crate_types": [
+            "lib"
+          ],
+          "name": "field_snapshot_admission",
+          "src_path": "/workspace/scratch/snapshot-audit/repair-native/independent-literal/src/lib.rs",
+          "edition": "2024",
+          "doc": true,
+          "doctest": true,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "0",
+          "debuginfo": 0,
+          "debug_assertions": true,
+          "overflow_checks": true,
+          "test": true
+        },
+        "features": [],
+        "filenames": [
+          "/workspace/scratch/snapshot-audit/native-literal-target/debug/deps/field_snapshot_admission-890be359ca6e1fa2"
+        ],
+        "executable": "/workspace/scratch/snapshot-audit/native-literal-target/debug/deps/field_snapshot_admission-890be359ca6e1fa2",
+        "fresh": false
+      }
+    },
+    {
+      "state": "wrong_owner",
+      "exit": 101,
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--message-format=json-render-diagnostics",
+        "--",
+        "--test-threads=1"
+      ],
+      "source_sha256": "a3c2c84c9d44abcc81197339bd0c70544d988a68ec39abbc380fe5304616b3ef",
+      "test_executable": "/workspace/scratch/snapshot-audit/native-literal-target/debug/deps/field_snapshot_admission-890be359ca6e1fa2",
+      "frozen_binary": "/workspace/scratch/snapshot-audit/repair-evidence/bin/native-literal-wrong_owner",
+      "sha256": "289a1fc3c92f5ab4ed6e4154d68dd611c6e6c32ff12b6579d43a3aa763f9fe58",
+      "compiler_artifact": {
+        "reason": "compiler-artifact",
+        "package_id": "path+file:///workspace/scratch/snapshot-audit/repair-native/independent-literal#field_snapshot_admission@0.0.0",
+        "manifest_path": "/workspace/scratch/snapshot-audit/repair-native/independent-literal/Cargo.toml",
+        "target": {
+          "kind": [
+            "lib"
+          ],
+          "crate_types": [
+            "lib"
+          ],
+          "name": "field_snapshot_admission",
+          "src_path": "/workspace/scratch/snapshot-audit/repair-native/independent-literal/src/lib.rs",
+          "edition": "2024",
+          "doc": true,
+          "doctest": true,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "0",
+          "debuginfo": 0,
+          "debug_assertions": true,
+          "overflow_checks": true,
+          "test": true
+        },
+        "features": [],
+        "filenames": [
+          "/workspace/scratch/snapshot-audit/native-literal-target/debug/deps/field_snapshot_admission-890be359ca6e1fa2"
+        ],
+        "executable": "/workspace/scratch/snapshot-audit/native-literal-target/debug/deps/field_snapshot_admission-890be359ca6e1fa2",
+        "fresh": false
+      }
+    },
+    {
+      "state": "restored",
+      "exit": 0,
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--message-format=json-render-diagnostics",
+        "--",
+        "--test-threads=1"
+      ],
+      "source_sha256": "41a7760ea6724cbd7d91e4d32c68f22bd97f321f8abbd44faea76579517fa76f",
+      "test_executable": "/workspace/scratch/snapshot-audit/native-literal-target/debug/deps/field_snapshot_admission-890be359ca6e1fa2",
+      "frozen_binary": "/workspace/scratch/snapshot-audit/repair-evidence/bin/native-literal-baseline",
+      "sha256": "a0dfebfbcc29d65f56c79a160d2a76a8836000eda1286111acf00017b9c4954d",
+      "compiler_artifact": {
+        "reason": "compiler-artifact",
+        "package_id": "path+file:///workspace/scratch/snapshot-audit/repair-native/independent-literal#field_snapshot_admission@0.0.0",
+        "manifest_path": "/workspace/scratch/snapshot-audit/repair-native/independent-literal/Cargo.toml",
+        "target": {
+          "kind": [
+            "lib"
+          ],
+          "crate_types": [
+            "lib"
+          ],
+          "name": "field_snapshot_admission",
+          "src_path": "/workspace/scratch/snapshot-audit/repair-native/independent-literal/src/lib.rs",
+          "edition": "2024",
+          "doc": true,
+          "doctest": true,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "0",
+          "debuginfo": 0,
+          "debug_assertions": true,
+          "overflow_checks": true,
+          "test": true
+        },
+        "features": [],
+        "filenames": [
+          "/workspace/scratch/snapshot-audit/native-literal-target/debug/deps/field_snapshot_admission-890be359ca6e1fa2"
+        ],
+        "executable": "/workspace/scratch/snapshot-audit/native-literal-target/debug/deps/field_snapshot_admission-890be359ca6e1fa2",
+        "fresh": false
+      },
+      "witness_reused_from": "baseline; restored bytes were independently compared equal"
+    }
+  ],
+  "local_validation": {
+    "original_driver": [
+      {
+        "stage": "retained.exact-literal",
+        "argv": [
+          "/workspace/scratch/snapshot-audit/repair-evidence/bin/8f5f0de-ripr",
+          "exact_owner_result_field_equality_stays_already_gripped",
+          "--test-threads=1"
+        ],
+        "head": "014238d1256fa283fece5679d520e511bcd460d0",
+        "exit": 0,
+        "seconds": 0.032,
+        "execution_subject_head": "8f5f0de72eaba77b743258757c0bf7681190a882",
+        "head_field_meaning": "Candidate context only; executable subject is explicitly recorded execution_subject_head."
+      },
+      {
+        "stage": "retained.expect-test",
+        "argv": [
+          "/workspace/scratch/snapshot-audit/repair-evidence/bin/8f5f0de-ripr",
+          "pin_strength_gate_keeps_exact_pins_strong_and_defers_bool_pins_to_owner_pin",
+          "--test-threads=1"
+        ],
+        "head": "014238d1256fa283fece5679d520e511bcd460d0",
+        "exit": 0,
+        "seconds": 0.016,
+        "execution_subject_head": "8f5f0de72eaba77b743258757c0bf7681190a882",
+        "head_field_meaning": "Candidate context only; executable subject is explicitly recorded execution_subject_head."
+      },
+      {
+        "stage": "final.honesty",
+        "argv": [
+          "cargo",
+          "run",
+          "--locked",
+          "-p",
+          "xtask",
+          "--",
+          "check-evidence-promotion-honesty"
+        ],
+        "head": "014238d1256fa283fece5679d520e511bcd460d0",
+        "exit": 0,
+        "seconds": 158.973
+      },
+      {
+        "stage": "final.check-fast",
+        "argv": [
+          "cargo",
+          "run",
+          "--locked",
+          "-p",
+          "xtask",
+          "--",
+          "check-fast"
+        ],
+        "head": "014238d1256fa283fece5679d520e511bcd460d0",
+        "exit": 0,
+        "seconds": 664.702
+      },
+      {
+        "stage": "final.goldens",
+        "argv": [
+          "cargo",
+          "run",
+          "--locked",
+          "-p",
+          "xtask",
+          "--",
+          "goldens",
+          "check"
+        ],
+        "head": "014238d1256fa283fece5679d520e511bcd460d0",
+        "exit": 1,
+        "seconds": 159.68
+      }
+    ],
+    "prepared_driver": [
+      {
+        "stage": "prepared.goldens",
+        "argv": [
+          "cargo",
+          "run",
+          "--locked",
+          "-p",
+          "xtask",
+          "--",
+          "goldens",
+          "check"
+        ],
+        "head": "014238d1256fa283fece5679d520e511bcd460d0",
+        "exit": 0,
+        "seconds": 300.395
+      },
+      {
+        "stage": "final.dogfood",
+        "argv": [
+          "cargo",
+          "run",
+          "--locked",
+          "-p",
+          "xtask",
+          "--",
+          "dogfood"
+        ],
+        "head": "014238d1256fa283fece5679d520e511bcd460d0",
+        "exit": 0,
+        "seconds": 1.568
+      },
+      {
+        "stage": "final.precommit",
+        "argv": [
+          "cargo",
+          "run",
+          "--locked",
+          "-p",
+          "xtask",
+          "--",
+          "precommit"
+        ],
+        "head": "014238d1256fa283fece5679d520e511bcd460d0",
+        "exit": 0,
+        "seconds": 544.457
+      },
+      {
+        "stage": "final.cli-build",
+        "argv": [
+          "cargo",
+          "build",
+          "--locked",
+          "-p",
+          "ripr",
+          "--bin",
+          "ripr",
+          "--message-format=json-render-diagnostics"
+        ],
+        "head": "014238d1256fa283fece5679d520e511bcd460d0",
+        "exit": 0,
+        "seconds": 0.215
+      }
+    ],
+    "goldens": {
+      "fixtures": 454,
+      "surfaces_passed": 1131,
+      "drift": 0,
+      "source_or_expected_bytes_blessed": false
+    },
+    "honesty_false_strong_control": {
+      "head": "014238d1256fa283fece5679d520e511bcd460d0",
+      "argv": [
+        "/workspace/scratch/snapshot-audit/target/debug/xtask",
+        "check-evidence-promotion-honesty"
+      ],
+      "binary_sha256": "3b34506c93f30d20f4d381edc201ecfeb02804de18df1a00d37c07d0331e531c",
+      "false_strong_exit": 1,
+      "restored_exit": 0,
+      "original_sha256": {
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-wrong-receiver.json": "2c27b04cc3450d1a8486ac8832facf469960b411a482fad7dddb3598135e8cbd",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-missing-expected.json": "2c27b04cc3450d1a8486ac8832facf469960b411a482fad7dddb3598135e8cbd"
+      },
+      "working_tree_clean_after": true
+    }
+  },
+  "golden_preparation": {
+    "source_head": "014238d1256fa283fece5679d520e511bcd460d0",
+    "exact_base": "0b8dad52d85dc7271e4ddfeef8b6d375dc02784c",
+    "fixture_inputs_sha256": {
+      "SPEC.md": "cf0496e9659cf104a6fc0aa819c6192ea59ab704e30b950f0f97a266361ac75b",
+      "diff.patch": "31b178c31e72c54361892c3d3766ea86397071fad0e324a6cb1c37800f3eece7",
+      "expected/human.txt": "b9a4dbb033c4d13fe041a2296a82be561b9980feb202521fa47ef493bcdf1ace",
+      "expected/CHANGELOG.md": "85b5ed0967c745d5f2ce699efd2ce2258f4a5c12634dc5d82e66a7c4aa4b9fe1",
+      "expected/human-full.txt": "9f7153e327a66c722bc5915e3160f8f8a105f751c44e514aff2eb1b9d3de6a5e",
+      "expected/check.json": "d8ab0d0ceb97091c3e0baf9f62b76a200b7f6478e99e98525f68bd3d241fff02",
+      "input/Cargo.toml": "2aa8e5bd4419777d133d56cda121c8bd846f42543e3370c67bb2258b3fdf44c5",
+      "input/Cargo.lock": "844eb86507661e8aa55742a25b25cec42b98bacf2458325aca14314293706bab",
+      "input/src/lib.rs": "ccb62ccc0c07dcee38df909fa64811c3007e737ac7650289aaf23b3bc2707605",
+      "input/src/test_support.rs": "221c32fa427e30497cbb2485b03e5ccaceadbf17472d281ec48a9eb36d4533d9"
+    },
+    "runs": [
+      {
+        "label": "golden.base-missing",
+        "argv": [
+          "/workspace/scratch/snapshot-audit/repair-evidence/bin/ripr-base-0b8dad52",
+          "check",
+          "--root",
+          "/workspace/scratch/snapshot-audit/source/fixtures/owner_return_pin_fallible_literal/input",
+          "--diff",
+          "/workspace/scratch/snapshot-audit/source/fixtures/owner_return_pin_fallible_literal/diff.patch",
+          "--mode",
+          "fast",
+          "--json"
+        ],
+        "exit": 0,
+        "seconds": 0.11471964300017135,
+        "binary_sha256": "841173d2f6a56a201fa575baece47a29c72a3a980239a7d6f2e92d28c1156f07",
+        "classification": "weakly_exposed",
+        "discriminate": {
+          "state": "weak",
+          "confidence": "medium",
+          "summary": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+        },
+        "probe": {
+          "id": "probe:src_lib.rs:return_value:b4958fd8",
+          "family": "return_value",
+          "delta": "value",
+          "file": "./src/lib.rs",
+          "line": 1,
+          "expression": "7"
+        }
+      },
+      {
+        "label": "golden.head-missing",
+        "argv": [
+          "/workspace/scratch/snapshot-audit/repair-evidence/bin/ripr-014238d1",
+          "check",
+          "--root",
+          "/workspace/scratch/snapshot-audit/source/fixtures/owner_return_pin_fallible_literal/input",
+          "--diff",
+          "/workspace/scratch/snapshot-audit/source/fixtures/owner_return_pin_fallible_literal/diff.patch",
+          "--mode",
+          "fast",
+          "--json"
+        ],
+        "exit": 0,
+        "seconds": 0.06455832600022404,
+        "binary_sha256": "22ef862f765cfe9588a96d1979dc968e702f2a62c1e758784e4934806862b6f7",
+        "classification": "weakly_exposed",
+        "discriminate": {
+          "state": "weak",
+          "confidence": "medium",
+          "summary": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+        },
+        "probe": {
+          "id": "probe:src_lib.rs:return_value:b4958fd8",
+          "family": "return_value",
+          "delta": "value",
+          "file": "./src/lib.rs",
+          "line": 1,
+          "expression": "7"
+        }
+      },
+      {
+        "label": "golden.base-prepared",
+        "argv": [
+          "/workspace/scratch/snapshot-audit/repair-evidence/bin/ripr-base-0b8dad52",
+          "check",
+          "--root",
+          "/workspace/scratch/snapshot-audit/source/fixtures/owner_return_pin_fallible_literal/input",
+          "--diff",
+          "/workspace/scratch/snapshot-audit/source/fixtures/owner_return_pin_fallible_literal/diff.patch",
+          "--mode",
+          "fast",
+          "--json"
+        ],
+        "exit": 0,
+        "seconds": 0.06447995899998205,
+        "binary_sha256": "841173d2f6a56a201fa575baece47a29c72a3a980239a7d6f2e92d28c1156f07",
+        "classification": "exposed",
+        "discriminate": {
+          "state": "yes",
+          "confidence": "medium",
+          "summary": "Strong oracle found: exact value or pattern assertion"
+        },
+        "probe": {
+          "id": "probe:src_lib.rs:return_value:b4958fd8",
+          "family": "return_value",
+          "delta": "value",
+          "file": "./src/lib.rs",
+          "line": 1,
+          "expression": "7"
+        }
+      },
+      {
+        "label": "golden.head-prepared",
+        "argv": [
+          "/workspace/scratch/snapshot-audit/repair-evidence/bin/ripr-014238d1",
+          "check",
+          "--root",
+          "/workspace/scratch/snapshot-audit/source/fixtures/owner_return_pin_fallible_literal/input",
+          "--diff",
+          "/workspace/scratch/snapshot-audit/source/fixtures/owner_return_pin_fallible_literal/diff.patch",
+          "--mode",
+          "fast",
+          "--json"
+        ],
+        "exit": 0,
+        "seconds": 0.06453707699984079,
+        "binary_sha256": "22ef862f765cfe9588a96d1979dc968e702f2a62c1e758784e4934806862b6f7",
+        "classification": "exposed",
+        "discriminate": {
+          "state": "yes",
+          "confidence": "medium",
+          "summary": "Strong oracle found: exact value or pattern assertion"
+        },
+        "probe": {
+          "id": "probe:src_lib.rs:return_value:b4958fd8",
+          "family": "return_value",
+          "delta": "value",
+          "file": "./src/lib.rs",
+          "line": 1,
+          "expression": "7"
+        }
+      }
+    ],
+    "prepare_argv": [
+      "cargo",
+      "fetch",
+      "--locked",
+      "--manifest-path",
+      "/workspace/scratch/snapshot-audit/source/fixtures/owner_return_pin_fallible_literal/input/Cargo.toml"
+    ],
+    "prepare_exit": 0,
+    "locked_anyhow_checksum": "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61",
+    "fixture_bytes_unchanged": true,
+    "classification": "Fixture dependency availability, not candidate semantic drift; same frozen binaries produce weak before preparation and exposed after preparation."
+  },
+  "final_cli": {
+    "source_head": "014238d1256fa283fece5679d520e511bcd460d0",
+    "version": "ripr 0.11.0 (014238d1256fa283fece5679d520e511bcd460d0)",
+    "cargo_build_native_exit": 0,
+    "cargo_artifact": {
+      "reason": "compiler-artifact",
+      "package_id": "path+file:///workspace/scratch/snapshot-audit/source/crates/ripr#0.11.0",
+      "manifest_path": "/workspace/scratch/snapshot-audit/source/crates/ripr/Cargo.toml",
+      "target": {
+        "kind": [
+          "bin"
+        ],
+        "crate_types": [
+          "bin"
+        ],
+        "name": "ripr",
+        "src_path": "/workspace/scratch/snapshot-audit/source/crates/ripr/src/main.rs",
+        "edition": "2024",
+        "doc": true,
+        "doctest": false,
+        "test": true
+      },
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": 0,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": false
+      },
+      "features": [
+        "default",
+        "lang-python",
+        "lang-rust",
+        "lang-typescript"
+      ],
+      "filenames": [
+        "/workspace/scratch/snapshot-audit/target/debug/ripr"
+      ],
+      "executable": "/workspace/scratch/snapshot-audit/target/debug/ripr",
+      "fresh": true
+    },
+    "consumed_path": "/workspace/scratch/snapshot-audit/target/debug/ripr",
+    "frozen_path": "/workspace/scratch/snapshot-audit/repair-evidence/bin/ripr-014238d1",
+    "sha256": "22ef862f765cfe9588a96d1979dc968e702f2a62c1e758784e4934806862b6f7",
+    "frozen_sha256": "22ef862f765cfe9588a96d1979dc968e702f2a62c1e758784e4934806862b6f7",
+    "same_reviewed_frozen_binary": true,
+    "source_tree_clean": true,
+    "claim_boundary": "Exact CLI build/execution identity; no package/install/platform equivalence."
+  },
+  "remote_merge_at_capture": {
+    "sha": "4990b322c7fef18ea998f759b3164809c8e57f20",
+    "tree": "6e2c43e6cbdcd4c1c1213c452b840a5f6d698046",
+    "parents": [
+      "c7777e3d81368e2f641bfc693cea67acf86545d7",
+      "014238d1256fa283fece5679d520e511bcd460d0"
+    ],
+    "merged_preparation_pr": 8174,
+    "merged_preparation_commit": "19ffa77e504222079265597b6ac2f8c9cb1501fd",
+    "readiness_hook_verified": true,
+    "claim_boundary": "Source composition readback only; actual hosted checkout/integration execution not established by this ref."
+  },
+  "transport_recovery": {
+    "reported_callback": "Parent reported disconnect at08:12 UTC; no local native-call failure was observed during this callback.",
+    "saved_head": "014238d1256fa283fece5679d520e511bcd460d0",
+    "original_validation_session": 65842,
+    "replacement_clippy_runs_started": 0,
+    "original_cargo_clippy_exit": 0,
+    "check_fast_exit": 0,
+    "native_terminal_diagnostic": "- program=\"cargo\"; argv=[\"clippy\", \"--workspace\", \"--all-targets\", \"--\", \"-D\", \"warnings\"]; outcome=pass; status=exit status: 0; exit_code=0; elapsed_ms=387378; elapsed_scope=inherited_status_call_including_launch; cargo_progress=unavailable",
+    "continuation": "Original serial driver advanced to goldens. Native execution available; source proof and transport availability remain distinct.",
+    "resource_exit_proof": {
+      "oom": 0,
+      "oom_kill": 0,
+      "oom_group_kill": 0
+    }
+  },
+  "resources": {
+    "cargo_jobs": 1,
+    "test_threads": 1,
+    "rayon_threads": 1,
+    "task_storage_growth_budget_bytes": 10737418240,
+    "unchanged_disk_reserve_bytes": 16106127360,
+    "allocated_task_bytes": 6239309824,
+    "free_bytes": 25784279040,
+    "base_investigation_worktree": "released after verified clean status; native remove0; immutable base/source and frozen executable retained",
+    "candidate_and_warm_target": "retained for open PR8251 exact-head review and possible CI repair",
+    "no_local_build_or_watcher_remaining": true
+  },
+  "unclaimed": [
+    "full workspace test suite",
+    "native Windows or other platform qualification",
+    "package publication or installation",
+    "source/build/install equivalence",
+    "complete #8120/#8121 acceptance",
+    "hosted required result or merge"
+  ]
+}
