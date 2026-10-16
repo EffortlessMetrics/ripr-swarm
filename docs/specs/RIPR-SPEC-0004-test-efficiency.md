@@ -121,6 +121,9 @@ Current and planned tests:
 - planned unit tests for duplicate-discriminator grouping
 - planned fixture coverage for smoke-only, broad-error, duplicate-boundary, and
   opaque-helper cases
+- `crates/ripr/src/output/badge/tests.rs::badge_plus_accepts_empty_not_run_report_with_optional_explanation`
+- `crates/ripr/src/output/badge/tests.rs::badge_plus_optional_explanation_preserves_nonempty_ledger`
+- `xtask/src/tests.rs::report_index_preserves_test_efficiency_not_run_with_explanation`
 
 ## Implementation Mapping
 

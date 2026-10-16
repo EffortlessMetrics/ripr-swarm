@@ -382,7 +382,10 @@ tests = [
   "xtask/src/tests.rs::test_efficiency_nonempty_selection_keeps_pass_and_warn",
   "xtask/src/main.rs::test_efficiency_ledger_records_owner_oracle_values_and_limitations",
   "xtask/src/main.rs::test_efficiency_reports_are_advisory",
-  "xtask/src/main.rs::test_efficiency_signals_likely_vacuous_and_possibly_circular_tests"
+  "xtask/src/main.rs::test_efficiency_signals_likely_vacuous_and_possibly_circular_tests",
+  "crates/ripr/src/output/badge/tests.rs::badge_plus_accepts_empty_not_run_report_with_optional_explanation",
+  "crates/ripr/src/output/badge/tests.rs::badge_plus_optional_explanation_preserves_nonempty_ledger",
+  "xtask/src/tests.rs::report_index_preserves_test_efficiency_not_run_with_explanation",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
