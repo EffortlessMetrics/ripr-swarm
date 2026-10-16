@@ -5,14 +5,14 @@ config: <cwd>/fixtures/python_rebound_constant_boundary_limit/input/ripr.toml
 
 Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
 
-Changed file(s) by language: python: 1.
+Changed file(s) by language: python = 1
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
 
 Start here:
   State: preview language, advisory only (preview_limited)
-  Safe next action: this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`.
+  Safe next action: this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
   File: src/pricing.py:10
   Language: python
   Language status: preview
@@ -28,7 +28,7 @@ Start here:
   Verify command: python -m pytest tests/test_pricing.py::test_discount_far_above_threshold (high)
   Evidence: reach yes · infection weak · propagation weak · observation yes · discriminator weak
     - reach yes: 2 related Python test(s) found for owner `discounted_total`
-    - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.
+    - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:

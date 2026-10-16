@@ -174,7 +174,12 @@ fn literal_json_context_preserves_complete_refusals() -> Result<(), &'static str
             trusted.push("json");
         }
         assert_eq!(
-            has_escape(&body, &trusted, &BTreeMap::new()),
+            has_escape(
+                &body,
+                &trusted,
+                &BTreeMap::new(),
+                &literal_json_uses(&parse.tree()),
+            ),
             expected,
             "{imports} {code}"
         );
@@ -197,7 +202,12 @@ fn literal_json_authority_follows_each_lexical_call() -> Result<(), &'static str
             let expected = (name == "outside")
                 .then(|| AssertionContextRefusal::MacroOperandExit("assert_eq".into()));
             assert_eq!(
-                has_escape(&function_body(&parse, name)?, &trusted, &BTreeMap::new()),
+                has_escape(
+                    &function_body(&parse, name)?,
+                    &trusted,
+                    &BTreeMap::new(),
+                    &literal_json_uses(&parse.tree()),
+                ),
                 expected,
                 "{name}",
             );

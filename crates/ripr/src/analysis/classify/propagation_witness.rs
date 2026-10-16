@@ -128,9 +128,27 @@ impl PathCompleteness {
 /// exact owner, has a family-compatible kind, and shares a semantic token with
 /// the changed expression.  In particular, a compatible oracle or a sibling
 /// sink is not enough to manufacture a witness.
+///
+/// Test callers read it with no declared error variant
+/// ([`current_path_witness_with`]).
+#[cfg(test)]
 pub(in crate::analysis) fn current_path_witness(
     probe: &Probe,
     flow_sinks: &[FlowSinkFact],
+) -> Option<PropagationWitnessV1> {
+    current_path_witness_with(probe, flow_sinks, &|_| false)
+}
+
+/// [`current_path_witness`] with `declared_error_variant`: for an error
+/// variant path (`ConfigError::MissingEquals`), whether its qualifier
+/// resolves, in the owner's file, to a declared workspace enum that declares
+/// that variant. Only such a construction completes the #7063 on-line error
+/// witness ([`constructs_its_error_on_its_line`]); an alias, a `type` alias,
+/// `Self::` or a module path keeps the candidate witness.
+pub(in crate::analysis) fn current_path_witness_with(
+    probe: &Probe,
+    flow_sinks: &[FlowSinkFact],
+    declared_error_variant: &dyn Fn(&str) -> bool,
 ) -> Option<PropagationWitnessV1> {
     let owner = probe.owner.clone()?;
     // #6695: a statement-level `.ok_or(Type::Variant)?` returns exactly
@@ -167,13 +185,19 @@ pub(in crate::analysis) fn current_path_witness(
                     && source_sink_tokens_overlap(&probe.expression, &sink.text)
                     && !opaque_path_text(&probe.expression)
                     && !opaque_path_text(&sink.text)
-                    || unchanged_closure_tail(probe, sink)))
+                    || unchanged_closure_tail(probe, sink)
+                    // #7063: the payload-carrying source and its
+                    // variant-named sink share no path identity.
+                    || constructs_its_error_on_its_line(probe, sink, declared_error_variant)))
     })?;
 
     let edge_kind = edge_kind_for_sink(&sink.kind)?;
     let source_identity = normalize_semantic_text(&probe.expression);
     let sink_identity = normalize_semantic_text(&sink.text);
-    let edge_status = if is_question_mark_sink(sink) || returns_itself_on_its_line(probe, sink) {
+    let edge_status = if is_question_mark_sink(sink)
+        || returns_itself_on_its_line(probe, sink)
+        || constructs_its_error_on_its_line(probe, sink, declared_error_variant)
+    {
         EdgeStatus::Established
     } else {
         edge_status_for_kind(&edge_kind, &source_identity, &sink_identity)
@@ -737,6 +761,44 @@ fn returns_itself_on_its_line(probe: &Probe, sink: &FlowSinkFact) -> bool {
         && source.strip_prefix("return ").is_some_and(|payload| {
             let payload = payload.trim();
             call_free_constructor(payload) && payload == normalize_semantic_text(&sink.text)
+        })
+}
+
+/// #7063: `return Err(E::V { line: idx + 1 });` on the changed line is one
+/// expression whose error-variant sink the flow producer names by its variant
+/// alone (`Result::Err(E::V)`), so the payload-carrying source and the sink
+/// never share an identity. The edge is established exactly as for
+/// [`returns_itself_on_its_line`]: the sink is the error variant on the
+/// probe's own line, the source is one `Err(..)` constructor (optionally
+/// after `return`) whose exact variant is the sink's, and its payload is
+/// call-free (no call, macro, closure or `?` that may drop the changed
+/// value). Whether a test observes the payload is reveal's question: a
+/// variant-only oracle does not (`payload_pin_required` in reveal).
+fn constructs_its_error_on_its_line(
+    probe: &Probe,
+    sink: &FlowSinkFact,
+    declared_error_variant: &dyn Fn(&str) -> bool,
+) -> bool {
+    if sink.kind != FlowSinkKind::ErrorVariant || sink.line != probe.location.line {
+        return false;
+    }
+    let source = normalize_semantic_text(&probe.expression);
+    let source = source.trim().trim_end_matches(';').trim_end();
+    let payload = source.strip_prefix("return ").unwrap_or(source).trim();
+    let Some(inner) = payload
+        .strip_prefix("Err(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    else {
+        return false;
+    };
+    let call_free = !inner.trim().is_empty()
+        && !inner.contains(['(', ')', '!', '|', '?', ';', '"', '\''])
+        && inner.matches('{').count() <= 1
+        && inner.matches('{').count() == inner.matches('}').count();
+    call_free
+        && super::text::exact_error_variant(payload).is_some_and(|variant| {
+            normalize_semantic_text(&sink.text) == format!("Result::Err({variant})")
+                && declared_error_variant(&variant)
         })
 }
 
@@ -1341,6 +1403,92 @@ pub(in crate::analysis) fn assertion_expects_default_like(assertion: &str) -> bo
         .any(|operand| is_default_like(operand))
 }
 
+/// #8051: whether an assertion expects a collection to be empty
+/// (`assert_eq!(p.log, vec![])`, `assert!(p.log.is_empty())`,
+/// `assert_eq!(p.log.len(), 0)`). A test that passes with an empty
+/// collection after the owner call never ran the owner's push on that path,
+/// so deleting or changing the push leaves the test passing: the assertion
+/// cannot discriminate it.
+pub(in crate::analysis) fn assertion_expects_empty_collection(assertion: &str) -> bool {
+    let text = assertion.trim().trim_end_matches(';').trim_end();
+    if let Some(at) = text.find("assert_eq!") {
+        let operands = super::reveal::macro_arguments(&text[at + "assert_eq!".len()..]);
+        let empty = |operand: &str| {
+            is_empty_collection_literal(operand.trim().trim_start_matches('&').trim())
+        };
+        let zero_len =
+            |pair: [&str; 2]| pair[0].trim().ends_with(".len()") && pair[1].trim() == "0";
+        return match operands.as_slice() {
+            [left, right, ..] => {
+                empty(left) || empty(right) || zero_len([left, right]) || zero_len([right, left])
+            }
+            _ => false,
+        };
+    }
+    let Some(at) = text.find("assert!") else {
+        return false;
+    };
+    super::reveal::macro_arguments(&text[at + "assert!".len()..])
+        .first()
+        .is_some_and(|condition| {
+            let condition = condition.trim();
+            !condition.starts_with('!')
+                && condition
+                    .strip_suffix(".is_empty()")
+                    .is_some_and(|receiver| !receiver.contains(['&', '|', '=', '<', '>']))
+        })
+}
+
+/// An empty `Vec` or slice literal: `vec![]`, `Vec::new()`,
+/// `Vec::<T>::new()`, `[]`.
+fn is_empty_collection_literal(operand: &str) -> bool {
+    matches!(operand, "vec![]" | "Vec::new()" | "[]")
+        || (operand.starts_with("Vec::<") && operand.ends_with(">::new()"))
+}
+
+/// #8051: whether the owner whose source text `owner_body` starts at file
+/// line `owner_start_line` may leave before the changed `expression` on file
+/// line `line` (see [`may_exit_early`]). The scan runs to the expression's
+/// first occurrence on that line, so a guard sharing the line
+/// (`if self.locked { return; } self.log.push(1);`) still counts; when the
+/// expression does not appear on the line, only the lines before it do.
+pub(in crate::analysis) fn owner_may_exit_before_line(
+    owner_body: &str,
+    owner_start_line: usize,
+    line: usize,
+    expression: &str,
+) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(owner_body);
+    let Some(lines_before) = line.checked_sub(owner_start_line) else {
+        return false;
+    };
+    let line_at: usize = masked
+        .split_inclusive('\n')
+        .take(lines_before)
+        .map(str::len)
+        .sum();
+    let line_end = masked[line_at..]
+        .find('\n')
+        .map_or(masked.len(), |nl| line_at + nl);
+    // #8141 review: a guard on the changed line but before the changed
+    // expression still lets the owner skip it. The mask blanks string and
+    // comment bytes in place (one space per byte), so the expression is
+    // located in the owner body itself and its offset reads the same in
+    // `masked`; a candidate whose first byte the mask blanked sits inside
+    // a string or comment and is skipped, and no executable occurrence on
+    // the line keeps the line-start scan.
+    let owner_line = &owner_body[line_at..line_end];
+    let masked_line = &masked[line_at..line_end];
+    let at = owner_line
+        .match_indices(expression)
+        .find(|(at, _)| owner_line.as_bytes()[*at] == masked_line.as_bytes()[*at])
+        .map_or(line_at, |(at, _)| line_at + at);
+    masked
+        .find('{')
+        .filter(|open| *open < at)
+        .is_some_and(|open| may_exit_early(&masked[open..at]))
+}
+
 fn is_default_like(operand: &str) -> bool {
     let operand = operand.trim().trim_start_matches('&').trim();
     // `0 as u32` reads as its value.
@@ -1350,10 +1498,9 @@ fn is_default_like(operand: &str) -> bool {
     if operand.ends_with("::MIN") || operand.ends_with("::ZERO") {
         return true;
     }
-    if matches!(
-        operand,
-        "false" | "None" | "\"\"" | "String::new()" | "Vec::new()" | "vec![]" | "[]"
-    ) || operand.ends_with("default()")
+    if matches!(operand, "false" | "None" | "\"\"" | "String::new()")
+        || is_empty_collection_literal(operand)
+        || operand.ends_with("default()")
     {
         return true;
     }
@@ -2159,6 +2306,73 @@ mod tests {
             "Result::Err(E::Bad)"
         );
         Ok(())
+    }
+
+    /// #7063: `return Err(E::V { line: n });` on the changed line reaches its
+    /// own error-variant sink, which the flow producer names by the variant
+    /// alone. A sink on another line, a sibling variant, or a payload that
+    /// calls, closes over or `?`s something stays a candidate.
+    #[test]
+    fn a_payload_carrying_err_on_its_own_line_completes_the_error_witness() {
+        let complete_if = |expression: &str, sink_text: &str, sink_line: usize, declared: bool| {
+            current_path_witness_with(
+                &probe(ProbeFamily::ErrorPath, expression),
+                &[sink(FlowSinkKind::ErrorVariant, sink_text, sink_line)],
+                &|_| declared,
+            )
+            .is_some_and(|witness| {
+                witness.completeness == PathCompleteness::Complete
+                    && complete_direct_witness(
+                        &probe(ProbeFamily::ErrorPath, expression),
+                        Some(&witness),
+                    )
+            })
+        };
+        let complete = |expression: &str, sink_text: &str, sink_line: usize| {
+            complete_if(expression, sink_text, sink_line, true)
+        };
+        // A qualifier that names no declared workspace enum (an alias,
+        // `Self::`, a module path) keeps the candidate witness.
+        assert!(!complete_if(
+            "return Err(CE::MissingEquals { line: idx + 1 });",
+            "Result::Err(CE::MissingEquals)",
+            10,
+            false
+        ));
+        for expression in [
+            "return Err(ConfigError::MissingEquals { line: idx + 1 });",
+            "return Err(ConfigError::MissingEquals { line: line_no });",
+            "Err(ConfigError::MissingEquals { line: idx + 1 })",
+        ] {
+            assert!(
+                complete(expression, "Result::Err(ConfigError::MissingEquals)", 10),
+                "{expression}"
+            );
+        }
+        let changed = "return Err(ConfigError::MissingEquals { line: idx + 1 });";
+        // The same variant returned on another line is a different exit.
+        assert!(!complete(
+            changed,
+            "Result::Err(ConfigError::MissingEquals)",
+            11
+        ));
+        // A sibling variant's sink is not this construction's.
+        assert!(!complete(changed, "Result::Err(ConfigError::EmptyKey)", 10));
+        for expression in [
+            "return Err(ConfigError::MissingEquals { line: next(idx) });",
+            "return Err(ConfigError::MissingEquals { line: m!(idx) });",
+            "return Err(ConfigError::MissingEquals { line: f()? });",
+            "return Err(ConfigError::MissingEquals { line: (|| idx)() });",
+            "return Err(ConfigError::Bad { inner: Inner { line: idx } });",
+            // A tuple payload's parentheses read as a call: not established.
+            "return Err(ConfigError::MissingEquals(idx + 1));",
+            "return Err(error);",
+        ] {
+            assert!(
+                !complete(expression, "Result::Err(ConfigError::MissingEquals)", 10),
+                "{expression}"
+            );
+        }
     }
 
     /// The owner-checked `ok_or?` bypass keys on the probe line having no
@@ -3190,6 +3404,117 @@ mod tests {
             assigned_field_path(body, 1, 2, "self.count += 1", &none).as_deref(),
             Some("count")
         );
+    }
+
+    #[test]
+    fn empty_collection_expectations_cannot_confirm_a_push() {
+        for assertion in [
+            "assert_eq!(p.log, vec![]);",
+            "assert_eq!(vec![], p.log)",
+            "assert_eq!(p.log, Vec::new());",
+            "assert_eq!(p.log, Vec::<Entry>::new());",
+            "assert_eq!(&p.log, &[]);",
+            "assert_eq!(p.log.len(), 0);",
+            "assert_eq!(0, p.log.len());",
+            "assert!(p.log.is_empty());",
+            "assert!(p.history().is_empty())",
+        ] {
+            assert!(assertion_expects_empty_collection(assertion), "{assertion}");
+        }
+        for assertion in [
+            "assert_eq!(p.log, vec![Entry::Beat { n: 1 }]);",
+            "assert_eq!(p.log.len(), 1);",
+            "assert_eq!(p.count, 0);",
+            "assert!(!p.log.is_empty());",
+            "assert!(p.log.is_empty() || p.locked);",
+            "assert!(p.locked || p.log.is_empty());",
+            "assert_ne!(p.log, vec![]);",
+            "assert!(p.log == vec![Entry::Beat { n: 1 }]);",
+        ] {
+            assert!(
+                !assertion_expects_empty_collection(assertion),
+                "{assertion}"
+            );
+        }
+    }
+
+    #[test]
+    fn owner_may_exit_before_line_reads_everything_before_the_changed_expression() {
+        let owner = "fn beat(&mut self) {\n    if self.locked {\n        return;\n    }\n    self.log.push(1);\n}";
+        assert!(owner_may_exit_before_line(
+            owner,
+            10,
+            14,
+            "self.log.push(1)"
+        ));
+        // The guard sits after line 11, so the first statement cannot skip.
+        assert!(!owner_may_exit_before_line(owner, 10, 11, "self.locked"));
+        let plain = "fn add(&mut self, x: u32) {\n    self.items.push(x);\n}";
+        assert!(!owner_may_exit_before_line(
+            plain,
+            10,
+            11,
+            "self.items.push(x)"
+        ));
+        let fallible = "fn ship(&mut self) -> Result<(), E> {\n    let n = self.next()?;\n    self.log.push(n);\n    Ok(())\n}";
+        assert!(owner_may_exit_before_line(
+            fallible,
+            10,
+            12,
+            "self.log.push(n)"
+        ));
+        // A line before the owner starts reads nothing.
+        assert!(!owner_may_exit_before_line(
+            plain,
+            10,
+            9,
+            "self.items.push(x)"
+        ));
+        // #8141 review: a guard sharing the changed line still lets the
+        // owner skip the push, so the prefix before the expression counts.
+        let inline = "fn beat(&mut self) { if self.locked { return; } self.log.push(1); }";
+        assert!(owner_may_exit_before_line(
+            inline,
+            10,
+            10,
+            "self.log.push(1)"
+        ));
+        // A guard after the push on the same line cannot skip it.
+        let guarded_after = "fn beat(&mut self) { self.log.push(1); if self.locked { return; } }";
+        assert!(!owner_may_exit_before_line(
+            guarded_after,
+            10,
+            10,
+            "self.log.push(1)"
+        ));
+        // A string literal is blanked in the masked body, so the expression
+        // is located in the owner body itself: a same-line guard before a
+        // quoted-argument push is still found.
+        let quoted_inline =
+            "fn tag(&mut self) { if self.locked { return; } self.log.push(\"x\"); }";
+        assert!(owner_may_exit_before_line(
+            quoted_inline,
+            10,
+            10,
+            "self.log.push(\"x\")"
+        ));
+        // A quoted argument without an earlier exit keeps the rule off.
+        let quoted = "fn tag(&mut self) {\n    self.log.push(\"x\");\n}";
+        assert!(!owner_may_exit_before_line(
+            quoted,
+            10,
+            11,
+            "self.log.push(\"x\")"
+        ));
+        // An earlier string containing the expression is skipped: only the
+        // executable occurrence after the guard positions the scan.
+        let decoy = "fn beat(&mut self) { let s = \"self.log.push(1)\"; if self.locked { return; } self.log.push(1); }";
+        assert!(owner_may_exit_before_line(
+            decoy,
+            10,
+            10,
+            "self.log.push(1)"
+        ));
     }
 
     #[test]

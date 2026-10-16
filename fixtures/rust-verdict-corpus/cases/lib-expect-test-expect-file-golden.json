@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "return_value_arithmetic",
   "test_shape": "expect_test_expect_file_golden",
-  "hard_case": "The expected text is in src/expect/summary.txt via `expect_file![..]`; ripr reads snapshot/medium and reports weakly_exposed.",
+  "hard_case": "The expected text is in src/expect/summary.txt via `expect_file![..]`; ripr must credit the verified golden comparison as an owner-return pin without reading the file, and must not credit a test that could write the golden itself.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

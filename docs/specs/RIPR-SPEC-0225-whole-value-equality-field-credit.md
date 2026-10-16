@@ -20,7 +20,7 @@ Linked plan:
 
 Linked issues:
 
-- None yet
+- #7858 (fields of a returned array element; decision 9)
 
 Linked PRs:
 
@@ -303,6 +303,114 @@ rejected alternative. Any can be reversed later without touching the rest.
    (lib-assert-matches-variant-field-pinned moves gap to credited; the
    `{ .. }`, `pos: _`, guarded and alternative controls stay unconfirmed).
 
+9. **Fields of a returned array element (2026-10-15, #7858).** When the
+   owner is a free function whose whole body is one array literal of struct
+   literals of the same type, none with a `..base` and no attribute anywhere
+   in the array (a `#[cfg]` element may be compiled out and shift every
+   later index), and the changed field `f` is built in exactly one element
+   `k`, a related test pins `f` of element `k` when all of these hold:
+
+   - the struct is declared exactly once in the owner's file, in the
+     owner's own inline module (a local item takes the name from every
+     import, so a macro-generated type or a decoy in another module cannot
+     stand in), with no attribute beyond derives, docs and lint levels, no
+     generic parameter and no attribute on an enclosing module, and no other
+     indexed file declares a type of that name;
+   - `f` is declared once, without attributes, as a primitive integer
+     (`u8`..`u128`, `usize`, `i8`..`i128`, `isize`) that no workspace type,
+     alias, rename or foreign import rebinds in the owner's file, and no
+     workspace macro may declare: every file parses, every item-level macro
+     call names a macro the workspace defines (or `thread_local!` or
+     `compile_error!`), and no macro body or argument that holds `struct`,
+     `enum`, `union` or `type` also holds the name or a `$` metavariable.
+     So `==` against an integer literal is the built-in comparison and not
+     a workspace `PartialEq`. Both forms also need the closed workspace
+     the membership bullet below defines: a workspace macro (`use .. as $n`),
+     an outside crate's macro or a module in a directory the index skips
+     (`src/fixtures/`) may otherwise declare a local `u32`. An outside
+     procedural macro's output is not read; a derive or attribute macro that
+     declares a type named after a primitive is outside this decision, as is
+     an owner or element type that ends the process before the assertion
+     (`std::process::exit` in the owner or in a `Drop`), which no owner pin
+     models yet (#8084);
+
+   - the owner's name is the name of no other indexed function, because the
+     owner call is matched by name and a nested module's `super::rows` or a
+     test file's local `fn rows` could take it;
+   - the test's only attribute is exactly `#[test]` (an empty attribute
+     list, as the lexical fallback and harness-registered tests carry,
+     gives no credit), and no token of its body, macro arguments included,
+     is `return`, `break`, `continue` or `?`, and it declares no item;
+   - the pinning assertion is the test's first statement (or its tail),
+     preceded at most by a plain immutable `let` of the owner call that the
+     whole test body binds nowhere else, so nothing can rebind the receiver,
+     exit or settle the test before it runs;
+   - the receiver is that binding or a direct call of the owner by name (or
+     `super::`, `crate::`), the call's arguments are literals or paths, and
+     the shared free-call binding authority that targeted owner selection
+     uses (`targeted_free_call_reaches_owner`) places the call on the owner:
+     no `const`, `static`, import or item in the test's scope takes the
+     name. The receiver's own `let rows = rows(..)` is read with its binding
+     renamed, since the call runs before the binding takes the name;
+   - the macro is a bare `assert_eq!` or `assert!` (a qualified path may be
+     any crate's macro), and the shared assertion-context validator that
+     owner pins use admits the assertion on that line (a local or imported
+     rebinding of the macro, an unresolved module composition or an escape
+     the oracle scan models refuses it);
+   - it is `assert_eq!(recv[k].f, literal)`, in either order, with `k` an
+     integer literal; or `assert!(recv.iter().any(|r| r.f == literal))`
+     (`into_iter`, literal first, no message), where every other element
+     builds `f` from a decimal integer literal different from `literal`,
+     every literal in range for `f`'s type (an out-of-range literal under
+     `overflowing_literals` wraps onto another value), and the workspace is
+     closed for iteration: every package holding an indexed file depends
+     only on others of them, through plain unrenamed `path` dependencies
+     (directly or through `[workspace.dependencies]`), none is a proc-macro
+     library, and no manifest `[patch]`/`[replace]` or `.cargo` configuration
+     sits between them and the root; the workspace defines no macro
+     (`macro_rules!` or `macro`); every `.rs` file under each such package
+     (its own `target/` aside) is indexed, with no symbolic link and no
+     target `path` in its manifest, since the index skips directories such as
+     `fixtures/` that a nested or non-root module may still compile; every indexed file parses, nothing sits outside
+     the index (no non-UTF-8 source, include limitation, `include!` macro
+     however qualified, or attribute naming `path`, `cfg_attr` included),
+     every `use`, macro path and attribute path is rooted in `std`, `core`,
+     `alloc`, `crate`, `self`, `super` or a workspace package, there is no
+     `extern crate`, no macro body or argument holding `use`, `extern` or
+     `include`, no `fn $name` in a macro, and
+     every `fn iter`, `fn into_iter` or `fn any` (comments skipped) is an
+     indexed free, local or inherent function. An outside crate's trait or a
+     generated method could otherwise make the membership iterate something
+     other than the returned elements. Most real workspaces import outside
+     crates, so both forms credit only small closed ones.
+
+   The membership needs the last condition because it holds through any
+   element: with `[Row { total: 33 }, Row { total: a + b }]`,
+   `rows(30, 3).iter().any(|r| r.total == 33)` passes whatever the second
+   element holds, so it observes nothing. A computed sibling, an index of
+   another element, `all`, `!=`, an ordering, a negated membership, a typed
+   or pattern closure parameter, a `let mut` or shadowed receiver, a
+   `#[should_panic]` or `#[ignore]` test, an assertion message, a statement
+   before the assertion (a macro that may rebind the receiver,
+   `std::process::exit`), a locally defined `assert_eq!`, a method owner, a
+   `const rows: fn(..)` in the test module, a trait `iter` on the array
+   (written plainly, behind a comment, or by a macro), an outside crate's
+   trait, a `#[path]` module (also behind `cfg_attr`), a macro body that
+   imports, a qualified `std::include!`, a wrapping sibling literal, a
+   `#[cfg]` element,
+   a field type with its own `PartialEq`, a macro that declares a type
+   named after the field's primitive or is handed `fn` to write `iter`, an
+   item-level macro the workspace does not define, any outside or renamed
+   dependency (`alloc = { package = .. }`) and a decoy declaration of the
+   struct all keep the `FieldValue` missing discriminator. Owner calls get the same
+   same-name import and cross-package defeats as reveal's owner pins. A
+   `vec![..]` owner, a `let r = &rows[1]` or `let [_, r] = rows` read and a
+   collected scalar owner are not covered. Rejected: crediting any
+   `.any(|r| r.f == literal)` on the owner's result, which credits the
+   decoy. Verdict-corpus case `spec0231-oracle-any-field-eq-literal`
+   (RIPR-SPEC-0231 example 28's membership on a returned array) moves from
+   gap to credited.
+
 ## Required Evidence
 
 - The reproduction above reads `exposed`.
@@ -396,6 +504,14 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
   `fixtures/evidence-promotion-honesty-corpus/corpus.json`, the
   should-stay-`weakly_exposed` control for the `String::from` shadow
   refusal (#7066 review).
+- Decision 9: `crates/ripr/tests/returned_element_field_pin.rs` (the
+  membership and index pins read `exposed`; the `total: 33` decoy, a
+  computed sibling, another element's index, a shadowed receiver, a faked
+  or skipped assertion, a nested module's same-name `rows`, a callable
+  `const`, a trait `iter`, a `#[cfg]` element, a custom `PartialEq`, the
+  open-world memberships and a decoy struct declaration keep the gap)
+  and the unit tests in
+  `crates/ripr/src/analysis/classify/element_field_pin.rs`.
 - Planned: oracle classifier unit tests for braces outside struct-literal
   operands.
 
@@ -416,6 +532,11 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
   `an_unwrapped_ok_tail_with_early_err_returns_pins_its_field`. Decision 7
   adds `expected_item_literal` in `expected_binding.rs`, covered by
   `an_expected_helper_or_default_base_reads_as_its_literal`.
+
+- `crates/ripr/src/analysis/classify/element_field_pin.rs`: decision 9
+  (`observes_returned_element_field`), consumed in
+  `crates/ripr/src/analysis/classifier/evidence.rs` where it clears the
+  `FieldValue` missing discriminator next to reveal's owner-pin credit.
 
 ## Metrics
 

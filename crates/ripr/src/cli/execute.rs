@@ -266,12 +266,7 @@ mod tests {
                 "unknown diff format \"xml\"; expected `human`, `text`, `md`, `markdown`, or `json`".to_string()
             ))
         );
-        assert_eq!(
-            execute(CliCommand::Cache(Vec::new())),
-            Err(CommandError::Failure(
-                "cache requires subcommand `status`, `export` or `clear`".to_string()
-            ))
-        );
+        assert_eq!(execute(CliCommand::Cache(Vec::new())), Ok(()));
         assert_eq!(execute(CliCommand::Feedback(Vec::new())), Ok(()));
         assert_eq!(
             execute(CliCommand::Feedback(args(&["record"]))),

@@ -518,9 +518,12 @@ pub(crate) fn build_gap_decision_ledger_report(
         let input_items = input_findings_total_from_source_value(source_value_snapshot.as_ref());
         if input_items > 0 {
             warnings.push(format!(
-                "check output contained {input_items} findings, but the --check-output route \
+                // #7753: count-aware noun — "1 finding", never "1 findings".
+                "check output contained {findings}, but the --check-output route \
                  projects Python/TypeScript/Perl findings only; no gap records were derived \
-                 from them"
+                 from them",
+                findings =
+                    crate::output::count_noun::count_noun(input_items, "finding", "findings"),
             ));
         }
     }
@@ -1320,7 +1323,7 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
         string_at(card, &["suggested_location", "test_file"]).map(ToString::to_string);
     let suggested_test_name =
         string_at(card, &["suggested_location", "test_name"]).map(ToString::to_string);
-    let related_test_line = first_related_test_line(finding);
+    let related_test_line = python_selected_related_test_line(finding, card);
     let verify_command = string_at(card, &["verify", "command"])
         .filter(|command| command_display_is_nonblank(command))
         .map(ToString::to_string);
@@ -2556,6 +2559,62 @@ fn typescript_route_kind<'a>(repair_kind: &'a str, behavior_kind: &str) -> &'a s
     }
 }
 
+// Card file/name is selected identity. A unique complete related-row match
+// supplies the line; same-file namesakes also leave `suggested_test_line` in
+// evidence. Truncated check-JSON inventories cannot prove uniqueness, so a
+// visible namesake is not enough without that selected evidence line.
+fn python_selected_related_test_line(finding: &Value, card: &Value) -> Option<u64> {
+    let file = string_at(card, &["suggested_location", "test_file"])?;
+    let name = string_at(card, &["suggested_location", "test_name"])?;
+    if file.trim().is_empty() || name.trim().is_empty() {
+        return None;
+    }
+    let evidence_line = python_evidence_selected_line(finding, file, name);
+    let row_line = python_unique_complete_related_line(finding, file, name);
+    match (evidence_line, row_line) {
+        (Some(left), Some(right)) if left == right => Some(left),
+        (Some(_), Some(_)) => None,
+        (Some(line), None) | (None, Some(line)) => Some(line),
+        (None, None) => None,
+    }
+}
+
+fn python_evidence_selected_line(finding: &Value, file: &str, name: &str) -> Option<u64> {
+    let evidence = finding.get("evidence")?.as_array()?;
+    let mut evidence_file = None;
+    let mut evidence_name = None;
+    let mut evidence_line = None;
+    for entry in evidence.iter().filter_map(Value::as_str) {
+        if let Some(value) = entry.strip_prefix("suggested_test_file: ") {
+            evidence_file = Some(value);
+        } else if let Some(value) = entry.strip_prefix("suggested_test_name: ") {
+            evidence_name = Some(value);
+        } else if let Some(value) = entry.strip_prefix("suggested_test_line: ") {
+            evidence_line = value.parse::<u64>().ok();
+        }
+    }
+    if evidence_file != Some(file) || evidence_name != Some(name) {
+        return None;
+    }
+    evidence_line.filter(|line| *line > 0)
+}
+
+fn python_unique_complete_related_line(finding: &Value, file: &str, name: &str) -> Option<u64> {
+    let rows = finding.get("related_tests")?.as_array()?;
+    let total = u64_at(finding, &["related_tests_total"]).unwrap_or(rows.len() as u64);
+    if usize::try_from(total).ok()? > rows.len() {
+        return None;
+    }
+    let mut matches = rows.iter().filter(|test| {
+        string_at(test, &["file"]) == Some(file) && string_at(test, &["name"]) == Some(name)
+    });
+    let selected = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    u64_at(selected, &["line"]).filter(|line| *line > 0)
+}
+
 fn first_related_test_line(finding: &Value) -> Option<u64> {
     finding
         .get("related_tests")
@@ -3287,6 +3346,9 @@ fn md_inline(value: &str) -> String {
     }
     escaped
 }
+
+#[cfg(all(test, feature = "lang-python"))]
+mod python_identity_tests;
 
 #[cfg(test)]
 mod tests {

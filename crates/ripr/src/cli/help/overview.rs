@@ -23,8 +23,10 @@ Usage:
   ripr <command> [options]
 
 Try this first:
-  ripr doctor                     Check this workspace can produce evidence.
   ripr check                      Analyze the current diff, name the top gap.
+
+Uses tracked edits, or committed history when clean. On a clean base branch,
+edit a tracked source file first; new files need git add -N PATH.
 
 The loop is: ripr names one gap -> you add one focused test -> ripr records
 whether the gap closed. `ripr.toml` is optional; the zero-config run is the
@@ -90,7 +92,7 @@ Setup:
   ripr cache clear [--dry-run] [--force]
 
 Analysis:
-  ripr pilot [--root PATH] [--out PATH] [--mode draft] [--max-seams 5] [--timeout-ms 30000]
+  ripr pilot [--root PATH] [--out PATH] [--mode draft] [--max-seams 5] [--timeout-ms 30000] [--format json]
   ripr check [--base REV] [--worktree] [--diff PATH] [--mode draft] [--format FORMAT]
   ripr diff [--root .] [--base REV] [--head HEAD] [--mode draft] [--json]
   ripr explain [--base REV] [--worktree|--diff PATH] <finding-id|file:line>

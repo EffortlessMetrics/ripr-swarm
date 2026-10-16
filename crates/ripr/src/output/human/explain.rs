@@ -12,7 +12,10 @@ use crate::domain::{
 use crate::output::path::display_path;
 use crate::output::related_test_miss::{checked_assertion_text, related_test_miss_reason};
 
-pub(crate) fn render_verdict_explanation(finding: &Finding) -> String {
+pub(crate) fn render_verdict_explanation(
+    finding: &Finding,
+    owner_signature: Option<&str>,
+) -> String {
     let mut out = String::from("\nWhy this verdict\n");
     let total = finding.related_tests_total();
     if finding.related_tests.is_empty() {
@@ -65,7 +68,7 @@ pub(crate) fn render_verdict_explanation(finding: &Finding) -> String {
             ));
         }
     }
-    let needs = verdict_changers(finding);
+    let needs = verdict_changers(finding, owner_signature);
     if !needs.is_empty() {
         out.push_str("  To change the verdict, a test needs to:\n");
         for need in needs {
@@ -146,7 +149,7 @@ fn group_rows_by_test(rows: &[RelatedTest]) -> Vec<Vec<&RelatedTest>> {
 /// `exposed` there is nothing to change, for the unknown classes ripr has not
 /// established what is missing, and a gap whose next step was withheld (an
 /// exact oracle already covers the direct sink) indicates no assertion repair.
-fn verdict_changers(finding: &Finding) -> Vec<String> {
+fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<String> {
     if !matches!(
         finding.class,
         ExposureClass::NoStaticPath
@@ -156,16 +159,22 @@ fn verdict_changers(finding: &Finding) -> Vec<String> {
     {
         return Vec::new();
     }
-    let owner = finding
-        .probe
-        .owner
-        .as_ref()
-        .and_then(|owner| owner.0.rsplit("::").next().map(str::to_string))
-        .filter(|name| !name.is_empty())
-        .map_or_else(
-            || "the changed code".to_string(),
-            |name| format!("`{name}`"),
-        );
+    // #7796: the recipe names the owner; when the observed call shape is
+    // available (the same producer `ripr agent stub` reads), the name carries
+    // its signature so the user is not sent to the source to learn how to
+    // call it. This is observed source data, not a synthesized assertion.
+    let owner = owner_signature
+        .map(|signature| format!("`{signature}`"))
+        .or_else(|| {
+            finding
+                .probe
+                .owner
+                .as_ref()
+                .and_then(|owner| owner.0.rsplit("::").next().map(str::to_string))
+                .filter(|name| !name.is_empty())
+                .map(|name| format!("`{name}`"))
+        })
+        .unwrap_or_else(|| "the changed code".to_string());
     let mut needs: Vec<String> = Vec::new();
     let mut push = |need: String| {
         if !needs.contains(&need) {
@@ -273,6 +282,27 @@ mod tests {
     }
 
     #[test]
+    fn verdict_change_recipe_carries_the_observed_call_shape_when_known() {
+        let mut finding = sample_perl_finding();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.recommended_next_step = Some("add a test that calls the owner".to_string());
+        finding.related_tests = Vec::new();
+
+        let with_shape = render_verdict_explanation(&finding, Some("greet(name: &str) -> String"));
+        assert!(
+            with_shape
+                .contains("  - call `greet(name: &str) -> String` and assert on its result\n"),
+            "{with_shape}"
+        );
+
+        let without_shape = render_verdict_explanation(&finding, None);
+        assert!(
+            without_shape.contains("  To change the verdict, a test needs to:\n"),
+            "{without_shape}"
+        );
+    }
+
+    #[test]
     fn a_test_is_judged_by_its_strongest_assertion_not_its_first_row() {
         let mut finding = sample_perl_finding();
         finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
@@ -292,7 +322,7 @@ mod tests {
                 RelatedTestMiss::MissingInput,
             ),
         ];
-        let text = render_verdict_explanation(&finding);
+        let text = render_verdict_explanation(&finding, None);
         assert!(
             text.contains(
                 "  - tests/parse.rs:7 parses_empty: misses: no test input reaches `len == 0`\n"
@@ -320,7 +350,7 @@ mod tests {
                 .to_string(),
             flow_sink: None,
         }];
-        let text = render_verdict_explanation(&finding);
+        let text = render_verdict_explanation(&finding, None);
         assert!(
             text.contains("use an input that selects arm `Kind::Beta =>`"),
             "{text}"
@@ -359,7 +389,7 @@ mod tests {
             OracleStrength::Strong,
             RelatedTestMiss::ObservationUnconfirmed,
         )];
-        let text = render_verdict_explanation(&finding);
+        let text = render_verdict_explanation(&finding, None);
         assert!(
             text.contains(
                 "  - tests/parse.rs:7 parses_empty: unconfirmed: ripr could not confirm that this assertion observes the changed behavior\n"

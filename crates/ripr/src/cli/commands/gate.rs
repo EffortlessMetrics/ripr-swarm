@@ -33,13 +33,16 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
         help::print_gate_help();
         return Ok(());
     }
-    // The sole subcommand is implied when the command runs bare, or when the
-    // first token is a flag rather than a subcommand name (#2013, #7740):
+    // The sole subcommand is implied when the first token is a flag rather
+    // than a subcommand name (#7740):
     // `ripr gate --pr-guidance ...` behaves like `ripr gate evaluate --pr-guidance ...`.
     let (subcommand, rest) = match args.split_first() {
         Some((first, _)) if first.starts_with('-') => ("evaluate", args),
         Some((subcommand, rest)) => (subcommand.as_str(), rest),
-        None => ("evaluate", &[][..]),
+        None => {
+            help::print_gate_help();
+            return Ok(());
+        }
     };
     if subcommand != "evaluate" {
         return Err(CommandError::from(format!(
@@ -462,24 +465,9 @@ mod tests {
 
     #[test]
     fn gate_rejects_bad_surface_and_unknown_args() {
-        // Bare `ripr gate` is the `evaluate` alias (#2013): it dispatches
-        // instead of erroring on a missing subcommand. The full path writes
-        // the default report files, so they are cleaned on both sides.
-        for residue in [
-            "target/ripr/reports/gate-decision.json",
-            "target/ripr/reports/gate-decision.md",
-        ] {
-            let _ = std::fs::remove_file(residue);
-        }
-        let bare_result = gate(&args(&[]));
-        for residue in [
-            "target/ripr/reports/gate-decision.json",
-            "target/ripr/reports/gate-decision.md",
-        ] {
-            let _ = std::fs::remove_file(residue);
-        }
+        assert_eq!(gate(&args(&[])), Ok(()));
         assert_eq!(
-            bare_result,
+            gate(&args(&["evaluate"])),
             Err(CommandError::Failure(
                 "gate evaluate requires at least one of --pr-guidance <path> or --gap-ledger <path>; see `ripr gate --help` for all options"
                     .to_string()

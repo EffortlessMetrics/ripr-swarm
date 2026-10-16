@@ -4,8 +4,8 @@ root: fixtures/error_path_diagnostic_typed_argument/input
 
 Summary: 2 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
 
 WARNING ./src/lib.rs:5
   id: probe:src_lib.rs:error_path:fedbf836
@@ -40,7 +40,7 @@ Weakness
   - No exact error variant discriminator was detected
 
 Next step
-  The related test `reads_successfully` already asserts an exact value; the gap is not the assertion shape. Add a test input that executes the changed error arm and assert the exact variant or payload it produces.
+  The related test `reads_successfully` already asserts an exact value; the gap is not the assertion shape. Add a test input that executes the changed error arm and assert the exact variant or payload it produces
 Drill in:
   ripr explain --root <cwd>/fixtures/error_path_diagnostic_typed_argument/input --diff <cwd>/fixtures/error_path_diagnostic_typed_argument/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
   ripr context --root <cwd>/fixtures/error_path_diagnostic_typed_argument/input --diff <cwd>/fixtures/error_path_diagnostic_typed_argument/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
@@ -68,7 +68,7 @@ Evidence
   - propagation unknown: No propagation model is available for this changed syntax
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator unknown: Assertions exist, but oracle strength is unknown
-  - local flow reaches unknown sink: unknown sink (line 5)
+  - local flow reaches unknown sink (line 5)
   - related test src/lib.rs:14 reads_successfully uses unknown exact value oracle: assert_eq!(rdr.len(), 10, "{:?}", Err::<(), _>(std::io::ErrorKind::Other));
   - source assertion argument value 10 at line 17
   - source assertion argument value "{:?}" at line 18
@@ -83,7 +83,7 @@ Stop reasons:
   - static_probe_unknown — ripr could not model this change well enough to classify it
 
 Next step
-  Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.
+  Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 Drill in:
   ripr explain --root <cwd>/fixtures/error_path_diagnostic_typed_argument/input --diff <cwd>/fixtures/error_path_diagnostic_typed_argument/diff.patch --mode fast probe:src_lib.rs:static_unknown:afc04379
   ripr context --root <cwd>/fixtures/error_path_diagnostic_typed_argument/input --diff <cwd>/fixtures/error_path_diagnostic_typed_argument/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:afc04379

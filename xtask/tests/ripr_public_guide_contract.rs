@@ -280,19 +280,158 @@ fn hierarchy_feedback_record_row_matches_the_c2_example() -> Result<(), String> 
     Ok(())
 }
 
+/// Live default-help dispatch, not the HELP constant: `ripr`, `--help`, `-h`,
+/// and `help` must share one unqualified first-run command.
+fn canonical_first_run_command(help: &str) -> Result<String, String> {
+    let lf = help.replace("\r\n", "\n");
+    let Some((_, after)) = lf.split_once("Try this first:\n") else {
+        return Err("default help lost its first-run section".to_string());
+    };
+    let section = after.split("\n\n").next().unwrap_or_default();
+    let commands: Vec<_> = section
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("ripr "))
+        .collect();
+    let [line] = commands.as_slice() else {
+        return Err(format!(
+            "first run must name exactly one command, got:\n{section}"
+        ));
+    };
+    let command = line.split_once("  ").map(|(part, _)| part).unwrap_or(line);
+    if normalized(command) != "ripr check" {
+        return Err(format!(
+            "first run must be `ripr check` without a fixed base, got `{command}`"
+        ));
+    }
+    if section.contains("--base") {
+        return Err("first-run command must not hardcode --base".to_string());
+    }
+    Ok(command.to_string())
+}
+
+#[test]
+fn rendered_default_help_routes_share_one_canonical_first_run() -> Result<(), String> {
+    for args in [
+        [].as_slice(),
+        ["--help"].as_slice(),
+        ["-h"].as_slice(),
+        ["help"].as_slice(),
+    ] {
+        let stdout = rendered_help(args)?;
+        if stdout.replace("\r\n", "\n").lines().count() > 40 {
+            return Err(format!(
+                "default help {args:?} exceeded the 40-line screen budget"
+            ));
+        }
+        canonical_first_run_command(&stdout)?;
+    }
+    Ok(())
+}
+
 #[test]
 fn first_run_guard_does_not_credit_a_later_correct_example() -> Result<(), String> {
     let changed = "```bash\nripr pilot\n```\nLater:\n```bash\nripr check\n```\n";
     if first_bash_block(changed)? == "ripr check" {
         return Err("a later command must not hide a wrong first-run route".to_string());
     }
-    let cli = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
-    let wrong = cli.replacen("ripr check", "ripr pilot", 1);
-    if first_bash_block(&wrong)? == "ripr check" {
-        return Err(
-            "the CLI section credited a later check instead of its first command".to_string(),
-        );
+    for (surface, section, expected) in [
+        (
+            "README",
+            doc_section(ROOT_README, "## The first useful run")?,
+            "cargo install ripr ripr check",
+        ),
+        (
+            "Quickstart CLI",
+            doc_section(QUICKSTART_DOC, "## CLI First Hour")?,
+            "ripr check",
+        ),
+    ] {
+        for command in [
+            "ripr doctor",
+            "ripr pilot --root .",
+            "ripr check --base origin/main",
+        ] {
+            let wrong = section.replacen("\nripr check\n", &format!("\n{command}\n"), 1);
+            if wrong == section {
+                return Err(format!(
+                    "{surface} negative control did not change a command"
+                ));
+            }
+            if first_bash_block(&wrong)? == expected {
+                return Err(format!(
+                    "{surface} first-run guard accepted `{command}` before a later correct example"
+                ));
+            }
+        }
     }
+    Ok(())
+}
+
+/// First-run usability: a clean checkout needs a tracked source edit, and a
+/// new file needs `git add -N PATH`. Command-only checks stay green if this
+/// note is deleted (#8179 review 5543109598).
+fn assert_clean_checkout_guidance(surface: &str, text: &str) -> Result<(), String> {
+    let n = normalized(text);
+    for needle in ["tracked source", "git add -N PATH"] {
+        assert_contains(surface, &n, needle)?;
+    }
+    if !(n.contains("clean base") || n.contains("clean checkout")) {
+        return Err(format!(
+            "{surface} lost clean-base-branch first-run guidance"
+        ));
+    }
+    for forbidden in ["is a clean bill of health", "commit your changes first"] {
+        if n.contains(forbidden) {
+            return Err(format!(
+                "{surface} presents `{forbidden}` as first-run guidance"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn without_clean_checkout_note(text: &str) -> String {
+    text.replace("git add -N PATH", "")
+        .replace("tracked source", "")
+}
+
+#[test]
+fn first_run_surfaces_require_clean_checkout_guidance() -> Result<(), String> {
+    let readme = doc_section(ROOT_README, "## The first useful run")?;
+    let quickstart = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
+    let mut surfaces = vec![
+        ("README first useful run".to_string(), readme),
+        ("Quickstart CLI First Hour".to_string(), quickstart),
+    ];
+    for args in [
+        [].as_slice(),
+        ["--help"].as_slice(),
+        ["-h"].as_slice(),
+        ["help"].as_slice(),
+    ] {
+        surfaces.push((
+            format!("rendered default help {args:?}"),
+            rendered_help(args)?,
+        ));
+    }
+    for (surface, text) in &surfaces {
+        assert_clean_checkout_guidance(surface, text)?;
+        let removed = without_clean_checkout_note(text);
+        if assert_clean_checkout_guidance(surface, &removed).is_ok() {
+            return Err(format!(
+                "{surface} still passed after removing tracked-edit / git add -N PATH guidance"
+            ));
+        }
+        let wrong = format!("{text}\nAn empty diff is a clean bill of health.\n");
+        if assert_clean_checkout_guidance(surface, &wrong).is_ok() {
+            return Err(format!(
+                "{surface} accepted empty-diff-as-clean-bill-of-health guidance"
+            ));
+        }
+    }
+    let help = rendered_help(&["--help"])?;
+    canonical_first_run_command(&without_clean_checkout_note(&help))?;
     Ok(())
 }
 
@@ -493,6 +632,8 @@ const PORTABLE_TESTS: &[&str] = &[
     "exhaustive_help_keeps_the_same_roles_and_boundaries",
     "exhaustive_help_marks_non_public_rows_visibly",
     "help_screens_state_the_surfaces_the_parsers_accept",
+    "bare_groups_display_their_documented_help",
+    "group_help_preserves_explicit_errors_and_gate_flag_alias",
     "calibrate_help_names_how_to_produce_the_imported_artifacts",
     "calibrate_help_discloses_mutants_json_only_denominator",
     "outcome_help_matches_the_enforced_canonical_gap_contract",
@@ -507,9 +648,9 @@ const PORTABLE_TESTS: &[&str] = &[
 ];
 
 #[test]
-fn packaged_help_target_compiles_and_runs_every_portable_case() -> Result<(), String> {
+fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Result<(), String> {
     use ripr_help::{Scratch, compile_portable, extracted_package, require_success, run};
-    let scratch = Scratch::new("packaged-help-positive")?;
+    let scratch = Scratch::new("packaged-help-contract")?;
     let package = extracted_package(&scratch.0)?;
     let executable = scratch
         .0
@@ -530,7 +671,7 @@ fn packaged_help_target_compiles_and_runs_every_portable_case() -> Result<(), St
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    if actual != expected || actual.len() != 18 {
+    if actual != expected || actual.len() != 20 {
         return Err(format!(
             "portable test inventory drifted: expected {expected:?}, got {actual:?}"
         ));
@@ -539,27 +680,16 @@ fn packaged_help_target_compiles_and_runs_every_portable_case() -> Result<(), St
     execute.arg("--test-threads=1").current_dir(&scratch.0);
     let result = require_success(run(execute)?, "extracted help execution")?;
     let text = String::from_utf8(result.stdout).map_err(|error| error.to_string())?;
-    if !text.contains("test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
+    if !text.contains("test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
     {
         return Err(format!(
-            "extracted target did not run all 18 portable cases:\n{text}"
+            "extracted target did not run all 20 portable cases:\n{text}"
         ));
     }
-    Ok(())
-}
-
-#[test]
-fn packaged_help_target_rejects_a_missing_shared_test_asset() -> Result<(), String> {
-    use ripr_help::{Scratch, compile_portable, extracted_package, require_success};
-    let scratch = Scratch::new("packaged-help-negative")?;
-    let package = extracted_package(&scratch.0)?;
-    let pristine = scratch
-        .0
-        .join(format!("pristine-tests{}", std::env::consts::EXE_SUFFIX));
-    require_success(
-        compile_portable(&package, &pristine)?,
-        "negative-control precondition",
-    )?;
+    // The successful compile, exact inventory and execution above establish
+    // the pristine precondition for this same archive. Keeping the removal
+    // control in this transaction avoids repeating package/build/compile setup
+    // in a separate nextest process; no test result is reused across runs.
     let helper = package.join("tests/common/help_contract.rs");
     std::fs::remove_file(&helper).map_err(|error| error.to_string())?;
     let broken = scratch

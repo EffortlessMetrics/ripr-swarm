@@ -45,6 +45,9 @@ Error and panic diagnostics on stderr are best effort. If a stderr reader
 closes after a JSON refusal has been written, the command retains that stdout
 document and its original exit `2` or `3`. A failed panic diagnostic still
 terminates with `2`; reporting it must not cause a recursive panic or abort.
+Once `agent card` or `agent stub` reaches a named refusal, its stderr JSON
+envelope is also best effort: a closed stderr reader keeps stdout empty and
+preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
 
 ## When you see exit code 2
 

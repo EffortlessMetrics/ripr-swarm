@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- An expect-test golden-file comparison, `expect_file!["out.txt"].assert_eq(&owner(..))`, behind a manifest-verified `use expect_test::expect_file;` now pins the owner's return as the inline `expect![[..]]` comparison does, instead of reading as a medium snapshot. `assert_debug_eq`, a computed or out-of-tree file path, an unverified or shadowed import, tests that write files, run commands, make symlinks, rename `std::fs` imports or set `UPDATE_EXPECT`, and `#[should_panic]` tests still do not pin (#6578).

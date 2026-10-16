@@ -427,7 +427,11 @@ fn root_has_entries(cache_dir: &Path) -> Result<bool, String> {
 }
 
 fn describe_entries(entry_count: usize, total_size_bytes: u64) -> String {
-    format!("{entry_count} entries ({total_size_bytes} bytes)")
+    // #7753: count-aware noun — "1 entry", never "1 entries".
+    format!(
+        "{} ({total_size_bytes} bytes)",
+        crate::output::count_noun::count_noun(entry_count, "entry", "entries")
+    )
 }
 
 fn describe_layers(plan: &ClearPlan) -> String {
@@ -612,7 +616,8 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     }
 
     let Some((subcommand, rest)) = args.split_first() else {
-        return Err("cache requires subcommand `status`, `export` or `clear`".to_string());
+        println!("{CACHE_USAGE}");
+        return Ok(());
     };
 
     match subcommand.as_str() {
@@ -1214,7 +1219,9 @@ mod tests {
         let still_present = cache_dir.join("repo-seam-facts").is_dir();
         remove_base(&base)?;
         if !still_present
-            || !dry_run.contains("1 entries")
+            // #7753: regression pin — the count-aware form must read "1 entry".
+            || !dry_run.contains("1 entry")
+            || dry_run.contains("1 entries")
             || !dry_run.contains("repo-seam-facts")
             || !dry_run.contains("unrelated siblings would remain")
         {
@@ -1901,12 +1908,7 @@ mod tests {
         run(&["--help".to_string()])?;
         run(&["-h".to_string()])?;
         run(&["clear".to_string(), "--help".to_string()])?;
-        if run(&[])
-            .err()
-            .is_none_or(|error| !error.contains("`status`, `export` or `clear`"))
-        {
-            return Err("missing cache subcommand did not fail closed".to_string());
-        }
+        run(&[])?;
         if run(&["show".to_string()]).is_ok() {
             return Err("unknown cache subcommand unexpectedly passed".to_string());
         }
