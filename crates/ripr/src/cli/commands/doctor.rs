@@ -395,16 +395,13 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
             Some(_) => {}
         }
     }
-    match config {
-        Err(err) => {
-            lines.push(format!("! Config: invalid {CONFIG_FILE_NAME}"));
-            lines.push(format!(
-                "- Config path: {}",
-                output::path::human_path(&root.join(CONFIG_FILE_NAME))
-            ));
-            lines.push(format!("  error: {err}"));
-        }
-        Ok(_) => {}
+    if let Err(err) = config {
+        lines.push(format!("! Config: invalid {CONFIG_FILE_NAME}"));
+        lines.push(format!(
+            "- Config path: {}",
+            output::path::human_path(&root.join(CONFIG_FILE_NAME))
+        ));
+        lines.push(format!("  error: {err}"));
     }
     for tool in output::doctor::DOCTOR_TOOLS {
         let name = format!("tool_{tool}");
@@ -462,38 +459,33 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
             }
         }
     }
-    match config {
-        Ok(_) => {
-            if let Some(defaults) = environment.facts.config_defaults.as_ref() {
-                match &defaults.source_path {
-                    Some(path) => {
-                        workspace.push(format!("Config: loaded {CONFIG_FILE_NAME}"));
-                        lines.push(format!("- Config path: {path}"));
-                        // Init follow-ups replay bare `ripr doctor` to confirm
-                        // the written policy (#8168 keeps the rest verbose).
-                        lines.push(format!(
-                            "- Analysis mode default: {}",
-                            defaults.analysis_mode
-                        ));
-                        lines.push(format!(
-                            "- LSP seam diagnostics default: {}",
-                            defaults.lsp_seam_diagnostics
-                        ));
-                    }
-                    None => {
-                        workspace.push("Config: not found; using built-in defaults".to_string())
-                    }
+    if config.is_ok() {
+        if let Some(defaults) = environment.facts.config_defaults.as_ref() {
+            match &defaults.source_path {
+                Some(path) => {
+                    workspace.push(format!("Config: loaded {CONFIG_FILE_NAME}"));
+                    lines.push(format!("- Config path: {path}"));
+                    // Init follow-ups replay bare `ripr doctor` to confirm
+                    // the written policy (#8168 keeps the rest verbose).
+                    lines.push(format!(
+                        "- Analysis mode default: {}",
+                        defaults.analysis_mode
+                    ));
+                    lines.push(format!(
+                        "- LSP seam diagnostics default: {}",
+                        defaults.lsp_seam_diagnostics
+                    ));
                 }
-            } else {
-                lines.push(format!("! Config: invalid {CONFIG_FILE_NAME}"));
-                lines.push(format!(
-                    "- Config path: {}",
-                    output::path::human_path(&root.join(CONFIG_FILE_NAME))
-                ));
-                lines.push("  error: configuration loaded but produced no defaults".to_string());
+                None => workspace.push("Config: not found; using built-in defaults".to_string()),
             }
+        } else {
+            lines.push(format!("! Config: invalid {CONFIG_FILE_NAME}"));
+            lines.push(format!(
+                "- Config path: {}",
+                output::path::human_path(&root.join(CONFIG_FILE_NAME))
+            ));
+            lines.push("  error: configuration loaded but produced no defaults".to_string());
         }
-        Err(_) => {}
     }
     if let Some(line) = join_compact("Workspace", &workspace) {
         lines.push(line);
@@ -556,9 +548,7 @@ Point RIPR_CACHE_DIR at a writable directory."
         if probe.required && probe.status == output::doctor::DoctorStatus::Fail {
             continue;
         }
-        if probe.required && probe.status == output::doctor::DoctorStatus::Pass {
-            lines.push(language_runtime_probe_display_line(probe));
-        } else if verbose {
+        if verbose || (probe.required && probe.status == output::doctor::DoctorStatus::Pass) {
             lines.push(language_runtime_probe_display_line(probe));
         }
     }
