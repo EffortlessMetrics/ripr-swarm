@@ -411,7 +411,7 @@ fn unrun_target_test_files(
                 .flatten()
                 .and_then(|bytes| String::from_utf8(bytes).ok())
                 .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
-                .filter(|manifest| has_conditionally_run_test_target(manifest))
+                .filter(has_conditionally_run_test_target)
                 .map(|manifest| explicit_test_paths(&manifest, &package_dir))
         });
         // Only a file under `tests/` or named by a `[[test]]` path can be a
@@ -420,9 +420,7 @@ fn unrun_target_test_files(
             continue;
         };
         let normalized = workspace::normalize_path(path);
-        let in_tests_dir = path
-            .strip_prefix(&package_dir)
-            .is_ok_and(|relative| relative.starts_with("tests"));
+        let in_tests_dir = rust_index::is_test_file(path);
         if !in_tests_dir && !explicit_paths.contains(&normalized) {
             continue;
         }
