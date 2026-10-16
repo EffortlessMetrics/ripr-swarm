@@ -607,20 +607,55 @@ fn compares_test_with_non_literal(line: &str) -> bool {
     // A literal side asserts the other side's comparison, so that
     // comparison is read in turn (`assert_eq!((r == Err(E::Bad)) as u8 == 0,
     // true)`; review of #8110).
+    let mut wrapped = false;
     loop {
         (left, right) = (left.trim(), right.trim());
+        // The same constructor around both sides compares what it wraps
+        // (`assert_eq!(Some(r == Err(E::Bad)), Some(expected))`; #8101).
+        if let (Some((left_ctor, inner_left)), Some((right_ctor, inner_right))) =
+            (constructor_argument(left), constructor_argument(right))
+            && left_ctor == right_ctor
+        {
+            (left, right) = (inner_left, inner_right);
+            wrapped = true;
+            continue;
+        }
         let other = match (literal(left), literal(right)) {
             (false, false) => return is_bool_test(left) || is_bool_test(right),
             (true, false) => right,
             (false, true) => left,
             (true, true) => return false,
         };
+        // A wrapped test compared with a `false` literal is asserted false,
+        // which excludes it rather than pins it: fail closed.
+        if wrapped && is_bool_test(other) {
+            let literal_side = if std::ptr::eq(other, right) {
+                left
+            } else {
+                right
+            };
+            let value = literal_spelling_value(&mask_comments_and_strings(literal_side));
+            if value == Some(false) {
+                return true;
+            }
+        }
         let (core, _, _) = strip_negations(other);
         let Some(sides) = whole_comparison_sides(core) else {
             return false;
         };
         (left, right) = sides;
     }
+}
+
+/// The constructor name and sole argument of a `Some(..)`, `Ok(..)` or
+/// `Err(..)` call that spans the whole of `text`.
+fn constructor_argument(text: &str) -> Option<(&'static str, &str)> {
+    let text = text.trim();
+    ["Some", "Ok", "Err"].into_iter().find_map(|name| {
+        let rest = text.strip_prefix(name)?.trim_start();
+        let argument = super::arguments::parenthesized_contents(rest)?;
+        (super::arguments::split_top_level_commas(argument).len() == 1).then_some((name, argument))
+    })
 }
 
 /// The two sides of `condition` when its whole is one `==` or `!=`

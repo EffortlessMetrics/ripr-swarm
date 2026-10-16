@@ -1097,6 +1097,10 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!(<u8 as From<bool>>::from(r == Err(E::Bad)), 0);",
         "assert_eq!(Into::<u8>::into(r == Err(E::Bad)), n);",
         "assert_eq!(std::primitive::u8::from(r == Err(E::Bad)), 0);",
+        // #8101: the same constructor around both sides.
+        "assert_eq!(Some(r == Err(E::Bad)), Some(expected));",
+        "assert_eq!(Some(matches!(r, Err(E::Bad))), Some(false));",
+        "assert_eq!(Ok(r == Err(E::Bad)), Ok(flag));",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
@@ -1129,6 +1133,9 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         ("assert_eq!(flags | compute(|v| v == 1), EXPECTED);", &exact),
         ("assert_eq!(mask & lookup(a == b), X);", &exact),
         ("assert_eq!(flags | compute(v), EXPECTED);", &exact),
+        // A wrapped value that is no test still pins it.
+        ("assert_eq!(Some(compute(x)), Some(5));", &exact),
+        ("assert_eq!(Some(compute(x)), Some(false));", &exact),
         ("assert_eq!(<u8 as From<bool>>::from(x), 1);", &exact),
         ("assert_eq!(Into::<u8>::into(c), 97);", &exact),
         (
