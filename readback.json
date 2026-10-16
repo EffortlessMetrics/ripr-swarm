@@ -1,0 +1,10 @@
+{
+  "observed_utc": "2026-10-16T05:17:16.286002+00:00",
+  "remote_commit": "49502a996222bf5376ff8ba955a1e299d3cf2ec9",
+  "tree": "e22308acc81bdac27092aec0d544f90cc2955305",
+  "payload_hashes_sizes_verified": 287,
+  "full_tree_files_verified": 288,
+  "manifest_sha256": "4263538cc3336995e5fa6b3d870e6b1bf42549f50b979694571bf549859ad9ab",
+  "result": "pass",
+  "method": "fresh empty Git repository fetched remote evidence ref; archive all files; compare complete inventory and every payload size/SHA256"
+}

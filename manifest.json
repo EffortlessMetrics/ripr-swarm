@@ -1440,6 +1440,11 @@
       "path": "run.py.md",
       "bytes": 780,
       "sha256": "a16cd0b231636b7f8fa1a8d937778896b3f986525481571309be6d9658d3eb1e"
+    },
+    {
+      "path": "readback.json",
+      "bytes": 505,
+      "sha256": "e0e253c8d284462a79517f1c360cbad89917d75043082cc4f2c3bd1f90891865"
     }
   ],
   "omitted": [
@@ -1447,5 +1452,6 @@
     "build caches",
     "raw corpus directory trees; corpus-final-state.json plus drivers preserve content/creation"
   ],
-  "disposition": "REVIEW_INCOMPLETE"
+  "disposition": "REVIEW_INCOMPLETE",
+  "readback_scope": "readback.json verifies the prior immutable packet commit; this manifest adds its receipt without changing earlier payloads"
 }
