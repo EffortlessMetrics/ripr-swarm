@@ -4769,8 +4769,8 @@ mod tests {
     #[test]
     fn shell_arg_token_for_undoes_simple_windows_console_quotes() {
         assert_eq!(
-            shell_arg_token_for(r#""C:/tmp/probe win space""#, true),
-            Some("C:/tmp/probe win space")
+            shell_arg_token_for(r#""ws/probe win space""#, true),
+            Some("ws/probe win space")
         );
         assert_eq!(
             shell_arg_token_for(r#""target/ripr/receipt > data.json""#, true),
@@ -4785,10 +4785,7 @@ mod tests {
             shell_arg_token_for("'gap:len(x):$(literal)'", false),
             Some("gap:len(x):$(literal)")
         );
-        assert_eq!(
-            shell_arg_token_for(r#""C:/tmp/probe win space""#, false),
-            None
-        );
+        assert_eq!(shell_arg_token_for(r#""ws/probe win space""#, false), None);
     }
 
     /// #8153: unquoted substitution stays refused on both cores.
