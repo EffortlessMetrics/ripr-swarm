@@ -6041,6 +6041,12 @@ tests = [
   "xtask/src/main.rs::tests::perl_lsp_facts_exporter_fixture_accepts_supported_producers",
   "xtask/src/main.rs::tests::perl_real_repo_eval_fixture_corpus_is_valid",
   "crates/ripr/tests/perl_two_binary_harness.rs::two_binary_proof_three_outcomes_against_real_perllsp",
+  "crates/ripr/tests/perl_two_binary_harness/command.rs::tests::capture_preserves_success_nonzero_and_both_streams",
+  "crates/ripr/tests/perl_two_binary_harness/command.rs::tests::zero_deadline_does_not_spawn",
+  "crates/ripr/tests/perl_two_binary_harness/command.rs::tests::oversized_capture_is_refused_instead_of_truncated",
+  "crates/ripr/tests/perl_two_binary_harness/command.rs::tests::deadline_reaps_primary_and_terminates_term_resistant_descendant",
+  "crates/ripr/tests/perl_two_binary_harness/command.rs::tests::primary_exit_does_not_wait_for_inherited_pipe_holder",
+  "crates/ripr/tests/perl_two_binary_harness/command.rs::tests::producer_path_preserves_argv_packet_check_and_cleans_descendant",
   "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_packet_contract_migration_corpus_pins_real_producer_dispositions",
   "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_corpus_is_valid",
   "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_guard_reports_packet_tamper",
@@ -6063,6 +6069,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/language/perl/mod.rs",
+  "crates/ripr/tests/perl_two_binary_harness/command.rs",
   "crates/ripr/src/output/perl_preview_card.rs",
   "crates/ripr/src/output/json/report.rs",
   "crates/ripr/src/output/human/sections.rs",
