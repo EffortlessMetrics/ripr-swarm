@@ -161,3 +161,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — perl_cpan_alpha (9)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless perl_cpan_alpha --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
