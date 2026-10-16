@@ -604,6 +604,7 @@ fn compares_test_with_non_literal(line: &str) -> bool {
         }
         None => return false,
     };
+    (left, right) = peel_constructor_pair(left, right);
     // A literal side asserts the other side's comparison, so that
     // comparison is read in turn (`assert_eq!((r == Err(E::Bad)) as u8 == 0,
     // true)`; review of #8110).
@@ -620,6 +621,26 @@ fn compares_test_with_non_literal(line: &str) -> bool {
             return false;
         };
         (left, right) = sides;
+    }
+}
+
+/// The two sides of an equality with a matching `Some(..)`, `Ok(..)` or
+/// `Err(..)` constructor peeled from both: the wrapper compares equal
+/// exactly when its contents do, so `Some(r == Err(E::Bad))` against
+/// `Some(expected)` states the same relation as the bare sides (#8101).
+fn peel_constructor_pair<'a>(mut left: &'a str, mut right: &'a str) -> (&'a str, &'a str) {
+    let contents = |side: &'a str, name: &str| {
+        let rest = side.trim().strip_prefix(name)?;
+        super::arguments::parenthesized_contents(rest)
+    };
+    'peel: loop {
+        for name in ["Some", "Ok", "Err"] {
+            if let (Some(l), Some(r)) = (contents(left, name), contents(right, name)) {
+                (left, right) = (l.trim(), r.trim());
+                continue 'peel;
+            }
+        }
+        return (left, right);
     }
 }
 
@@ -731,7 +752,10 @@ fn compared_with_bool_literal(line: &str) -> Option<(String, bool, bool)> {
             not_equal,
             left,
             right,
-        } => pick(&left, &right, not_equal).map(|(operand, positive)| (operand, positive, false)),
+        } => {
+            let (left, right) = peel_constructor_pair(&left, &right);
+            pick(left, right, not_equal).map(|(operand, positive)| (operand, positive, false))
+        }
         AssertionComparison::Condition(condition) => {
             let condition = unwrap_parentheses(condition.trim());
             // `a && b == true` compares only `b`; the chain rules read it.

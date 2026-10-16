@@ -310,8 +310,10 @@ Two pattern terms are used below.
    `assert_eq!(u8::from(r == Err(E::Bad)), n)`; #8093), and so do the
    `From`/`Into` path spellings of that conversion (`From::from(..)`,
    `<u8 as From<bool>>::from(..)`, `Into::<u8>::into(..)`,
-   `std::primitive::u8::from(..)`; #8101); a cast of a value
-   still pins (`assert_eq!(x as u8, 3)`). Such a comparison asserted by a
+   `std::primitive::u8::from(..)`; #8101); a matching `Some(..)`, `Ok(..)` or
+   `Err(..)` on both sides is peeled first, so `assert_eq!(Some(r ==
+   Err(E::Bad)), Some(expected))` reads as the bare sides do (#8101); a cast
+   of a value still pins (`assert_eq!(x as u8, 3)`). Such a comparison asserted by a
    boolean literal caps the same way (`assert_eq!((r == Err(E::Bad)) as u8
    == 0, true)`, `assert_eq!((r == Err(E::Bad)) == flag, true)`), and a
    path call to `not` negates like `!` (`assert_eq!(Not::not(r ==

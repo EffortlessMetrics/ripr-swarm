@@ -1097,6 +1097,11 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!(<u8 as From<bool>>::from(r == Err(E::Bad)), 0);",
         "assert_eq!(Into::<u8>::into(r == Err(E::Bad)), n);",
         "assert_eq!(std::primitive::u8::from(r == Err(E::Bad)), 0);",
+        // #8101: a matching constructor wrapper on both sides compares its
+        // contents, so the test inside it is no pinned value.
+        "assert_eq!(Some(r == Err(E::Bad)), Some(expected));",
+        "assert_eq!(Some(matches!(r, Err(E::Bad))), Some(false));",
+        "assert_eq!(Ok(Some(r == Err(E::Bad))), Ok(Some(expected)));",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
@@ -1116,6 +1121,8 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert!(matches!(r, Err(E::Bad)).eq(&true));",
         "assert!(foo::<T>(matches!(x, A)).is_ok());",
         "assert_eq!(flags | compute(|v| v == 1), EXPECTED);",
+        "assert_eq!(Some(is_valid(x)), Some(expected));",
+        "assert_eq!(Some(x), Some(3));",
     ] {
         if is_inequality_assertion(text) {
             return Err(format!("{text}: must not read as an inequality"));
@@ -1129,6 +1136,16 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         ("assert_eq!(flags | compute(|v| v == 1), EXPECTED);", &exact),
         ("assert_eq!(mask & lookup(a == b), X);", &exact),
         ("assert_eq!(flags | compute(v), EXPECTED);", &exact),
+        // #8101: the issue traced this as exact (the pinning conjunct
+        // decides), but a negated group over a pattern caps the whole
+        // condition. A safe underclaim, pinned here so a widening is a
+        // deliberate change.
+        (
+            "assert!(!(flag && matches!(r, Err(E::Bad))) && x == 4);",
+            &weak,
+        ),
+        // A wrapper on one side only is no pair; `Some(true)` pins a pattern.
+        ("assert_eq!(Some(is_valid(x)), Some(expected));", &exact),
         ("assert_eq!(<u8 as From<bool>>::from(x), 1);", &exact),
         ("assert_eq!(Into::<u8>::into(c), 97);", &exact),
         (
