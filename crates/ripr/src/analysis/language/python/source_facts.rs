@@ -194,11 +194,14 @@ pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
 /// capped so a repo with hundreds of packages cannot expand the read.
 fn python_framework_scan_dirs(root: &Path) -> Vec<PathBuf> {
     let mut dirs = vec![root.to_path_buf(), root.join("tests"), root.join("test")];
+    // Review (#8257): collect every immediate directory first, then sort,
+    // then cap. Capping the raw entry stream before filtering let 64
+    // non-directory entries starve the scan and made the surviving set
+    // depend on arbitrary filesystem order.
     let mut app_dirs: Vec<PathBuf> = std::fs::read_dir(root)
         .map(|entries| {
             entries
                 .flatten()
-                .take(64)
                 .map(|entry| entry.path())
                 .filter(|path| path.is_dir())
                 .filter(|path| {
@@ -211,7 +214,7 @@ fn python_framework_scan_dirs(root: &Path) -> Vec<PathBuf> {
         })
         .unwrap_or_default();
     app_dirs.sort();
-    app_dirs.truncate(16);
+    app_dirs.truncate(64);
     dirs.extend(app_dirs);
     dirs
 }
