@@ -456,6 +456,10 @@ fn collection_observer_confirms(
 /// returns that field (`inv.history()` with
 /// `fn history(&self) -> &[Event] { &self.log }`). A shared name is not a
 /// read: `inv.log()` returning another field does not confirm.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the field-collection observer groups the write identity (path, append, insert key) with the test and assertion it judges"
+)]
 fn field_collection_observer_confirms(
     path: &str,
     count_reads: bool,
