@@ -3235,6 +3235,7 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
 {
   "version": "1.0",
   "tool": "ripr",
+  "canonical_gap_id": "gap:rust:src/lib.rs:discount:predicate_boundary:predicate:amount>=discount_threshold",
   "probe": {
     "id": "probe:src_lib.rs:predicate:bbaa2c25",
     "family": "predicate",
@@ -3316,7 +3317,12 @@ named and called from a test. It is observed source data only; no assertion
 value is synthesized. `source_currentness` (RIPR-SPEC-0152) mirrors the finding's
 disposition: agent consumers must not treat a `base_deleted`,
 `moved_or_renamed`, or `unresolved_subject` packet as a candidate edit
-target.
+target. `canonical_gap_id` is additive: it is present exactly when the
+finding carries a canonical gap and carries the same stable class-scoped
+value as `finding_alignment.items[].canonical_gap_id` and the finding-level
+`canonical_gap_id`, so packet consumers share one gap identity with
+`ripr receipt write --gap` and the gap ledger instead of inventing a second
+one. It is emitted between `tool` and `source_currentness`.
 
 ## Repo Seam Inventory
 
