@@ -3231,3 +3231,10 @@ Durable rules:
   `AdmissionQuery::from_core_index` quadratic on every changed function.
 - Do not raise `RIPR_PR_EVIDENCE_TIMEOUT_SECS` or `workflow_dispatch`
   routed-rust to hide an analyzer quadratic.
+
+After those two caches, gdb on the same doctor diff moved into classify
+`workspace_macro_binding_site` → `binding_free_local_wrapper`. That helper
+walked every `UseTree` / `macro_rules!` / `mod` / `MacroCall` descendant
+for each untrusted macro. `cli_smoke.rs` and `doctor.rs` make that
+macros × file size again. Collect those nodes once per parse and filter
+per call; pin the collect count, not a wall-clock.

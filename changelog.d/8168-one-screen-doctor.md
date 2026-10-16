@@ -13,6 +13,7 @@
   the raw path. Verbose config failures keep source-free parser reasons.
   `ripr doctor --json` schema is unchanged (#8168).
   Owner-return pin JSON-import visibility scans each file's `use` items
-  once, and unseen-reach / dependent-scope admission reuse one workspace
-  `UnseenReachNames` scan, so dogfood `ripr check` on this doctor diff
-  can finish inside the PR-evidence ceiling.
+  once, unseen-reach / dependent-scope admission reuse one workspace
+  `UnseenReachNames` scan, and binding-free wrapper facts are collected
+  once per parse, so dogfood `ripr check` on this doctor diff can finish
+  inside the PR-evidence ceiling.
