@@ -1,8 +1,59 @@
 # Contabo consumer source and qualification handoff
 
 Source owner: #4988. Bounded workload/pool qualification: #7164.
-Admission and integration adapters remain #4986 / #4836. Settings activation
-remains #4838; service-created merge-group proof remains #4840.
+Current request/review and integration owners remain #4986 / #8157 / #4836
+in existing draft #8082. Desired cutover and specifically authorized application
+remain #4834 / #4838; native ordinary-PR acceptance remains #4840.
+
+## Current governing flow and landing order
+
+The October 15 ruling recorded in #4984 supersedes the old merge-queue and
+production default-branch-dispatch plan. Production admission is an explicit
+reviewed `merge-ready` request, followed by applicable late qualification, a
+separate current-repository/product-vision judgment and normal expected-head
+protected squash. No merge queue or auto-merge is introduced. Ordinary Draft,
+push, Ready and synchronize activity remains cheap. #8082 owns that existing
+production caller; #8157 and #4836 own its review and coherent-subject repairs.
+Do not reproduce those controllers in this consumer.
+
+GitHub runner capacity queueing is distinct from a PR merge queue. #7164 still
+qualifies an actually selected owned route, including busy-slot queueing and
+independent control capacity; it does not require service-created merge groups.
+The reusable standard ceiling is 75 minutes. That is not proof of the governing
+20-minute production qualification target, and this source does not raise it.
+
+The recoverable sequence is:
+
+1. Finish source/local proof and independent source review in this existing
+   #7929 candidate. Keep the additional read scopes and live allowance withheld
+   until their explicit approvals. Source acceptance, native qualification and
+   final merge judgment are separate dispositions.
+2. After scope approval, integrate only the approved source delta through
+   #7929's normal existing source-review/merge gates. This first lands the manual
+   workflow on the default branch. No separate registration stub, competing PR,
+   speculative dispatch or live settings write is needed. Future #7164 native
+   success is not a circular prerequisite to accepting this inactive source.
+3. Verify GitHub recognizes the landed workflow through an authorized read.
+   At the October 16 observation `main@50166e2f2`, this workflow path is absent;
+   branch publication alone has not registered it. GitHub's
+   [workflow_dispatch contract](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)
+   requires the workflow file on the default branch. This applies only to this
+   non-required capacity rehearsal, not the retired production dispatcher plan.
+4. The parent #7164 owner binds and reviews the exact source/image/toolchain,
+   permission/allowance observations, slot count and bounded resource/fixture
+   envelope before any execution. Verify the approved live `8ff77e5` allowance;
+   select the exact reviewed branch subject and ancestor base. Then run the
+   separately admitted manual rehearsal and retain actual runner identities,
+   product outcomes, native import/result custody and lifecycle observations.
+5. A complete #7164 packet feeds #4834/#4838 only if production selects this
+   owned route. #8082's existing owner joins request, coherent subject, product,
+   result and cache coverage before controlled cutover. #4840 later accepts the
+   actual no-queue ordinary-PR flow after its authorized apply/readback; this
+   manual rehearsal never impersonates its required result or final judgment.
+
+The source integrator owns steps 1–3; the parent #7164 execution owner owns
+step 4. Existing #8082/#4834/#4838 owners retain step 5. Missing execution
+authority blocks execution, not the independent source work above.
 
 ## Staged consumer
 
@@ -200,7 +251,7 @@ activation or new authentication credential is supplied here.
 The legacy `routed-rust.yml` / `rust-gates.yml` required producer remains available
 as bounded compatibility pending coherent activation. Its Ready/main routing and
 old inventory/fallback are historical live behavior, not the desired route.
-This rehearsal does not claim to complete their retirement, admission, exact-G
+This rehearsal does not claim to complete their retirement, admission, coherent-subject
 aggregation, cache-writer continuity or required-context migration. #4986 / #4836 /
 #7827 / #4838 must bind those changes before cutover. No protection changes occur.
 
@@ -213,7 +264,7 @@ replacement coverage and rollback generation are accepted together.
 
 | Current source owner | Replacement / release condition |
 | --- | --- |
-| `routed-rust.yml` hosted inventory, cx43/cpx42/cx53 selection and hosted scratch-tempfail recovery | #4986 supplies explicit reviewed H admission; #4836 binds actual G/native result. The reviewed central standard caller queues on qualified capability with no ordinary hosted chooser/fallback. No Ready/push/synchronize qualification. Remove inventory/token references only after rederiving genuine consumers; do not remove a credential live. |
+| `routed-rust.yml` hosted inventory, cx43/cpx42/cx53 selection and hosted scratch-tempfail recovery | #4986 supplies explicit reviewed H admission; #4836 binds coherent H/Bq/Iq/Tq and native selected results. The reviewed central standard caller queues on qualified capability with no ordinary hosted chooser/fallback. No Ready/push/synchronize qualification. Remove inventory/token references only after rederiving genuine consumers; do not remove a credential live. |
 | `rust-gates.yml` shared command and native artifact owners | Preserve these 17 commands, policy-preflight/ci-policy composition, separate strict Clippy, fresh nonempty JUnit, doctests and real corpus/PR outcomes. Transfer actual retention through the distinct product contract above. Keep the command owner; provider migration does not fork or copy the product portfolio. |
 | `Ripr Rust Small Result`, docs/no-heavy result and `pr-staleness-watchdog.yml` | #4836 binds selected required children/attempt/source and truthful no-heavy finalization; #4986 supplies review/request revocation. Update actual workflow/event/head lookups and policy fixtures together. Missing/cancelled/stale evidence cannot become pass. Independent control capacity remains a #7164 proof obligation. |
 | `.github/actions/ci-scratch-lease`, inline legacy scratch and `scratch-gc.yml` | Remain exclusively legacy `/mnt/ci-scratch` lease owners and `/mnt/ci-cache/sccache` users. GC retains `em-ci-small` and its old label matrix; **never relabel it onto Contabo**. After no new legacy allocations, inventory exact in-flight jobs/leases and let the existing owner settle them. Only after verified ownership/coverage transfer may a reviewed source change remove the obsolete schedule/action/policy entries. No age-based or foreign-tree deletion. |
@@ -259,8 +310,10 @@ The new dispatch workflow must first exist on the default branch for GitHub's
 workflow-dispatch registration. This source PR stays Draft pending its own review;
 parent coordinates the source landing and subsequent bounded execution. Do not
 replace this with a Ready transition, speculative dispatch or settings activation.
-Do not execute the current envelope-only path as complete #7164 qualification:
-the actual new-pin allowance, read-scope approval, workflow registration and reviewed admission must be resolved first.
+The prepared path includes product custody but has not executed it. The actual
+new-pin allowance, read-scope approval, workflow registration and reviewed
+admission must be resolved before execution; do not call source compatibility a
+complete #7164 qualification.
 
 After source registration and full admission, resolve the existing reviewed
 `BRANCH` to exact `SUBJECT` and retain its reviewed `BASE`. GitHub's
@@ -278,7 +331,7 @@ rows and complete reusable result (including receipt artifact). Record queue del
 separately from execution and preserve every refused/failed/cancelled attempt.
 No execution has been dispatched by this source change. Unsupported measurements
 or inaccessible observations remain unknown. #4834/#4838 consume only a complete
-bounded qualification packet; #4840 separately observes actual native G later.
+bounded qualification packet; #4840 separately observes the actual ordinary-PR request/qualification/final-judgment flow after controlled cutover.
 
 ## Validation and rollback
 
@@ -294,7 +347,7 @@ and repaired overwrite control remain separate epochs. The documentation-only
 basis refresh leaves adapter/contract/caller/command-owner bytes unchanged.
 Exact-head workspace results and source/review custody are retained in Draft
 PR #7929; neither local compile proof nor the upstream required result supplies
-central artifact transport, #7164 pool/lifecycle or #4840 native-G evidence.
+central artifact transport, #7164 pool/lifecycle or #4840 native ordinary-PR acceptance evidence.
 The minimal Bash product shim is the required central entrypoint; Rust owns the adapter. The bounded Bash/jq result script avoids heavy bootstrap in the control job.
 Revert this staged caller, adapter, shim and scoped policy/doc additions to remove
 rehearsal without changing the existing required producer or live settings.

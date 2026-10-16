@@ -28,7 +28,10 @@ export GITHUB_SHA=$(git rev-parse HEAD) GITHUB_RUN_ID=101 GITHUB_RUN_ATTEMPT=2
 export GITHUB_EVENT_PATH="$FIXTURE/event.json" EM_CI_ARTIFACT_DIR="$FIXTURE/imported"
 export EM_CI_LANE=ripr-product EM_CI_SELECTED_PROOF_RESULT=success
 mkdir "$EM_CI_ARTIFACT_DIR"
-base=$(git rev-parse HEAD^)
+# This policy fixture needs a matching distinct SHA, not a history object.
+# Ancestry is authenticated by the central importer, outside this unit test.
+base=0000000000000000000000000000000000000001
+[[ "$base" != "$GITHUB_SHA" ]] || base=0000000000000000000000000000000000000002
 tree=$(git rev-parse 'HEAD^{tree}')
 jq -n --arg sha "$GITHUB_SHA" --arg base "$base" '{inputs:{expected_sha:$sha,base_sha:$base}}' > "$GITHUB_EVENT_PATH"
 jq -n --arg sha "$GITHUB_SHA" --arg base "$base" --arg tree "$tree" '{
