@@ -38,8 +38,9 @@ pub(crate) enum PilotCurrentChange {
         /// out by design (build scripts, `xtask/`, roots outside `src`),
         /// root-relative and slash separated (#6944).
         diff_only: Vec<(String, DiffOnlySource)>,
-        /// Coverage recorded by a successful changed-file supplement; absent
-        /// when classification failed or did not run.
+        /// Shared source-admission observation for the changed Rust files,
+        /// independent of whether supplemental classification ran or succeeded.
+        /// Absent when no source-admission observation was requested.
         absent_file_limitations: Option<Vec<AnalysisLimitation>>,
     },
     /// The default diff loaded and is empty: there is no current change.
@@ -237,7 +238,7 @@ impl PilotCurrentChange {
         self
     }
 
-    /// Replace the supplement's recorded coverage, including an empty recovery.
+    /// Replace the recorded source admission, including an empty recovery.
     pub(crate) fn with_absent_file_limitations(
         mut self,
         limitations: Option<Vec<AnalysisLimitation>>,
@@ -252,7 +253,7 @@ impl PilotCurrentChange {
         self
     }
 
-    /// Canonical absent-file disclosures, or no successful supplement record.
+    /// Canonical absent-file disclosures, or no source-admission observation.
     pub(crate) fn absent_file_limitations(&self) -> Option<&[AnalysisLimitation]> {
         match self {
             Self::Changed {

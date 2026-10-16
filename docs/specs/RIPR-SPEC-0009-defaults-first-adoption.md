@@ -238,17 +238,22 @@ check` reads committed history only. When the repo-exposure seam limit cuts
 the inventory, pilot classifies the seams on the change's lines on their own,
 within what is left of its deadline, and adds the ones the cut dropped, so they
 still rank change-first and count as analyzed; the inventory seam-limit caveat
-about the change then no longer applies. A successful supplement also retains
-the producer's existing `changed_file_absent_from_worktree` limitations for
-requested changed files absent from the working tree. The terminal and Markdown
-name each path and its recovery action under "Inspected", even when a present
-changed seam is the top recommendation. `current_change.absent_changed_files`
-in the JSON summary records those portable paths; it is omitted if the
-supplement did not run or failed, and is an empty array only after a successful
-supplement found no absent requested files. Neither an empty classification nor
-an empty absence array establishes that every changed seam was classified.
-Restoring a regular source file at the same HEAD makes the next supplement
-inspect it and replaces the absence list, without stale cache disclosures.
+about the change then no longer applies. When Rust is enabled and the loaded
+change names Rust source files, pilot records the shared source-admission
+observation regardless of whether the inventory cap fired or supplemental
+classification succeeded. It retains the producer's existing
+`changed_file_absent_from_worktree` limitations for absent requested files.
+The terminal and Markdown name each path and its recovery action under
+"Inspected", even when a present changed seam is the top recommendation.
+`current_change.absent_changed_files` in the JSON summary records those portable
+paths (or a null entry for a bounded path-less disclosure when a name is
+refused). The field is omitted when no source-admission observation was
+requested, including Rust-disabled scope; an empty array means that observation
+found no absent requested files. Intentionally deleted files are excluded by
+the shared diff parser. Neither an empty classification nor an empty absence
+array establishes that every changed seam was classified. Restoring a regular
+source file at the same HEAD replaces the absence list on the next run,
+without stale cache disclosures.
 If that classification fails or runs out of time, pilot says so on stderr,
 keeps the inventory caveat and still completes. When
 pilot added any such seam, its `repo-exposure.json` is written without the

@@ -1129,6 +1129,10 @@ tests = [
 
   "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_sparse_missing_changed_file_and_recovers_same_head",
   "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_mixed_missing_changed_file_even_with_changed_recommendation",
+  "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_sparse_missing_changed_file_without_inventory_limit",
+  "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_mixed_missing_changed_file_without_inventory_limit",
+  "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_does_not_name_intentionally_deleted_file_as_absent",
+  "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_does_not_probe_absent_rust_source_when_rust_is_disabled",
   "crates/ripr/src/output/pilot/tests.rs::pilot_current_change_preserves_absent_file_coverage_through_empty_and_mixed_supplements",
   "crates/ripr/src/output/pilot/tests.rs::pilot_renderers_disclose_absent_changed_files_independently_of_top_recommendation",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::invalid_ancestor_git_markers_preserve_python_and_cache_context",

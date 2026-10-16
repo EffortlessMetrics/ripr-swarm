@@ -117,7 +117,10 @@ pub(crate) use workspace::apply_module_graph_evidence;
 pub(crate) use workspace::context_for_files;
 pub(crate) use workspace::is_test_surface_path;
 pub(crate) use workspace::seeds_diff_probes;
-pub(crate) use workspace::{UnlinkedPythonTests, discover_python_test_files};
+pub(crate) use workspace::{
+    UnlinkedPythonTests, changed_source_files_absent_from_worktree, discover_python_test_files,
+    supplement_absent_file_limitations,
+};
 
 /// Re-export workspace discovery helpers for the output layer so it can
 /// detect TS-predominant workspaces without importing through analysis::workspace
