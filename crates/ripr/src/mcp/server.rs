@@ -79,9 +79,10 @@ impl McpServer {
             max_envelope_bytes,
         ) {
             Ok(envelope) => envelope,
-            // The envelope builder fails closed when even the compact text
-            // cannot fit the bound (#6021): that is the typed
-            // `result_too_large` state, not an instrument error.
+            // The envelope builder fails closed when the structured
+            // envelope cannot fit the bound (#6021, #7768): that is the
+            // typed `result_too_large` state, not an instrument error, and
+            // no text-only success replaces the structured copy.
             Err(detail) => {
                 let failure = workspace::AttemptFailure::new(
                     workspace::CODE_RESULT_TOO_LARGE,
@@ -423,11 +424,11 @@ impl McpServer {
 
     /// Wrap a document in the tool envelope. The envelope builder measures
     /// the final form against the caller's id-aware response budget before
-    /// it ships (#6021, #7768): the compact text always fits
-    /// guard-approved documents, `structuredContent` is dropped past the
-    /// budget instead of failing an approved response, and a document that
-    /// cannot fit even as compact text fails closed with the typed
-    /// `result_too_large` here rather than as an over-cap wire response.
+    /// it ships (#6021, #7768): an envelope over that budget fails closed
+    /// with the typed `result_too_large` failure here — every tool
+    /// advertises an `outputSchema`, so a text-only success without
+    /// `structuredContent` is not a shippable outcome — and only a document
+    /// whose complete envelope fits ships.
     fn bounded_tool_result(
         &self,
         document: Value,

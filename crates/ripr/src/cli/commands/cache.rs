@@ -616,7 +616,8 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     }
 
     let Some((subcommand, rest)) = args.split_first() else {
-        return Err("cache requires subcommand `status`, `export` or `clear`".to_string());
+        println!("{CACHE_USAGE}");
+        return Ok(());
     };
 
     match subcommand.as_str() {
@@ -1907,12 +1908,7 @@ mod tests {
         run(&["--help".to_string()])?;
         run(&["-h".to_string()])?;
         run(&["clear".to_string(), "--help".to_string()])?;
-        if run(&[])
-            .err()
-            .is_none_or(|error| !error.contains("`status`, `export` or `clear`"))
-        {
-            return Err("missing cache subcommand did not fail closed".to_string());
-        }
+        run(&[])?;
         if run(&["show".to_string()]).is_ok() {
             return Err("unknown cache subcommand unexpectedly passed".to_string());
         }

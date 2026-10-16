@@ -261,3 +261,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — lsp_agent_protocol (14)
+
+Reason:
+RIPR-SPEC-0001: output contract changed - 7798 collapse tautological unknown-sink flow row when sink text restates the kind label
+
+Command:
+`cargo xtask goldens bless lsp_agent_protocol --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

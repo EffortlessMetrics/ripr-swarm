@@ -1,6 +1,12 @@
 pub(super) const PR_LEDGER_HELP: &str = r#"Record a read-only PR evidence ledger entry over existing reports.
 
-Usage: ripr pr-ledger record --pr-number VALUE --base REV --head REV [--label LABEL]... [--gate PATH] [--baseline-delta PATH] [--zero-status PATH] [--pr-guidance PATH] [--gap-ledger PATH] [--recommendation-calibration PATH] [--agent-receipt PATH] [--coverage PATH] [--history PATH] [--out PATH] [--out-md PATH] [--out-jsonl PATH]
+Usage: ripr pr-ledger record --pr-number VALUE --base REV --head REV [--label LABEL]... (--gate PATH|--baseline-delta PATH|--zero-status PATH|--pr-guidance PATH|--gap-ledger PATH) [--recommendation-calibration PATH] [--agent-receipt PATH] [--coverage PATH] [--history PATH] [--out PATH] [--out-md PATH] [--out-jsonl PATH]
+
+At least one artifact input is required: `--gate`, `--baseline-delta`,
+`--zero-status`, `--pr-guidance`, or `--gap-ledger`. Each one below is
+individually optional, but `ripr pr-ledger record` with none exits 2 rather
+than guessing where artifacts live, so the paths printed in `ripr help --all`
+are examples of what to pass, not defaults that are read for you.
 
 Record options:
   --pr-number VALUE                    Pull request number or local identifier.

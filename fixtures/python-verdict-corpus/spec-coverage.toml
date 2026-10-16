@@ -545,3 +545,15 @@ reason = "acceptance examples are prose and code blocks, not numbered; Python co
 [[unmeasured]]
 id = "RIPR-SPEC-0201"
 reason = "acceptance examples are a table, not numbered; no Python corpus case covers same-class transitive reach yet"
+
+# Owner call shape projection for drill-in surfaces
+[[spec]]
+id = "RIPR-SPEC-0267"
+scope = "out"
+reason = "explain/context packet drill-in projection of an observed Rust signature; a Python case cannot label it"
+
+# Flow-sink evidence row collapses restated labels
+[[spec]]
+id = "RIPR-SPEC-0268"
+scope = "out"
+reason = "render-only collapse of a duplicated evidence row; a Python case cannot label it"

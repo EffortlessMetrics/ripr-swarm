@@ -10,8 +10,8 @@ use super::builder_override::{
 };
 use super::propagation_witness::{
     assertion_field_collection_reads, assertion_keyed_getter_reads,
-    assertion_observes_direct_collection, direct_collection_mutation_receiver,
-    field_collection_insert_key, field_collection_write_path,
+    assertion_observes_direct_collection_in_test, direct_collection_mutation_receiver,
+    field_collection_insert_key, field_collection_write_appends, field_collection_write_path,
 };
 use super::reach::{invokes_opaque_macro, is_proximity_only};
 use super::rust_string_literals;
@@ -438,11 +438,15 @@ fn effect_observer_confirms(assertion: &OracleFact) -> bool {
     )
 }
 
-fn collection_observer_confirms(expression: &str, assertion: &OracleFact) -> bool {
+fn collection_observer_confirms(
+    expression: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+) -> bool {
     let Some(receiver) = direct_collection_mutation_receiver(expression) else {
         return false;
     };
-    assertion_observes_direct_collection(&assertion.text, receiver)
+    assertion_observes_direct_collection_in_test(&assertion.text, receiver, &test.body)
 }
 
 /// RIPR-SPEC-0228: whether `assertion` observes the field collection `path`
@@ -452,9 +456,15 @@ fn collection_observer_confirms(expression: &str, assertion: &OracleFact) -> boo
 /// returns that field (`inv.history()` with
 /// `fn history(&self) -> &[Event] { &self.log }`). A shared name is not a
 /// read: `inv.log()` returning another field does not confirm.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the field-collection observer groups the write identity (path, append, insert key) with the test and assertion it judges"
+)]
 fn field_collection_observer_confirms(
     path: &str,
     count_reads: bool,
+    append_write: bool,
+    insert_key_index: Option<usize>,
     owner: Option<OwnerCall<'_>>,
     test: &TestSummary,
     assertion: &OracleFact,
@@ -463,21 +473,170 @@ fn field_collection_observer_confirms(
     let Some(owner) = owner else {
         return false;
     };
-    assertion_field_collection_reads(&assertion.text, path, count_reads)
+    let plain_reads = assertion_field_collection_reads(&assertion.text, path, false, append_write);
+    assertion_field_collection_reads(&assertion.text, path, count_reads, append_write)
         .into_iter()
         .any(|read| {
-            owner_call_precedes_read(
-                &test.body,
-                test.start_line,
-                &read.binding,
-                owner.name(),
-                assertion.line,
-            ) && read.getter.as_deref().is_none_or(|getter| {
-                owner
-                    .impl_type()
-                    .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
-            })
+            // #8204: a count-only read of a map the owner inserts into
+            // cannot confirm deleting that insert when the test may
+            // already hold the inserted key: overwriting it leaves the
+            // count unchanged.
+            let count_only = !plain_reads.contains(&read);
+            !(count_only
+                && insert_key_index.is_some_and(|index| {
+                    insert_count_may_overwrite(
+                        test,
+                        owner,
+                        &read.binding,
+                        path,
+                        index,
+                        assertion.line,
+                    )
+                }))
+                && owner_call_precedes_read(
+                    &test.body,
+                    test.start_line,
+                    &read.binding,
+                    owner.name(),
+                    assertion.line,
+                )
+                && read.getter.as_deref().is_none_or(|getter| {
+                    owner
+                        .impl_type()
+                        .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
+                })
         })
+}
+
+/// #8204: whether the test may already hold, in `binding.path`, the key an
+/// accepted owner call passes at argument `key_index`, so the owner's
+/// insert only overwrites it and a count of the map cannot notice the
+/// insert being deleted. Positive evidence only: a direct
+/// `binding.path.insert(key, ..)` before the owner call with a matching
+/// key (literal keys compared by value, anything else by spelling), or a
+/// `binding.path = ..` seeding assignment whose right-hand side names the
+/// literal key. Any other setup keeps the count credit: no seeding
+/// evidence means the insert may be the entry that makes the count.
+fn insert_count_may_overwrite(
+    test: &TestSummary,
+    owner: OwnerCall<'_>,
+    binding: &str,
+    path: &str,
+    key_index: usize,
+    read_line: usize,
+) -> bool {
+    let masked = mask_comments_and_strings(&test.body);
+    let normalize = |text: &str| normalize_insert_key(text);
+    let call_name = format!("{binding}.{}", owner.name());
+    let seed_name = format!("{binding}.{path}.insert");
+    owner_calls_before_read(
+        &test.body,
+        test.start_line,
+        binding,
+        owner.name(),
+        read_line,
+    )
+    .into_iter()
+    .any(|at| {
+        let Some(key) = test
+            .body
+            .get(at..)
+            .and_then(|text| super::activation::call_arguments(text, &call_name))
+            .and_then(|args| args.get(key_index).map(|arg| normalize(arg)))
+        else {
+            return false;
+        };
+        masked[..at]
+            .match_indices(&format!("{seed_name}("))
+            .any(|(seed_at, _)| {
+                test.body
+                    .get(seed_at..)
+                    .and_then(|text| super::activation::call_arguments(text, &seed_name))
+                    .and_then(|args| args.first().map(|arg| normalize(arg)))
+                    .is_some_and(|seed| insert_keys_match(&key, &seed))
+            })
+            || is_literal_key(&key)
+                && masked[..at]
+                    .match_indices(&format!("{binding}.{path}"))
+                    .any(|(seed_at, needle)| {
+                        // Only the right-hand side of this assignment
+                        // statement can seed the map: bound the search at
+                        // its terminating `;` and require the key in key
+                        // position, so a later statement or a value-side
+                        // mention of the literal cannot demote the count.
+                        let Some(after) = masked.get(seed_at + needle.len()..at) else {
+                            return false;
+                        };
+                        if after
+                            .chars()
+                            .next()
+                            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+                        {
+                            return false;
+                        }
+                        let Some(rhs) = after
+                            .trim_start()
+                            .strip_prefix('=')
+                            .filter(|rest| !rest.starts_with('=') && !rest.starts_with('>'))
+                        else {
+                            return false;
+                        };
+                        // The masked text fixes the statement span (a `;`
+                        // inside a string cannot end it early); the key
+                        // itself is matched in the unmasked text.
+                        let rhs_end = rhs.find(';').unwrap_or(rhs.len());
+                        let rhs_start = at - rhs.len();
+                        test.body
+                            .get(rhs_start..rhs_start + rhs_end)
+                            .is_some_and(|rhs| key_in_key_position(rhs, key.as_str()))
+                    })
+    })
+}
+
+/// Whether `rhs` (one assignment right-hand side) names `key` as a map key:
+/// the literal appears where an entry key belongs, followed by `,`, `:`,
+/// or `=>` and preceded by an opening bracket or the start. A literal in
+/// value position (`from([("B", "A")])`) does not seed the key.
+fn key_in_key_position(rhs: &str, key: &str) -> bool {
+    rhs.match_indices(key).any(|(at, _)| {
+        let before = rhs[..at].trim_end();
+        let after = rhs[at + key.len()..].trim_start();
+        (before.is_empty() || before.ends_with(['(', '[', '{', ',']))
+            && (after.starts_with(',') || after.starts_with(':') || after.starts_with("=>"))
+    })
+}
+
+/// An insert key as the value it names: owned-copy spellings of the same
+/// key (`"A"`, `"A".to_string()`, `String::from("A")`, `sku.clone()`)
+/// normalize to the copied value, so a seeded entry and the owner call
+/// that overwrites it compare equal.
+fn normalize_insert_key(text: &str) -> String {
+    let mut value = text.trim();
+    loop {
+        let trimmed = value.trim().trim_start_matches('&').trim();
+        let stripped = [".to_string()", ".to_owned()", ".into()", ".clone()"]
+            .iter()
+            .find_map(|suffix| trimmed.strip_suffix(suffix))
+            .or_else(|| {
+                ["String::from(", "str::to_string("]
+                    .iter()
+                    .find_map(|prefix| trimmed.strip_prefix(prefix))
+                    .and_then(|inner| inner.strip_suffix(')'))
+            });
+        match stripped {
+            Some(inner) => value = inner,
+            None => return trimmed.to_string(),
+        }
+    }
+}
+/// Whether two insert keys name the same entry: literal keys compare by
+/// value (`"A"` and `"A"` respelled), anything else by spelling, so the
+/// same variable passed twice still matches.
+fn insert_keys_match(key: &str, seed: &str) -> bool {
+    match literals_equal(key, seed) {
+        Some(equal) => equal,
+        None => key == seed,
+    }
 }
 
 /// RIPR-SPEC-0228 keyed reads: whether `assertion` reads back the entry the
@@ -1790,6 +1949,8 @@ fn analyze_related_assertions(
                     // Only a deleted write changes how many elements the
                     // collection holds; a changed argument does not.
                     matches!(probe.family, ProbeFamily::CallDeletion),
+                    field_collection_write_appends(&probe.expression),
+                    insert_key_index,
                     override_owner,
                     test,
                     assertion,
@@ -1907,7 +2068,7 @@ fn analyze_related_assertions(
                 let observation_confirmed = !self_computed
                     && (!confirm_required
                         || (confirms_observation
-                            && (collection_observer_confirms(&probe.expression, assertion)
+                            && (collection_observer_confirms(&probe.expression, test, assertion)
                                 || field_collection_read
                                 || collection_argument_read
                                 || (direct_collection_mutation_receiver(&probe.expression)
@@ -4649,6 +4810,64 @@ mod tests {
         assert!(!runs(99));
     }
 
+    /// #8204: a count-only read cannot confirm a map insert the test may
+    /// already hold the key for; an empty start or another key still can.
+    #[test]
+    fn field_collection_count_read_refuses_a_preexisting_key() {
+        let owner = OwnerCall::from_symbol("src/shelf.rs::impl Shelf::restock");
+        let confirms = |body: &str, assertion_text: &str, line: usize| {
+            let test = TestSummary {
+                start_line: 1,
+                ..test_with_body_assertions(
+                    "case",
+                    body,
+                    vec![OracleFact {
+                        line,
+                        ..oracle(
+                            assertion_text,
+                            OracleKind::ExactValue,
+                            OracleStrength::Strong,
+                        )
+                    }],
+                )
+            };
+            field_collection_observer_confirms(
+                "stock",
+                true,
+                false,
+                Some(0),
+                owner,
+                &test,
+                &test.assertions[0],
+                &|_, _, _| false,
+            )
+        };
+        let seeded = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock.insert(\"A\".to_string(), 1);\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 1);\n}";
+        assert!(!confirms(seeded, "assert_eq!(shelf.stock.len(), 1);", 5));
+        let empty = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 1);\n}";
+        assert!(confirms(empty, "assert_eq!(shelf.stock.len(), 1);", 4));
+        let other_key = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock.insert(\"B\".to_string(), 1);\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 2);\n}";
+        assert!(confirms(other_key, "assert_eq!(shelf.stock.len(), 2);", 5));
+        // A whole-map read of the seeded map still observes the write.
+        let whole = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock.insert(\"A\".to_string(), 1);\n    shelf.restock(\"A\", 2);\n    assert_eq!(&shelf.stock[\"A\"], &2);\n}";
+        assert!(confirms(whole, "assert_eq!(&shelf.stock[\"A\"], &2);", 5));
+        // #8204: an assignment seeding names the key in its own right-hand
+        // side; a later statement or a value-side literal cannot demote.
+        let assign_seeded = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock = BTreeMap::from([(\"A\", 1)]);\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 1);\n}";
+        assert!(!confirms(
+            assign_seeded,
+            "assert_eq!(shelf.stock.len(), 1);",
+            5
+        ));
+        let later_mention = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock = BTreeMap::new();\n    let label = \"A\";\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 1);\n}";
+        assert!(confirms(
+            later_mention,
+            "assert_eq!(shelf.stock.len(), 1);",
+            6
+        ));
+        let value_side = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock = BTreeMap::from([(\"B\", \"A\")]);\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 2);\n}";
+        assert!(confirms(value_side, "assert_eq!(shelf.stock.len(), 2);", 5));
+    }
     /// RIPR-SPEC-0228 keyed reads: a `#[should_panic]` test passes when the
     /// compared values differ, so it never confirms a keyed read.
     #[test]

@@ -3362,10 +3362,14 @@ mod tests {
         )?;
         let value: Value =
             serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
-        assert_eq!(
-            value["comments"][0]["llm_guidance"]["command"],
-            "ripr first-action --root 'it'\\''s a repo' --gap-ledger 'target/it'\\''s;ledger.json'"
+        // Host-aware quoting (#7729): bash single quotes off Windows, double
+        // quotes on it.
+        let expected = format!(
+            "ripr first-action --root {} --gap-ledger {}",
+            shell_arg("it's a repo"),
+            shell_arg("target/it's;ledger.json")
         );
+        assert_eq!(value["comments"][0]["llm_guidance"]["command"], expected,);
         Ok(())
     }
 

@@ -17,6 +17,8 @@ mod agent_policy_guidance;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/artifact_mode_precedence.rs"]
 mod artifact_mode_precedence;
+#[path = "cli_smoke/baseline_path_values.rs"]
+mod baseline_path_values;
 #[path = "../src/build_commit_record.rs"]
 mod build_commit_record;
 #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
@@ -56,6 +58,15 @@ mod javascript_awaited_roots;
 mod next_action;
 #[path = "cli_smoke/output_leaf_identity.rs"]
 mod output_leaf_identity;
+#[cfg(all(
+    feature = "lang-rust",
+    any(feature = "lang-python", feature = "lang-typescript")
+))]
+#[path = "cli_smoke/partial_preview_disclosure.rs"]
+mod partial_preview_disclosure;
+#[cfg(all(feature = "lang-rust", feature = "lang-python"))]
+#[path = "cli_smoke/portable_diff_paths.rs"]
+mod portable_diff_paths;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
@@ -91,11 +102,17 @@ mod structural_workspace_markers;
 #[path = "cli_smoke/suppression_notice.rs"]
 mod suppression_notice;
 #[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/typescript_caught_assertions.rs"]
+mod typescript_caught_assertions;
+#[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/typescript_effect_aliases.rs"]
 mod typescript_effect_aliases;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unknown_explain.rs"]
 mod unknown_explain;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/unsupported_artifact.rs"]
+mod unsupported_artifact;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unsupported_check_exit.rs"]
 mod unsupported_check_exit;
@@ -644,14 +661,37 @@ fn unique_external_workspace(label: &str) -> Result<PathBuf, String> {
     let workspace = workspace_root()
         .canonicalize()
         .map_err(|error| format!("canonicalize workspace root: {error}"))?;
-    let candidate = unique_temp_workspace(label);
-    let parent = workspace
-        .parent()
-        .ok_or_else(|| "workspace root has no parent".to_string())?;
-    let name = candidate
+    let name = unique_temp_workspace(label)
         .file_name()
-        .ok_or_else(|| "temporary fixture has no file name".to_string())?;
-    Ok(parent.join(name))
+        .ok_or_else(|| "temporary fixture has no file name".to_string())?
+        .to_os_string();
+
+    // Prefer a sibling of the checkout so the fixture is outside this Git
+    // tree. Hosted containers may pin TMPDIR inside the worktree (for
+    // example `/workspace/target`) and may not allow writes to `/`.
+    let mut parents = Vec::new();
+    if let Some(parent) = workspace.parent() {
+        parents.push(parent.to_path_buf());
+    }
+    parents.push(std::env::temp_dir());
+    #[cfg(unix)]
+    parents.push(PathBuf::from("/tmp"));
+
+    for parent in parents {
+        let Ok(canonical) = parent.canonicalize() else {
+            continue;
+        };
+        if canonical == workspace || canonical.starts_with(&workspace) {
+            continue;
+        }
+        let probe = canonical.join(format!(".ripr-write-probe-{}", std::process::id()));
+        if std::fs::create_dir(&probe).is_err() {
+            continue;
+        }
+        let _ = std::fs::remove_dir(&probe);
+        return Ok(canonical.join(&name));
+    }
+    Err("no writable directory outside the Git checkout".to_string())
 }
 
 fn assert_success(output: &Output) {
@@ -7110,7 +7150,7 @@ fn agent_start_writes_source_edit_free_workflow_packet() -> Result<(), Box<dyn s
 }
 
 #[test]
-fn agent_start_packet_discloses_that_generated_commands_assume_bash()
+fn agent_start_packet_discloses_the_command_shell_assumption()
 -> Result<(), Box<dyn std::error::Error>> {
     let out_dir = unique_temp_workspace("agent-start-shell-disclosure");
     let out = out_dir
@@ -7134,9 +7174,16 @@ fn agent_start_packet_discloses_that_generated_commands_assume_bash()
 
     // The commands are already fenced as ```bash, so a bare `bash` substring is
     // not evidence. Require the prose disclosure ahead of the first fence.
-    let disclosure = commands_md
-        .find("Each step includes Bash command forms and, where supported, PowerShell forms; unavailable variants are disclosed.")
-        .ok_or_else(|| format!("commands.md must disclose the bash assumption:\n{commands_md}"))?;
+    // Host-aware (#7729): the pinned sentence names the shell family the
+    // commands are actually quoted for on the running host.
+    let pinned_disclosure = if cfg!(windows) {
+        "Each step includes command forms for the Windows console and, where supported, PowerShell forms; unavailable variants are disclosed."
+    } else {
+        "Each step includes Bash command forms and, where supported, PowerShell forms; unavailable variants are disclosed."
+    };
+    let disclosure = commands_md.find(pinned_disclosure).ok_or_else(|| {
+        format!("commands.md must disclose the command-shell assumption:\n{commands_md}")
+    })?;
     let first_fence = commands_md
         .find("```bash")
         .ok_or("commands.md must still fence commands as bash")?;
@@ -7148,8 +7195,17 @@ fn agent_start_packet_discloses_that_generated_commands_assume_bash()
         commands_md.contains("PowerShell"),
         "commands.md must name the shells that do not accept these commands:\n{commands_md}"
     );
+    // Machine consumers never read commands.md, so the manifest must carry
+    // the same boundary the Markdown header states. Host-aware (#7729, #8152
+    // review): the command strings are bash source off Windows and the
+    // Windows console form on it.
+    let expected_shell = if cfg!(windows) {
+        "windows-console"
+    } else {
+        "bash"
+    };
     assert!(
-        workflow_json.contains(r#""command_shell": "bash""#),
+        workflow_json.contains(&format!("\"command_shell\": \"{expected_shell}\"")),
         "workflow.json must name the shell its command strings assume:\n{workflow_json}"
     );
 
@@ -11220,24 +11276,34 @@ fn doctor_reports_missing_config_defaults() -> Result<(), String> {
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().count() <= 24,
+        "default doctor must fit one 80x24 screen:\n{stdout}"
+    );
     assert!(stdout.contains("Config: not found; using built-in defaults"));
-    assert!(stdout.contains("Analysis mode default: draft"));
-    assert!(stdout.contains("LSP seam diagnostics default: true"));
-    assert!(stdout.contains("Suppressions path: .ripr/suppressions.toml"));
-    assert!(stdout.contains("Start-here packet: target/ripr/reports/start-here.md"));
-    assert!(stdout.contains("`ripr first-pr` composes it once analysis evidence exists"));
-    assert!(!stdout.contains("(present; open it first)"));
-    // On a workspace with no artifacts, `first-pr` has nothing to compose: it
-    // returns `missing_artifacts` and answers with a `ripr check` regeneration
-    // command. So the safe next action must route to the analysis command this
-    // screen already recommends, not to the compose command.
-    assert!(stdout.contains("Safe next action: run the recommended first command below"));
+    assert!(!stdout.contains("Analysis mode default: draft"), "{stdout}");
+    assert!(!stdout.contains("Start-here packet:"), "{stdout}");
+    assert!(!stdout.contains("Known limitations:"), "{stdout}");
     assert!(
         !stdout.contains("Safe next action: run `ripr first-pr"),
         "a fresh workspace must not be sent to the compose command:\n{stdout}"
     );
-    assert!(stdout.contains("Recovery states: missing artifact, stale evidence, wrong root"));
-    assert!(stdout.contains("Proof rail: verify command, receipt command, and receipt path"));
+    let verbose = run_ripr(&["--verbose", "doctor", "--root", &root]);
+    assert_success(&verbose);
+    let verbose_out = String::from_utf8_lossy(&verbose.stdout);
+    assert!(verbose_out.contains("Analysis mode default: draft"));
+    assert!(verbose_out.contains("LSP seam diagnostics default: true"));
+    assert!(verbose_out.contains("Suppressions path: .ripr/suppressions.toml"));
+    assert!(verbose_out.contains("Start-here packet: target/ripr/reports/start-here.md"));
+    assert!(verbose_out.contains("`ripr first-pr` composes it once analysis evidence exists"));
+    assert!(!verbose_out.contains("(present; open it first)"));
+    // On a workspace with no artifacts, `first-pr` has nothing to compose: it
+    // returns `missing_artifacts` and answers with a `ripr check` regeneration
+    // command. So the safe next action must route to the analysis command this
+    // screen already recommends, not to the compose command.
+    assert!(verbose_out.contains("Safe next action: run the recommended first command below"));
+    assert!(verbose_out.contains("Recovery states: missing artifact, stale evidence, wrong root"));
+    assert!(verbose_out.contains("Proof rail: verify command, receipt command, and receipt path"));
 
     ignore_remove_dir_all(&workspace);
     Ok(())
@@ -11408,10 +11474,18 @@ fn doctor_reports_present_start_here_packet() -> Result<(), String> {
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().count() <= 24,
+        "default doctor with a present packet must still fit 80x24:\n{stdout}"
+    );
     assert!(stdout.contains("Start-here packet: target/ripr/reports/start-here.md"));
     assert!(stdout.contains("(present; open it first)"));
     assert!(!stdout.contains("not yet generated"));
     assert!(!stdout.contains("stale_evidence"));
+    assert!(
+        !stdout.contains("Recovery states:") && !stdout.contains("Proof rail:"),
+        "packet recovery dump stays behind --verbose:\n{stdout}"
+    );
     // With a packet on disk `first-pr` has something to refresh, so naming it
     // here is a real route rather than a dead end.
     assert!(stdout.contains("Safe next action: open that packet"));
@@ -11434,6 +11508,10 @@ fn doctor_reports_version_mismatched_start_here_packet_as_stale() -> Result<(), 
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().count() <= 24,
+        "default doctor with a stale packet must still fit 80x24:\n{stdout}"
+    );
     assert!(stdout.contains("stale_evidence"), "{stdout}");
     assert!(stdout.contains(recorded), "{stdout}");
     assert!(stdout.contains(env!("CARGO_PKG_VERSION")), "{stdout}");
@@ -11522,7 +11600,7 @@ fn doctor_reports_directory_squatting_packet_path_as_not_generated() -> Result<(
     let squat = workspace.join("target/ripr/reports/start-here.md");
     std::fs::create_dir_all(&squat).map_err(|e| format!("create squat dir: {e}"))?;
     let root = workspace.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root]);
+    let output = run_ripr(&["--verbose", "doctor", "--root", &root]);
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -11891,8 +11969,14 @@ fn doctor_json_for(root: &Path) -> Result<serde_json::Value, String> {
 }
 
 fn doctor_human_stdout(root: &Path) -> Result<String, String> {
+    doctor_human_stdout_with_args(root, &[])
+}
+
+fn doctor_human_stdout_with_args(root: &Path, extra: &[&str]) -> Result<String, String> {
     let root_arg = root.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root_arg]);
+    let mut args = vec!["doctor", "--root", &root_arg];
+    args.extend_from_slice(extra);
+    let output = run_ripr(&args);
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
@@ -11913,7 +11997,16 @@ fn json_array<'a>(
 #[test]
 fn doctor_json_carries_every_environment_fact_the_human_screen_prints() -> Result<(), String> {
     let root = doctor_environment_fact_root("doctor-json-parity")?;
-    let human = doctor_human_stdout(&root)?;
+    let compact = doctor_human_stdout(&root)?;
+    assert!(
+        compact.lines().count() <= 24,
+        "default doctor must fit one 80x24 screen:\n{compact}"
+    );
+    assert!(
+        !compact.contains("- Perl preview:") && !compact.contains("Known limitations:"),
+        "default doctor must leave Perl preview and limitations behind --verbose:\n{compact}"
+    );
+    let human = doctor_human_stdout_with_args(&root, &["--verbose"])?;
     let report = doctor_json_for(&root)?;
     let outcome = (|| -> Result<(), String> {
         // Detected languages, with the tier the screen prints in parentheses.
@@ -12651,10 +12744,10 @@ fn doctor_discloses_missing_verification_tools_but_still_checks_manifest() -> Re
     .map_err(|error| format!("run source-build doctor human: {error}"))?;
     let human_stdout = String::from_utf8_lossy(&human_source.stdout);
     let human_result = if human_source.status.success()
-        || !human_stdout
-            .contains("! cargo not available; install Rust via rustup (https://rustup.rs)")
-        || !human_stdout
-            .contains("! rustc not available; install Rust via rustup (https://rustup.rs)")
+        || !human_stdout.contains("! cargo not available")
+        || !human_stdout.contains("! rustc not available")
+        || !human_stdout.contains("  Fix: install Rust via rustup (https://rustup.rs)")
+        || human_stdout.contains("! cargo not available; install")
         || human_stdout.contains("Start-here packet:")
         || human_stdout.contains("Recommended first command:")
         || human_stdout.contains("Recovery states:")
@@ -12662,7 +12755,7 @@ fn doctor_discloses_missing_verification_tools_but_still_checks_manifest() -> Re
         || human_stdout.contains("rustup update stable")
     {
         Err(format!(
-            "source-build human output must name the install route on each ! line and omit analysis first-run guidance:\n{human_stdout}"
+            "source-build human output must name the install route on each Fix line and omit analysis first-run guidance:\n{human_stdout}"
         ))
     } else {
         Ok(())
@@ -12857,13 +12950,92 @@ fn doctor_reports_loaded_config_path() -> Result<(), String> {
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().count() <= 24,
+        "default doctor with a loaded config must fit 80x24:\n{stdout}"
+    );
     assert!(stdout.contains("Config: loaded ripr.toml"));
     assert!(stdout.contains("Config path:"));
     assert!(stdout.contains("ripr.toml"));
     assert!(stdout.contains("Analysis mode default: deep"));
     assert!(stdout.contains("LSP seam diagnostics default: true"));
     assert!(!stdout.contains("mode = \"deep\""));
-    assert!(!stdout.contains("seam_diagnostics"));
+    assert!(!stdout.contains("seam_diagnostics ="));
+    let verbose = run_ripr(&["--verbose", "doctor", "--root", &root]);
+    assert_success(&verbose);
+    let verbose_out = String::from_utf8_lossy(&verbose.stdout);
+    assert!(verbose_out.contains("Analysis mode default: deep"));
+    assert!(verbose_out.contains("LSP seam diagnostics default: true"));
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn doctor_combined_ordinary_path_with_enablement_tip_fits_one_screen() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    // Enable only rust: the required hosted lane is `--features lang-rust`,
+    // and `enabled = ["python"]` is an invalid config on that binary.
+    std::fs::write(
+        workspace.join("ripr.toml"),
+        "[analysis]\nmode = \"deep\"\n\n[lsp]\nseam_diagnostics = true\n\n[languages]\nenabled = [\"rust\"]\n",
+    )
+    .map_err(|e| format!("write ripr.toml: {e}"))?;
+    std::fs::write(workspace.join("index.ts"), "export const x = 1;\n")
+        .map_err(|e| format!("write ts: {e}"))?;
+    std::fs::write(workspace.join("index.js"), "export const y = 1;\n")
+        .map_err(|e| format!("write js: {e}"))?;
+    std::fs::write(workspace.join("calc.py"), "def a():\n    return 1\n")
+        .map_err(|e| format!("write py: {e}"))?;
+    std::fs::write(workspace.join("main.go"), "package main\n")
+        .map_err(|e| format!("write go: {e}"))?;
+    std::fs::create_dir_all(workspace.join(".github/workflows"))
+        .map_err(|e| format!("mkdir workflow: {e}"))?;
+    std::fs::write(
+        workspace.join(".github/workflows/ripr.yml"),
+        "      - name: Install ripr\n        run: cargo install ripr --locked\n",
+    )
+    .map_err(|e| format!("write workflow: {e}"))?;
+
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().count() <= 24,
+        "combined ordinary-path doctor must fit 80x24 ({} lines):\n{stdout}",
+        stdout.lines().count()
+    );
+    #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
+    {
+        let tip = stdout.lines().find(|line| line.contains("- Tip:"));
+        assert!(
+            tip.is_some_and(|line| {
+                line.contains("[languages]")
+                    && line.contains("enabled =")
+                    && !line.contains("[languages] enabled")
+            }),
+            "enablement tip must stay one physical line of valid TOML instructions:\n{stdout}"
+        );
+    }
+    #[cfg(not(any(feature = "lang-python", feature = "lang-typescript")))]
+    {
+        assert!(
+            !stdout.contains("- Tip:"),
+            "rust-only doctor has no compiled-in preview adapter to enable:\n{stdout}"
+        );
+    }
+    assert!(
+        !stdout.contains("To analyze them, set in ripr.toml:"),
+        "the four-row TOML block must not return:\n{stdout}"
+    );
+    assert!(stdout.contains("Config: loaded ripr.toml"), "{stdout}");
+    assert!(stdout.contains("Analysis mode default: deep"), "{stdout}");
+    assert!(
+        stdout.contains("Unanalyzed languages:") && stdout.contains("Go"),
+        "{stdout}"
+    );
 
     ignore_remove_dir_all(&workspace);
     Ok(())
@@ -12891,6 +13063,120 @@ fn doctor_reports_malformed_config_error() -> Result<(), String> {
     assert!(!stdout.contains("mode = \"slow\""));
 
     ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+/// #8168: an otherwise healthy committed Cargo repo with malformed `ripr.toml`
+/// must name a config correction, not `ripr check`.
+#[test]
+fn doctor_invalid_config_on_a_committed_repo_does_not_recommend_check() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    run_git(&workspace, &["init", "-q", "-b", "main"])
+        .map_err(|error| format!("git init: {error}"))?;
+    run_git(
+        &workspace,
+        &["config", "user.email", "ripr@example.invalid"],
+    )
+    .map_err(|error| format!("git email: {error}"))?;
+    run_git(&workspace, &["config", "user.name", "RIPR test"])
+        .map_err(|error| format!("git name: {error}"))?;
+    run_git(&workspace, &["add", "."]).map_err(|error| format!("git add: {error}"))?;
+    run_git(&workspace, &["commit", "-qm", "init"])
+        .map_err(|error| format!("git commit: {error}"))?;
+    std::fs::write(workspace.join("ripr.toml"), "[analysis]\nmode = \"slow\"\n")
+        .map_err(|error| format!("write ripr.toml: {error}"))?;
+    run_git(&workspace, &["add", "ripr.toml"])
+        .map_err(|error| format!("git add config: {error}"))?;
+    run_git(&workspace, &["commit", "-qm", "invalid config"])
+        .map_err(|error| format!("git commit config: {error}"))?;
+
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    assert!(
+        !output.status.success(),
+        "malformed config on a committed repo must fail doctor\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().count() <= 24,
+        "invalid-config compact must fit 80x24:\n{stdout}"
+    );
+    assert!(stdout.contains("! Config: invalid ripr.toml"), "{stdout}");
+    assert!(stdout.contains("  Fix:"), "{stdout}");
+    assert!(
+        stdout.contains("correct `ripr.toml` so it loads"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("Recommended first command: ripr check"),
+        "invalid config must not recommend a check that will hit the same error:\n{stdout}"
+    );
+
+    let verbose = run_ripr(&["--verbose", "doctor", "--root", &root]);
+    let verbose_out = String::from_utf8_lossy(&verbose.stdout);
+    assert!(
+        !verbose_out.contains("Recommended first command: ripr check"),
+        "verbose invalid config must not recommend ripr check:\n{verbose_out}"
+    );
+
+    let json = run_ripr(&["doctor", "--root", &root, "--json"]);
+    let document = String::from_utf8_lossy(&json.stdout);
+    assert!(!document.contains("mode = \"slow\""), "{document}");
+    let report: serde_json::Value = serde_json::from_str(&document)
+        .map_err(|err| format!("doctor JSON did not parse: {err}\n{document}"))?;
+    let config = report["checks"]
+        .as_array()
+        .and_then(|checks| checks.iter().find(|check| check["name"] == "config"))
+        .ok_or_else(|| format!("doctor JSON must report the config check: {report}"))?;
+    assert_eq!(config["status"], "fail");
+    assert!(report["config_defaults"].is_null(), "{report}");
+
+    std::fs::write(workspace.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")
+        .map_err(|error| format!("rewrite ripr.toml: {error}"))?;
+    let restored = run_ripr(&["doctor", "--root", &root]);
+    assert_success(&restored);
+    let restored_out = String::from_utf8_lossy(&restored.stdout);
+    assert!(
+        restored_out.contains("Recommended first command: ripr check"),
+        "correcting the config must restore the ordinary check next action:\n{restored_out}"
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+/// #8168: a committed Cargo root whose last path component contains
+/// newlines must still print ≤24 physical lines. JSON keeps the raw path.
+#[cfg(unix)]
+#[test]
+fn doctor_newline_bearing_root_still_fits_one_screen() -> Result<(), Box<dyn std::error::Error>> {
+    let parent = unique_external_workspace("newline-root")?;
+    let root = parent.join(format!("{}界", "line\n".repeat(8)));
+    init_producer_fixture_repo(&root)?;
+    let root_str = root
+        .to_str()
+        .ok_or("newline-bearing root is not valid UTF-8")?;
+    let output = run_ripr(&["doctor", "--root", root_str]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().count() <= 24,
+        "newline-bearing --root must still fit 80x24 ({} lines):\n{stdout}",
+        stdout.lines().count()
+    );
+    assert!(
+        stdout.contains("\\u{0a}"),
+        "human doctor must spell newlines in the root:\n{stdout}"
+    );
+    let json = run_ripr(&["doctor", "--json", "--root", root_str]);
+    let parsed: serde_json::Value = serde_json::from_slice(&json.stdout)?;
+    let json_root = parsed["root"].as_str().unwrap_or("");
+    assert!(
+        json_root.contains('\n'),
+        "JSON root must keep the raw newline; got {json_root:?}"
+    );
+    let _ = std::fs::remove_dir_all(&parent);
     Ok(())
 }
 
@@ -12930,20 +13216,31 @@ fn doctor_reports_language_tiers_and_limitations() -> Result<(), String> {
         "must not list typescript when no TS markers are present:\n{detected_line}"
     );
 
-    // Section 3: Known limitations.
     assert!(
-        stdout.contains("Known limitations:"),
-        "expected 'Known limitations:' in stdout:\n{stdout}"
+        stdout.lines().count() <= 24,
+        "default doctor must fit one 80x24 screen:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Known limitations:"),
+        "default doctor must leave known limitations behind --verbose:\n{stdout}"
+    );
+    let verbose = run_ripr(&["--verbose", "doctor", "--root", &root]);
+    assert_success(&verbose);
+    let verbose_out = String::from_utf8_lossy(&verbose.stdout);
+    // Section 3: Known limitations live on the verbose screen.
+    assert!(
+        verbose_out.contains("Known limitations:"),
+        "expected 'Known limitations:' in verbose stdout:\n{verbose_out}"
     );
     // TypeScript preview line.
     assert!(
-        stdout.contains("TypeScript/JavaScript/Bun analysis is preview"),
-        "expected TypeScript/JavaScript/Bun preview line in stdout:\n{stdout}"
+        verbose_out.contains("TypeScript/JavaScript/Bun analysis is preview"),
+        "expected TypeScript/JavaScript/Bun preview line in verbose stdout:\n{verbose_out}"
     );
     // Cross-language fail-closed line.
     assert!(
-        stdout.contains("cross_language_oracle_visibility_unresolved"),
-        "expected cross_language_oracle_visibility_unresolved in stdout:\n{stdout}"
+        verbose_out.contains("cross_language_oracle_visibility_unresolved"),
+        "expected cross_language_oracle_visibility_unresolved in verbose stdout:\n{verbose_out}"
     );
 
     // Section 4: Recommended first command. The exact wording is
@@ -12992,7 +13289,18 @@ fn doctor_reports_perl_preview_section_when_perl_markers_present() -> Result<(),
     .map_err(|err| err.to_string())?;
 
     let root_str = root.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root_str]);
+    let compact = run_ripr(&["doctor", "--root", &root_str]);
+    assert_success(&compact);
+    let compact_out = String::from_utf8_lossy(&compact.stdout);
+    assert!(
+        compact_out.lines().count() <= 24,
+        "default doctor must fit one 80x24 screen:\n{compact_out}"
+    );
+    assert!(
+        !compact_out.contains("- Perl preview:"),
+        "default doctor must leave the Perl preview behind --verbose:\n{compact_out}"
+    );
+    let output = run_ripr(&["--verbose", "doctor", "--root", &root_str]);
     assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -13181,7 +13489,7 @@ fn doctor_perl_stdout_with_path(
     let output = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         root,
-        &["doctor", "--root", &root_str],
+        &["--verbose", "doctor", "--root", &root_str],
         &[("PATH", search_path)],
     )
     .map_err(|err| format!("run doctor: {err}"))?;
@@ -13201,7 +13509,7 @@ fn run_doctor_with_shims_first(root: &Path, shim_dir: &Path) -> Result<Output, S
     run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         root,
-        &["doctor", "--root", &root_str],
+        &["--verbose", "doctor", "--root", &root_str],
         &[("PATH", &search_path)],
     )
     .map_err(|err| format!("run doctor: {err}"))
@@ -13753,19 +14061,24 @@ fn doctor_without_git_names_the_fix_and_recommends_the_diff_route() -> Result<()
     let git_line = stdout
         .lines()
         .find(|line| {
-            line.contains("git was not found on PATH") || line.contains("git not available")
+            line.starts_with('!')
+                && (line.contains("git was not found on PATH")
+                    || line.contains("git not available"))
         })
         .unwrap_or("");
+    let git_fix = stdout
+        .lines()
+        .find(|line| line.starts_with("  Fix:") && line.contains("install git"))
+        .unwrap_or("");
     assert!(
-        git_line.starts_with('!'),
+        git_line.starts_with('!') && git_line.contains("git was not found on PATH"),
         "missing git must be a failing ! line:\n{stdout}"
     );
     assert!(
-        git_line.contains("git was not found on PATH")
-            && git_line.contains("install git")
-            && git_line.contains("`--diff PATH`")
-            && git_line.contains("`--diff -`"),
-        "the ! line must name the same fix as check:\n{git_line}"
+        git_fix.contains("install git")
+            && git_fix.contains("`--diff PATH`")
+            && git_fix.contains("`--diff -`"),
+        "the Fix line must name the same repair as check:\n{git_fix}\n{stdout}"
     );
     assert!(
         !git_line.contains("core.quotePath") && !git_line.contains("[\"-c\""),
@@ -13923,9 +14236,10 @@ fn windows_init_preview_and_doctor_use_one_separator_convention() -> Result<(), 
     let doctor = run_ripr(&["doctor", "--root", &root]);
     let doctor_stdout = String::from_utf8_lossy(&doctor.stdout);
     for line in doctor_stdout.lines().filter(|line| {
-        line.starts_with("- root:")
+        line.starts_with("Root:")
             || line.starts_with("- ripr binary:")
             || line.starts_with("- Cache location:")
+            || line.starts_with("✓ Cache:")
             || line.contains("Cargo.toml found at")
             || line.contains("root directory exists at")
     }) {
@@ -15852,8 +16166,24 @@ fn pilot_format_json_prints_the_packet_summary_and_suppresses_the_human_block() 
     let parsed: serde_json::Value =
         serde_json::from_str(&stdout).map_err(|e| format!("stdout JSON: {e}\n{stdout}"))?;
     assert_eq!(parsed["schema_version"], "0.3", "{parsed}");
-    assert!(parsed.get("status").is_some(), "{parsed}");
-    assert!(parsed.get("actionable_seams_total").is_some(), "{parsed}");
+    // Both surfaces share a renderer: equality alone also accepts a timeout
+    // summary after completed analysis. Pin the fixture's completed result.
+    assert_eq!(parsed["status"], "complete", "{parsed}");
+    assert!(parsed["actionable_seams_total"].is_u64(), "{parsed}");
+    #[cfg(feature = "lang-rust")]
+    {
+        // The fixture has one price predicate whose equality case is absent.
+        assert_eq!(parsed["actionable_seams_total"], 1, "{parsed}");
+        let seams = parsed["top_actionable_seams"]
+            .as_array()
+            .ok_or("completed Rust summary must contain ranked seams")?;
+        assert_eq!(seams.len(), 1, "{parsed}");
+        let seam = seams.first().ok_or("fixture predicate was not ranked")?;
+        assert_eq!(seam["file"], "src/lib.rs", "{parsed}");
+        assert_eq!(seam["line"], 2, "{parsed}");
+        assert_eq!(seam["kind"], "predicate_boundary", "{parsed}");
+        assert_eq!(seam["owner"], "src/lib.rs::price", "{parsed}");
+    }
     assert!(
         !stdout.contains("focused test:"),
         "human terminal must not mix into JSON stdout:\n{stdout}"
@@ -28477,7 +28807,7 @@ fn doctor_probes_language_runtimes_outside_the_checkout() -> Result<(), String> 
             dirs.extend(std::env::split_paths(&path));
             let path = std::env::join_paths(dirs).map_err(|err| format!("PATH: {err}"))?;
             let output = probe_command(env!("CARGO_BIN_EXE_ripr"))
-                .arg("doctor")
+                .args(["--verbose", "doctor"])
                 .current_dir(&root)
                 .env("PATH", path)
                 .output()

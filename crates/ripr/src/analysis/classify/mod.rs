@@ -83,6 +83,8 @@ pub(in crate::analysis) use propagation_witness::{
 pub(in crate::analysis) use propagation_witness::{
     constant_tail_witness, fallible_literal_witness, format_tail_witness,
 };
+#[cfg(test)]
+pub(in crate::analysis) use reach::take_external_docs_parse_count;
 pub(in crate::analysis) use reach::{
     UnseenReachNames, includes_external_docs, invokes_opaque_macro, is_proximity_only,
     is_trait_impl_method, names_identifier_outside_fn_definition, owner_may_be_reached_unseen,

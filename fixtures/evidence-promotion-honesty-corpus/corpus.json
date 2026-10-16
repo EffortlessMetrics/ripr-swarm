@@ -2633,6 +2633,36 @@
         {
           "type": "expected_class",
           "class": "exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "seconds_total",
+          "file": "src/lib.rs",
+          "line": 36,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call",
+          "miss": null
+        },
+        {
+          "type": "expected_related_test",
+          "name": "bridge_fortnight",
+          "file": "src/lib.rs",
+          "line": 45,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "same_test_file",
+          "miss": "no_call_path"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "from_str_fortnight",
+          "file": "src/lib.rs",
+          "line": 50,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "same_test_file",
+          "miss": "no_call_path"
         }
       ]
     },
@@ -9077,6 +9107,183 @@
       "vector": "test_rewritten_local_field_write_is_not_owner_result_evidence",
       "control": "must_stay_weakly_exposed",
       "probe_family": "field_construction",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_preseeded_first_element_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_preseeded_first_element",
+      "vector": "first_element_read_of_preseeded_collection_cannot_confirm_push",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_preseeded_first_element_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_preseeded_first_element",
+      "vector": "first_element_read_of_preseeded_collection_cannot_confirm_push",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_pushed_element_last_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_pushed_element_last",
+      "vector": "last_element_read_observes_pushed_element",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_pushed_element_last_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_pushed_element_last",
+      "vector": "last_element_read_observes_pushed_element",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "ts_caught_assertion_cannot_confirm_rejection",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_caught_assertion",
+      "vector": "catch_swallows_awaited_rejection_matcher_failure",
+      "probe_family": "error_path",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_map_overwrite_count_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_map_overwrite_count",
+      "vector": "len_count_cannot_confirm_insert_overwriting_preexisting_key",
+      "probe_family": "call_deletion",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_map_overwrite_count_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_map_overwrite_count",
+      "vector": "len_count_cannot_confirm_insert_overwriting_preexisting_key",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_map_insert_count_empty_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_map_insert_count_empty",
+      "vector": "len_count_confirms_insert_into_empty_map",
+      "probe_family": "call_deletion",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_map_insert_count_empty_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_map_insert_count_empty",
+      "vector": "len_count_cannot_confirm_changed_insert_value",
+      "probe_family": "side_effect",
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "expected_finding_count", "count": 1 },

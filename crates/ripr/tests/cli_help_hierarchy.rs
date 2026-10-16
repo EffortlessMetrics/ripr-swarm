@@ -8,10 +8,170 @@ mod help_contract;
 use help_contract::{assert_contains, normalized, undocumented_doc_flags};
 
 fn run_ripr(args: &[&str]) -> Result<std::process::Output, String> {
-    Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(args)
+    run_ripr_in(args, None)
+}
+
+fn run_ripr_in(
+    args: &[&str],
+    root: Option<&std::path::Path>,
+) -> Result<std::process::Output, String> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command.args(args);
+    if let Some(root) = root {
+        command.current_dir(root);
+    }
+    command
         .output()
         .map_err(|error| format!("failed to run ripr {args:?}: {error}"))
+}
+
+const BARE_HELP_GROUPS: &[&str] = &[
+    "cache",
+    "baseline",
+    "policy",
+    "reports",
+    "calibrate",
+    "zero",
+    "assistant-loop",
+    "config",
+    "pr-ledger",
+    "pr-review",
+    "coverage-grip",
+    "gate",
+];
+
+fn in_help_workspace(
+    test: impl FnOnce(&std::path::Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let parent = std::env::temp_dir();
+    std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
+    let root = parent.join(format!("ripr-group-help-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+    // Help must neither load configuration nor write reports, even in a
+    // workspace where an executing command would reject the configuration.
+    let config = "deliberately invalid TOML [";
+    std::fs::write(root.join("ripr.toml"), config).map_err(|error| error.to_string())?;
+    let result = test(&root).and_then(|()| {
+        let entries = std::fs::read_dir(&root).map_err(|error| error.to_string())?;
+        let entries = entries
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        let actual =
+            std::fs::read_to_string(root.join("ripr.toml")).map_err(|error| error.to_string())?;
+        if entries.len() != 1 || actual != config {
+            return Err(format!("group help changed workspace contents: {root:?}"));
+        }
+        Ok(())
+    });
+    let cleanup = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
+    result.and(cleanup)
+}
+
+#[test]
+fn bare_groups_display_their_documented_help() -> Result<(), String> {
+    in_help_workspace(|root| {
+        let discovery = run_ripr_in(&["help", "--json"], Some(root))?;
+        if !discovery.status.success() || !discovery.stderr.is_empty() {
+            return Err(format!("machine discovery failed: {discovery:?}"));
+        }
+        let discovery_text = String::from_utf8_lossy(&discovery.stdout);
+        let mut failures = Vec::new();
+        for &group in BARE_HELP_GROUPS {
+            let has_path = discovery_text.contains(&format!("\"path\":\"{group}\""))
+                || discovery_text.contains(&format!("\"path\": \"{group}\""));
+            let has_example = discovery_text.contains(&format!("\"example\":\"ripr {group}\""))
+                || discovery_text.contains(&format!("\"example\": \"ripr {group}\""));
+            if !has_path || !has_example {
+                return Err(format!(
+                    "missing {group} discovery row in machine discovery output"
+                ));
+            }
+            let help = run_ripr_in(&["help", group], Some(root))?;
+            if !help.status.success()
+                || !help.stderr.is_empty()
+                || !String::from_utf8_lossy(&help.stdout).contains("Usage:")
+            {
+                return Err(format!("invalid reference help for {group}: {help:?}"));
+            }
+            let bare = run_ripr_in(&[group], Some(root))?;
+            let flag = run_ripr_in(&[group, "--help"], Some(root))?;
+            for (spelling, output) in [("bare", bare), ("--help", flag)] {
+                if output.status.code() != Some(0)
+                    || !output.stderr.is_empty()
+                    || output.stdout != help.stdout
+                {
+                    failures.push(format!(
+                        "{group} ({spelling}) differs from group help: {output:?}"
+                    ));
+                }
+            }
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("\n"))
+        }
+    })
+}
+
+#[test]
+fn group_help_preserves_explicit_errors_and_gate_flag_alias() -> Result<(), String> {
+    in_help_workspace(|root| {
+        for &group in BARE_HELP_GROUPS {
+            let output = run_ripr_in(&[group, "bogus"], Some(root))?;
+            assert_eq!(output.status.code(), Some(2), "{group}: {output:?}");
+            assert!(output.stdout.is_empty(), "{group}: {output:?}");
+            assert_contains(
+                group,
+                &String::from_utf8_lossy(&output.stderr),
+                &format!("unknown {group} subcommand"),
+            )?;
+        }
+        for (args, error) in [
+            (["zero", "status"], "zero status requires --delta"),
+            (
+                ["pr-ledger", "record"],
+                "pr-ledger record requires at least one",
+            ),
+            (
+                ["pr-review", "front-panel"],
+                "pr-review front-panel requires at least one",
+            ),
+            (
+                ["coverage-grip", "frontier"],
+                "coverage-grip frontier requires at least one",
+            ),
+            (["gate", "evaluate"], "gate evaluate requires at least one"),
+            (
+                ["calibrate", "cargo-mutants"],
+                "calibrate cargo-mutants requires --mutants-json",
+            ),
+            (
+                ["assistant-loop", "proof"],
+                "assistant-loop proof requires at least one",
+            ),
+        ] {
+            let output = run_ripr_in(&args, Some(root))?;
+            assert_eq!(output.status.code(), Some(2), "{args:?}: {output:?}");
+            assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
+            assert_contains(args[0], &String::from_utf8_lossy(&output.stderr), error)?;
+        }
+        let alias = run_ripr_in(&["gate", "--pr-guidance"], Some(root))?;
+        let explicit = run_ripr_in(&["gate", "evaluate", "--pr-guidance"], Some(root))?;
+        assert_eq!(alias.status.code(), Some(2));
+        assert!(alias.stdout.is_empty());
+        assert_eq!(alias.stderr, explicit.stderr);
+        assert_contains(
+            "gate flag alias",
+            &String::from_utf8_lossy(&alias.stderr),
+            "missing value for --pr-guidance",
+        )?;
+        Ok(())
+    })
 }
 
 fn rendered_help(args: &[&str]) -> Result<String, String> {
@@ -509,7 +669,7 @@ fn help_index_routes_agent_repair_to_repair_help() -> Result<(), String> {
 #[test]
 fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), String> {
     for command in ["check", "context"] {
-        let help = normalized(&rendered_help(&[command, "--help"])?);
+        let help = normalized(&rendered_help(&[command, "--help", "--all"])?);
         for needle in [
             "instant (changed files only, cheapest)",
             "deep and ready (whole workspace, slowest)",
@@ -526,7 +686,7 @@ fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), Stri
 /// base through the same authority (#3952), so its help states the same order.
 #[test]
 fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
-    let check = normalized(&rendered_help(&["check", "--help"])?);
+    let check = normalized(&rendered_help(&["check", "--help", "--all"])?);
     for needle in [
         "the local origin/HEAD ref, then origin/main, origin/master, main, and master in order",
         "when none of those resolves, the analysis does not run",
@@ -556,7 +716,7 @@ fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
 /// the group list. Each task below must keep exactly its recommended path.
 #[test]
 fn check_help_chooses_one_format_per_task() -> Result<(), String> {
-    let check = normalized(&rendered_help(&["check", "--help"])?);
+    let check = normalized(&rendered_help(&["check", "--help", "--all"])?);
     for needle in [
         "Choose by task:",
         "eye review -> human",
@@ -631,6 +791,241 @@ fn doc_flag_guard_rejects_removed_flags_and_accepts_prose() -> Result<(), String
     let drift = undocumented_doc_flags(&[("good.md", good)], &mut cache, &run_ripr)?;
     if !drift.is_empty() {
         return Err(format!("guard rejected valid prose: {drift:?}"));
+    }
+    Ok(())
+}
+
+/// The exhaustive `check` reference must keep every option, output format and
+/// environment variable by name, so a removed entry fails even when the help
+/// stays long.
+const CHECK_REFERENCE_OPTIONS: &[&str] = &[
+    "--root",
+    "--base",
+    "--diff",
+    "--candidate-tree",
+    "--candidate-base",
+    "--worktree",
+    "--committed",
+    "--mode",
+    "--format",
+    "--gap-ledger",
+    "--json",
+    "--no-unchanged-tests",
+    "--perl-facts",
+    "--suppression-policy",
+    "--write-artifact",
+    "--git-timeout",
+    "--quiet",
+    "--all",
+];
+const CHECK_REFERENCE_FORMATS: &[&str] = &[
+    "human",
+    "human-full",
+    "json",
+    "github",
+    "sarif",
+    "badge-json",
+    "badge-shields",
+    "badge-plus-json",
+    "badge-plus-shields",
+    "repo-seams-json",
+    "repo-seams-md",
+    "repo-exposure-json",
+    "repo-exposure-summary-json",
+    "repo-exposure-md",
+    "repo-sarif",
+    "repo-badge-json",
+    "repo-badge-shields",
+    "repo-badge-plus-json",
+    "repo-badge-plus-shields",
+    "agent-seam-packets-json",
+];
+const CHECK_REFERENCE_ENVIRONMENT: &[&str] = &[
+    "RIPR_MAX_DIFF_CHANGED_RUST_LINES",
+    "RIPR_MAX_DIFF_INDEX_FILES",
+    "RIPR_DIFF_NARROW_INDEX_FILES",
+    "RIPR_DIFF_DEPENDENT_SCOPE",
+    "RIPR_PARTIAL_DIFF_FILE_BUDGET",
+    "RIPR_PARTIAL_DIFF_LINE_BUDGET",
+    "RIPR_GIT_TIMEOUT",
+    "RIPR_REPO_EXPOSURE_LATENCY_TRACE",
+    "RIPR_ALLOW_REPO_PERL_EXECUTABLE",
+];
+
+/// #8158 item 2: `check --help` is one screen that still answers the first
+/// questions (which base, which scope, which format, what the exit code
+/// means) and points at the exhaustive reference, which stays reachable and
+/// complete.
+#[test]
+fn check_help_is_one_screen_and_all_is_the_full_reference() -> Result<(), String> {
+    let short = rendered_help(&["check", "--help"])?;
+    let lines = short.lines().count();
+    if lines > 35 {
+        return Err(format!(
+            "`ripr check --help` must fit one screen (<= 35 lines), got {lines}"
+        ));
+    }
+    let short = normalized(&short);
+    for needle in [
+        "--base REV",
+        "origin/HEAD ref, then origin/main",
+        "--diff PATH",
+        "--worktree",
+        "already the",
+        "--committed",
+        "committed history only",
+        "--format FORMAT",
+        "--json",
+        "--mode MODE",
+        "--root PATH",
+        "--quiet",
+        "Unknown totals show no percentage or ETA",
+        "progress makes no speed claim",
+        // The completed-run and gate-blocked exit contract, sentence by sentence.
+        "Exit status: 0 for a completed run, including `exposed` and `weakly_exposed` findings.",
+        "`unsupported_input` reports exit 2, as do usage errors.",
+        "run `ripr gate evaluate` (exit 3 on `blocked`)",
+        "ripr check --help --all",
+    ] {
+        assert_contains("`ripr check --help`", &short, needle)?;
+    }
+    if short.contains("3 for a completed run") {
+        return Err("short check help must not give a completed run exit 3".to_string());
+    }
+    // Reference-only detail stays behind `--all`.
+    let deep: Vec<&str> = CHECK_REFERENCE_ENVIRONMENT
+        .iter()
+        .copied()
+        .chain([
+            "--candidate-tree",
+            "--suppression-policy",
+            "--write-artifact",
+        ])
+        .chain(["--git-timeout", "--gap-ledger", "badge-shields"])
+        .collect();
+    for item in deep {
+        if short.contains(item) {
+            return Err(format!("short check help leaked reference detail {item:?}"));
+        }
+    }
+    let full_text = rendered_help(&["check", "--help", "--all"])?;
+    if full_text.lines().count() <= 150 {
+        return Err("`--help --all` must be the exhaustive reference (> 150 lines)".to_string());
+    }
+    let full = normalized(&full_text);
+    // Options and environment variables must be DEFINED (an entry at the start
+    // of a line), not merely mentioned in another entry's prose.
+    for name in CHECK_REFERENCE_OPTIONS
+        .iter()
+        .chain(CHECK_REFERENCE_ENVIRONMENT)
+    {
+        let defined = full_text.lines().any(|line| {
+            line.trim_start()
+                .strip_prefix(name)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
+        });
+        if !defined {
+            return Err(format!(
+                "`ripr check --help --all` has no entry defining `{name}`"
+            ));
+        }
+    }
+    for name in CHECK_REFERENCE_FORMATS {
+        assert_contains("`ripr check --help --all`", &full, name)?;
+    }
+    // Every spelling of "help for check" agrees, and `--all` order is free.
+    let help_check_all = rendered_help(&["help", "check", "--all"])?;
+    let all_first = rendered_help(&["check", "--all", "--help"])?;
+    if help_check_all != full_text || all_first != full_text {
+        return Err(
+            "`help check --all` and `check --all --help` must equal `check --help --all`"
+                .to_string(),
+        );
+    }
+    let summary = rendered_help(&["check", "--help"])?;
+    if rendered_help(&["help", "check"])? != summary || rendered_help(&["check", "-h"])? != summary
+    {
+        return Err("`help check` and `check -h` must equal `check --help`".to_string());
+    }
+    // `--all` is not a general check flag: without `--help` it is an unknown
+    // argument (exit 2), in the same family as any other typo.
+    let bare = run_ripr(&["check", "--all"])?;
+    if bare.status.code() != Some(2) {
+        return Err(format!(
+            "`ripr check --all` must exit 2, got {:?}",
+            bare.status.code()
+        ));
+    }
+    assert_contains(
+        "`ripr check --all` stderr",
+        &String::from_utf8_lossy(&bare.stderr),
+        "unknown check argument \"--all\"",
+    )?;
+    // A mistyped advanced flag is suggested from the exhaustive reference and
+    // points at it, because the summary omits that flag.
+    let typo = run_ripr(&["check", "--candidate-tre"])?;
+    if typo.status.code() != Some(2) {
+        return Err(format!(
+            "a mistyped advanced flag must exit 2, got {:?}",
+            typo.status.code()
+        ));
+    }
+    let typo_stderr = String::from_utf8_lossy(&typo.stderr).into_owned();
+    assert_contains(
+        "typo stderr",
+        &typo_stderr,
+        "Did you mean `--candidate-tree`?",
+    )?;
+    assert_contains(
+        "typo stderr",
+        &typo_stderr,
+        "Run `ripr check --help --all`.",
+    )?;
+    Ok(())
+}
+
+/// A value consumed by an option is never the `--all` flag: `--diff --all
+/// --help` names a diff file called `--all` and wants the default summary,
+/// while a real trailing `--all` still selects the reference.
+#[test]
+fn check_help_all_is_a_parsed_flag_not_a_raw_scan() -> Result<(), String> {
+    let short = rendered_help(&["check", "--help"])?;
+    if rendered_help(&["check", "--diff", "--all", "--help"])? != short {
+        return Err("`--diff --all --help` must print the one-screen summary".to_string());
+    }
+    let full = rendered_help(&["check", "--help", "--all"])?;
+    if rendered_help(&["check", "--diff", "d.patch", "--help", "--all"])? != full {
+        return Err("a real `--all` after other options must select the reference".to_string());
+    }
+    assert_contains(
+        "`ripr check --help`",
+        &normalized(&short),
+        "walks up to the enclosing workspace or package",
+    )
+}
+
+/// Help wins over later option values: a missing or invalid value after
+/// `--help` must not turn the help request into a usage error.
+#[test]
+fn check_help_wins_over_later_option_values() -> Result<(), String> {
+    let short = rendered_help(&["check", "--help"])?;
+    for args in [
+        &["check", "--help", "--format"][..],
+        &["check", "--help", "--mode", "invalid"][..],
+        &["check", "--bogus", "--help"][..],
+        // Enumerated values never look like flags, so these are help requests.
+        &["check", "--mode", "--help"][..],
+        &["check", "--format", "-h"][..],
+    ] {
+        if rendered_help(args)? != short {
+            return Err(format!("{args:?} must print the one-screen summary"));
+        }
+    }
+    // A free-form value may be flag-shaped: `--diff --help` names a file called
+    // `--help`, so it is not a help request.
+    let diff = run_ripr(&["check", "--diff", "--help"])?;
+    if diff.status.success() || String::from_utf8_lossy(&diff.stdout).contains("Common options:") {
+        return Err("`check --diff --help` must treat `--help` as a diff path".to_string());
     }
     Ok(())
 }
