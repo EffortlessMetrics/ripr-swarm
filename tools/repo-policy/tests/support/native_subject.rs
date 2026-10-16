@@ -37,7 +37,27 @@ pub fn api_pr(pr: &Value) -> Value {
     pr
 }
 
+pub const SHARED_PROGRAMS: &[&str] = &[
+    "NATIVE_REQUEST_JQ",
+    "NATIVE_COMMIT_JQ",
+    "NATIVE_REVIEWS_JQ",
+    "NATIVE_PRIOR_REQUESTS_JQ",
+    "NATIVE_PRIOR_JOBS_JQ",
+    "NATIVE_PRIOR_ADMISSION_JQ",
+    "READINESS_SUBJECT_DIAGNOSTIC_JQ",
+    "READINESS_PR_DIAGNOSTIC_JQ",
+    "READINESS_REVIEWS_DIAGNOSTIC_JQ",
+    "READINESS_THREADS_DIAGNOSTIC_JQ",
+];
+
 pub fn configure(command: &mut Command, workflow: &str) -> Result<(), String> {
+    for name in SHARED_PROGRAMS {
+        let source = program(workflow, name);
+        if source.trim().is_empty() {
+            return Err(format!("missing shared workflow program: {name}"));
+        }
+        command.env(name, source);
+    }
     let literal = fixture()?;
     command
         .env("REPOSITORY_ID", "R_fixture")

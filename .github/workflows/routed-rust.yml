@@ -71,6 +71,72 @@ env:
         .fence == null and (.dispositions | length > 0 and all(. == "positive"))
       end;
 
+  NATIVE_REQUEST_JQ: |
+    .node_id == $pr_id and .number == $number and .state == "open" and .draft == false and
+    .head.repo.node_id == $repo_id and .head.repo.full_name == $repo and .head.sha == $head and
+    .base.repo.node_id == $repo_id and .base.ref == "main" and
+    any(.labels[]; (.name | ascii_downcase) == "merge-ready")
+  NATIVE_COMMIT_JQ: |
+    .sha == $merge and .tree.sha == $tree and (.parents | map(.sha) == [$base,$head])
+  NATIVE_REVIEWS_JQ: |
+    [ .[][] ] as $reviews |
+    ($reviews | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
+    group_by(.user.login) | map(max_by(.submitted_at))) as $dispositions |
+    all($dispositions[]; .state != "CHANGES_REQUESTED") and
+    (any($dispositions[]; .commit_id == $head and .state == "APPROVED") or
+    any($reviews | group_by(.user.login) | map(max_by(.submitted_at))[];
+    .commit_id == $head and .state == "COMMENTED" and
+    (.body | current_comment_ready)))
+  NATIVE_PRIOR_REQUESTS_JQ: |
+    [.[].workflow_runs[] | select(.workflow_id == $workflow and .head_sha == $head and
+    .repository.node_id == $repo_id and .event == "pull_request" and .run_number < $current and
+    (.display_title | startswith("Merge-ready ")) and
+    any(.pull_requests[]; .id == $pr_database_id and .number == $number))] | sort_by(.run_number) | reverse
+  NATIVE_PRIOR_JOBS_JQ: |
+    [.[].jobs[]] as $jobs | ($jobs | length > 0) and
+    all($jobs[]; .run_id == $run and .head_sha == $head) and
+    ([$jobs[].id] | length == (unique | length))
+  NATIVE_PRIOR_ADMISSION_JQ: |
+    [.[].jobs[]] as $jobs |
+    ([$jobs[] | select(.name == "Live merge-ready preflight")] | length == 1) and
+    ([$jobs[].steps[]? | select(.name == $marker)] | length == 1) and
+    any($jobs[]; .name == "Live merge-ready preflight" and .status == "completed" and .conclusion == "success" and
+    any(.steps[]; .name == $marker and .status == "completed" and .conclusion == "success"))
+  READINESS_SUBJECT_DIAGNOSTIC_JQ: |
+    {payload:"qualification-subject", checks:{expected_present:($expected | length > 0),
+    exact_subject:($observed == $expected and ($observed | length > 0))}}
+  READINESS_PR_DIAGNOSTIC_JQ: |
+    def check(f): try f catch "unreadable";
+    def sha: if type == "string" and test("^[0-9a-f]{40}$") then . else null end;
+    .[0] as $pr | {payload:(if length == 0 then "missing" else ($pr | type) end),
+    expected:{head:$head,base:$base,subject:$subject}, checks:($pr | {
+    open: check(.state == "open"), non_draft: check(.draft == false),
+    same_repository: check(.head.repo.full_name == $repo), main_base: check(.base.ref == "main"),
+    mergeable: check(.mergeable == true), exact_head: check(.head.sha == $head),
+    stored_base_matches_event: check(.base.sha == $base), exact_subject: check(.merge_commit_sha == $subject),
+    merge_ready: check(any(.labels[]; (.name | ascii_downcase) == "merge-ready"))}),
+    observed:($pr | {head:check(.head.sha | sha),base:check(.base.sha | sha),subject:check(.merge_commit_sha | sha)})}
+  READINESS_REVIEWS_DIAGNOSTIC_JQ: |
+    [ .[][] ] as $reviews |
+    ($reviews | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
+    group_by(.user.login) | map(max_by(.submitted_at))) as $dispositions |
+    ($reviews | group_by(.user.login) | map(max_by(.submitted_at))) as $latest |
+    {payload:"review-pages", pages:length, latest_count:($latest | length),
+    latest_ids:($latest | map(.id | if type == "number" then . else null end) | .[:20]),
+    checks:{no_changes_requested:all($dispositions[]; .state != "CHANGES_REQUESTED"),
+    current_head_approved:any($dispositions[]; .commit_id == $head and .state == "APPROVED"),
+    current_head_marker:any($latest[];
+    .commit_id == $head and .state == "COMMENTED" and
+    (.body | current_comment_ready))}}
+  READINESS_THREADS_DIAGNOSTIC_JQ: |
+    def check(f): try f catch "unreadable";
+    .[0] as $page | {payload:(if length == 0 then "missing" else ($page | type) end),
+    checks:($page | {no_graphql_errors:check(.errors == null),
+    all_resolved:check(.data.repository.pullRequest.reviewThreads.nodes | all(.isResolved == true)),
+    next_page_boolean:check(.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type == "boolean"),
+    cursor_nonempty:check(.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | type == "string" and length > 0)}),
+    unresolved_count:($page | check([.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved != true)] | length))}
+
 jobs:
   admission:
     if: github.event_name == 'pull_request'
@@ -121,11 +187,7 @@ jobs:
               readiness_phase=pull-request-fetch
               pr=$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER") || return
               readiness_phase=pull-request-check
-              jq -e --arg repo "$REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$HEAD_SHA" --arg merge "$SUBJECT_SHA" '
-                .node_id == $pr_id and .number == $number and .state == "open" and .draft == false and
-                .head.repo.node_id == $repo_id and .head.repo.full_name == $repo and .head.sha == $head and
-                .base.repo.node_id == $repo_id and .base.ref == "main" and
-                any(.labels[]; (.name | ascii_downcase) == "merge-ready")' <<< "$pr" >/dev/null || return
+              jq -e --arg repo "$REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$HEAD_SHA" --arg merge "$SUBJECT_SHA" "${NATIVE_REQUEST_JQ:?}" <<< "$pr" >/dev/null || return
               state=$(jq -er 'if .mergeable == null then "pending" elif .mergeable == true then "ready" else "refused" end' <<< "$pr") || return
               case "$state" in
                 ready) jq -e --arg merge "$SUBJECT_SHA" ' .merge_commit_sha == $merge ' <<< "$pr" >/dev/null || return; return 0 ;;
@@ -143,8 +205,7 @@ jobs:
             base=$(jq -er .base <<< "$candidate") || return
             tree=$(jq -er .tree <<< "$candidate") || return
             commit=$(gh api "repos/$REPOSITORY/git/commits/$SUBJECT_SHA") || return
-            jq -e --arg merge "$SUBJECT_SHA" --arg base "$base" --arg head "$HEAD_SHA" --arg tree "$tree" '
-              .sha == $merge and .tree.sha == $tree and (.parents | map(.sha) == [$base,$head])' <<< "$commit" >/dev/null || return
+            jq -e --arg merge "$SUBJECT_SHA" --arg base "$base" --arg head "$HEAD_SHA" --arg tree "$tree" "${NATIVE_COMMIT_JQ:?}" <<< "$commit" >/dev/null || return
             printf '%s\n' "$candidate"
           }
           settle_request
@@ -152,15 +213,7 @@ jobs:
           subject_before=$(read_subject)
           reviews=$(gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100")
           author=$(jq -r .user.login <<< "$pr")
-          jq -s -e --arg head "$HEAD_SHA" --arg author "$author" "$REVIEW_DISPOSITION_JQ"'
-            [ .[][] ] as $reviews |
-            ($reviews | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
-              group_by(.user.login) | map(max_by(.submitted_at))) as $dispositions |
-            all($dispositions[]; .state != "CHANGES_REQUESTED") and
-            (any($dispositions[]; .commit_id == $head and .state == "APPROVED") or
-             any($reviews | group_by(.user.login) | map(max_by(.submitted_at))[];
-               .commit_id == $head and .state == "COMMENTED" and
-               (.body | current_comment_ready)))' <<< "$reviews" >/dev/null
+          jq -s -e --arg head "$HEAD_SHA" --arg author "$author" "$REVIEW_DISPOSITION_JQ${NATIVE_REVIEWS_JQ:?}" <<< "$reviews" >/dev/null
           cursor=null
           while :; do
             threads=$(gh api graphql -f query='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}' -F number="$PR_NUMBER" -F cursor="$cursor")
@@ -179,11 +232,7 @@ jobs:
           workflow_file=${workflow_file%%@*}
           workflow_id=$(gh api "repos/$REPOSITORY/actions/workflows/$workflow_file" --jq .id)
           runs=$(gh api --paginate "repos/$REPOSITORY/actions/runs?head_sha=$HEAD_SHA&event=pull_request&per_page=100")
-          prior_runs=$(jq -cs --arg head "$HEAD_SHA" --arg repo_id "$REPOSITORY_ID" --argjson pr_database_id "$PR_DATABASE_ID" --argjson workflow "$workflow_id" --argjson number "$PR_NUMBER" --argjson current "$GITHUB_RUN_NUMBER" '
-            [.[].workflow_runs[] | select(.workflow_id == $workflow and .head_sha == $head and
-              .repository.node_id == $repo_id and .event == "pull_request" and .run_number < $current and
-              (.display_title | startswith("Merge-ready ")) and
-              any(.pull_requests[]; .id == $pr_database_id and .number == $number))] | sort_by(.run_number) | reverse' <<< "$runs")
+          prior_runs=$(jq -cs --arg head "$HEAD_SHA" --arg repo_id "$REPOSITORY_ID" --argjson pr_database_id "$PR_DATABASE_ID" --argjson workflow "$workflow_id" --argjson number "$PR_NUMBER" --argjson current "$GITHUB_RUN_NUMBER" "${NATIVE_PRIOR_REQUESTS_JQ:?}" <<< "$runs")
           while IFS= read -r prior; do
             [ -n "$prior" ] || continue
             [[ "$(jq -er .status <<< "$prior")" = completed ]] || { echo 'Prior native request pending/running; no relaunch' >&2; exit 1; }
@@ -191,18 +240,10 @@ jobs:
             attempt=$(jq -er '.run_attempt | select(type == "number" and . >= 1)' <<< "$prior")
             jobs=$(gh api --paginate "repos/$REPOSITORY/actions/runs/$prior_id/attempts/$attempt/jobs?per_page=100")
             marker="Admitted v2 $identity run $prior_id attempt $attempt"
-            jq -s -e --arg head "$HEAD_SHA" --argjson run "$prior_id" '
-              [.[].jobs[]] as $jobs | ($jobs | length > 0) and
-              all($jobs[]; .run_id == $run and .head_sha == $head) and
-              ([$jobs[].id] | length == (unique | length))' <<< "$jobs" >/dev/null
+            jq -s -e --arg head "$HEAD_SHA" --argjson run "$prior_id" "${NATIVE_PRIOR_JOBS_JQ:?}" <<< "$jobs" >/dev/null
             count=$(jq -sr --arg marker "$marker" '[.[].jobs[].steps[]? | select(.name == $marker)] | length' <<< "$jobs")
             [ "$count" != 0 ] || { echo 'origin-identity-unavailable: prior request lacks verified v2 identity; no replacement' >&2; exit 1; }
-            jq -s -e --arg marker "$marker" '
-              [.[].jobs[]] as $jobs |
-              ([$jobs[] | select(.name == "Live merge-ready preflight")] | length == 1) and
-              ([$jobs[].steps[]? | select(.name == $marker)] | length == 1) and
-              any($jobs[]; .name == "Live merge-ready preflight" and .status == "completed" and .conclusion == "success" and
-                any(.steps[]; .name == $marker and .status == "completed" and .conclusion == "success"))' <<< "$jobs" >/dev/null
+            jq -s -e --arg marker "$marker" "${NATIVE_PRIOR_ADMISSION_JQ:?}" <<< "$jobs" >/dev/null
             # Metadata identity discovery is not producer proof. No recursive reused-run
             # chain or aggregate-only pass; actual MSRV/VSCode receipts are not verified.
             echo 'origin-proof-unavailable: same-attempt native producer receipt identities are not qualified; no reuse or replacement' >&2
@@ -687,46 +728,16 @@ jobs:
               subject-check|subject-final-check)
                 observed=${subject_before-}
                 [ "$readiness_phase" != subject-final-check ] || observed=${subject_after-}
-                diagnostic=$(jq -cn --arg expected "$EXPECTED_SUBJECT" --arg observed "$observed" '
-                  {payload:"qualification-subject", checks:{expected_present:($expected | length > 0),
-                   exact_subject:($observed == $expected and ($observed | length > 0))}}' 2>/dev/null) || diagnostic='{"payload":"diagnostic-unavailable"}'
+                diagnostic=$(jq -cn --arg expected "$EXPECTED_SUBJECT" --arg observed "$observed" "${READINESS_SUBJECT_DIAGNOSTIC_JQ:-halt_error(5)}" 2>/dev/null) || diagnostic='{"payload":"diagnostic-unavailable"}'
                 ;;
               pull-request-check)
-                diagnostic=$(jq -cs --arg repo "$REPOSITORY" --arg head "$HEAD_SHA" --arg base "$STORED_BASE_SHA" --arg subject "$SUBJECT_SHA" '
-                  def check(f): try f catch "unreadable";
-                  def sha: if type == "string" and test("^[0-9a-f]{40}$") then . else null end;
-                  .[0] as $pr | {payload:(if length == 0 then "missing" else ($pr | type) end),
-                   expected:{head:$head,base:$base,subject:$subject}, checks:($pr | {
-                     open: check(.state == "open"), non_draft: check(.draft == false),
-                     same_repository: check(.head.repo.full_name == $repo), main_base: check(.base.ref == "main"),
-                     mergeable: check(.mergeable == true), exact_head: check(.head.sha == $head),
-                     stored_base_matches_event: check(.base.sha == $base), exact_subject: check(.merge_commit_sha == $subject),
-                     merge_ready: check(any(.labels[]; (.name | ascii_downcase) == "merge-ready"))}),
-                   observed:($pr | {head:check(.head.sha | sha),base:check(.base.sha | sha),subject:check(.merge_commit_sha | sha)})}' <<< "${pr-}" 2>/dev/null) || diagnostic='{"payload":"invalid-json-or-shape"}'
+                diagnostic=$(jq -cs --arg repo "$REPOSITORY" --arg head "$HEAD_SHA" --arg base "$STORED_BASE_SHA" --arg subject "$SUBJECT_SHA" "${READINESS_PR_DIAGNOSTIC_JQ:-halt_error(5)}" <<< "${pr-}" 2>/dev/null) || diagnostic='{"payload":"invalid-json-or-shape"}'
                 ;;
               reviews-check)
-                diagnostic=$(jq -cs --arg head "$HEAD_SHA" "$REVIEW_DISPOSITION_JQ"'
-                  [ .[][] ] as $reviews |
-                  ($reviews | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
-                    group_by(.user.login) | map(max_by(.submitted_at))) as $dispositions |
-                  ($reviews | group_by(.user.login) | map(max_by(.submitted_at))) as $latest |
-                  {payload:"review-pages", pages:length, latest_count:($latest | length),
-                   latest_ids:($latest | map(.id | if type == "number" then . else null end) | .[:20]),
-                   checks:{no_changes_requested:all($dispositions[]; .state != "CHANGES_REQUESTED"),
-                     current_head_approved:any($dispositions[]; .commit_id == $head and .state == "APPROVED"),
-                     current_head_marker:any($latest[];
-                       .commit_id == $head and .state == "COMMENTED" and
-                       (.body | current_comment_ready))}}' <<< "${reviews-}" 2>/dev/null) || diagnostic='{"payload":"invalid-json-or-shape"}'
+                diagnostic=$(jq -cs --arg head "$HEAD_SHA" "$REVIEW_DISPOSITION_JQ${READINESS_REVIEWS_DIAGNOSTIC_JQ:-halt_error(5)}" <<< "${reviews-}" 2>/dev/null) || diagnostic='{"payload":"invalid-json-or-shape"}'
                 ;;
               threads-check|threads-page-parse|threads-cursor-parse)
-                diagnostic=$(jq -cs '
-                  def check(f): try f catch "unreadable";
-                  .[0] as $page | {payload:(if length == 0 then "missing" else ($page | type) end),
-                   checks:($page | {no_graphql_errors:check(.errors == null),
-                     all_resolved:check(.data.repository.pullRequest.reviewThreads.nodes | all(.isResolved == true)),
-                     next_page_boolean:check(.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type == "boolean"),
-                     cursor_nonempty:check(.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | type == "string" and length > 0)}),
-                   unresolved_count:($page | check([.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved != true)] | length))}' <<< "${threads-}" 2>/dev/null) || diagnostic='{"payload":"invalid-json-or-shape"}'
+                diagnostic=$(jq -cs "${READINESS_THREADS_DIAGNOSTIC_JQ:-halt_error(5)}" <<< "${threads-}" 2>/dev/null) || diagnostic='{"payload":"invalid-json-or-shape"}'
                 ;;
             esac
             printf 'readiness_detail=%s\n' "$diagnostic" >&2
@@ -741,11 +752,7 @@ jobs:
               readiness_phase=pull-request-fetch
               pr=$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER") || return
               readiness_phase=pull-request-check
-              jq -e --arg repo "$REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$HEAD_SHA" --arg merge "$SUBJECT_SHA" '
-                .node_id == $pr_id and .number == $number and .state == "open" and .draft == false and
-                .head.repo.node_id == $repo_id and .head.repo.full_name == $repo and .head.sha == $head and
-                .base.repo.node_id == $repo_id and .base.ref == "main" and
-                any(.labels[]; (.name | ascii_downcase) == "merge-ready")' <<< "$pr" >/dev/null || return
+              jq -e --arg repo "$REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$HEAD_SHA" --arg merge "$SUBJECT_SHA" "${NATIVE_REQUEST_JQ:?}" <<< "$pr" >/dev/null || return
               state=$(jq -er 'if .mergeable == null then "pending" elif .mergeable == true then "ready" else "refused" end' <<< "$pr") || return
               case "$state" in
                 ready) jq -e --arg merge "$SUBJECT_SHA" ' .merge_commit_sha == $merge ' <<< "$pr" >/dev/null || return; return 0 ;;
@@ -763,8 +770,7 @@ jobs:
             base=$(jq -er .base <<< "$candidate") || return
             tree=$(jq -er .tree <<< "$candidate") || return
             commit=$(gh api "repos/$REPOSITORY/git/commits/$SUBJECT_SHA") || return
-            jq -e --arg merge "$SUBJECT_SHA" --arg base "$base" --arg head "$HEAD_SHA" --arg tree "$tree" '
-              .sha == $merge and .tree.sha == $tree and (.parents | map(.sha) == [$base,$head])' <<< "$commit" >/dev/null || return
+            jq -e --arg merge "$SUBJECT_SHA" --arg base "$base" --arg head "$HEAD_SHA" --arg tree "$tree" "${NATIVE_COMMIT_JQ:?}" <<< "$commit" >/dev/null || return
             printf '%s\n' "$candidate"
           }
           readiness_phase=subject-refresh
@@ -777,15 +783,7 @@ jobs:
           readiness_phase=author-parse
           author=$(jq -r .user.login <<< "$pr")
           readiness_phase=reviews-check
-          jq -s -e --arg head "$HEAD_SHA" --arg author "$author" "$REVIEW_DISPOSITION_JQ"'
-            [ .[][] ] as $reviews |
-            ($reviews | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
-              group_by(.user.login) | map(max_by(.submitted_at))) as $dispositions |
-            all($dispositions[]; .state != "CHANGES_REQUESTED") and
-            (any($dispositions[]; .commit_id == $head and .state == "APPROVED") or
-             any($reviews | group_by(.user.login) | map(max_by(.submitted_at))[];
-               .commit_id == $head and .state == "COMMENTED" and
-               (.body | current_comment_ready)))' <<< "$reviews" >/dev/null
+          jq -s -e --arg head "$HEAD_SHA" --arg author "$author" "$REVIEW_DISPOSITION_JQ${NATIVE_REVIEWS_JQ:?}" <<< "$reviews" >/dev/null
           cursor=null
           while :; do
             readiness_phase=threads-fetch

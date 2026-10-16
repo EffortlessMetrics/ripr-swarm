@@ -177,3 +177,4 @@ tools/repo-policy/tests/printed_command_admission.rs|Command::new|1|printed-comm
 
 tools/repo-policy/tests/ci_leaf_contract.rs|Command::new|1|ci-leaf-contract|#4987: GNU timeout bounds literal workflow Bash predicates, source/result guards and stubbed payload commands; no product build, network, publication or production spawn.
 xtask/tests/windows_subset_evidence.rs|Command::new|2|windows-subset-evidence-proof|#4987: existing test-only Bash replay of literal producer/evidence guards with fixed local stubs in per-process scratch, plus Windows-only PowerShell native-status capture with a mocked Python function; no product execution or network.
+tools/repo-policy/tests/support/native_subject.rs|use std::process::Command|1|native-admission-proof|#8082: Configure literal workflow programs and synthetic identity arguments on the existing bounded Linux test-harness Command; this helper does not construct or launch a process, use the network or access real credentials.

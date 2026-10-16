@@ -150,6 +150,11 @@ fn execute_review_stream(
     if let Some(stored) = environment.get("STORED_BASE_SHA").and_then(Value::as_str) {
         command.env("STORED_BASE_SHA", stored);
     }
+    for key in native_subject::SHARED_PROGRAMS {
+        if let Some(program) = environment.get(key).and_then(Value::as_str) {
+            command.env(key, program);
+        }
+    }
     let output = command.output().map_err(|e| e.to_string())?;
     let result = output.status.success();
     if !result && script.contains("execute=true") {
@@ -334,17 +339,18 @@ fn admission_rejects_event_base_that_disagrees_with_actual_merge_parent() -> Res
         &inconsistent
     )?);
     let parent_guard = " and (.parents | map(.sha) == [$base,$head])";
-    let missing_guard = script.replace(parent_guard, "");
+    let commit_program = native_subject::program(WORKFLOW, "NATIVE_COMMIT_JQ");
+    let missing_guard = commit_program.replace(parent_guard, "");
     assert_ne!(
-        missing_guard, script,
+        missing_guard, commit_program,
         "production parent guard must be exercised"
     );
     assert!(
         execute(
-            &missing_guard,
+            &script,
             &live["live_pull_request"],
             &live["reviews"],
-            &inconsistent
+            &json!({"MOCK_COMMIT": inconsistent["MOCK_COMMIT"], "NATIVE_COMMIT_JQ": missing_guard})
         )?,
         "removing the parent guard must expose the false allocation"
     );
@@ -484,22 +490,19 @@ fn ordinary_comments_cannot_erase_native_review_dispositions() -> Result<(), Str
     }
     // Admission and final refresh must use exactly the same review reducer.
     let admission = body("Reconcile native request and current readiness")?;
-    let reducer = |text: &str| -> Result<String, String> {
-        // The diagnostic jq also inspects review pages. Compare the actual
-        // authoritative -s -e command, never its advisory lookalike.
-        let command = "jq -s -e --arg head \"$HEAD_SHA\" --arg author \"$author\" \"$REVIEW_DISPOSITION_JQ\"'";
-        assert_eq!(text.matches(command).count(), 1, "unique decision command");
-        let decision = text.split_once(command).ok_or("review decision missing")?.1;
-        Ok(decision
-            .split_once("[ .[][] ] as $reviews |")
-            .ok_or("review reducer missing")?
-            .1
-            .split_once("' <<< \"$reviews\"")
-            .ok_or("review reducer end missing")?
-            .0
-            .to_owned())
-    };
-    assert_eq!(reducer(&admission)?, reducer(&script)?);
+    let command = "jq -s -e --arg head \"$HEAD_SHA\" --arg author \"$author\" \"$REVIEW_DISPOSITION_JQ${NATIVE_REVIEWS_JQ:?}\"";
+    for boundary in [&admission, &script] {
+        assert_eq!(
+            boundary.matches(command).count(),
+            1,
+            "unique shared decision command"
+        );
+    }
+    assert!(
+        !native_subject::program(WORKFLOW, "NATIVE_REVIEWS_JQ")
+            .trim()
+            .is_empty()
+    );
     Ok(())
 }
 
@@ -781,13 +784,22 @@ fn streamed_review_controls_reject_page_loss_and_first_disposition() -> Result<(
             execute_review_stream(&script, pr, &review_stream(&outstanding[1..]), &json!({}))?,
             "dropping first page recreates false success; unchanged expected=false rejects it"
         );
-        let first_only = script.replace(
+        let review_program = native_subject::program(WORKFLOW, "NATIVE_REVIEWS_JQ");
+        let first_only = review_program.replace(
             "map(max_by(.submitted_at))) as $dispositions",
             "map(first)) as $dispositions",
         );
-        assert_ne!(first_only, script, "wrong disposition mutation must engage");
+        assert_ne!(
+            first_only, review_program,
+            "wrong disposition mutation must engage"
+        );
         assert!(
-            !execute_review_stream(&first_only, pr, &review_stream(&repaired), &json!({}))?,
+            !execute_review_stream(
+                &script,
+                pr,
+                &review_stream(&repaired),
+                &json!({"NATIVE_REVIEWS_JQ": first_only})
+            )?,
             "selecting first decisive review loses genuine resolution"
         );
     }
@@ -1192,5 +1204,27 @@ fn stored_base_is_provenance_and_live_candidate_remains_exact() -> Result<(), St
         &literal["REVIEWS"],
         &json!({"MOCK_FRAME":bad})
     )?);
+    Ok(())
+}
+
+#[test]
+fn shared_admission_programs_are_required_before_allocation() -> Result<(), String> {
+    let literal = native_subject::fixture()?;
+    let script = body("Reconcile native request and current readiness")?;
+    for key in native_subject::SHARED_PROGRAMS.iter().filter(|key| {
+        key.starts_with("NATIVE_")
+            && !key.starts_with("NATIVE_PRIOR_JOBS")
+            && !key.starts_with("NATIVE_PRIOR_ADMISSION")
+    }) {
+        assert!(
+            !execute(
+                &script,
+                &literal["PR"],
+                &literal["REVIEWS"],
+                &json!({*key:""})
+            )?,
+            "empty {key} must refuse allocation"
+        );
+    }
     Ok(())
 }

@@ -572,3 +572,33 @@ fn thread_pagination_errors_and_missing_fields_preserve_native_refusals() -> Res
     }
     Ok(())
 }
+
+#[test]
+fn missing_advisory_program_preserves_refusal_without_payload_leak() -> Result<(), String> {
+    let mut case = positive();
+    case.reviews = case
+        .reviews
+        .replace("SOURCE_REVIEW_READY", "REPAIR_REQUIRED");
+    let script = format!("unset READINESS_REVIEWS_DIAGNOSTIC_JQ\n{}", body()?);
+    let (output, _) = run(&script, &case)?;
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).map_err(|error| error.to_string())?;
+    assert!(stderr.contains("readiness_refusal phase=reviews-check status=1"));
+    assert!(stderr.contains(r#"readiness_detail={"payload":"invalid-json-or-shape"}"#));
+    assert!(!stderr.contains(REVIEW_SECRET));
+    assert!(!stderr.contains(TOKEN_SECRET));
+    let unsafe_fallback = script.replace(
+        "${READINESS_REVIEWS_DIAGNOSTIC_JQ:-halt_error(5)}",
+        "${READINESS_REVIEWS_DIAGNOSTIC_JQ:-.}",
+    );
+    assert_ne!(unsafe_fallback, script, "fallback removal must engage");
+    let (unsafe_output, _) = run(&unsafe_fallback, &case)?;
+    assert_eq!(unsafe_output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(unsafe_output.stderr)
+            .map_err(|error| error.to_string())?
+            .contains(REVIEW_SECRET),
+        "identity fallback recreates the payload leak"
+    );
+    Ok(())
+}
