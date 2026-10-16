@@ -77,6 +77,10 @@ type SharedIdentities = BTreeMap<String, Option<std::sync::Arc<OwnerCallIdentity
 
 /// Per-index memos for the call-identity family (#7716 residual).
 ///
+/// Workspace `const`/`static` items by name: file, masked initializer, and
+/// whether the item is a `static mut`.
+pub(crate) type WorkspaceConstants = BTreeMap<String, Vec<(std::path::PathBuf, String, bool)>>;
+
 /// Every producer that classifies probes rebuilds its [`RustIndex`] per
 /// analysis run (the CLI diff pass, an MCP refresh, an LSP analysis), so a
 /// memo held here lives exactly one run and can never outlive the sources it
@@ -97,7 +101,7 @@ pub(crate) struct CallIdentityMemos {
     /// RIPR-SPEC-0035: every workspace `const`/`static` by name with its
     /// file and masked initializer, built once per index on first use by
     /// the owner-return pin's self-computed expected-value check.
-    constants: std::sync::OnceLock<BTreeMap<String, Vec<(std::path::PathBuf, String, bool)>>>,
+    constants: std::sync::OnceLock<WorkspaceConstants>,
 }
 
 impl Clone for CallIdentityMemos {
@@ -197,8 +201,8 @@ impl CallIdentityMemos {
     /// The memoized workspace constant table, built by `build` on first use.
     pub(crate) fn workspace_constants(
         &self,
-        build: impl FnOnce() -> BTreeMap<String, Vec<(std::path::PathBuf, String, bool)>>,
-    ) -> &BTreeMap<String, Vec<(std::path::PathBuf, String, bool)>> {
+        build: impl FnOnce() -> WorkspaceConstants,
+    ) -> &WorkspaceConstants {
         self.constants.get_or_init(build)
     }
 }
