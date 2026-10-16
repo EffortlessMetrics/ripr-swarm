@@ -966,7 +966,19 @@ pub(crate) fn render_finding_with_context_command(
     // source fragments keep their exact bytes.
     let mut out =
         render_finding_with_config(finding, config, root, JsonPointerWording::ExplainNamesCheck);
-    out.push_str(&explain::render_verdict_explanation(finding));
+    // #7796: project the owner's observed call shape (the same producer
+    // `ripr agent stub` reads) into the verdict-change recipe. A missing or
+    // unparsed source declines silently and the recipe keeps the name-only
+    // form; the render itself never reads source files.
+    let owner_signature = crate::analysis::owner_call_shape_at_line(
+        root,
+        &finding.probe.location.file,
+        finding.probe.location.line,
+    );
+    out.push_str(&explain::render_verdict_explanation(
+        finding,
+        owner_signature.as_deref(),
+    ));
     out.push_str(&format!("\nNext: {context_command}\n"));
     push_powershell_variant(&mut out, "", context_command);
     terminal_safe(out)

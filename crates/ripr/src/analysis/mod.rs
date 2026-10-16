@@ -107,7 +107,9 @@ pub(crate) use seam_inventory::{
     pilot_seam_budget, seam_kind_for_probe_family, workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
-pub(crate) use syntax::fn_signature::{owner_fn_line_span, rust_source_parses_cleanly};
+pub(crate) use syntax::fn_signature::{
+    owner_call_shape_at_line, owner_fn_line_span, rust_source_parses_cleanly,
+};
 pub(crate) use syntax::governed_cfg_test_modules;
 pub(crate) use syntax::parse_clean_source_file;
 pub(crate) use workspace::DiffOnlySource;

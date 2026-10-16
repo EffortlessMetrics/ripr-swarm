@@ -466,6 +466,76 @@ pub(crate) fn owner_fn_line_span(source: &str, line: usize) -> Option<(usize, us
         })
 }
 
+impl OwnerSignature {
+    /// Observed call shape as written, e.g. `greet(name: &str) -> String`;
+    /// methods include the receiver slot (`push(self, value: i32)`), and
+    /// `()`-returning functions omit the arrow. This is observed source data
+    /// for drill-in surfaces, not a synthesized call: a typed `self` receiver
+    /// or unbound type/const generics make the shape not honestly nameable,
+    /// so those decline with `None` (#7796).
+    pub(crate) fn call_shape(&self) -> Option<String> {
+        if self.receiver == Some(OwnerReceiver::Typed) || self.has_type_generics {
+            return None;
+        }
+        let mut params: Vec<String> = Vec::new();
+        if let Some(receiver) = &self.receiver {
+            params.push(
+                match receiver {
+                    OwnerReceiver::Value => "self",
+                    OwnerReceiver::Ref => "&self",
+                    OwnerReceiver::RefMut => "&mut self",
+                    OwnerReceiver::Typed => return None,
+                }
+                .to_string(),
+            );
+        }
+        params.extend(self.params.iter().map(|param| match &param.name {
+            Some(name) => format!("{name}: {}", param.ty),
+            None => param.ty.clone(),
+        }));
+        match &self.return_type {
+            Some(return_type) => Some(format!(
+                "{}({}) -> {return_type}",
+                self.name,
+                params.join(", ")
+            )),
+            None => Some(format!("{}({})", self.name, params.join(", "))),
+        }
+    }
+}
+
+/// Signature of the innermost `fn` containing 1-based `line`, when the file
+/// parses and a function covers that line.
+pub(crate) fn owner_signature_at_line(source: &str, line: usize) -> Option<OwnerSignature> {
+    let (start_line, _end_line) = owner_fn_line_span(source, line)?;
+    let start_offset = if start_line <= 1 {
+        0
+    } else {
+        source
+            .match_indices('\n')
+            .nth(start_line - 2)
+            .map(|(idx, _)| idx + 1)?
+    };
+    // Land on the line's first token: leading whitespace is outside the
+    // parser's `fn` text range, so the raw line start could miss it.
+    let line_text = source.get(start_offset..)?;
+    let offset = start_offset + (line_text.len() - line_text.trim_start().len());
+    owner_signature_at(source, offset)
+}
+
+/// Observed call shape of the `fn` owning 1-based `line` in `root`/`file`
+/// (the context-packet/explain drill-in projection, #7796). `None` when the
+/// source is missing or unparsed, no function covers the line, or the shape
+/// is not honestly nameable. No assertion value is synthesized here.
+pub(crate) fn owner_call_shape_at_line(
+    root: &std::path::Path,
+    file: &std::path::Path,
+    line: usize,
+) -> Option<String> {
+    let source = std::fs::read_to_string(root.join(file)).ok()?;
+    owner_signature_at_line(&source, line)?.call_shape()
+}
+
 /// Whether the innermost struct-literal field at `byte_offset` belongs to the
 /// value its owning `fn` returns directly: the struct literal is that
 /// function's tail expression (through parentheses and nested block tails)
@@ -817,6 +887,69 @@ mod tests {
         assert_eq!(signature.return_type.as_deref(), Some("u32"));
         assert!(signature.parent_modules.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn call_shape_renders_observed_params_and_return() -> Result<(), String> {
+        let source = "pub fn greet(name: &str) -> String {\n    format!(\"HELLO, {}!\", name.to_uppercase())\n}\n";
+        let offset = source.find("format!").ok_or("fixture has a body")?;
+        let signature = owner_signature_at(source, offset).ok_or("signature parses")?;
+        assert_eq!(
+            signature.call_shape().as_deref(),
+            Some("greet(name: &str) -> String")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn call_shape_includes_receiver_slot_for_methods() -> Result<(), String> {
+        let source = "struct Bag;\nimpl Bag {\n    pub fn push(&mut self, value: i32) -> bool {\n        let _ = value;\n        true\n    }\n}\n";
+        let offset = source.find("let _ =").ok_or("fixture has a body")?;
+        let signature = owner_signature_at(source, offset).ok_or("signature parses")?;
+        assert_eq!(
+            signature.call_shape().as_deref(),
+            Some("push(&mut self, value: i32) -> bool")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn call_shape_omits_arrow_for_unit_return() -> Result<(), String> {
+        let source = "fn record(value: u8) {\n    let _ = value;\n}\n";
+        let offset = source.find("let _ =").ok_or("fixture has a body")?;
+        let signature = owner_signature_at(source, offset).ok_or("signature parses")?;
+        assert_eq!(signature.call_shape().as_deref(), Some("record(value: u8)"));
+        Ok(())
+    }
+
+    #[test]
+    fn call_shape_declines_unbound_type_generics() -> Result<(), String> {
+        let source = "fn identity<T>(value: T) -> T {\n    value\n}\n";
+        let offset = source.find("value\n").ok_or("fixture has a body")?;
+        let signature = owner_signature_at(source, offset).ok_or("signature parses")?;
+        assert_eq!(signature.call_shape(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn owner_signature_at_line_finds_the_innermost_covering_function() -> Result<(), String> {
+        let source = "pub fn outer() -> u8 {\n    fn inner(flag: bool) -> u8 {\n        if flag { 1 } else { 2 }\n    }\n    inner(true)\n}\n";
+        let signature = owner_signature_at_line(source, 3).ok_or("line 3 sits inside `inner`")?;
+        assert_eq!(signature.name, "inner");
+        assert_eq!(
+            signature.call_shape().as_deref(),
+            Some("inner(flag: bool) -> u8")
+        );
+        let outer = owner_signature_at_line(source, 5).ok_or("line 5 sits inside `outer`")?;
+        assert_eq!(outer.name, "outer");
+        assert_eq!(outer.call_shape().as_deref(), Some("outer() -> u8"));
+        Ok(())
+    }
+
+    #[test]
+    fn owner_signature_at_line_declines_outside_any_function() {
+        let source = "const ANSWER: u8 = 42;\n";
+        assert_eq!(owner_signature_at_line(source, 1), None);
     }
 
     #[test]
