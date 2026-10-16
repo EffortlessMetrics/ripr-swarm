@@ -1,0 +1,323 @@
+name: 'PR candidate admission'
+description: 'Refuse expensive qualification for stale heads, incomplete claim identity, unresolved competing candidates, or oversized non-docs scope (#2022, #4987)'
+author: 'EffortlessMetrics'
+
+inputs:
+  token:
+    description: 'Read-only GitHub token used to inspect the current PR and open candidate set'
+    required: false
+    default: ''
+  repository:
+    description: 'Repository in owner/name form'
+    required: false
+    default: ${{ github.repository }}
+  pr-number:
+    description: 'Pull request number; empty for non-PR workflow invocations'
+    required: false
+    default: ''
+  expected-head:
+    description: 'Exact full candidate head from the admission event'
+    required: false
+    default: ''
+  docs-only:
+    description: 'Whether the independently classified candidate is docs-only'
+    required: false
+    default: 'false'
+  max-changed-files:
+    description: 'Maximum changed files admitted to ordinary non-docs qualification'
+    required: false
+    default: '160'
+  max-changed-lines:
+    description: 'Maximum additions plus deletions admitted to ordinary non-docs qualification'
+    required: false
+    default: '3000'
+  mode:
+    description: 'admit or self-test'
+    required: false
+    default: 'admit'
+
+outputs:
+  status:
+    description: 'admitted, not_applicable, self_test_pass, or refused'
+    value: ${{ steps.admit.outputs.status }}
+  reason:
+    description: 'Stable admission reason token'
+    value: ${{ steps.admit.outputs.reason }}
+  claim:
+    description: 'Normalized governing claim identity'
+    value: ${{ steps.admit.outputs.claim }}
+  acceptance-delta:
+    description: 'Normalized acceptance delta'
+    value: ${{ steps.admit.outputs.acceptance_delta }}
+  competing-prs:
+    description: 'Comma-separated unresolved competing PR numbers'
+    value: ${{ steps.admit.outputs.competing_prs }}
+  changed-files:
+    description: 'GitHub changed-files count for the current PR'
+    value: ${{ steps.admit.outputs.changed_files }}
+  changed-lines:
+    description: 'GitHub additions plus deletions for the current PR'
+    value: ${{ steps.admit.outputs.changed_lines }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Evaluate candidate admission
+      id: admit
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        ADMISSION_REPOSITORY: ${{ inputs.repository }}
+        ADMISSION_PR_NUMBER: ${{ inputs.pr-number }}
+        ADMISSION_EXPECTED_HEAD: ${{ inputs.expected-head }}
+        ADMISSION_DOCS_ONLY: ${{ inputs.docs-only }}
+        ADMISSION_MAX_CHANGED_FILES: ${{ inputs.max-changed-files }}
+        ADMISSION_MAX_CHANGED_LINES: ${{ inputs.max-changed-lines }}
+        ADMISSION_MODE: ${{ inputs.mode }}
+      run: |
+        set -euo pipefail
+        tmp="$(mktemp -d)"
+        trap 'rm -rf "$tmp"' EXIT
+        current="$tmp/current.json"
+        open_prs="$tmp/open-prs.json"
+        result="$tmp/result.json"
+
+        if [ "${ADMISSION_MODE:-admit}" = "admit" ] && [ -n "${ADMISSION_PR_NUMBER:-}" ]; then
+          [ -n "${GH_TOKEN:-}" ] || { echo '::error::candidate admission requires a read-only GitHub token'; exit 1; }
+          gh api "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}" > "$current"
+          gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls?state=open&per_page=100" | jq -s 'add' > "$open_prs"
+        fi
+
+        CURRENT_PATH="$current" OPEN_PRS_PATH="$open_prs" python3 - <<'PY' > "$result"
+        import json
+        import os
+        import re
+
+        MODE = os.environ.get("ADMISSION_MODE", "admit")
+        EXPECTED_HEAD = os.environ.get("ADMISSION_EXPECTED_HEAD", "")
+        DOCS_ONLY = os.environ.get("ADMISSION_DOCS_ONLY", "false").lower() == "true"
+
+        def bounded_int(name: str) -> int:
+            raw = os.environ.get(name, "")
+            if not raw.isdigit() or int(raw) < 1:
+                raise SystemExit(f"{name} must be a positive integer")
+            return int(raw)
+
+        MAX_FILES = bounded_int("ADMISSION_MAX_CHANGED_FILES")
+        MAX_LINES = bounded_int("ADMISSION_MAX_CHANGED_LINES")
+        LABELS = {
+            "claim": (
+                "governing issue or accepted claim",
+                "owner / governing claim",
+            ),
+            "delta": (
+                "acceptance delta (one sentence)",
+                "acceptance delta",
+            ),
+        }
+        PLACEHOLDERS = {
+            "", "n/a", "na", "none", "not applicable", "tbd", "todo",
+            "unknown", "pending", "-", "—",
+        }
+
+        def normalize(value: str) -> str:
+            value = value.strip().strip("`")
+            return " ".join(value.split()).casefold()
+
+        def extract_fields(body: str) -> dict[str, str]:
+            found = {"claim": "", "delta": ""}
+            for raw_line in (body or "").splitlines():
+                line = raw_line.strip()
+                folded = line.casefold()
+                for key, labels in LABELS.items():
+                    if found[key]:
+                        continue
+                    for label in labels:
+                        prefix = f"{label}:"
+                        if folded.startswith(prefix):
+                            found[key] = line[len(prefix):].strip()
+                            break
+            return found
+
+        def invalid(value: str) -> bool:
+            normalized = normalize(value)
+            return normalized in PLACEHOLDERS or normalized.startswith("<")
+
+        def refusal(reason: str, current: dict, fields: dict, peers=None) -> dict:
+            changed_files = int(current.get("changed_files") or 0)
+            changed_lines = int(current.get("additions") or 0) + int(current.get("deletions") or 0)
+            return {
+                "status": "refused",
+                "reason": reason,
+                "claim": normalize(fields.get("claim", "")),
+                "acceptance_delta": normalize(fields.get("delta", "")),
+                "competing_prs": peers or [],
+                "changed_files": changed_files,
+                "changed_lines": changed_lines,
+                "max_changed_files": MAX_FILES,
+                "max_changed_lines": MAX_LINES,
+            }
+
+        def decide(current: dict, open_candidates: list[dict], expected_head: str, docs_only: bool) -> dict:
+            fields = extract_fields(current.get("body") or "")
+            actual_head = ((current.get("head") or {}).get("sha") or "")
+            if not expected_head or not re.fullmatch(r"[0-9a-f]{40}", expected_head):
+                return refusal("expected_head_missing", current, fields)
+            if actual_head != expected_head:
+                return refusal("candidate_head_moved", current, fields)
+            if current.get("state") != "open" or current.get("draft") is True:
+                return refusal("candidate_not_open_ready", current, fields)
+            if invalid(fields["claim"]) or invalid(fields["delta"]):
+                return refusal("claim_identity_missing", current, fields)
+
+            claim = normalize(fields["claim"])
+            delta = normalize(fields["delta"])
+            exact_peers: list[int] = []
+            incomplete_peers: list[int] = []
+            for peer in open_candidates:
+                if peer.get("number") == current.get("number"):
+                    continue
+                peer_fields = extract_fields(peer.get("body") or "")
+                if invalid(peer_fields["claim"]):
+                    continue
+                if normalize(peer_fields["claim"]) != claim:
+                    continue
+                if invalid(peer_fields["delta"]):
+                    incomplete_peers.append(int(peer["number"]))
+                elif normalize(peer_fields["delta"]) == delta:
+                    exact_peers.append(int(peer["number"]))
+
+            if exact_peers:
+                return refusal("competing_candidate", current, fields, sorted(exact_peers))
+            if incomplete_peers:
+                return refusal("claim_collision_unresolved", current, fields, sorted(incomplete_peers))
+
+            changed_files = int(current.get("changed_files") or 0)
+            changed_lines = int(current.get("additions") or 0) + int(current.get("deletions") or 0)
+            if not docs_only and (changed_files > MAX_FILES or changed_lines > MAX_LINES):
+                return refusal("qualification_scope_oversized", current, fields)
+
+            return {
+                "status": "admitted",
+                "reason": "candidate_current_unique_bounded",
+                "claim": claim,
+                "acceptance_delta": delta,
+                "competing_prs": [],
+                "changed_files": changed_files,
+                "changed_lines": changed_lines,
+                "max_changed_files": MAX_FILES,
+                "max_changed_lines": MAX_LINES,
+            }
+
+        def fixture(number: int = 10, body: str = "", head: str = "a" * 40,
+                    changed_files: int = 2, additions: int = 20, deletions: int = 5,
+                    draft: bool = False) -> dict:
+            return {
+                "number": number,
+                "state": "open",
+                "draft": draft,
+                "body": body,
+                "head": {"sha": head},
+                "changed_files": changed_files,
+                "additions": additions,
+                "deletions": deletions,
+            }
+
+        def body(claim: str = "#2022", delta: str = "refuse duplicate candidate qualification") -> str:
+            return (
+                f"Governing issue or accepted claim: {claim}\n"
+                f"Acceptance delta (one sentence): {delta}\n"
+            )
+
+        if MODE == "self-test":
+            head = "a" * 40
+            current = fixture(body=body(), head=head)
+            duplicate = fixture(number=11, body=body(), head="b" * 40)
+            assert decide(current, [current, duplicate], head, False)["reason"] == "competing_candidate"
+            distinct = fixture(number=12, body=body(delta="add a delivery-state projection"), head="c" * 40)
+            assert decide(current, [current, distinct], head, False)["status"] == "admitted"
+            incomplete = fixture(number=13, body="Governing issue or accepted claim: #2022\n", head="d" * 40)
+            assert decide(current, [current, incomplete], head, False)["reason"] == "claim_collision_unresolved"
+            assert decide(fixture(body="", head=head), [], head, False)["reason"] == "claim_identity_missing"
+            oversized = fixture(body=body(), head=head, changed_files=161)
+            assert decide(oversized, [oversized], head, False)["reason"] == "qualification_scope_oversized"
+            assert decide(oversized, [oversized], head, True)["status"] == "admitted"
+            assert decide(current, [current], "b" * 40, False)["reason"] == "candidate_head_moved"
+            print(json.dumps({
+                "status": "self_test_pass",
+                "reason": "six_discriminating_controls_passed",
+                "claim": "",
+                "acceptance_delta": "",
+                "competing_prs": [],
+                "changed_files": 0,
+                "changed_lines": 0,
+                "max_changed_files": MAX_FILES,
+                "max_changed_lines": MAX_LINES,
+            }, sort_keys=True))
+        elif not os.environ.get("ADMISSION_PR_NUMBER", ""):
+            print(json.dumps({
+                "status": "not_applicable",
+                "reason": "non_pull_request_invocation",
+                "claim": "",
+                "acceptance_delta": "",
+                "competing_prs": [],
+                "changed_files": 0,
+                "changed_lines": 0,
+                "max_changed_files": MAX_FILES,
+                "max_changed_lines": MAX_LINES,
+            }, sort_keys=True))
+        else:
+            with open(os.environ["CURRENT_PATH"], encoding="utf-8") as handle:
+                current = json.load(handle)
+            with open(os.environ["OPEN_PRS_PATH"], encoding="utf-8") as handle:
+                open_candidates = json.load(handle)
+            print(json.dumps(decide(current, open_candidates, EXPECTED_HEAD, DOCS_ONLY), sort_keys=True))
+        PY
+
+        status="$(jq -r '.status' "$result")"
+        reason="$(jq -r '.reason' "$result")"
+        claim="$(jq -r '.claim' "$result")"
+        acceptance_delta="$(jq -r '.acceptance_delta' "$result")"
+        competing_prs="$(jq -r '.competing_prs | map(tostring) | join(",")' "$result")"
+        changed_files="$(jq -r '.changed_files' "$result")"
+        changed_lines="$(jq -r '.changed_lines' "$result")"
+        max_files="$(jq -r '.max_changed_files' "$result")"
+        max_lines="$(jq -r '.max_changed_lines' "$result")"
+        {
+          echo "status=$status"
+          echo "reason=$reason"
+          echo "claim=$claim"
+          echo "acceptance_delta=$acceptance_delta"
+          echo "competing_prs=$competing_prs"
+          echo "changed_files=$changed_files"
+          echo "changed_lines=$changed_lines"
+        } >> "$GITHUB_OUTPUT"
+        {
+          echo "### PR candidate admission"
+          echo ""
+          echo "- status: \`$status\`"
+          echo "- reason: \`$reason\`"
+          echo "- claim: \`$claim\`"
+          echo "- acceptance delta: \`$acceptance_delta\`"
+          echo "- competing PRs: \`${competing_prs:-none}\`"
+          echo "- scope: \`$changed_files files / $changed_lines changed lines\`"
+          echo "- ordinary limit: \`$max_files files / $max_lines changed lines\`"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        if [ "$status" = "refused" ]; then
+          case "$reason" in
+            competing_candidate|claim_collision_unresolved)
+              echo "::error::candidate admission refused ($reason): reconcile competing PRs ${competing_prs:-unknown} and record the accepted winner/losing disposition before qualification"
+              ;;
+            qualification_scope_oversized)
+              echo "::error::candidate admission refused ($reason): split or recompose the candidate before ordinary qualification ($changed_files files, $changed_lines changed lines)"
+              ;;
+            claim_identity_missing)
+              echo "::error::candidate admission refused ($reason): complete Governing issue or accepted claim and Acceptance delta in the PR body"
+              ;;
+            *)
+              echo "::error::candidate admission refused ($reason); refresh the exact PR/head evidence and retry the explicit admission event"
+              ;;
+          esac
+          exit 1
+        fi
