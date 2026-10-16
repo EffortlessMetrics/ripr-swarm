@@ -1,0 +1,161 @@
+{
+  "at": "2026-10-16T05:57:56.696259+00:00",
+  "disposition": "SOURCE_MAINTENANCE_PUBLISHED / REVIEW_INCOMPLETE; KEEP DRAFT FOR FRESH INDEPENDENT NEW-HEAD REVIEW",
+  "old_head": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+  "old_integrated_basis": "f2ba9522267e88dfb03e3006e83129dfd2a8bb72",
+  "new_head": "36dbb87430ef858aa143b5fc3205b376b0caee11",
+  "new_integrated_basis": "d08c77d144c016078364fcc1fcf2fa593d21cefc",
+  "new_tree": "024d04e46de6ac531ca7485d9b7b6b4e7dafc2e4",
+  "parents": [
+    "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+    "d08c77d144c016078364fcc1fcf2fa593d21cefc"
+  ],
+  "operation": "ordinary --no-ff main merge, no manual edits; expected remote head rechecked; ordinary non-force push",
+  "owner": "Rook / #7415, retained",
+  "checks": [
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--lib",
+        "inherent"
+      ],
+      "start_utc": "2026-10-16T05:49:33Z",
+      "elapsed_seconds": 203.02950310707092,
+      "exit": 0,
+      "log": "corrected-0.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--lib",
+        "source_snapshot"
+      ],
+      "start_utc": "2026-10-16T05:52:56Z",
+      "elapsed_seconds": 0.2212390899658203,
+      "exit": 0,
+      "log": "corrected-1.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--lib",
+        "module_shadow_snapshot"
+      ],
+      "start_utc": "2026-10-16T05:52:56Z",
+      "elapsed_seconds": 0.19843387603759766,
+      "exit": 0,
+      "log": "corrected-2.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--test",
+        "private_inherent_receiver"
+      ],
+      "start_utc": "2026-10-16T05:52:56Z",
+      "elapsed_seconds": 90.53161096572876,
+      "exit": 0,
+      "log": "corrected-3.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--test",
+        "cli_help_hierarchy"
+      ],
+      "start_utc": "2026-10-16T05:54:27Z",
+      "elapsed_seconds": 0.8155674934387207,
+      "exit": 0,
+      "log": "corrected-4.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--test",
+        "returned_element_field_pin"
+      ],
+      "start_utc": "2026-10-16T05:54:27Z",
+      "elapsed_seconds": 1.3580753803253174,
+      "exit": 0,
+      "log": "corrected-5.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "check",
+        "--locked",
+        "-p",
+        "xtask"
+      ],
+      "start_utc": "2026-10-16T05:54:29Z",
+      "elapsed_seconds": 104.95727181434631,
+      "exit": 0,
+      "log": "corrected-6.log"
+    }
+  ],
+  "distinct_tests_passed": 71,
+  "old_exact_tree_archive_inventory_passes_reused": 5,
+  "actual_merge": {
+    "at": "2026-10-16T05:57:16.922366+00:00",
+    "commit": "4232b0459b58eb3283c9f9d1ee42faf690679446",
+    "tree": "024d04e46de6ac531ca7485d9b7b6b4e7dafc2e4",
+    "parents": [
+      "d08c77d144c016078364fcc1fcf2fa593d21cefc",
+      "36dbb87430ef858aa143b5fc3205b376b0caee11"
+    ],
+    "whole_tree_equals_tested_new_head": true,
+    "zip9_blobs": {
+      "Cargo.lock": "ef5d298aafe25b25107fa9c7d9aaa792016b2a7f",
+      "xtask/Cargo.toml": "4d5bf508f299958b8af38b621cd98e3a58533f67",
+      "xtask/src/main.rs": "81daa402493777ce8a8c817f40e3ecdf9659cee0",
+      "xtask/src/reports/release_server.rs": "07e776fcf111e9ba903362e5706cf7cfc834c7a1",
+      "xtask/src/tests.rs": "601488d70d31b528884253c54986d306ba487c4f"
+    },
+    "stale_material_subject_prerequisite": "cleared",
+    "hosted_product_matrix_checkout_verified": false,
+    "hosted_cargo_deny_checkout_verified": true,
+    "hosted_cargo_deny_job": 116835091002
+  },
+  "review": "Fresh independent exact-36db review required; parent arranges. Prior 8e review and performance reports remain frozen historical evidence.",
+  "limits": [
+    "~15.225s sync64 compact residual",
+    "two censored predecessor runs and two dependent warms unrun",
+    "no broad benchmark repeated",
+    "hosted job actual checkout and required hosted qualification separate",
+    "native Windows/full-workspace runtime/released bundle acceptance unestablished"
+  ],
+  "resources": "maintenance checkout, evidence and dedicated shared target retained for parent fresh review/replay; inherited checkout/target unchanged",
+  "hosted_security": {
+    "run": 38858454779,
+    "cargo_deny_job": 116835091002,
+    "dependency_review_job": 116835091181,
+    "conclusion": "success",
+    "actual_checkout": "4232b0459b58eb3283c9f9d1ee42faf690679446",
+    "checkout_log_verified": true,
+    "claim": "Named hosted security jobs only; not full required product/runtime qualification"
+  }
+}
