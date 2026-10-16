@@ -505,6 +505,37 @@ mod tests {
         );
     }
 
+    /// #8164: HELP, README, and Quickstart must lead with one analysis command.
+    /// `Try this first:` is the live help owner; doctor stays a setup task and
+    /// must not reappear as a co-first command or a hardcoded `--base`.
+    #[test]
+    fn help_overview_has_one_canonical_first_run() -> Result<(), String> {
+        let Some((_, after)) = HELP.split_once("Try this first:\n") else {
+            return Err("default help lost its first-run section".to_string());
+        };
+        let section = after.split("\n\n").next().unwrap_or_default();
+        let commands: Vec<_> = section
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("ripr "))
+            .collect();
+        let [line] = commands.as_slice() else {
+            return Err(format!(
+                "first run must name exactly one command, got:\n{section}"
+            ));
+        };
+        let command = line.split_once("  ").map(|(part, _)| part).unwrap_or(line);
+        if command != "ripr check" {
+            return Err(format!(
+                "first run must be `ripr check` without a fixed base, got `{command}`"
+            ));
+        }
+        if section.contains("--base") {
+            return Err("first-run command must not hardcode --base".to_string());
+        }
+        Ok(())
+    }
+
     /// The first screen has to answer "what do I run?" without the reader
     /// knowing any internal vocabulary: the setup commands, one route per task,
     /// and how to reach the rest.
