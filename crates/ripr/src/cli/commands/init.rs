@@ -228,17 +228,15 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
     }
 
     if path_is_occupied(&config_path)? && !options.force && options.ci.is_none() {
-        return Err(format!(
-            "{} already exists; rerun `ripr init --force` to overwrite it (resets customizations). Preview with `--force --dry-run`; `ripr init --ci github --force` refreshes the workflow and keeps the config",
-            config_path.display()
-        ));
+        return Err(existing_target_error(&config_path, &options.root, None));
     }
     if let Some(path) = workflow_path.as_ref().filter(|_| !options.force)
         && path_is_occupied(path)?
     {
-        return Err(format!(
-            "{} already exists; rerun `ripr init --ci github --force` to overwrite it",
-            path.display()
+        return Err(existing_target_error(
+            path,
+            &options.root,
+            options.ci.as_ref(),
         ));
     }
 
@@ -273,6 +271,52 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
         });
     }
     Ok(targets)
+}
+
+/// Refusal retries must target the same directory as the refused plan, even
+/// when pasted elsewhere. Share successful init's lossless root authority.
+fn existing_target_error(path: &Path, root: &Path, ci: Option<&InitCi>) -> String {
+    let path_display = output::path::human_path(path);
+    let root_display = match init_command_root(root) {
+        Ok(root) => root,
+        Err(error) => {
+            return format!("{path_display} already exists; recovery commands omitted: {error}.");
+        }
+    };
+    let root_arg = crate::agent::loop_commands::shell_arg(&root_display);
+    let workflow = format!("ripr init --ci github --force --root {root_arg}");
+    let overwrite = format!("ripr init --force --root {root_arg}");
+    let preview = format!("ripr init --force --dry-run --root {root_arg}");
+    let (mut message, commands) = if ci.is_some() {
+        (
+            format!("{path_display} already exists; rerun `{workflow}` to overwrite it"),
+            vec![&workflow],
+        )
+    } else {
+        (
+            format!(
+                "{path_display} already exists; rerun `{overwrite}` to overwrite it (resets customizations). Preview with `{preview}`; `{workflow}` refreshes the workflow and keeps the config"
+            ),
+            vec![&overwrite, &preview, &workflow],
+        )
+    };
+    for command in commands {
+        if let Some(powershell) = output::markdown::powershell_text_variant(command) {
+            message.push_str(&format!("\n(PowerShell) {powershell}"));
+        }
+    }
+    message
+}
+
+/// Preserve lossless aliases and filesystem traversal; only resolve the
+/// physical path if the supplied absolute spelling cannot be represented.
+fn init_command_root(root: &Path) -> Result<String, String> {
+    output::path::absolute_command_root_display(root).or_else(|error| {
+        let resolved = root.canonicalize().map_err(|resolve_error| {
+            format!("{error}; cannot resolve selected root: {resolve_error}")
+        })?;
+        output::path::command_root_display(root, &resolved)
+    })
 }
 
 /// Is anything at all sitting at `path`?
@@ -364,23 +408,14 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
     if wrote_any {
         // #7830: a UTF-8 argument can select a non-UTF-8 cwd. Never render
         // a lossy root as an executable command for a different repository.
-        let root_display =
-            match output::path::absolute_command_root_display(root).or_else(|error| {
-                // A byte-invalid cwd can still select a UTF-8 parent. Resolve
-                // real filesystem traversal, without lexically collapsing `..`
-                // across symlinks or replacing an already-lossless alias.
-                let resolved = root.canonicalize().map_err(|resolve_error| {
-                    format!("{error}; cannot resolve selected root: {resolve_error}")
-                })?;
-                output::path::command_root_display(root, &resolved)
-            }) {
-                Ok(root) => root,
-                Err(error) => {
-                    println!();
-                    println!("Init completed; follow-up commands omitted: {error}.");
-                    return Ok(());
-                }
-            };
+        let root_display = match init_command_root(root) {
+            Ok(root) => root,
+            Err(error) => {
+                println!();
+                println!("Init completed; follow-up commands omitted: {error}.");
+                return Ok(());
+            }
+        };
         let root_arg = crate::agent::loop_commands::shell_arg(&root_display);
         let doctor = format!("ripr doctor --root {root_arg}");
         let check = format!("ripr check --root {root_arg}");
