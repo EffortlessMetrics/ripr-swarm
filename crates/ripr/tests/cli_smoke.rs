@@ -15840,7 +15840,6 @@ fn pilot_format_json_prints_the_packet_summary_and_suppresses_the_human_block() 
         &out_dir.display().to_string(),
         "--format",
         "json",
-        "--quiet",
     ]);
     assert_success(&output);
     let stdout = String::from_utf8(output.stdout.clone()).map_err(|e| e.to_string())?;
