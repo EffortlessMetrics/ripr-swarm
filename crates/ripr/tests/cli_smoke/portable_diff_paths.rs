@@ -52,6 +52,8 @@ impl Repo {
         for (key, value) in [
             ("core.autocrlf", "false"),
             ("core.quotePath", "true"),
+            ("diff.noPrefix", "true"),
+            ("diff.mnemonicPrefix", "true"),
             ("commit.gpgsign", "false"),
             ("user.name", "Plain Paths"),
             ("user.email", "paths@example.invalid"),
@@ -91,6 +93,8 @@ impl Repo {
                 "--no-ext-diff",
                 "--no-textconv",
                 "--no-color",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
                 "--unified=0",
                 "HEAD",
                 "--",
