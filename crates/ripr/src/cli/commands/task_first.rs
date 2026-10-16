@@ -498,11 +498,11 @@ fn no_eligible_seam_message(
     if !reasons.is_empty() {
         message.push_str(&format!(" ({})", reasons.join("; ")));
     }
-    // `repair` only starts supported routes, so an open gap that `check`
-    // already named is not a dead end: point at the review step that can
-    // still act on it, then at the repository-wide exploration.
+    // `repair` inventories saved repository seams, while `check` reads a
+    // diff: promise a gap only when the branch has changed code, and keep
+    // the repository-wide route first.
     message.push_str(&format!(
-        ". Next: `ripr check --root {root}` names a changed-code gap to test by hand; `ripr pilot --root {root}` explores the whole repository"
+        ". Next: `ripr pilot --root {root}` explores the whole repository; when this branch has changed code, `ripr check --root {root}` names a gap in it to test by hand"
     ));
     message
 }
