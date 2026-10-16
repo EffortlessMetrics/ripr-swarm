@@ -696,3 +696,30 @@ fn check_all_without_help_is_a_usage_error() -> Result<(), String> {
         "unknown check argument",
     )
 }
+
+/// A typo of an advanced flag suggests it and must point at the help screen
+/// that documents it: the one-screen default omits `--candidate-tree`.
+#[test]
+fn check_advanced_flag_typo_points_at_the_exhaustive_reference() -> Result<(), String> {
+    let output = run_ripr(&["check", "--candidate-tre"])?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_contains(
+        "advanced typo suggestion",
+        &stderr,
+        "Did you mean `--candidate-tree`?",
+    )?;
+    assert_contains(
+        "advanced typo pointer",
+        &stderr,
+        "Run `ripr check --help --all`.",
+    )?;
+    let summary = rendered_help(&["check", "--help"])?;
+    if summary.contains("--candidate-tree") {
+        return Err("fixture assumption broken: summary now documents --candidate-tree".into());
+    }
+    assert_contains(
+        "exhaustive reference",
+        &rendered_help(&["check", "--help", "--all"])?,
+        "--candidate-tree",
+    )
+}

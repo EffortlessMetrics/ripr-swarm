@@ -2383,7 +2383,7 @@ mod tests {
     fn check_rejects_unknown_argument() {
         assert_eq!(
             check(&args(&["--wat"])),
-            Err("unknown check argument \"--wat\". Run `ripr check --help`.".to_string())
+            Err("unknown check argument \"--wat\". Run `ripr check --help --all`.".to_string())
         );
     }
 

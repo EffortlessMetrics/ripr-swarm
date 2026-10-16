@@ -141,7 +141,8 @@ Common options:
   --format FORMAT   human (default), human-full, json, github, sarif.
   --json            Shortcut for --format json.
   --root PATH       Workspace root. Defaults to the current directory, then
-                    walks up to the Cargo workspace.
+                    walks up to the Cargo workspace, else the nearest
+                    Cargo.toml or the git top level.
   --quiet           Suppress progress on stderr.
 
 Exit status: 0 for complete and partial reports regardless of findings;
