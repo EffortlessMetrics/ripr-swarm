@@ -32,7 +32,81 @@ fixture manifest. CI's Rust, coverage, analytics and advisory test paths run
 this step before offline checks. Missing preparation fails the positive; it is
 never treated as a skip or a reason to lower exposure assertions.
 
-Run everything:
+## Focused local iteration
+
+Select the package, Cargo target, and language features before applying a test
+name filter. A filter such as `structural_workspace_markers` selects tests to
+execute; by itself it does not limit which integration-test targets Cargo
+compiles. `--test cli_smoke` selects that integration target and its required
+product binary. Use `--lib` for library-only tests.
+
+For example, these commands prepare and exercise the Rust workspace-marker
+tests from the repository root:
+
+```bash
+cargo build --locked --offline -p ripr --bin ripr \
+  --no-default-features --features lang-rust --message-format=json
+cargo test --locked --offline -p ripr --test cli_smoke \
+  --no-default-features --features lang-rust --no-run --message-format=json
+cargo test --locked --offline -p ripr --test cli_smoke \
+  --no-default-features --features lang-rust structural_workspace_markers
+```
+
+These examples assume a prepared dependency registry. On first use, omit
+`--offline` so Cargo can download missing workspace dependencies; prepare the
+separate fixture dependency above when the selected tests require it. The JSON
+compiler output records emitted targets and effective features. `--no-run`
+separates preparation from execution; the final command can also prepare and
+run the selected target directly.
+
+Choose features for the behavior being tested. The example intentionally
+selects Rust only. For default-adapter coverage, omit both
+`--no-default-features` and `--features lang-rust`; defaults include Rust,
+TypeScript/JavaScript, and Python. Perl remains opt-in through `lang-perl`.
+Runtime language configuration is separate from compiled adapter availability;
+see the [language-adapter workflow](LANGUAGE_ADAPTER_PREVIEW.md#enable-preview-adapters).
+
+Keep `-p ripr` when a package-scoped feature check is intended. `xtask` depends
+on RIPR with default features enabled, so
+`cargo tree --locked --workspace --no-default-features --features ripr/lang-rust -e normal,build`
+still resolves the TypeScript and Python parsers through that dependency.
+Inspect the selected package instead with
+`cargo tree --locked -p ripr --no-default-features --features lang-rust -e normal,build`.
+For workflow-policy, agent-skill, and executable-file edits, use the existing
+[`cargo policy` frontdoor](../CONTRIBUTING.md#local-setup) for focused feedback.
+
+### Measured example and limits
+
+At `97cc171257fd76a1b3b9e79cc41ad949e0ecc861`, the three commands above were
+executed on Linux x86_64 with Rust/Cargo 1.95.0, `CARGO_BUILD_JOBS=2`, and an
+initially empty isolated `CARGO_TARGET_DIR`. The toolchain and registry were
+prepared before timing; commands ran sequentially and reused earlier outputs.
+
+| Command | Observed result |
+| --- | --- |
+| Explicit binary build | 115.23 s; RIPR library and binary, effective product features `["lang-rust"]`. |
+| `cli_smoke` preparation | 106.46 s following that build; one integration-test executable and its required product binary. |
+| Filtered `cli_smoke` execution | 0.42 s including Cargo; 3 passed, 476 filtered out. |
+
+At the same revision, `cargo tree -e normal,build` contained 113 distinct
+package/version identities for package-scoped Rust-only selection, 203 for
+package-scoped defaults, and 220 for workspace selection with
+`--no-default-features --features ripr/lang-rust`. These graph counts are not
+compiler-artifact counts or measurements of time saved. The timings are one
+prepared-registry sample, not cold onboarding, a default-build comparison,
+all-language coverage, or a complete qualification result. A passing filtered
+test does not establish that every internal fixture branch executed.
+
+Focused iteration leaves required broad qualification intact: retain the
+workspace/all-target checks, default and non-default feature obligations,
+fixtures and goldens, and the [nextest plus doctest contract](#ci-test-results).
+Select additional proof for the changed behavior before requesting qualification.
+
+## Full validation inventory
+
+The commands below inventory applicable checks. `cargo xtask ci-full` composes
+the complete local review/evidence/package pass; choose the aggregate for the
+intended proof without repeating its constituent commands.
 
 ```bash
 cargo xtask shape
