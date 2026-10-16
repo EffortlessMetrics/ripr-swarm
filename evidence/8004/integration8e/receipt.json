@@ -1,0 +1,314 @@
+{
+  "recorded_at": "2026-10-16T05:27:13.458112+00:00",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "pr": 8004,
+  "disposition": "LOCAL_COMPOSED_CORRECTNESS_SUPPORTED / WAITING_INTEGRATION_PROOF; KEEP DRAFT",
+  "candidate": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+  "subjects": {
+    "fbc8f7e58f11f25a8196495dfb88e7b393a5f4c4": {
+      "commit": "fbc8f7e58f11f25a8196495dfb88e7b393a5f4c4",
+      "tree": "7cea63f7a5b5fd757e5185497e2cb6b83190ffa7",
+      "parents": [
+        "50166e2f2ea9e391013152349a9b9be5c10fd371"
+      ],
+      "blobs": {
+        "Cargo.lock": "531197c1eae385730a8c6ad5e8f4d984b4067a3c",
+        "xtask/Cargo.toml": "d7aece40fa2e0866164c3e7c7ff82c2d3a8a0130",
+        "xtask/src/main.rs": "1245414f535ab313295be8205bf3d7f47cc644cb",
+        "xtask/src/reports/release_server.rs": "87c0a89d65dfd257943b7ee7150db0e55d26d580",
+        "xtask/src/tests.rs": "b947ca50ebc9abf11d61cb82d7a49a6667eba9ca",
+        "crates/ripr/src/analysis/classify/related_tests.rs": "34af466f4f95c028654e13ea56f982e4c42fefa3",
+        "crates/ripr/src/analysis/classify/owner_pin.rs": "505227c7ad8ef8b1375fec30a298389d5087eaf7",
+        "crates/ripr/src/analysis/syntax/source_snapshot.rs": null,
+        "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs": "6f35949cd449eb2886a67c6361ed8e21e38a3655"
+      }
+    },
+    "8e0444b1a62ead18584d40b18278c6e8716dc56c": {
+      "commit": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+      "tree": "da4222d49d37aa82662003e0b6ef4ca8715dbac3",
+      "parents": [
+        "246c3063ac970b5541e7364fef1786d2e00b3f82"
+      ],
+      "blobs": {
+        "Cargo.lock": "531197c1eae385730a8c6ad5e8f4d984b4067a3c",
+        "xtask/Cargo.toml": "d7aece40fa2e0866164c3e7c7ff82c2d3a8a0130",
+        "xtask/src/main.rs": "1245414f535ab313295be8205bf3d7f47cc644cb",
+        "xtask/src/reports/release_server.rs": "87c0a89d65dfd257943b7ee7150db0e55d26d580",
+        "xtask/src/tests.rs": "b947ca50ebc9abf11d61cb82d7a49a6667eba9ca",
+        "crates/ripr/src/analysis/classify/related_tests.rs": "5ac5805ae66fb438b3d6b339688a3d469c40d7a5",
+        "crates/ripr/src/analysis/classify/owner_pin.rs": "4d2cfcb31d5bb0d358920d4477e033a3f853db12",
+        "crates/ripr/src/analysis/syntax/source_snapshot.rs": "06c39013faf4b9b2287fe03d587dac896a1ded80",
+        "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs": "2b1fdf03905b76a30d3425af517a1398ad1ef83f"
+      }
+    },
+    "cdb813a86972b34c37ac769ac3a7b2202f7c0e2d": {
+      "commit": "cdb813a86972b34c37ac769ac3a7b2202f7c0e2d",
+      "tree": "4b98340bac3a8ce9dbe0317566f36426fe9d86c1",
+      "parents": [
+        "fbc8f7e58f11f25a8196495dfb88e7b393a5f4c4",
+        "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+      ],
+      "blobs": {
+        "Cargo.lock": "531197c1eae385730a8c6ad5e8f4d984b4067a3c",
+        "xtask/Cargo.toml": "d7aece40fa2e0866164c3e7c7ff82c2d3a8a0130",
+        "xtask/src/main.rs": "1245414f535ab313295be8205bf3d7f47cc644cb",
+        "xtask/src/reports/release_server.rs": "87c0a89d65dfd257943b7ee7150db0e55d26d580",
+        "xtask/src/tests.rs": "b947ca50ebc9abf11d61cb82d7a49a6667eba9ca",
+        "crates/ripr/src/analysis/classify/related_tests.rs": "5ac5805ae66fb438b3d6b339688a3d469c40d7a5",
+        "crates/ripr/src/analysis/classify/owner_pin.rs": "ebffe6e9e8d3fac8877169cdecf496d8c68b1330",
+        "crates/ripr/src/analysis/syntax/source_snapshot.rs": "06c39013faf4b9b2287fe03d587dac896a1ded80",
+        "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs": "2b1fdf03905b76a30d3425af517a1398ad1ef83f"
+      }
+    },
+    "4b80f51a8616a94a5924fb28292253f054a92db4": {
+      "commit": "4b80f51a8616a94a5924fb28292253f054a92db4",
+      "tree": "97df0abc617d16ac23a9e93710773f9c76ba38d9",
+      "parents": [
+        "92ad640d38f542c40904fb5d6d4bdc06934f2973"
+      ],
+      "blobs": {
+        "Cargo.lock": "ef5d298aafe25b25107fa9c7d9aaa792016b2a7f",
+        "xtask/Cargo.toml": "4d5bf508f299958b8af38b621cd98e3a58533f67",
+        "xtask/src/main.rs": "81daa402493777ce8a8c817f40e3ecdf9659cee0",
+        "xtask/src/reports/release_server.rs": "07e776fcf111e9ba903362e5706cf7cfc834c7a1",
+        "xtask/src/tests.rs": "601488d70d31b528884253c54986d306ba487c4f",
+        "crates/ripr/src/analysis/classify/related_tests.rs": "34af466f4f95c028654e13ea56f982e4c42fefa3",
+        "crates/ripr/src/analysis/classify/owner_pin.rs": "505227c7ad8ef8b1375fec30a298389d5087eaf7",
+        "crates/ripr/src/analysis/syntax/source_snapshot.rs": null,
+        "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs": "6f35949cd449eb2886a67c6361ed8e21e38a3655"
+      }
+    },
+    "8ad1a1efc9fd3fe7e334944d19d97efbd5d4a950": {
+      "commit": "8ad1a1efc9fd3fe7e334944d19d97efbd5d4a950",
+      "tree": "024d04e46de6ac531ca7485d9b7b6b4e7dafc2e4",
+      "parents": [
+        "cdb813a86972b34c37ac769ac3a7b2202f7c0e2d",
+        "4b80f51a8616a94a5924fb28292253f054a92db4"
+      ],
+      "blobs": {
+        "Cargo.lock": "ef5d298aafe25b25107fa9c7d9aaa792016b2a7f",
+        "xtask/Cargo.toml": "4d5bf508f299958b8af38b621cd98e3a58533f67",
+        "xtask/src/main.rs": "81daa402493777ce8a8c817f40e3ecdf9659cee0",
+        "xtask/src/reports/release_server.rs": "07e776fcf111e9ba903362e5706cf7cfc834c7a1",
+        "xtask/src/tests.rs": "601488d70d31b528884253c54986d306ba487c4f",
+        "crates/ripr/src/analysis/classify/related_tests.rs": "5ac5805ae66fb438b3d6b339688a3d469c40d7a5",
+        "crates/ripr/src/analysis/classify/owner_pin.rs": "ebffe6e9e8d3fac8877169cdecf496d8c68b1330",
+        "crates/ripr/src/analysis/syntax/source_snapshot.rs": "06c39013faf4b9b2287fe03d587dac896a1ded80",
+        "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs": "2b1fdf03905b76a30d3425af517a1398ad1ef83f"
+      }
+    },
+    "086e9012f13d6ed1bcdfdb26b89796c38404e5f9": {
+      "commit": "086e9012f13d6ed1bcdfdb26b89796c38404e5f9",
+      "tree": "aa1da91442e93efce823769a1951d4e63ccf63c9",
+      "parents": [
+        "97cc171257fd76a1b3b9e79cc41ad949e0ecc861",
+        "8e0444b1a62ead18584d40b18278c6e8716dc56c"
+      ],
+      "blobs": {
+        "Cargo.lock": "531197c1eae385730a8c6ad5e8f4d984b4067a3c",
+        "xtask/Cargo.toml": "d7aece40fa2e0866164c3e7c7ff82c2d3a8a0130",
+        "xtask/src/main.rs": "1245414f535ab313295be8205bf3d7f47cc644cb",
+        "xtask/src/reports/release_server.rs": "87c0a89d65dfd257943b7ee7150db0e55d26d580",
+        "xtask/src/tests.rs": "b947ca50ebc9abf11d61cb82d7a49a6667eba9ca",
+        "crates/ripr/src/analysis/classify/related_tests.rs": "5ac5805ae66fb438b3d6b339688a3d469c40d7a5",
+        "crates/ripr/src/analysis/classify/owner_pin.rs": "ebffe6e9e8d3fac8877169cdecf496d8c68b1330",
+        "crates/ripr/src/analysis/syntax/source_snapshot.rs": "06c39013faf4b9b2287fe03d587dac896a1ded80",
+        "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs": "2b1fdf03905b76a30d3425af517a1398ad1ef83f"
+      }
+    }
+  },
+  "main8e_checks": [
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--lib",
+        "inherent"
+      ],
+      "start_utc": "2026-10-16T05:21:24Z",
+      "elapsed_seconds": 1.72560715675354,
+      "exit": 0,
+      "log": "corrected-0.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--lib",
+        "source_snapshot"
+      ],
+      "start_utc": "2026-10-16T05:21:26Z",
+      "elapsed_seconds": 0.1472475528717041,
+      "exit": 0,
+      "log": "corrected-1.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--lib",
+        "module_shadow_snapshot"
+      ],
+      "start_utc": "2026-10-16T05:21:26Z",
+      "elapsed_seconds": 0.1513991355895996,
+      "exit": 0,
+      "log": "corrected-2.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--test",
+        "private_inherent_receiver"
+      ],
+      "start_utc": "2026-10-16T05:21:26Z",
+      "elapsed_seconds": 81.79263353347778,
+      "exit": 0,
+      "log": "corrected-3.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--test",
+        "cli_help_hierarchy"
+      ],
+      "start_utc": "2026-10-16T05:22:48Z",
+      "elapsed_seconds": 0.7524263858795166,
+      "exit": 0,
+      "log": "corrected-4.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--test",
+        "returned_element_field_pin"
+      ],
+      "start_utc": "2026-10-16T05:22:49Z",
+      "elapsed_seconds": 1.2650806903839111,
+      "exit": 0,
+      "log": "corrected-5.log"
+    }
+  ],
+  "main8e_distinct_passed": 71,
+  "prospective_checks": [
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "xtask",
+        "--bin",
+        "xtask",
+        "create_zip_archive_writes_flat_package_contents"
+      ],
+      "start_utc": "2026-10-16T05:23:02Z",
+      "elapsed_seconds": 180.17509245872498,
+      "exit": 0,
+      "log": "prospective-0.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "xtask",
+        "--bin",
+        "xtask",
+        "vsix_inventory_"
+      ],
+      "start_utc": "2026-10-16T05:26:02Z",
+      "elapsed_seconds": 0.17894768714904785,
+      "exit": 0,
+      "log": "prospective-1.log"
+    }
+  ],
+  "prospective_distinct_passed": 5,
+  "prior_setup_failure": [
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--lib",
+        "inherent"
+      ],
+      "start_utc": "2026-10-16T05:17:09Z",
+      "elapsed_seconds": 240.5935561656952,
+      "exit": 101,
+      "log": "check-0.log"
+    }
+  ],
+  "threads": {
+    "returned": 13,
+    "resolved": 1,
+    "unresolved": 12,
+    "unchanged_from_initial": true,
+    "states_mutated": false,
+    "CLI_graphql_inventory": "Forbidden; no retry; supported connector inventory used; no exposed pagination metadata"
+  },
+  "remote_currentness_observed_at": "2026-10-16 05:26:39 UTC",
+  "canonical_dependency": {
+    "pr": 8180,
+    "head": "4b80f51a8616a94a5924fb28292253f054a92db4",
+    "state": "open",
+    "owner_retained": true,
+    "cargo_deny_job": 116806740647,
+    "latest_routed_run": 38851160920,
+    "latest_routed_result": "success",
+    "earlier_cancelled_run_retained": 38851128304
+  },
+  "actual_checkout": {
+    "merge": "086e9012f13d6ed1bcdfdb26b89796c38404e5f9",
+    "tree": "aa1da91442e93efce823769a1951d4e63ccf63c9",
+    "job": 116804248064,
+    "outcome": "cargo-deny failed yanked zip8.6.0; not latest-main product qualification"
+  },
+  "limits": [
+    "15.225s sync64 compact residual",
+    "two 120s censored predecessor runs and two dependent warms unrun",
+    "local debug0/default-feature tests are not hosted required qualification",
+    "no local cargo-deny tool",
+    "native Windows/full-workspace runtime/released-bundle acceptance unestablished"
+  ],
+  "next": "Existing #8180 owner completes canonical landing; delivery owner verifies resulting main and actual #8004 merge/check checkout and prerequisite blobs, refreshes only affected proof before separately authorized promotion.",
+  "prohibitions_respected": [
+    "no candidate source changes",
+    "no dependency takeover/merge",
+    "no Ready or merge",
+    "no thread resolution",
+    "no release/deploy",
+    "no bot contact",
+    "no security/credential changes",
+    "no issue8005 access/retry",
+    "no native fanout8201 overlap"
+  ],
+  "retained_resources": {
+    "root": "/workspace/integration8004",
+    "purpose": "Parent integration follow-through, exact-tree replay and existing compiled artifact reuse",
+    "inherited_checkout_and_target": "preserved"
+  }
+}
