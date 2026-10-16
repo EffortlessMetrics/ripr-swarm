@@ -40,6 +40,364 @@ const BARE_HELP_GROUPS: &[&str] = &[
     "gate",
 ];
 
+/// Std-only machine-discovery parser for the portable `rustc --test` path.
+/// `xtask/tests/ripr_public_guide_contract.rs` compiles this file without crate
+/// dependencies, so the same-row check cannot import `serde_json`.
+mod discovery_rows {
+    use std::collections::BTreeMap;
+
+    struct JsonRead<'a> {
+        bytes: &'a [u8],
+        i: usize,
+    }
+
+    impl<'a> JsonRead<'a> {
+        fn new(src: &'a str) -> Self {
+            Self {
+                bytes: src.as_bytes(),
+                i: 0,
+            }
+        }
+
+        fn peek(&self) -> Option<u8> {
+            self.bytes.get(self.i).copied()
+        }
+
+        fn bump(&mut self) -> Result<u8, String> {
+            let byte = self
+                .peek()
+                .ok_or_else(|| "unexpected end of JSON".to_string())?;
+            self.i += 1;
+            Ok(byte)
+        }
+
+        fn skip_ws(&mut self) {
+            while matches!(self.peek(), Some(b' ' | b'\t' | b'\n' | b'\r')) {
+                self.i += 1;
+            }
+        }
+
+        fn expect(&mut self, wanted: u8) -> Result<(), String> {
+            self.skip_ws();
+            let got = self.bump()?;
+            if got == wanted {
+                Ok(())
+            } else {
+                Err(format!(
+                    "expected {:?}, got {:?}",
+                    wanted as char, got as char
+                ))
+            }
+        }
+
+        fn finish(mut self) -> Result<(), String> {
+            self.skip_ws();
+            if self.i == self.bytes.len() {
+                Ok(())
+            } else {
+                Err("trailing JSON after the discovery document".to_string())
+            }
+        }
+
+        fn parse_string(&mut self) -> Result<String, String> {
+            if self.bump()? != b'"' {
+                return Err("expected a JSON string".to_string());
+            }
+            let mut out = Vec::new();
+            loop {
+                let byte = self.bump()?;
+                match byte {
+                    b'"' => {
+                        return String::from_utf8(out)
+                            .map_err(|error| format!("non-UTF-8 JSON string: {error}"));
+                    }
+                    b'\\' => {
+                        let escaped = self.bump()?;
+                        match escaped {
+                            b'"' | b'\\' | b'/' => out.push(escaped),
+                            b'b' => out.push(0x08),
+                            b'f' => out.push(0x0c),
+                            b'n' => out.push(b'\n'),
+                            b'r' => out.push(b'\r'),
+                            b't' => out.push(b'\t'),
+                            b'u' => {
+                                let ch = self.parse_hex_escape()?;
+                                let mut buf = [0; 4];
+                                out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+                            }
+                            other => {
+                                return Err(format!("unknown string escape \\{}", other as char));
+                            }
+                        }
+                    }
+                    0x00..=0x1f => {
+                        return Err("unescaped control character in JSON string".to_string());
+                    }
+                    _ => out.push(byte),
+                }
+            }
+        }
+
+        fn parse_hex_escape(&mut self) -> Result<char, String> {
+            let mut value = 0u32;
+            for _ in 0..4 {
+                let digit = self.bump()?;
+                let nibble = match digit {
+                    b'0'..=b'9' => u32::from(digit - b'0'),
+                    b'a'..=b'f' => u32::from(digit - b'a' + 10),
+                    b'A'..=b'F' => u32::from(digit - b'A' + 10),
+                    _ => return Err("invalid \\u escape".to_string()),
+                };
+                value = (value << 4) | nibble;
+            }
+            char::from_u32(value).ok_or_else(|| format!("invalid unicode escape {value:04x}"))
+        }
+
+        fn skip_string(&mut self) -> Result<(), String> {
+            if self.bump()? != b'"' {
+                return Err("expected a JSON string".to_string());
+            }
+            loop {
+                match self.bump()? {
+                    b'"' => return Ok(()),
+                    b'\\' => {
+                        if self.bump()? == b'u' {
+                            for _ in 0..4 {
+                                let digit = self.bump()?;
+                                if !digit.is_ascii_hexdigit() {
+                                    return Err("invalid \\u escape".to_string());
+                                }
+                            }
+                        }
+                    }
+                    0x00..=0x1f => {
+                        return Err("unescaped control character in JSON string".to_string());
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        fn skip_literal(&mut self, literal: &[u8]) -> Result<(), String> {
+            for expected in literal {
+                let got = self.bump()?;
+                if got != *expected {
+                    return Err(format!(
+                        "expected literal {}, got {:?}",
+                        String::from_utf8_lossy(literal),
+                        got as char
+                    ));
+                }
+            }
+            Ok(())
+        }
+
+        fn skip_number(&mut self) -> Result<(), String> {
+            let start = self.i;
+            if self.peek() == Some(b'-') {
+                self.i += 1;
+            }
+            while matches!(
+                self.peek(),
+                Some(b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-')
+            ) {
+                self.i += 1;
+            }
+            if self.i == start {
+                return Err("expected a JSON number".to_string());
+            }
+            Ok(())
+        }
+
+        fn skip_value(&mut self) -> Result<(), String> {
+            self.skip_ws();
+            match self.peek() {
+                Some(b'"') => self.skip_string(),
+                Some(b'{') => self.skip_object(),
+                Some(b'[') => self.skip_array(),
+                Some(b't') => self.skip_literal(b"true"),
+                Some(b'f') => self.skip_literal(b"false"),
+                Some(b'n') => self.skip_literal(b"null"),
+                Some(b'-' | b'0'..=b'9') => self.skip_number(),
+                Some(other) => Err(format!(
+                    "unexpected JSON value starting with {:?}",
+                    other as char
+                )),
+                None => Err("unexpected end of JSON".to_string()),
+            }
+        }
+
+        fn skip_object(&mut self) -> Result<(), String> {
+            self.parse_object(|_, reader| reader.skip_value())
+        }
+
+        fn skip_array(&mut self) -> Result<(), String> {
+            self.expect(b'[')?;
+            self.skip_ws();
+            if self.peek() == Some(b']') {
+                self.i += 1;
+                return Ok(());
+            }
+            loop {
+                self.skip_value()?;
+                self.skip_ws();
+                match self.peek() {
+                    Some(b']') => {
+                        self.i += 1;
+                        return Ok(());
+                    }
+                    Some(b',') => {
+                        self.i += 1;
+                        self.skip_ws();
+                        if self.peek() == Some(b']') {
+                            return Err("trailing comma in JSON array".to_string());
+                        }
+                    }
+                    _ => return Err("expected comma or ] in JSON array".to_string()),
+                }
+            }
+        }
+
+        fn parse_object(
+            &mut self,
+            mut on_field: impl FnMut(&str, &mut Self) -> Result<(), String>,
+        ) -> Result<(), String> {
+            self.expect(b'{')?;
+            self.skip_ws();
+            if self.peek() == Some(b'}') {
+                self.i += 1;
+                return Ok(());
+            }
+            loop {
+                self.skip_ws();
+                let key = self.parse_string()?;
+                self.expect(b':')?;
+                self.skip_ws();
+                on_field(&key, self)?;
+                self.skip_ws();
+                match self.peek() {
+                    Some(b'}') => {
+                        self.i += 1;
+                        return Ok(());
+                    }
+                    Some(b',') => {
+                        self.i += 1;
+                        self.skip_ws();
+                        if self.peek() == Some(b'}') {
+                            return Err("trailing comma in JSON object".to_string());
+                        }
+                    }
+                    _ => return Err("expected comma or } in JSON object".to_string()),
+                }
+            }
+        }
+
+        fn parse_command_row(&mut self) -> Result<(String, String), String> {
+            let mut path = None;
+            let mut example = None;
+            self.parse_object(|key, reader| match key {
+                "path" => {
+                    if path.is_some() {
+                        return Err("command row has a duplicate path field".to_string());
+                    }
+                    path = Some(reader.parse_string()?);
+                    Ok(())
+                }
+                "example" => {
+                    if example.is_some() {
+                        return Err("command row has a duplicate example field".to_string());
+                    }
+                    example = Some(reader.parse_string()?);
+                    Ok(())
+                }
+                _ => reader.skip_value(),
+            })?;
+            match (path, example) {
+                (Some(path), Some(example)) => Ok((path, example)),
+                (None, _) => Err("command row missing string path".to_string()),
+                (_, None) => Err("command row missing string example".to_string()),
+            }
+        }
+
+        fn parse_command_rows(&mut self) -> Result<Vec<(String, String)>, String> {
+            self.expect(b'[')?;
+            self.skip_ws();
+            if self.peek() == Some(b']') {
+                return Err("commands array is empty".to_string());
+            }
+            let mut rows = Vec::new();
+            loop {
+                self.skip_ws();
+                rows.push(self.parse_command_row()?);
+                self.skip_ws();
+                match self.peek() {
+                    Some(b']') => {
+                        self.i += 1;
+                        return Ok(rows);
+                    }
+                    Some(b',') => {
+                        self.i += 1;
+                        self.skip_ws();
+                        if self.peek() == Some(b']') {
+                            return Err("trailing comma in JSON array".to_string());
+                        }
+                    }
+                    _ => return Err("expected comma or ] in commands array".to_string()),
+                }
+            }
+        }
+    }
+
+    pub(super) fn require_groups(json: &str, groups: &[&str]) -> Result<(), String> {
+        let mut reader = JsonRead::new(json);
+        let mut commands = None;
+        reader.parse_object(|key, reader| {
+            if key == "commands" {
+                if commands.is_some() {
+                    return Err("discovery document has a duplicate commands array".to_string());
+                }
+                commands = Some(reader.parse_command_rows()?);
+                Ok(())
+            } else {
+                reader.skip_value()
+            }
+        })?;
+        reader.finish()?;
+        let rows =
+            commands.ok_or_else(|| "discovery document missing commands array".to_string())?;
+        let mut by_path: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for (path, example) in &rows {
+            by_path
+                .entry(path.as_str())
+                .or_default()
+                .push(example.as_str());
+        }
+        for &group in groups {
+            let expected = format!("ripr {group}");
+            match by_path.get(group).map(Vec::as_slice) {
+                Some([example]) if *example == expected => {}
+                Some([example]) => {
+                    return Err(format!(
+                        "{group} discovery row example {example:?} does not match {expected:?}"
+                    ));
+                }
+                Some(examples) => {
+                    return Err(format!(
+                        "duplicate {group} discovery rows ({})",
+                        examples.len()
+                    ));
+                }
+                None => {
+                    return Err(format!(
+                        "missing {group} discovery row in machine discovery output"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 fn in_help_workspace(
     test: impl FnOnce(&std::path::Path) -> Result<(), String>,
 ) -> Result<(), String> {
@@ -79,17 +437,9 @@ fn bare_groups_display_their_documented_help() -> Result<(), String> {
             return Err(format!("machine discovery failed: {discovery:?}"));
         }
         let discovery_text = String::from_utf8_lossy(&discovery.stdout);
+        discovery_rows::require_groups(&discovery_text, BARE_HELP_GROUPS)?;
         let mut failures = Vec::new();
         for &group in BARE_HELP_GROUPS {
-            let has_path = discovery_text.contains(&format!("\"path\":\"{group}\""))
-                || discovery_text.contains(&format!("\"path\": \"{group}\""));
-            let has_example = discovery_text.contains(&format!("\"example\":\"ripr {group}\""))
-                || discovery_text.contains(&format!("\"example\": \"ripr {group}\""));
-            if !has_path || !has_example {
-                return Err(format!(
-                    "missing {group} discovery row in machine discovery output"
-                ));
-            }
             let help = run_ripr_in(&["help", group], Some(root))?;
             if !help.status.success()
                 || !help.stderr.is_empty()
@@ -116,6 +466,72 @@ fn bare_groups_display_their_documented_help() -> Result<(), String> {
             Err(failures.join("\n"))
         }
     })
+}
+
+/// Independent `"path"` / `"example"` substring searches cannot notice a
+/// swapped pair of discovery rows. This control keeps the same-object parser
+/// honest without invoking the CLI.
+#[test]
+fn discovery_rows_require_path_and_example_in_the_same_object() -> Result<(), String> {
+    let coupled = r#"{"commands":[{"path":"cache","nested":{"path":"policy","example":"ripr policy"},"example":"ripr cache"},{"path":"policy","example":"ripr policy"}]}"#;
+    discovery_rows::require_groups(coupled, &["cache", "policy"])?;
+    discovery_rows::require_groups(
+        "{\n  \"commands\": [\n    { \"path\": \"cache\", \"example\": \"ripr cache\" }\n  ]\n}\n",
+        &["cache"],
+    )?;
+
+    let swapped = r#"{"commands":[{"path":"cache","example":"ripr policy"},{"path":"policy","example":"ripr cache"}]}"#;
+    if !(swapped.contains("\"path\":\"cache\"")
+        && swapped.contains("\"example\":\"ripr cache\"")
+        && swapped.contains("\"path\":\"policy\"")
+        && swapped.contains("\"example\":\"ripr policy\""))
+    {
+        return Err("swapped-row fixture lost the independent substrings".to_string());
+    }
+    match discovery_rows::require_groups(swapped, &["cache", "policy"]) {
+        Err(error)
+            if error.contains("cache discovery row example \"ripr policy\"")
+                || error.contains("policy discovery row example \"ripr cache\"") => {}
+        other => {
+            return Err(format!(
+                "swapped discovery rows must fail the same-object check, got {other:?}"
+            ));
+        }
+    }
+
+    let nested_credit = r#"{"commands":[{"path":"cache","effects":{"path":"cache","example":"ripr cache"},"example":"ripr policy"}]}"#;
+    match discovery_rows::require_groups(nested_credit, &["cache"]) {
+        Err(error) if error.contains("cache discovery row example \"ripr policy\"") => {}
+        other => {
+            return Err(format!(
+                "nested matching fields must not credit the parent row, got {other:?}"
+            ));
+        }
+    }
+
+    for (label, json) in [
+        (
+            "duplicate group row",
+            r#"{"commands":[{"path":"cache","example":"ripr cache"},{"path":"cache","example":"ripr cache"}]}"#,
+        ),
+        ("missing example", r#"{"commands":[{"path":"cache"}]}"#),
+        ("missing path", r#"{"commands":[{"example":"ripr cache"}]}"#),
+        ("empty commands", r#"{"commands":[]}"#),
+        ("missing commands", r#"{"workflows":[]}"#),
+        (
+            "truncated",
+            r#"{"commands":[{"path":"cache","example":"ripr cache"}]"#,
+        ),
+        (
+            "non-string path",
+            r#"{"commands":[{"path":1,"example":"ripr cache"}]}"#,
+        ),
+    ] {
+        if discovery_rows::require_groups(json, &["cache"]).is_ok() {
+            return Err(format!("{label} must be rejected"));
+        }
+    }
+    Ok(())
 }
 
 #[test]
