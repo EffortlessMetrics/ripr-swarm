@@ -830,6 +830,29 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), CommandError> {
     run_agent_repair_with_identity(options, None)
 }
 
+/// Selection has not established that the attempt can resume. Offer only
+/// read-only inspection, preserving the authority's error and classification.
+pub(super) fn repair_attempt_input_error(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: Option<&str>,
+    error: String,
+) -> String {
+    let Some(id) = attempt_id else {
+        return error;
+    };
+    if crate::app::repair_attempt::RepairAttemptId::parse(id.to_string()).is_err() {
+        return error;
+    }
+    use crate::agent::loop_commands::{bound_root, shell_arg};
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
+    let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
+    let attempt_arg = shell_arg(id);
+    format!(
+        "{error}. For repair attempt `{id}`, inspect it with `ripr agent status --root {root_arg}{store_flag} --attempt {attempt_arg}`. No new repair attempt was started."
+    )
+}
+
 pub(in crate::cli) fn run_before_repair_with_identity(
     options: AgentRepairOptions,
     identity: &crate::app::repair_attempt::BeforeRepairAttemptIdentity,
@@ -1363,7 +1386,10 @@ fn run_agent_repair_phase(
                 store_ref,
                 attempt_id.as_deref(),
                 seam_id.as_deref(),
-            )?;
+            )
+            .map_err(|error| {
+                repair_attempt_input_error(&root, store_ref, attempt_id.as_deref(), error)
+            })?;
             refusal.selected_attempt =
                 Some((root.clone(), store.clone(), attempt.attempt_id.clone()));
             eprintln!(

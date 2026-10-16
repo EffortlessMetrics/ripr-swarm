@@ -367,9 +367,16 @@ fn facade_before_options(root: &std::path::Path, seam_id: &str) -> AgentRepairOp
 
 fn run_facade_continue(options: ContinueFacadeOptions) -> Result<(), CommandError> {
     ensure_command_root(&options.root, "continue")?;
-    match select_continue_attempt(&options.root, options.attempt_id.as_deref())
-        .map_err(CommandError::from)?
-    {
+    match select_continue_attempt(&options.root, options.attempt_id.as_deref()).map_err(
+        |error| {
+            CommandError::from(super::agent::repair_attempt_input_error(
+                &options.root,
+                None,
+                options.attempt_id.as_deref(),
+                error,
+            ))
+        },
+    )? {
         ContinueSelection::Proceed { attempt_id } => super::agent::run_agent_repair_with_identity(
             AgentRepairOptions {
                 root: options.root,
