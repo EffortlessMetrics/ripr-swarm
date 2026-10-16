@@ -14634,8 +14634,13 @@ tests = [
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::empty_collection_expectations_cannot_confirm_a_push",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::owner_may_exit_before_line_reads_everything_before_the_changed_expression",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::empty_collection_expectations_cap_effect_families_only_after_an_early_exit",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::assertion_field_collection_reads_name_binding_and_getter",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::collection_subject_must_end_after_root_index_or_value_read",
 ]
-fixtures = []
+fixtures = [
+  "fixtures/rust_preseeded_first_element",
+  "fixtures/rust_pushed_element_last",
+]
 code = [
   "crates/ripr/src/analysis/syntax/ra.rs",
   "crates/ripr/src/analysis/probes/diff.rs",
