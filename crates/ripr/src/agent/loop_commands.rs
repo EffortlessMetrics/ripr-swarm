@@ -574,35 +574,6 @@ fn windows_console_quote(value: &str) -> String {
     format!("\"{body}\"")
 }
 
-/// True when a rendered command stays in the Windows console double-quote
-/// form throughout — no single-quoted segments — so it pastes into cmd.exe
-/// as well as PowerShell and Git Bash (#8152 review). Single-quoted segments
-/// arise for values carrying `$` or backtick (literal in Git Bash and
-/// PowerShell; cmd.exe passes the quotes through) and for the
-/// `"$(printf '\ooo')"` escape segments of control-character values (bash
-/// source), and both must not be advertised as a cmd.exe form.
-pub(crate) fn is_windows_console_form(command: &str) -> bool {
-    let mut chars = command.chars().peekable();
-    let mut in_double = false;
-    while let Some(ch) = chars.next() {
-        if in_double {
-            match ch {
-                // `""` is one literal quote; the region stays open.
-                '"' if chars.peek() == Some(&'"') => {
-                    let _ = chars.next();
-                }
-                '"' => in_double = false,
-                _ => {}
-            }
-        } else if ch == '\'' {
-            return false;
-        } else if ch == '"' {
-            in_double = true;
-        }
-    }
-    !in_double
-}
-
 /// Which characters must not reach a terminal raw: every control character
 /// except `\n` and `\t`, plus the bidi formatting characters. One owner for the
 /// policy; `output::human::terminal_safe` escapes the same set in reports. It
@@ -1314,29 +1285,6 @@ mod tests {
             shell_arg_for("gap > /tmp/ripr-clobbered", true),
             "\"gap > /tmp/ripr-clobbered\""
         );
-    }
-
-    /// #8152 review: recovery labels must name the shell family the rendered
-    /// command actually parses in. The pure double-quote form is cmd.exe
-    /// paste-able; a single-quoted segment (a `$`/backtick value, or a
-    /// printf escape run) is not.
-    #[test]
-    fn is_windows_console_form_classifies_rendered_commands() {
-        let spaced_root = format!("C:{}work space", '\\');
-        assert!(is_windows_console_form(&format!(
-            "ripr check --root \"{spaced_root}\" --mode draft"
-        )));
-        // An interior apostrophe inside double quotes is data, not a quote.
-        assert!(is_windows_console_form("ripr check --root \"it's here\""));
-        // A doubled interior quote stays inside the region.
-        assert!(is_windows_console_form("ripr check --root \"a\"\"b\""));
-        // Single-quoted segments: `$`/backtick fallback and printf escapes.
-        assert!(!is_windows_console_form("ripr check --root '$(whoami)'"));
-        assert!(!is_windows_console_form(
-            "ripr check --root \"$(printf '\\033')\"'run'\"$(printf '\\033')\""
-        ));
-        // An unbalanced region is not any paste-able form.
-        assert!(!is_windows_console_form("ripr check --root \"unbalanced"));
     }
 
     /// #8152 review: a trailing backslash run inside the closing double quote

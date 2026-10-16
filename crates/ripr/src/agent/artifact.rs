@@ -313,6 +313,40 @@ fn artifact_generated_at_unix_ms() -> String {
 // fresh production" and "binary/artifact inventory disagrees" have no real
 // production condition to validate against. Do not fabricate those
 // rejections here; land them with the producers that make them real.
+/// True when a rendered command stays in the Windows console double-quote
+/// form throughout — no single-quoted segments — so it pastes into cmd.exe
+/// as well as PowerShell and Git Bash (#8152 review). Single-quoted segments
+/// arise for values carrying `$` or backtick (literal in Git Bash and
+/// PowerShell; cmd.exe passes the quotes through) and for the
+/// `"$(printf '\ooo')"` escape segments of control-character values (bash
+/// source), and both must not be advertised as a cmd.exe form.
+///
+/// Lives beside its only consumer because `xtask` includes
+/// `agent/loop_commands.rs` by path and builds with `-D warnings`: a helper
+/// used only outside that file's xtask-visible graph fails xtask's dead-code
+/// gate even though the crate wires it here.
+fn is_windows_console_form(command: &str) -> bool {
+    let mut chars = command.chars().peekable();
+    let mut in_double = false;
+    while let Some(ch) = chars.next() {
+        if in_double {
+            match ch {
+                // `""` is one literal quote; the region stays open.
+                '"' if chars.peek() == Some(&'"') => {
+                    let _ = chars.next();
+                }
+                '"' => in_double = false,
+                _ => {}
+            }
+        } else if ch == '\'' {
+            return false;
+        } else if ch == '"' {
+            in_double = true;
+        }
+    }
+    !in_double
+}
+
 pub(crate) fn validate_repo_exposure_artifact(
     root: &Path,
     raw: &str,
@@ -333,7 +367,7 @@ pub(crate) fn validate_repo_exposure_artifact(
             // is literal in Git Bash and PowerShell but not cmd.exe, so the
             // label must not advertise cmd.exe for it.
             let first_form = if cfg!(windows) {
-                if super::loop_commands::is_windows_console_form(&bash_recovery) {
+                if is_windows_console_form(&bash_recovery) {
                     "cmd.exe"
                 } else {
                     "Git Bash/PowerShell"
@@ -1312,6 +1346,29 @@ fn replace_content_commitment(
 
 #[cfg(test)]
 mod tests {
+    /// #8152 review: recovery labels must name the shell family the rendered
+    /// command actually parses in. The pure double-quote form is cmd.exe
+    /// paste-able; a single-quoted segment (a `$`/backtick value, or a
+    /// printf escape run) is not.
+    #[test]
+    fn is_windows_console_form_classifies_rendered_commands() {
+        let spaced_root = format!("C:{}work space", '\\');
+        assert!(is_windows_console_form(&format!(
+            "ripr check --root \"{spaced_root}\" --mode draft"
+        )));
+        // An interior apostrophe inside double quotes is data, not a quote.
+        assert!(is_windows_console_form("ripr check --root \"it's here\""));
+        // A doubled interior quote stays inside the region.
+        assert!(is_windows_console_form("ripr check --root \"a\"\"b\""));
+        // Single-quoted segments: `$`/backtick fallback and printf escapes.
+        assert!(!is_windows_console_form("ripr check --root '$(whoami)'"));
+        assert!(!is_windows_console_form(
+            "ripr check --root \"$(printf '\\033')\"'run'\"$(printf '\\033')\""
+        ));
+        // An unbalanced region is not any paste-able form.
+        assert!(!is_windows_console_form("ripr check --root \"unbalanced"));
+    }
+
     #[test]
     fn legacy_repo_exposure_has_actionable_rooted_recovery() -> Result<(), String> {
         // Released v0.10.0 (c08d474a) renders schema 0.3, scope repo and
