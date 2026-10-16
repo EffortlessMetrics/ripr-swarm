@@ -357,6 +357,12 @@ fn drop_unreached_test_files(
                 .map(|path| workspace::normalize_path(path)),
         );
     }
+    orphans.extend(cargo_skipped_test_files(
+        root,
+        test_harnesses,
+        &loaded_files,
+        holds_tests,
+    ));
     if orphans.is_empty() {
         return loaded_files;
     }
@@ -364,6 +370,62 @@ fn drop_unreached_test_files(
         .into_iter()
         .filter(|(path, _)| !orphans.contains(&workspace::normalize_path(path)))
         .collect()
+}
+
+/// Files holding tests that Cargo compiles into a declared `[[test]]` target
+/// `cargo test` never runs as libtest (#8016): `test = false`, unmet
+/// `required-features` under cargo defaults, or `harness = false` with no
+/// configured harness marker in the file (a registered custom harness
+/// stays credited through its own producer). Established only from Cargo's
+/// target metadata: an unavailable probe or an unlisted path keeps the file,
+/// and the probe runs only when a loaded file's owning manifest declares a
+/// `[[test]]` entry.
+fn cargo_skipped_test_files(
+    root: &Path,
+    test_harnesses: &[crate::config::TestHarnessRegistration],
+    loaded_files: &[(PathBuf, Vec<u8>)],
+    holds_tests: impl Fn(&[u8]) -> bool,
+) -> BTreeSet<String> {
+    let mut declares_test_target: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    let mut inventory = workspace::ManifestInventory::default();
+    let mut skipped = BTreeSet::new();
+    for (path, bytes) in loaded_files {
+        if !holds_tests(bytes) {
+            continue;
+        }
+        let Some(manifest_dir) = path.ancestors().skip(1).find_map(|dir| {
+            let manifest = dir.join("Cargo.toml");
+            committed_source::read_source_bytes(root, &manifest)
+                .ok()
+                .flatten()
+                .map(|_| dir.to_path_buf())
+        }) else {
+            continue;
+        };
+        let declares = *declares_test_target
+            .entry(manifest_dir.clone())
+            .or_insert_with(|| {
+                committed_source::read_source_bytes(root, &manifest_dir.join("Cargo.toml"))
+                    .ok()
+                    .flatten()
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+                    .is_some_and(|text| text.contains("[[test]]"))
+            });
+        if !declares {
+            continue;
+        }
+        let libtest_skipped = inventory.cargo_test_collection_skipped(root, path)
+            || (matches!(
+                inventory.verdict(root, path),
+                workspace::CargoHarnessVerdict::HarnessDisabled
+            ) && !test_harnesses
+                .iter()
+                .any(|harness| contains_bytes(bytes, harness.marker.as_bytes())));
+        if libtest_skipped {
+            skipped.insert(workspace::normalize_path(path));
+        }
+    }
+    skipped
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
@@ -7256,6 +7318,75 @@ fn absent_delimiter_boundary_returns_head() {
             );
             assert_eq!(kept.len(), usize::from(opted_in), "opted_in={opted_in}");
         }
+    }
+
+    #[test]
+    fn declared_test_targets_cargo_never_runs_as_libtest_drop_their_tests() -> Result<(), String> {
+        // #8016: `test = false`, unmet `required-features` and `harness =
+        // false` leave a declared `[[test]]` target unrun by `cargo test`.
+        // The control (a plain declared target) and a `harness = false`
+        // file carrying a configured harness marker keep their tests.
+        let test_source = b"#[test]\nfn t() { assert_eq!(1 + 1, 2); }\n".to_vec();
+        let marker_source = b"#[test]\nfn t() {}\n// myco::spec\n".to_vec();
+        let harness = crate::config::TestHarnessRegistration {
+            registration_id: "x".to_string(),
+            target: PathBuf::from("tests/x.rs"),
+            kind: crate::config::TestHarnessKind::RegisteredAttribute,
+            adapter: crate::config::TestHarnessAdapter::ExactAttributeV1,
+            marker: "myco::spec".to_string(),
+        };
+        let cases: [(&str, &str, &[u8], bool, bool); 5] = [
+            ("test-false", "test = false", &test_source, false, false),
+            (
+                "unmet-features",
+                "required-features = [\"never\"]",
+                &test_source,
+                false,
+                false,
+            ),
+            (
+                "harness-false",
+                "harness = false",
+                &test_source,
+                false,
+                false,
+            ),
+            (
+                "harness-false-registered",
+                "harness = false",
+                &marker_source,
+                true,
+                true,
+            ),
+            ("control", "", &test_source, false, true),
+        ];
+        for (name, entry, source, registered, kept) in cases {
+            let root = temp_root(&format!("skipped-target-{name}"))?;
+            write(
+                &root.join("Cargo.toml"),
+                &format!(
+                    "[package]\nname='p'\nversion='0.1.0'\nedition='2021'\n\
+                     [workspace]\n[features]\nnever=[]\n[[test]]\nname='x'\n{entry}\n"
+                ),
+            )?;
+            write(&root.join("src/lib.rs"), "pub fn f() {}\n")?;
+            write(&root.join("tests/x.rs"), &String::from_utf8_lossy(source))?;
+            let file = PathBuf::from("tests/x.rs");
+            let harnesses = if registered {
+                vec![harness.clone()]
+            } else {
+                Vec::new()
+            };
+            let remaining = super::drop_unreached_test_files(
+                &root,
+                &crate::analysis::workspace::SourceRoleContext::empty(),
+                &[],
+                &harnesses,
+                vec![(file, source.to_vec())],
+            );
+            assert_eq!(remaining.len(), usize::from(kept), "{name}");
+        }
+        Ok(())
     }
 
     #[test]
