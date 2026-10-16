@@ -39,8 +39,9 @@ traceability without reconstructing intent from chat history.
    `precommit`, or required merge qualification. Other edits still need their
    applicable checks, and hosted required CI remains authoritative for merge.
 
-4. For Rust product work, check the workspace before building executables or
-   running the full test suite:
+4. For focused Rust product work, start with the
+   [package, target, and feature selection examples](docs/TESTING.md#focused-local-iteration).
+   For workspace-wide compilation feedback, run:
 
    ```bash
    cargo check --workspace --all-targets
