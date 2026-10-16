@@ -2130,6 +2130,7 @@ JSON fields:
   `wrapper_error_binding_unresolved`, or
   `python_transitive_reach_unresolved`, or
   `rust_assertion_context_unresolved`, or
+  `rust_debug_assertion_unresolved`, or
   `rust_log_capture_unresolved`, or
   `rust_panic_outcome_unresolved`.
 - `static_limitation` is an additive optional per-finding object emitted only
@@ -2629,6 +2630,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `python_transitive_reach_unresolved` -- (RIPR-SPEC-0201, additive) A Python test constructs or calls into the owner's class, and a bounded same-class `self.` / `cls.` path may reach the changed method, but the preview adapter does not fully trace that path. Classification stays `no_static_path`; this is a named limitation, not a related-test or coverage claim.
 
 - `rust_assertion_context_unresolved` -- (RIPR-SPEC-0240, additive) Every related `assert_eq!` ripr refused was refused for a limit of its own reading (an unparsed or unplaced file, an unidentified test, a feature `cfg`, a binding that only may rebind the macro). The `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
+- `rust_debug_assertion_unresolved` -- (#8051, additive) A related test reaches the owner directly and its only strong assertion naming the changed code is a `debug_assert*` macro. It runs under `cargo test`'s default debug profile but is compiled out under `--release` or `debug-assertions = false`, and ripr does not read which profile the repair loop runs. ripr neither credits the assertion as `exposed` nor claims a gap: the `weakly_exposed` or `reachable_unrevealed` gap is withheld and classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
 - `rust_log_capture_unresolved` -- (#7133, additive) A changed `log::` record is checked by a related test that installs a capturing logger before calling the owner and asserts exactly on the captured store, against a string literal that carries the record's static template text. `tracing::` events and count or status assertions (`lines.len()`) keep their gap. ripr does not resolve the logger or the format template, so the `weakly_exposed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
 - `rust_panic_outcome_unresolved` -- (RIPR-SPEC-0240, additive) A related, non-ignored test with no assertion carries `#[should_panic]` (bare, `expected = ""`, or an `expected` message found in a literal argument of a panicking macro on or after the changed line), calls the owner directly, and the owner invokes a panicking macro on or after the changed line. ripr does not resolve whether the changed code decides that panic, so the `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
 
