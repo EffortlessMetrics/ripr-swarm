@@ -41,7 +41,24 @@ compiles. `--test cli_smoke` selects that integration target and its required
 product binary. Use `--lib` for library-only tests.
 
 Keep an isolated `CARGO_TARGET_DIR` stable for repeated runs of the same
-candidate. Record the package, target, profile, and effective features with each
+candidate. From the repository root in Bash, place it below the checkout's
+`target/` and create it before invoking Cargo:
+
+```bash
+export CARGO_TARGET_DIR="$PWD/target/contributor-rust"
+mkdir -p "$CARGO_TARGET_DIR"
+```
+
+This creates both the build-artifact directory and its parent `target/`.
+The repository's `.cargo/config.toml` forces `TEMP`, `TMP`, and `TMPDIR` to
+the checkout's `target/`, independently of `CARGO_TARGET_DIR`. If you place
+build artifacts outside the checkout, also run `mkdir -p target` from the
+repository root before building. Exporting another temporary directory does
+not override that forced setting. See the
+[workspace linker temp redirect](agent-context/validation.md#workspace-linker-temp-redirect)
+for the MSVC failure and recovery details.
+
+Record the package, target, profile, and effective features with each
 result: binary builds, test preparation, and Clippy can populate different build
 units even when they share that directory.
 
@@ -82,7 +99,7 @@ For workflow-policy, agent-skill, and executable-file edits, use the existing
 
 ### Measured example and limits
 
-At `97cc171257fd76a1b3b9e79cc41ad949e0ecc861`, the three commands above were
+At `97cc171257fd76a1b3b9e79cc41ad949e0ecc861`, the three Cargo commands above were
 executed on Linux x86_64 with Rust/Cargo 1.95.0, `CARGO_BUILD_JOBS=2`, and an
 initially empty isolated `CARGO_TARGET_DIR`. The toolchain and registry were
 prepared before timing; commands ran sequentially and reused earlier outputs.
