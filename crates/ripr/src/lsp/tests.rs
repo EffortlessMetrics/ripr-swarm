@@ -678,7 +678,14 @@ fn workspace_pull_reuses_each_document_result_id() -> Result<(), String> {
 }
 
 #[test]
-fn pull_diagnostics_before_first_snapshot_return_empty_full_reports() -> Result<(), String> {
+fn pull_diagnostics_before_first_snapshot_disclose_analysis_pending() -> Result<(), String> {
+    // Pre-analysis state (#7774): before the first snapshot commit an empty
+    // report is indistinguishable from "analysis ran and found nothing", so
+    // both pull paths disclose the never-analyzed state with one typed
+    // Information marker under the stable `ripr:analysis-pending` identity
+    // instead of serving bare emptiness. A cold workspace report with no
+    // previous result ids still has no document URI to attach the marker
+    // to, so it stays empty; the document pull covers every open file.
     let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
     let backend = service.inner();
     let uri = test_uri("file:///workspace/src/pricing.rs")?;
@@ -689,7 +696,7 @@ fn pull_diagnostics_before_first_snapshot_return_empty_full_reports() -> Result<
 
     let document = runtime
         .block_on(backend.diagnostic(DocumentDiagnosticParams {
-            text_document: TextDocumentIdentifier { uri },
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
             identifier: None,
             previous_result_id: None,
             work_done_progress_params: Default::default(),
@@ -703,12 +710,27 @@ fn pull_diagnostics_before_first_snapshot_return_empty_full_reports() -> Result<
         .and_then(serde_json::Value::as_str)
         != Some("full")
         || document_json
-            .get("items")
-            .and_then(serde_json::Value::as_array)
-            .is_none_or(|items| !items.is_empty())
+            .get("resultId")
+            .and_then(serde_json::Value::as_str)
+            != Some("ripr:analysis-pending")
     {
         return Err(format!(
-            "expected an empty full document report before the first snapshot: {document_json}"
+            "expected a full pending report under the stable pending identity: {document_json}"
+        ));
+    }
+    let items = document_json
+        .get("items")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| format!("pending document items missing: {document_json}"))?;
+    if items.len() != 1
+        || items
+            .first()
+            .and_then(|item| item.get("code"))
+            .and_then(serde_json::Value::as_str)
+            != Some(crate::lsp::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE)
+    {
+        return Err(format!(
+            "expected exactly one analysis-pending marker: {document_json}"
         ));
     }
 
@@ -728,7 +750,7 @@ fn pull_diagnostics_before_first_snapshot_return_empty_full_reports() -> Result<
         .is_none_or(|items| !items.is_empty())
     {
         return Err(format!(
-            "expected an empty workspace report before the first snapshot: {workspace_json}"
+            "a cold workspace report has no URI to attach the marker to: {workspace_json}"
         ));
     }
     Ok(())

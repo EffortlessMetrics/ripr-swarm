@@ -8,8 +8,8 @@ use super::client_features::ClientFeatureProfile;
 use super::config::{LspAnalysisConfig, validated_pulled_options};
 use super::diagnostics::{
     DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache, WorkspaceDiagnostics,
-    delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
-    take_all_uris, withdrawn_quarantine_diagnostics,
+    analysis_pending_diagnostics, delivered_diagnostics_for_uri, delivery_omission_diagnostic,
+    diagnostic_refresh_plan, take_all_uris, withdrawn_quarantine_diagnostics,
 };
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
@@ -5825,17 +5825,12 @@ impl Backend {
         params: DocumentDiagnosticParams,
     ) -> LspResult<DocumentDiagnosticReportResult> {
         let Some((snapshot, result_ids)) = self.latest_pull_snapshot() else {
-            return Ok(
-                DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
-                    related_documents: None,
-                    full_document_diagnostic_report:
-                        tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
-                            result_id: None,
-                            items: Vec::new(),
-                        },
-                })
-                .into(),
-            );
+            // Pre-analysis state (#7774): an empty report here would be
+            // indistinguishable from "analysis ran and found nothing",
+            // which is a completeness claim the server cannot support
+            // before the first snapshot commit. Serve the typed pending
+            // marker under a stable state identity instead.
+            return Ok(analysis_pending_document_report(params.previous_result_id).into());
         };
         let uri = params.text_document.uri;
         // A quarantined (dirty-buffer) document is served one Information
@@ -5915,7 +5910,13 @@ impl Backend {
         // snapshot fast path so a missing snapshot cannot skip the bound.
         check_previous_result_ids(&params.previous_result_ids)?;
         let Some((snapshot, result_ids)) = self.latest_pull_snapshot() else {
-            return Ok(WorkspaceDiagnosticReport { items: Vec::new() }.into());
+            // Pre-analysis state (#7774): serve the typed pending marker
+            // for every document the client already tracks, under the same
+            // stable state identity the document pull path uses. A cold
+            // client with no previous result ids gets no items — a
+            // workspace report item needs a document URI, and the document
+            // pull path discloses the state for every open file.
+            return Ok(analysis_pending_workspace_report(&params).into());
         };
         let mut uris = snapshot
             .diagnostics_by_uri
@@ -6993,6 +6994,76 @@ fn push_budget_unavailable_log_message(detail: &str) -> String {
 /// folded in so a later reason change cannot hide behind `unchanged`.
 fn quarantined_document_result_id(base: &str, reason: DocumentStalenessReason) -> String {
     format!("{base}:{}:quarantined", reason.as_str())
+}
+
+/// The stable pull result identity for the pre-analysis state (#7774). A
+/// literal, not a payload digest: there is no snapshot to derive from, the
+/// served payload is the constant pending marker, and the state flips
+/// exactly once, when the first snapshot commit resumes normal serving.
+/// The identity lets a client that already holds the pending report answer
+/// `unchanged` instead of re-rendering the marker on every pull.
+const ANALYSIS_PENDING_RESULT_ID: &str = "ripr:analysis-pending";
+
+/// The pre-analysis document pull report (#7774): one Information marker
+/// under the stable pending identity, or `unchanged` when the client
+/// already holds exactly that report.
+fn analysis_pending_document_report(
+    previous_result_id: Option<String>,
+) -> DocumentDiagnosticReport {
+    if previous_result_id.as_deref() == Some(ANALYSIS_PENDING_RESULT_ID) {
+        return DocumentDiagnosticReport::Unchanged(RelatedUnchangedDocumentDiagnosticReport {
+            related_documents: None,
+            unchanged_document_diagnostic_report: UnchangedDocumentDiagnosticReport {
+                result_id: ANALYSIS_PENDING_RESULT_ID.to_string(),
+            },
+        });
+    }
+    DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
+        related_documents: None,
+        full_document_diagnostic_report: tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
+            result_id: Some(ANALYSIS_PENDING_RESULT_ID.to_string()),
+            items: analysis_pending_diagnostics(),
+        },
+    })
+}
+
+/// The pre-analysis workspace pull report (#7774): the pending marker rides
+/// one full report per document URI the client already tracks, under the
+/// same stable identity as the document pull path; previously served
+/// pending reports answer `unchanged`. A cold client with an empty
+/// previous-result-id set gets an empty item list because a workspace
+/// report item requires a document URI — the document pull path discloses
+/// the state for every open file.
+fn analysis_pending_workspace_report(
+    params: &WorkspaceDiagnosticParams,
+) -> WorkspaceDiagnosticReport {
+    let mut items = Vec::with_capacity(params.previous_result_ids.len());
+    for entry in &params.previous_result_ids {
+        if entry.value == ANALYSIS_PENDING_RESULT_ID {
+            items.push(WorkspaceDocumentDiagnosticReport::Unchanged(
+                WorkspaceUnchangedDocumentDiagnosticReport {
+                    uri: entry.uri.clone(),
+                    version: None,
+                    unchanged_document_diagnostic_report: UnchangedDocumentDiagnosticReport {
+                        result_id: ANALYSIS_PENDING_RESULT_ID.to_string(),
+                    },
+                },
+            ));
+            continue;
+        }
+        items.push(WorkspaceDocumentDiagnosticReport::Full(
+            WorkspaceFullDocumentDiagnosticReport {
+                uri: entry.uri.clone(),
+                version: None,
+                full_document_diagnostic_report:
+                    tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
+                        result_id: Some(ANALYSIS_PENDING_RESULT_ID.to_string()),
+                        items: analysis_pending_diagnostics(),
+                    },
+            },
+        ));
+    }
+    WorkspaceDiagnosticReport { items }
 }
 
 /// Disclosure emitted once per quarantine episode when a dirty document's
@@ -10893,6 +10964,7 @@ mod delivery_selection_parity_tests {
     }
 
     // Keep the payload oracles separate from the selected-ID-only tests.
+    mod analysis_pending_tests;
     mod omission_tests;
     mod quarantine_marker_tests;
 
