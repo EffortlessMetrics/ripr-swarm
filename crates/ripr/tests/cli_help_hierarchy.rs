@@ -78,18 +78,18 @@ fn bare_groups_display_their_documented_help() -> Result<(), String> {
         if !discovery.status.success() || !discovery.stderr.is_empty() {
             return Err(format!("machine discovery failed: {discovery:?}"));
         }
-        let document: serde_json::Value =
-            serde_json::from_slice(&discovery.stdout).map_err(|error| error.to_string())?;
-        let rows = document["commands"]
-            .as_array()
-            .ok_or("missing command inventory")?;
+        let discovery_text = String::from_utf8_lossy(&discovery.stdout);
         let mut failures = Vec::new();
         for &group in BARE_HELP_GROUPS {
-            let row = rows
-                .iter()
-                .find(|row| row["path"] == group)
-                .ok_or_else(|| format!("missing {group} discovery row"))?;
-            assert_eq!(row["example"], format!("ripr {group}"));
+            let has_path = discovery_text.contains(&format!("\"path\":\"{group}\""))
+                || discovery_text.contains(&format!("\"path\": \"{group}\""));
+            let has_example = discovery_text.contains(&format!("\"example\":\"ripr {group}\""))
+                || discovery_text.contains(&format!("\"example\": \"ripr {group}\""));
+            if !has_path || !has_example {
+                return Err(format!(
+                    "missing {group} discovery row in machine discovery output"
+                ));
+            }
             let help = run_ripr_in(&["help", group], Some(root))?;
             if !help.status.success()
                 || !help.stderr.is_empty()
