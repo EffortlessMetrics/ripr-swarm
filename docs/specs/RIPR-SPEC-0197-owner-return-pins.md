@@ -1776,17 +1776,22 @@ idx + 1 });` got no pin and read as a gap although
   crate with indexed files is workspace-owned.
 - A `macro_rules!` or `macro` body is only tokens to the parser, so the
   items its expansion emits are read from its binding positions (#5991):
-  `macro_rules! name`, `macro name`, and a `use` whose last segment or
-  rename target is the name make that trusted name ambiguous wherever the
-  macro may expand. `macro_use`, `no_implicit_prelude`, or a glob `use`
-  not rooted at `crate`, `self`, `super` or `$crate` in a body makes every
-  trusted name ambiguous. A body that binds a name its caller passes in
-  (`macro_rules! $n`, `macro $n`, `use x::$n`) does too, when the macro's
-  own name is trusted: calls of a trusted name are never read for the
-  names they pass, while an untrusted call's arguments already record
-  them. Such a site is crate-local only when neither the macro nor its
-  body is exported. A helper body that only calls `assert_eq!` or holds
-  `use super::*;` binds nothing.
+  each rule's matcher matches the invocation and emits nothing, so the
+  binding positions are the transcriber's, and a literal
+  `use other::assert_eq;` in a matcher binds nothing. `macro_rules! name`,
+  `macro name`, and a `use` whose last segment or rename target is the name
+  make that trusted name ambiguous wherever the macro may expand.
+  `macro_use`, `no_implicit_prelude`, or a glob `use` not rooted at `crate`,
+  `self`, `super` or `$crate` in a body makes every trusted name ambiguous.
+  A body that binds a name its caller passes in (`macro_rules! $n`,
+  `macro $n`, `use x::$n`, `use $n;`) does too, when the macro's own name is
+  trusted: calls of a trusted name are never read for the names they pass,
+  while an untrusted call's arguments already record them. A rename target
+  (`use $n as x`) and a fragment before `::` bind the name they qualify, not
+  the fragment. Either kind of site is crate-local only when neither the
+  macro nor its body is exported, so a private macro's glob body binds only
+  its own target root, as a direct glob there would. A helper body that only
+  calls `assert_eq!` or holds `use super::*;` binds nothing.
 - A crate-local binding reaches only tests compiled in the same crate. A
   site is crate-local when it cannot leave the crate whose module tree holds
   its file: a private `use` or glob, `#[macro_use] extern crate`,

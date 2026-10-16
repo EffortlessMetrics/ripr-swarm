@@ -665,14 +665,19 @@ fn macro_binding_ambiguities(
                 .binds_fragment
                 .filter(|_| trusted.contains(&macro_name.trim_start_matches("r#")));
             if let Some(binding) = body.any.or(fragment) {
+                // The expansion lands wherever the macro is in scope, so a
+                // private macro's glob, `#[macro_use]` or
+                // `no_implicit_prelude` body stays in its own target root,
+                // like a direct site there; an exported macro, or one whose
+                // body exports another, reaches other crates.
+                let crate_local = !body.exports && !is_exported_macro(&node);
                 return all(
                     line_of(&node),
                     MacroBindingKind::BodyBindsAny {
                         macro_name,
                         binding,
                     },
-                    // The macro may be invoked from another crate.
-                    false,
+                    crate_local,
                 );
             }
             // The expansion lands wherever the macro is invoked, so no
@@ -1228,18 +1233,97 @@ struct MacroBodyBindings {
     /// The body carries `macro_export`, so what it defines leaves the crate.
     exports: bool,
     /// The body defines or imports a name its caller passes in (`macro_rules!
-    /// $name`). A call of an untrusted macro records the names in its
-    /// arguments, but a call whose own name is trusted is never read, so a
-    /// local `vec!` like this may bind any name. The text is the binding.
+    /// $name`, `macro $name`, `use x::$n`, `use $n;`). A call of an untrusted
+    /// macro records the names in its arguments, but a call whose own name is
+    /// trusted is never read, so a local `vec!` like this may bind any name.
+    /// The text is the binding.
     binds_fragment: Option<String>,
+}
+
+/// The tokens a definition's rules may emit. A `matcher => transcriber`
+/// rule, or a `macro` 2.0 `name(args) { body }` argument list, matches the
+/// invocation's tokens and emits nothing, so a literal
+/// `use other::assert_eq;` in it binds nothing (#5991 review): each such
+/// group is skipped with its arrow, and only the transcriber is read.
+/// Rule-level punctuation and the outermost delimiters are dropped; every
+/// token inside a transcriber, nested delimiters included, is kept so a
+/// `use` tree's bounds stay readable. A rule-level group without a
+/// following `=>` or group is kept, so an unrecognized shape cannot hide a
+/// binding. A nested definition's own rules sit inside a transcriber and
+/// are read in full, which can only over-approximate.
+fn transcriber_tokens(tokens: &[ra_ap_syntax::SyntaxToken]) -> Vec<&ra_ap_syntax::SyntaxToken> {
+    use ra_ap_syntax::SyntaxKind::{
+        EQ, L_BRACK, L_CURLY, L_PAREN, R_ANGLE, R_BRACK, R_CURLY, R_PAREN,
+    };
+    let opens = |kind: ra_ap_syntax::SyntaxKind| matches!(kind, L_PAREN | L_CURLY | L_BRACK);
+    let closes = |kind: ra_ap_syntax::SyntaxKind| matches!(kind, R_PAREN | R_CURLY | R_BRACK);
+    // One past the group's closing delimiter, or `None` when unbalanced.
+    let group_end = |start: usize| {
+        let mut depth = 1usize;
+        let mut at = start + 1;
+        while at < tokens.len() {
+            if opens(tokens[at].kind()) {
+                depth += 1;
+            } else if closes(tokens[at].kind()) {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(at + 1);
+                }
+            }
+            at += 1;
+        }
+        None
+    };
+    let mut emitted = Vec::new();
+    let mut depth = 0usize;
+    let mut at = 0usize;
+    while at < tokens.len() {
+        let kind = tokens[at].kind();
+        // At rule level, a group is the matcher when `=` `>` follows its
+        // close, or a `macro` 2.0 argument list when another group follows;
+        // token trees keep `=` and `>` as separate tokens.
+        if depth == 1
+            && opens(kind)
+            && let Some(end) = group_end(at)
+        {
+            let followed_by_arrow = tokens.get(end).is_some_and(|token| token.kind() == EQ)
+                && tokens
+                    .get(end + 1)
+                    .is_some_and(|token| token.kind() == R_ANGLE);
+            let followed_by_body = tokens.get(end).is_some_and(|token| opens(token.kind()));
+            if followed_by_arrow {
+                at = end + 2;
+                continue;
+            }
+            if followed_by_body {
+                at = end;
+                continue;
+            }
+        }
+        if opens(kind) {
+            depth += 1;
+            if depth > 2 {
+                emitted.push(&tokens[at]);
+            }
+        } else if closes(kind) {
+            if depth > 2 {
+                emitted.push(&tokens[at]);
+            }
+            depth = depth.saturating_sub(1);
+        } else if depth >= 1 {
+            emitted.push(&tokens[at]);
+        }
+        at += 1;
+    }
+    emitted
 }
 
 /// The binding items in a `macro_rules!` or `macro` body. A body is a token
 /// tree, so the items it emits never parse into the `MacroRules`, `Use` or
-/// `Attr` nodes the scan reads; this reads them from the tokens instead.
-/// Only binding positions count, so a test-generating macro whose body
-/// calls `assert_eq!` and holds `use super::*;` binds nothing. `None` when
-/// the node is not a macro definition.
+/// `Attr` nodes the scan reads; this reads them from the tokens its rules
+/// emit instead. Only binding positions count, so a test-generating macro
+/// whose body calls `assert_eq!` and holds `use super::*;` binds nothing.
+/// `None` when the node is not a macro definition.
 fn macro_body_bindings(
     definition: &SyntaxNode,
     trusted: &dyn Fn(&str) -> bool,
@@ -1254,6 +1338,7 @@ fn macro_body_bindings(
         .filter(|child| child.kind() == ra_ap_syntax::SyntaxKind::TOKEN_TREE)
         .flat_map(|tree| non_trivia_tokens(&tree))
         .collect();
+    let tokens = transcriber_tokens(&tokens);
     let word = |index: usize| {
         tokens
             .get(index)
@@ -1321,8 +1406,16 @@ fn macro_body_bindings(
                             ..MacroBodyBindings::default()
                         });
                     }
-                    // A fragment past the root may name what is imported.
-                    if at > start && kind(at) == Some(DOLLAR) {
+                    // A fragment that is the effective imported leaf names
+                    // what the expansion imports: past the root
+                    // (`use x::$n;`) or as the whole tree (`use $n;`). A
+                    // renamed one (`use $n as x`) binds the rename, and one
+                    // before `::` only qualifies the path; `$crate` is this
+                    // crate.
+                    if kind(at) == Some(DOLLAR)
+                        && word(at + 1) != Some("crate")
+                        && (at + 2 >= end || matches!(kind(at + 2), Some(COMMA | R_CURLY)))
+                    {
                         binds_fragment = Some(format!("use ${}", word(at + 1).unwrap_or("")));
                     }
                     let Some(name) = word(at) else { continue };

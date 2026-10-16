@@ -7031,6 +7031,29 @@ fn stored_macro_candidates_record_each_binding_construct() -> Result<(), String>
             "macro_rules! define { ($n:ident) => { macro_rules! $n { () => {} } }; }\n",
             names(&[]),
         ),
+        // A matcher matches the invocation and emits nothing, so a literal
+        // `use` in it binds nothing.
+        (
+            "macro_rules! m { (use other::assert_eq;) => {}; }\n",
+            names(&[]),
+        ),
+        ("macro_rules! m { (use other::*) => {}; }\n", names(&[])),
+        // A direct fragment leaf names the import; a rename target or a
+        // path segment before `::` is what binds instead. The definition's
+        // own name stays recorded either way, and a wrongly recorded
+        // fragment would widen these to `Any`.
+        (
+            "macro_rules! vec { ($n:ident) => { use $n; }; }\n",
+            any.clone(),
+        ),
+        (
+            "macro_rules! vec { ($n:ident) => { use $n as check; }; }\n",
+            names(&["vec"]),
+        ),
+        (
+            "macro_rules! vec { ($n:ident) => { use $n::path; }; }\n",
+            names(&["vec"]),
+        ),
     ] {
         let expected = match expected {
             None => MacroBindingCandidates::Any,
@@ -10026,6 +10049,7 @@ fn a_macro_body_that_binds_a_trusted_name_makes_it_ambiguous() {
         "macro_rules! m { () => { macro_rules! inner { () => { macro_rules! assert_eq { ($($t:tt)*) => {}; } }; } inner!(); }; }\nm!();\n",
         "macro_rules! m { () => { macro assert_eq($($t:tt)*) {} }; }\nm!();\n",
         "macro_rules! m { () => { use other::check as assert_eq; }; }\nm!();\n",
+        "macro_rules! m { () => { use other::assert_eq; }; }\nm!();\n",
         "macro_rules! m { () => { use other::{assert_eq, Thing}; }; }\nm!();\n",
         "macro_rules! m { () => { use ::other::assert_eq; }; }\nm!();\n",
         // Words that may bring in any name.
@@ -10033,8 +10057,22 @@ fn a_macro_body_that_binds_a_trusted_name_makes_it_ambiguous() {
         "macro_rules! m { () => { #![no_implicit_prelude] }; }\nm!();\n",
         "macro_rules! m { () => { use other::*; }; }\nm!();\n",
         "macro_rules! m { ($k:ident) => { use $k::*; }; }\nm!(other);\n",
+        // A trusted-named macro whose body imports its caller's name, as a
+        // whole tree.
+        "macro_rules! vec { ($n:ident) => { use $n; }; }\nvec!(assert_eq);\n",
     ] {
         assert!(refused(other), "{other}");
+    }
+    // A matcher matches the invocation's tokens and emits nothing, so the
+    // `use` in it binds nothing; a rename target or a path segment before
+    // `::` is what the fragment binds instead.
+    for other in [
+        "macro_rules! m { (use other::assert_eq;) => {}; }\nm!();\n",
+        "macro_rules! m { (use other::*) => {}; }\nm!();\n",
+        "macro_rules! vec { ($n:ident) => { use $n as check; }; }\nvec!(assert_eq);\n",
+        "macro_rules! vec { ($n:ident) => { use $n::path; }; }\nvec!(assert_eq);\n",
+    ] {
+        assert_eq!(refusal(other), None, "{other}");
     }
     // A test-generating macro whose body only calls `assert_eq!`, renames it
     // away, or glob-imports this crate binds nothing.
@@ -10045,6 +10083,49 @@ fn a_macro_body_that_binds_a_trusted_name_makes_it_ambiguous() {
     ] {
         assert_eq!(refusal(other), None, "{other}");
     }
+}
+
+#[test]
+fn a_private_macro_bodys_any_binding_stays_in_its_own_target() {
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    // A private macro's `macro_use`, `no_implicit_prelude` or foreign-glob
+    // body binds only where the macro can expand, like a direct site in the
+    // same file would; a bench cannot expand it in the test's crate.
+    for other in [
+        (
+            "benches/b.rs",
+            "macro_rules! m { () => { use other::*; }; }\nm!();\n",
+        ),
+        (
+            "benches/b.rs",
+            "macro_rules! m { () => { #[macro_use] extern crate other; }; }\nm!();\n",
+        ),
+        (
+            "benches/b.rs",
+            "macro_rules! m { () => { #![no_implicit_prelude] }; }\nm!();\n",
+        ),
+    ] {
+        assert_eq!(weight_refusal(tests, &[other]), None, "{other:?}");
+    }
+    // Its exported twin reaches every test, and the test file's own private
+    // macro keeps its binding.
+    let exported = (
+        "benches/b.rs",
+        "#[macro_export]\nmacro_rules! m { () => { use other::*; }; }\nm!();\n",
+    );
+    assert!(matches!(
+        weight_refusal(tests, &[exported]),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::MacroBinding(_)
+        ))
+    ));
+    let own = format!("macro_rules! m {{ () => {{ use other::*; }}; }}\nm!();\n{tests}");
+    assert!(matches!(
+        weight_refusal(&own, &[]),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::MacroBinding(_)
+        ))
+    ));
 }
 
 #[test]
@@ -10077,7 +10158,9 @@ fn a_macro_body_site_names_the_macro_and_its_reach() {
         sites("macro_rules! f { () => { #[macro_export] macro_rules! write { () => {} } }; }\n"),
         vec![("write".to_string(), body("f"), false)]
     );
-    // A glob from a fragment root may import anything.
+    // A glob from a fragment root may import anything, and a private
+    // macro's reach stops at its own crate, like a direct glob's would; the
+    // exported twin reaches other crates.
     let any = sites("macro_rules! h { ($k:ident) => { use $k::*; }; }\n");
     assert_eq!(any.len(), trusted.len());
     assert!(any.iter().all(|(_, kind, crate_local)| {
@@ -10086,8 +10169,18 @@ fn a_macro_body_site_names_the_macro_and_its_reach() {
                 macro_name: "h".to_string(),
                 binding: "use $k::*".to_string(),
             }
-            && !crate_local
+            && *crate_local
     }));
+    assert!(
+        sites("#[macro_export]\nmacro_rules! h { ($k:ident) => { use $k::*; }; }\n")
+            .iter()
+            .all(|(_, _, crate_local)| !*crate_local)
+    );
+    // A matcher matches the invocation and emits nothing.
+    assert_eq!(
+        sites("macro_rules! m { (use other::*) => {}; (use other::assert_eq;) => {}; }\n"),
+        Vec::new()
+    );
     // A local macro under a trusted name is never read at its calls, so a
     // name it takes from its caller may be any name; an untrusted one's
     // calls are read instead.
@@ -10103,6 +10196,7 @@ fn a_macro_body_site_names_the_macro_and_its_reach() {
     for source in [
         "macro_rules! vec { ($n:ident) => { macro $n() {} }; }\n",
         "macro_rules! vec { ($n:ident) => { use other::$n; }; }\n",
+        "macro_rules! vec { ($n:ident) => { use $n; }; }\n",
     ] {
         assert_eq!(sites(source).len(), trusted.len(), "{source}");
     }
