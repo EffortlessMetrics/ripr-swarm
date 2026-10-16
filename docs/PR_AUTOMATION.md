@@ -109,6 +109,35 @@ HTML inside a list ends with its owning container rather than hiding a dedented
 outside disposition. Ordinary list paragraph text retains the existing column-zero
 field rule. `container-boundary-rendering.json` retains 114 bodies and both
 renderers' agreeing field sets, including both directions of each reported repair.
+The container interpreter follows the [block-phase parsing strategy](https://spec.commonmark.org/0.29/#phase-1-block-structure):
+match existing container prefixes, recognize new blocks in the last matched
+context, then consider lazy continuation. The open paragraph belongs to the old
+complete container stack; it does not make an unmatched quote/item's parent a
+paragraph. Consequently any valid one-to-nine-digit ordered marker can open a
+sibling after a prefix fails, while only literal `1.` / `1)` with nonempty text
+interrupt an ordinary paragraph. One list-marker lexer supplies both decisions,
+including empty items, padding, leading zeros, delimiters and thematic priority.
+
+Production remains the existing static Bash/jq preflight, before checkout and
+without candidate execution. There is no mature Markdown parser in that runtime
+or in repo-policy's dependencies. Using a third-party token stream there would
+require a new trusted dependency delivery/bootstrap path; compiling repo-policy
+from the candidate would cross the current admission boundary. A vendored full
+parser would greatly enlarge the static workflow. This bounded compatibility
+repair therefore keeps an explicit quote/list stack and shared context-sensitive
+block recognition in jq. Mature CommonMark and cmark-gfm ASTs supply independent
+development oracles; they are not new production dependencies. This choice does
+not claim full Markdown conformance or replace the pending structured-record fix.
+
+`sibling-context-rendering.json` retains 521 representative bodies, including all39
+reviewer controls, against both actual consumers and diagnostics. The external
+proof retains the complete 8840-body ordered/unordered marker, indentation,
+nesting and paragraph-interruption matrix. Sixteen leading-zero-one inline-span
+cases in that matrix differ between renderers: CommonMark retains `0001.` / `0001)`
+in the paragraph, while cmark-gfm starts a list. Existing interpretation and
+accepted syntax are preserved; these new alternate-renderer limitations are
+recorded alongside, without changing the earlier12 CDATA limitations. Adopting
+the alternative interpretation requires a separate evidence-format decision.
 A source-ready declaration may separately report overall `REVIEW_INCOMPLETE`
 while qualification remains outstanding. Both admission and the final refresh,
 including diagnostics, use the same parser.

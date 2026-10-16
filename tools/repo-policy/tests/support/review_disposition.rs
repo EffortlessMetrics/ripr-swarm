@@ -48,6 +48,15 @@ pub fn container_boundary_cases() -> Result<Vec<(String, String, bool)>, String>
     )
 }
 
+pub fn sibling_context_cases() -> Result<Vec<(String, String, bool)>, String> {
+    renderer_cases(
+        include_str!(
+            "../../../../fixtures/convergence/native-late-admission/sibling-context-rendering.json"
+        ),
+        521,
+    )
+}
+
 fn renderer_cases(contents: &str, count: usize) -> Result<Vec<(String, String, bool)>, String> {
     let fixture: serde_json::Value = serde_json::from_str(contents).map_err(|e| e.to_string())?;
     let cases = fixture["cases"].as_array().ok_or("block cases missing")?;

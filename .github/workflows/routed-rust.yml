@@ -62,29 +62,38 @@ env:
         ($line | capture("^ {0,3}<(?<name>code|textarea|xmp|noembed|noframes)"; "i")) as $tag |
         {kind:"html",end:("(?i:</" + $tag.name + "[ \t]*>)")}
       else null end;
-    # Resolve container membership before masking inline HTML. A missing quote or
-    # list indentation is a lazy continuation only while a paragraph is open;
-    # headings, fences and HTML blocks cannot lend that continuation to a field.
-    def review_container_interrupt:
-      "^ {0,3}(?:#{1,6}(?:[ \t]|$)|" + review_fence_open + "$|(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$|>|[-+*][ \t]+\\S|1[.)][ \t]+\\S|<" + review_html_interrupt + ")";
+    # List starts depend on the LAST MATCHED container. Only literal '1' and a
+    # nonempty item interrupt a paragraph; every valid marker can start an item
+    # after a quote/item prefix fails. Keep that lexical decision shared.
+    def review_list_marker($paragraph):
+      if test("^ {0,3}(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$") then null
+      elif test("^ {0,3}(?:[-+*]|[0-9]{1,9}[.)])(?:[ \t]+|$)") then
+        capture("^(?<offset> {0,3})(?<marker>[-+*]|[0-9]{1,9}[.)])(?=[ \t]|$)(?<space>[ \t]*)(?<rest>.*)$") as $m |
+        if $paragraph and (($m.marker | test("^(?:[-+*]|1[.)])$") | not) or ($m.rest | test("\\S") | not)) then null
+        else
+          (($m.offset|length) + ($m.marker|length)) as $width |
+          (if ($m.space|length) == 0 or ($m.space|length) > 4 then 1 else ($m.space|length) end) as $padding |
+          {marker:$m.marker,indent:($width+$padding),text: .[($width+$padding):]}
+        end
+      else null end;
+    def review_container_start($paragraph):
+      . as $line |
+      test("^ {0,3}(?:#{1,6}(?:[ \t]|$)|" + review_fence_open + "$|(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$|>)") or
+      (review_list_marker($paragraph) != null) or
+      (review_html_context($line; ($paragraph|not)) != null) or
+      (($paragraph|not) and test("^ {0,3}" + review_html_standalone + "[ \t]*$"));
     def review_expand_tabs:
       reduce (explode[]) as $c ({column:0,text:""};
         if $c == 9 then (4 - (.column % 4)) as $n | .text += (" " * $n) | .column += $n
         else .text += ([$c]|implode) | .column += 1 end) | .text;
     def review_container_prefixes:
+      .paragraph as $paragraph | (.text | review_list_marker($paragraph)) as $item |
       if (.text | test("^ {0,3}>")) then
         .text |= sub("^ {0,3}>[ \t]?"; "") |
         .containers += [{kind:"quote"}] | .paragraph = false | review_container_prefixes
-      elif (.text | test("^ {0,3}(?:[-+*]|[0-9]{1,9}[.)])(?:[ \t]+|$)")) and
-           ((.paragraph|not) or (.text | test("^ {0,3}(?:[-+*]|1[.)])[ \t]+\\S"))) and
-           (.text | test("^ {0,3}(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})$") | not) then
-        (.text | capture("^(?<prefix> {0,3}(?:[-+*]|[0-9]{1,9}[.)])(?<space>[ \t]*))")) as $m |
-        # Five or more spaces mean one marker-padding space plus indented code.
-        (if ($m.space|length) == 0 then ($m.prefix|length) + 1
-         elif ($m.space|length) > 4 then ($m.prefix|length) - ($m.space|length) + 1
-         else ($m.prefix|length) end) as $indent |
-        .text = .text[$indent:] | .containers += [{kind:"list",indent:$indent}] | .paragraph = false |
-        review_container_prefixes
+      elif $item != null then
+        .text = $item.text | .containers += [{kind:"list",indent:$item.indent,marker:$item.marker}] |
+        .paragraph = false | review_container_prefixes
       else . end;
     def hide_review_containers:
       reduce (split("\n")[]) as $source
@@ -101,8 +110,12 @@ env:
               .text = .text[$c.indent:] | .containers += [$c]
             elif $c.kind == "list" and (.text | test("^[ \t]*$")) then .containers += [$c]
             else .failed = true end)) as $continued |
-         ($continued.failed and .paragraph and
-           ($continued.text | test("^[ \t]*$|" + review_container_interrupt) | not)) as $lazy |
+         # Match prefixes first, then recognize block starts in that context.
+         # The still-open old paragraph is eligible for lazy text only AFTER
+         # a new block failed to start at the last matching container.
+         ($continued.text | review_container_start(false)) as $new_block |
+         ($continued.failed and .paragraph and ($new_block|not) and
+           ($continued.text | test("^[ \t]*$") | not)) as $lazy |
          if $lazy then
            .lines += [(if any(.containers[]; .kind == "quote") then ($source | gsub("."; "\u0003")) else $source end)]
          else
