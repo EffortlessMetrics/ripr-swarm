@@ -157,3 +157,59 @@ fn source_and_product_guards_have_discriminating_controls() -> Result<(), String
     );
     Ok(())
 }
+
+#[test]
+fn caller_grants_only_the_four_approved_read_scopes() -> Result<(), String> {
+    let source = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../.github/workflows/contabo-qualification.yml"),
+    )
+    .map_err(|e| e.to_string())?;
+    // This is a static caller contract, not proof of effective GitHub access.
+    // Reject job overrides as well as missing, extra or write-level grants.
+    let approved = |source: &str| {
+        let permissions: Vec<_> = source
+            .lines()
+            .filter(|line| line.trim_start().starts_with("permissions:"))
+            .collect();
+        let Some((_, rest)) = source.split_once("\npermissions:\n") else {
+            return false;
+        };
+        let mut grants: Vec<_> = rest
+            .lines()
+            .take_while(|line| line.is_empty() || line.starts_with(' '))
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect();
+        grants.sort_unstable();
+        permissions == ["permissions:"]
+            && grants
+                == [
+                    "actions: read",
+                    "checks: read",
+                    "contents: read",
+                    "pull-requests: read",
+                ]
+    };
+    assert!(
+        approved(&source),
+        "caller must grant exactly approved read scopes"
+    );
+    for scope in ["actions", "checks", "contents", "pull-requests"] {
+        let grant = format!("  {scope}: read\n");
+        assert!(source.contains(&grant));
+        assert!(!approved(&source.replace(&grant, "")), "missing {scope}");
+        assert!(
+            !approved(&source.replace(&grant, &format!("  {scope}: write\n"))),
+            "write-level {scope}"
+        );
+    }
+    assert!(!approved(
+        &source.replace("permissions:\n", "permissions:\n  id-token: write\n")
+    ));
+    assert!(!approved(&source.replace(
+        "  qualification:\n",
+        "  qualification:\n    permissions: write-all\n"
+    )));
+    Ok(())
+}

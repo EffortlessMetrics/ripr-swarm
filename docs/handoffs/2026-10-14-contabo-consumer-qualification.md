@@ -25,10 +25,11 @@ The reusable standard ceiling is 75 minutes. That is not proof of the governing
 The recoverable sequence is:
 
 1. Finish source/local proof and independent source review in this existing
-   #7929 candidate. Keep the additional read scopes and live allowance withheld
-   until their explicit approvals. Source acceptance, native qualification and
-   final merge judgment are separate dispositions.
-2. After scope approval, integrate only the approved source delta through
+   #7929 candidate. The owner approved the two additional caller read scopes on
+   October 16; this candidate now grants them. Verify the separately managed live
+   allowance readback before execution. Source acceptance, native qualification
+   and final merge judgment are separate dispositions.
+2. Integrate only the approved source delta through
    #7929's normal existing source-review/merge gates. This first lands the manual
    workflow on the default branch. No separate registration stub, competing PR,
    speculative dispatch or live settings write is needed. Future #7164 native
@@ -74,14 +75,17 @@ The caller now prepares `artifact_lane: ripr-product`, `upload_artifacts: true`,
 public `em-ci-workflows#23` merged at the immutable pin above. This is source
 preparation, not live runner admission or a qualified product result.
 
-**Execution blockers:** the caller retains `actions: read` and `contents: read`.
-The reusable workflow additionally declares `checks: read` and
-`pull-requests: read`; explicit approval of these two read-only scope additions
-is pending. They are deliberately recorded as comments, not granted by this
-candidate. The actual new-pin live runner allowance must also be observed after
-its separate pending approval. Do not dispatch until both conditions, default
-workflow registration and reviewed #7164 admission hold. No permissions, runner
-settings, secrets, protection or image activation are changed here.
+**Approved caller scopes:** `actions: read`, `checks: read`, `contents: read`
+and `pull-requests: read`. The owner explicitly approved the latter two additions
+on October 16 for GitHub check and PR evidence inspection; they match the pinned
+reusable workflow's read requirements. No write scopes or inherited secrets are
+granted. The static scope regression is not proof of effective live access.
+
+**Execution blockers:** the actual new-pin live runner allowance must be verified
+through the separately authorized application/readback owner. Approval alone is
+not observed admission. Do not dispatch until that readback, default workflow
+registration and reviewed #7164 admission hold. This source change does not alter
+runner settings, secrets, protection, the immutable pin or image activation.
 
 The immutable standard job has a **75-minute** limit. The repository cannot
 extend it. Its classifier and finalizer also use standard capacity; this source
@@ -311,8 +315,8 @@ workflow-dispatch registration. This source PR stays Draft pending its own revie
 parent coordinates the source landing and subsequent bounded execution. Do not
 replace this with a Ready transition, speculative dispatch or settings activation.
 The prepared path includes product custody but has not executed it. The actual
-new-pin allowance, read-scope approval, workflow registration and reviewed
-admission must be resolved before execution; do not call source compatibility a
+new-pin allowance readback, effective approved scopes, workflow registration and
+reviewed admission must be verified before execution; do not call source compatibility a
 complete #7164 qualification.
 
 After source registration and full admission, resolve the existing reviewed

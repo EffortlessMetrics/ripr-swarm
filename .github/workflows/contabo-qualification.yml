@@ -15,9 +15,9 @@ on:
 
 permissions:
   actions: read
+  checks: read
   contents: read
-  # Pending explicit approval before adding checks: read and pull-requests: read.
-  # The pinned reusable workflow requires both; do not dispatch until resolved.
+  pull-requests: read
 
 concurrency:
   group: contabo-qualification-${{ github.sha }}
