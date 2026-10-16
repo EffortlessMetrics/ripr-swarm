@@ -6,7 +6,7 @@ Summary: 1 probe (0 exposed, 0 weak, 0 unrevealed, 1 no path); 1 of 1 finding un
 
 Analysis outcome: limitations below (analysis incomplete)
   The 1 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
-  Limitation: some changed files were not analyzed during language analysis (language_scope_unsupported at language_adapter); file: tests/opaque.rs; affected items: 1; recovery: inspect the failure (inspect_failure) — An unchanged test file was indexed by lexical fallback after the reference parser refused it, so related-test evidence for a classified owner was weaker or missing. Check whether tests in the named file already exercise the change before trusting a no-path or weak result; rewrite nightly-only syntax or move those tests to a parser-valid file.
+  Limitation: some changed files were not analyzed during language analysis; file: tests/opaque.rs; affected items: 1; recovery: inspect the failure — An unchanged test file was indexed by lexical fallback after the reference parser refused it, so related-test evidence for a classified owner was weaker or missing. Check whether tests in the named file already exercise the change before trusting a no-path or weak result; rewrite nightly-only syntax or move those tests to a parser-valid file.
 
 Start here:
   State: limited by static analysis

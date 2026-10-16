@@ -7,7 +7,7 @@ Summary: 0 probes analyzed; 0 findings unsuppressed
 
 Analysis outcome: limitations below (analysis incomplete)
   Zero findings is not a clean result because the analyzed scope is incomplete.
-  Limitation: no analyzer is available for a changed language during language analysis (language_adapter_unavailable at language_adapter); affected items: 1; recovery: enable the language (enable_language) — Enable the typescript preview adapter and re-run the analysis.
+  Limitation: no analyzer is available for a changed language during language analysis; affected items: 1; recovery: enable the language — Enable the typescript preview adapter and re-run the analysis.
 
 No diff-derived static exposure probes found.
 

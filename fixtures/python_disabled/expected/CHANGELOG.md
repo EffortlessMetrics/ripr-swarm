@@ -215,3 +215,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_disabled (13)
+
+Reason:
+RIPR-SPEC-0122: bounded limitation lines drop schema tokens (#8165)
+
+Command:
+`cargo xtask goldens bless python_disabled --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

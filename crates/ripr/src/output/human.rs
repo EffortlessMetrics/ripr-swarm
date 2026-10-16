@@ -489,15 +489,24 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
         }
     }
     for limitation in &outcome.limitations {
-        // Plain words lead; the schema tokens follow in parentheses so the
-        // line still greps against JSON and docs (#4323).
-        out.push_str(&format!(
-            "  Limitation: {} during {} ({} at {})",
-            limitation.kind.plain_label(),
-            limitation.producer_stage.plain_label(),
-            limitation.kind.as_str(),
-            limitation.producer_stage.as_str()
-        ));
+        // Plain words lead; on the full surface the schema tokens follow in
+        // parentheses so the line still greps against JSON and docs (#4323).
+        // The bounded surface drops the tokens (#8165).
+        if plain {
+            out.push_str(&format!(
+                "  Limitation: {} during {}",
+                limitation.kind.plain_label(),
+                limitation.producer_stage.plain_label(),
+            ));
+        } else {
+            out.push_str(&format!(
+                "  Limitation: {} during {} ({} at {})",
+                limitation.kind.plain_label(),
+                limitation.producer_stage.plain_label(),
+                limitation.kind.as_str(),
+                limitation.producer_stage.as_str()
+            ));
+        }
         if let Some(path) = &limitation.path {
             out.push_str(&format!("; file: {path}"));
         }
@@ -505,8 +514,8 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
             out.push_str(&format!("; affected items: {count}"));
         }
         let recovery = limitation.recovery.kind;
-        let recovery_label = if recovery.plain_label() == recovery.as_str() {
-            recovery.as_str().to_string()
+        let recovery_label = if plain || recovery.plain_label() == recovery.as_str() {
+            recovery.plain_label().to_string()
         } else {
             format!("{} ({})", recovery.plain_label(), recovery.as_str())
         };
@@ -1628,6 +1637,63 @@ mod tests {
         Ok(())
     }
 
+    /// #8165: limitation lines on the bounded surface drop their
+    /// parenthesized kind/stage tokens; the full surface keeps them.
+    #[test]
+    fn bounded_limitation_lines_drop_schema_tokens() -> Result<(), String> {
+        let output = partial_outcome_output(vec![sample_finding()])?;
+        let rendered = render(&output);
+        assert!(
+            rendered.contains("  Limitation: "),
+            "missing limitation line:\n{rendered}"
+        );
+        for line in rendered.lines().filter(|line| line.contains("Limitation:")) {
+            assert!(
+                !line.contains(" at ") || !line.contains('('),
+                "bounded limitation leaked a schema token: {line}"
+            );
+        }
+        assert!(
+            !rendered.contains("combined_hunk_unsupported at diff_parse"),
+            "bounded render leaked limitation schema tokens:\n{rendered}"
+        );
+        let full = super::render_full_with_config(&output, &RiprConfig::default());
+        assert!(
+            full.contains("combined_hunk_unsupported at diff_parse"),
+            "human-full must retain limitation schema tokens:\n{full}"
+        );
+        Ok(())
+    }
+
+    /// #8165: every class plain label is prose, never a snake_case wire
+    /// token, so a future class cannot silently leak its token into the
+    /// bounded summary. `exposed` legitimately reuses its single plain
+    /// word.
+    #[test]
+    fn every_class_plain_label_is_prose_not_a_wire_token() {
+        for class in [
+            ExposureClass::Exposed,
+            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
+            ExposureClass::NoStaticPath,
+            ExposureClass::InfectionUnknown,
+            ExposureClass::PropagationUnknown,
+            ExposureClass::StaticUnknown,
+        ] {
+            assert!(
+                !class.plain_label().contains('_'),
+                "plain label for {class:?} is not plain: {}",
+                class.plain_label()
+            );
+            if class.plain_label() == class.as_str() {
+                assert!(
+                    !class.as_str().contains('_'),
+                    "{class:?} reuses a snake_case token as its plain label"
+                );
+            }
+        }
+    }
+
     // #4952: the EOL-only churn disclosure is a churn-shape note, not an
     // incompleteness, so a complete run carrying it renders the limitation
     // without the incomplete-scope hedges.
@@ -1694,7 +1760,7 @@ mod tests {
         assert!(rendered.contains("analysis complete"), "{rendered}");
         assert!(
             rendered.contains(
-                "Limitation: some files changed only in line endings during parsing the diff (eol_only_churn at diff_parse)"
+                "Limitation: some files changed only in line endings during parsing the diff"
             ),
             "{rendered}"
         );
@@ -1720,7 +1786,11 @@ mod tests {
             !rendered.contains("Zero findings is not a clean result"),
             "{rendered}"
         );
-        assert!(rendered.contains("eol_only_churn"), "{rendered}");
+        assert!(
+            rendered.contains("some files changed only in line endings"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("eol_only_churn"), "{rendered}");
         Ok(())
     }
 

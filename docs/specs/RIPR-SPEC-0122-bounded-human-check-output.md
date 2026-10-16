@@ -96,10 +96,15 @@ bullets' plain class words, and a summary that names classes in plain words
 (`Summary: 4 probes (0 exposed, 2 weak, 1 unrevealed, 1 no path); 4 of 4
 findings unsuppressed`; with zero probes, `Summary: 0 probes analyzed; 0
 findings unsuppressed`). The three unknown classes share the one plain word
-`unknown` and sum into a single bucket named only when non-zero. The schema
-ids and their meanings are unchanged and stay available on the retention
-surfaces: `--format human-full` keeps the parenthesized ids, the seven
-separate class counts, and the full summary tokens byte-for-byte, JSON is
+`unknown` and sum into a single bucket named only when non-zero. Limitation
+lines on this surface likewise drop their parenthesized kind/stage and
+recovery tokens. The promise covers renderer-controlled labels on the
+bounded surface; producer prose (for example a next-step sentence), file
+paths, and required CLI or probe identifiers are data, not renderer labels,
+and are unchanged. The schema ids and their meanings are unchanged and stay
+available on the retention surfaces: `--format human-full` keeps the header,
+digest, limitation, and outcome schema forms it already rendered (the
+bounded-only triage sentence was never part of that surface), JSON is
 unchanged, and `ripr explain` keeps the exact schema tokens.
 
 The trailing block is state-dependent, because a `Hidden:` heading over a
