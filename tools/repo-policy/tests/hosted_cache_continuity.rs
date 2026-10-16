@@ -6,6 +6,10 @@
 //! a cache. The archive-boundary contract (#7685) remains independent.
 const CALLER: &str = include_str!("../../../.github/workflows/routed-rust.yml");
 const PRODUCER: &str = include_str!("../../../.github/workflows/rust-gates.yml");
+const LEGACY_HOSTED_NEEDS: &str =
+    "    needs: [route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]\n";
+const STAGED_HOSTED_NEEDS: &str =
+    "    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]\n";
 
 fn block<'a>(source: &'a str, name: &str, indent: usize) -> Option<&'a str> {
     let marker = format!("{}{name}:", " ".repeat(indent));
@@ -74,8 +78,19 @@ fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
         }
     }
     let hosted = block(jobs, "rust-github", 2).unwrap_or("");
+    let expected_needs = if admission.is_some() {
+        STAGED_HOSTED_NEEDS
+    } else {
+        LEGACY_HOSTED_NEEDS
+    };
+    let dependency_lines = hosted
+        .lines()
+        .filter(|line| line.starts_with("    needs:"))
+        .collect::<Vec<_>>();
+    if dependency_lines != [expected_needs.trim_end()] {
+        findings.push("hosted caller/cache producer binding changed; requalify writer eligibility");
+    }
     for required in [
-        "    needs: [route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]\n",
         "    uses: ./.github/workflows/rust-gates.yml\n",
         "      use-scratch: false\n",
     ] {
@@ -222,16 +237,44 @@ fn disabled_hosted_job_or_filtered_push_is_not_writer_continuity() {
 
 #[test]
 fn missing_caller_dependencies_cannot_supply_guard_outputs() {
-    for needs in [
-        "needs: [detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]",
-        "needs: [route, rust-cx43, rust-cpx42, rust-cx53]",
-    ] {
-        let changed = CALLER.replace(
-            "needs: [route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]",
-            needs,
+    let jobs = block(CALLER, "jobs", 0).unwrap_or("");
+    let staged = block(jobs, "admission", 2).is_some();
+    let hosted = block(jobs, "rust-github", 2).unwrap_or("");
+    let expected_needs = if staged {
+        STAGED_HOSTED_NEEDS
+    } else {
+        LEGACY_HOSTED_NEEDS
+    };
+    assert!(
+        hosted.contains(expected_needs),
+        "control must bind the actual profile"
+    );
+    let dependencies = [
+        "admission",
+        "route",
+        "detect-docs-only",
+        "rust-cx43",
+        "rust-cpx42",
+        "rust-cx53",
+    ];
+    for missing in dependencies
+        .into_iter()
+        .filter(|name| staged || *name != "admission")
+    {
+        let retained = dependencies
+            .into_iter()
+            .filter(|name| (staged || *name != "admission") && *name != missing)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let changed_hosted = hosted.replace(expected_needs, &format!("    needs: [{retained}]\n"));
+        let changed = CALLER.replace(hosted, &changed_hosted);
+        assert_ne!(changed, CALLER, "must remove {missing} from the hosted job");
+        assert!(
+            continuity_findings(&changed, PRODUCER)
+                .iter()
+                .any(|finding| finding.contains("binding changed")),
+            "missing {missing} must fail the binding check"
         );
-        assert_ne!(changed, CALLER);
-        assert!(!continuity_findings(&changed, PRODUCER).is_empty());
     }
 }
 

@@ -184,9 +184,7 @@ jobs:
           settle_request() {
             local attempt state
             for attempt in 1 2 3; do
-              readiness_phase=pull-request-fetch
               pr=$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER") || return
-              readiness_phase=pull-request-check
               jq -e --arg repo "$REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$HEAD_SHA" --arg merge "$SUBJECT_SHA" "${NATIVE_REQUEST_JQ:?}" <<< "$pr" >/dev/null || return
               state=$(jq -er 'if .mergeable == null then "pending" elif .mergeable == true then "ready" else "refused" end' <<< "$pr") || return
               case "$state" in
@@ -209,14 +207,13 @@ jobs:
             printf '%s\n' "$candidate"
           }
           settle_request
-          readiness_phase=subject-check
           subject_before=$(read_subject)
           reviews=$(gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100")
           author=$(jq -r .user.login <<< "$pr")
           jq -s -e --arg head "$HEAD_SHA" --arg author "$author" "$REVIEW_DISPOSITION_JQ${NATIVE_REVIEWS_JQ:?}" <<< "$reviews" >/dev/null
           cursor=null
           while :; do
-            threads=$(gh api graphql -f query='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}' -F number="$PR_NUMBER" -F cursor="$cursor")
+            threads=$(gh api graphql -f query="query(\$number:Int!,\$cursor:String){repository(owner:\"EffortlessMetrics\",name:\"ripr-swarm\"){pullRequest(number:\$number){reviewThreads(first:100,after:\$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}" -F number="$PR_NUMBER" -F cursor="$cursor")
             jq -e '.errors == null and (.data.repository.pullRequest.reviewThreads.nodes | all(.isResolved == true))' <<< "$threads" >/dev/null
             more=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | if type == "boolean" then tostring else error("invalid pagination") end' <<< "$threads")
             [ "$more" = true ] || break
@@ -318,7 +315,7 @@ jobs:
           else
             runner_query=failed reason=runner_api_failed
           fi
-          { echo "router_target=$target"; echo "router_reason=$reason"; repo=$REPOSITORY workflow=routed-rust run_id=$RUN_ID; for name in repo workflow run_id runner_query runner_total cx43_online cx43_idle_ready cpx42_online cpx42_idle_ready cx53_online cx53_idle_ready; do echo "$name=${!name}"; done; } >> "$GITHUB_OUTPUT"
+          { echo "router_target=$target"; echo "router_reason=$reason"; echo "repo=$REPOSITORY"; echo "workflow=routed-rust"; echo "run_id=$RUN_ID"; for name in runner_query runner_total cx43_online cx43_idle_ready cpx42_online cpx42_idle_ready cx53_online cx53_idle_ready; do echo "$name=${!name}"; done; } >> "$GITHUB_OUTPUT"
           { echo "### Ripr Rust Small Router"; echo ""; echo "- repo: \`$REPOSITORY\`"; echo "- workflow: \`routed-rust\`"; echo "- run: \`$RUN_ID\`"; echo "- target: \`$target\`"; echo "- reason: \`$reason\`"; for row in "runner query:$runner_query" "visible runners:$runner_total" "cx43 online:$cx43_online" "cx43 idle ready:$cx43_idle_ready" "cpx42 online:$cpx42_online" "cpx42 idle ready:$cpx42_idle_ready" "cx53 online:$cx53_online" "cx53 idle ready:$cx53_idle_ready"; do echo "- ${row%%:*}: \`${row#*:}\`"; done; } >> "$GITHUB_STEP_SUMMARY"
 
   detect-docs-only:
@@ -743,15 +740,15 @@ jobs:
             printf 'readiness_detail=%s\n' "$diagnostic" >&2
             exit "$status"
           }
-          readiness_phase=start
+          readiness_phase='start'
           trap readiness_refused ERR
           [ "${LABEL,,}" = merge-ready ] || exit 0
           settle_request() {
             local attempt state
             for attempt in 1 2 3; do
-              readiness_phase=pull-request-fetch
+              readiness_phase='pull-request-fetch'
               pr=$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER") || return
-              readiness_phase=pull-request-check
+              readiness_phase='pull-request-check'
               jq -e --arg repo "$REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$HEAD_SHA" --arg merge "$SUBJECT_SHA" "${NATIVE_REQUEST_JQ:?}" <<< "$pr" >/dev/null || return
               state=$(jq -er 'if .mergeable == null then "pending" elif .mergeable == true then "ready" else "refused" end' <<< "$pr") || return
               case "$state" in
@@ -773,32 +770,32 @@ jobs:
             jq -e --arg merge "$SUBJECT_SHA" --arg base "$base" --arg head "$HEAD_SHA" --arg tree "$tree" "${NATIVE_COMMIT_JQ:?}" <<< "$commit" >/dev/null || return
             printf '%s\n' "$candidate"
           }
-          readiness_phase=subject-refresh
+          readiness_phase='subject-refresh'
           settle_request || readiness_refused
-          readiness_phase=subject-check
+          readiness_phase='subject-check'
           subject_before=$(read_subject) || readiness_refused
           [[ -n "$EXPECTED_SUBJECT" && "$subject_before" == "$EXPECTED_SUBJECT" ]] || readiness_refused
-          readiness_phase=reviews-fetch
+          readiness_phase='reviews-fetch'
           reviews=$(gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100")
-          readiness_phase=author-parse
+          readiness_phase='author-parse'
           author=$(jq -r .user.login <<< "$pr")
-          readiness_phase=reviews-check
+          readiness_phase='reviews-check'
           jq -s -e --arg head "$HEAD_SHA" --arg author "$author" "$REVIEW_DISPOSITION_JQ${NATIVE_REVIEWS_JQ:?}" <<< "$reviews" >/dev/null
           cursor=null
           while :; do
-            readiness_phase=threads-fetch
-            threads=$(gh api graphql -f query='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}' -F number="$PR_NUMBER" -F cursor="$cursor")
-            readiness_phase=threads-check
+            readiness_phase='threads-fetch'
+            threads=$(gh api graphql -f query="query(\$number:Int!,\$cursor:String){repository(owner:\"EffortlessMetrics\",name:\"ripr-swarm\"){pullRequest(number:\$number){reviewThreads(first:100,after:\$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}" -F number="$PR_NUMBER" -F cursor="$cursor")
+            readiness_phase='threads-check'
             jq -e '.errors == null and (.data.repository.pullRequest.reviewThreads.nodes | all(.isResolved == true))' <<< "$threads" >/dev/null
-            readiness_phase=threads-page-parse
+            readiness_phase='threads-page-parse'
             more=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | if type == "boolean" then tostring else error("invalid pagination") end' <<< "$threads")
             [ "$more" = true ] || break
-            readiness_phase=threads-cursor-parse
+            readiness_phase='threads-cursor-parse'
             cursor=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | select(length > 0)' <<< "$threads")
           done
-          readiness_phase=subject-final-refresh
+          readiness_phase='subject-final-refresh'
           settle_request || readiness_refused
-          readiness_phase=subject-final-check
+          readiness_phase='subject-final-check'
           subject_after=$(read_subject) || readiness_refused
           [[ "$subject_after" == "$subject_before" && "$subject_after" == "$EXPECTED_SUBJECT" ]] || readiness_refused
 
