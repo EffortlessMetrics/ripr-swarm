@@ -2070,6 +2070,8 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::baseline_create_writes_reviewed_ledger_and_refuses_overwrite",
   "crates/ripr/tests/cli_smoke.rs::baseline_create_warns_when_source_predates_build_identity",
   "crates/ripr/tests/cli_smoke.rs::baseline_diff_writes_debt_delta_json_and_markdown",
+  "crates/ripr/tests/cli_smoke/baseline_path_values.rs::missing_path_values_refuse_option_tokens_before_writing_reports",
+  "crates/ripr/tests/cli_smoke/baseline_path_values.rs::explicit_option_named_paths_and_unreadable_inputs_keep_advisory_reports",
   "crates/ripr/tests/cli_smoke.rs::baseline_update_removes_resolved_without_adopting_new_debt",
   "crates/ripr/src/output/baseline.rs::tests::baseline_create_persists_producing_analyzer_version_from_subject",
   "crates/ripr/src/output/baseline.rs::tests::baseline_create_discloses_missing_producing_analyzer_version",
@@ -2088,6 +2090,7 @@ fixtures = [
 code = [
   "crates/ripr/src/cli/command.rs",
   "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/baseline.rs",
   "crates/ripr/src/cli/execute.rs",
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/src/output/baseline.rs",
