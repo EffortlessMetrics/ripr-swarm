@@ -8320,6 +8320,9 @@ tests = [
   "crates/ripr/src/analysis/diff/path.rs::tests::named_c_control_escapes_keep_native_path_identity",
   "crates/ripr/src/analysis/diff/path.rs::tests::quoted_whitespace_old_headers_keep_plain_file_sections_separate",
   "crates/ripr/src/analysis/diff/path.rs::tests::quoted_control_header_pair_inside_declared_hunk_stays_source_payload",
+  "crates/ripr/src/analysis/diff/path.rs::tests::tab_delimited_plain_headers_keep_paths_and_line_coordinates",
+  "crates/ripr/src/analysis/diff/path.rs::tests::tab_delimited_header_pair_inside_declared_hunk_stays_source",
+  "crates/ripr/tests/cli_smoke/portable_diff_paths.rs::plain_patch_json_keeps_portable_locations_and_exact_crlf_provenance",
   "crates/ripr/tests/cli_smoke/diff_selection.rs::git_named_control_paths_select_the_live_predicate_from_root_and_subdirectory",
 ]
 fixtures = []
