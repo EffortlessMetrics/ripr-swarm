@@ -2867,12 +2867,13 @@ mod tests {
         let text = lines.join("\n");
         let fail_at = text
             .find("! not inside a Git work tree")
-            .unwrap_or_else(|| panic!("{text}"));
-        let fix_at = text.find("  Fix:").unwrap_or_else(|| panic!("{text}"));
-        let pass_at = text
-            .find("✓ Workspace:")
-            .unwrap_or_else(|| panic!("{text}"));
-        assert!(fail_at < fix_at && fix_at < pass_at, "{text}");
+            .unwrap_or(usize::MAX);
+        let fix_at = text.find("  Fix:").unwrap_or(usize::MAX);
+        let pass_at = text.find("✓ Workspace:").unwrap_or(usize::MAX);
+        assert!(
+            fail_at < fix_at && fix_at < pass_at && pass_at != usize::MAX,
+            "{text}"
+        );
         assert!(text.contains("repo-exposure-md"), "{text}");
         assert!(!text.contains("Known limitations:"), "{text}");
         assert!(!text.contains("Start-here packet:"), "{text}");
