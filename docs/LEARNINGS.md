@@ -3204,3 +3204,30 @@ Durable rules:
 - A tiny-diff hang that still names `analyzing [diff]` after index
   disclosure is CPU work on indexed test files, not "the diff is too
   many lines". Sample the stack before splitting the changed file.
+
+## 2026-10-16: Per-owner `includes_external_docs` parses hang dogfood PR evidence
+
+The per-file JSON-import use-scan (#8181 first hang) was necessary but
+not sufficient. After that landed, `ripr check` on the doctor diff still
+stayed in `analyzing [diff]` until the 3600s PR-evidence ceiling. gdb
+showed `parse_clean_source_file` under `includes_external_docs` under
+`owner_may_be_reached_unseen` under `AdmissionQuery::insert_owner`.
+`includes_external_docs` parses every indexed file that mentions `doc`
+and `!`. Asking that per changed-span owner re-parsed `crates/ripr` on
+every `doctor.rs` / `cli_smoke.rs` function. `UnseenReachNames` already
+existed for seam inventory; classify and dependent-scope still used the
+uncached per-owner walk. `owner_pin_assertions` of those same files
+finished in seconds, so a per-file owner-pin timing test does not catch
+this.
+
+Durable rules:
+
+- A workspace-scoped lexical query whose answer is "does anything name
+  this owner outside `fn`, or does any file pull external docs" must
+  scan the index once (`UnseenReachNames::build`) and answer from the
+  set. Pin the parse count against owner count, not a wall-clock.
+- Dependent-scope admission runs before classify. Caching only the
+  classify/`RelatedTestCandidateIndex` path still leaves
+  `AdmissionQuery::from_core_index` quadratic on every changed function.
+- Do not raise `RIPR_PR_EVIDENCE_TIMEOUT_SECS` or `workflow_dispatch`
+  routed-rust to hide an analyzer quadratic.
