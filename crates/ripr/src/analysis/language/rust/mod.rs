@@ -32,7 +32,7 @@ use crate::analysis::committed_source::{self, CommittedSourceRead};
 use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_findings};
 use crate::analysis::facts::RustIndex;
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
-use crate::analysis::workspace::limitations_for_absent_changed_files;
+use crate::analysis::workspace::{limitations_for_absent_changed_files, unrun_test_roots};
 use crate::config::OraclePolicy;
 use crate::domain::{
     ExposureClass, Finding, Probe, SourceCurrentness, StaticLimitKind, StopReason,
@@ -532,6 +532,9 @@ fn may_be_unreached(
                                             .and_then(toml::Value::as_bool)
                                             == Some(false)
                                     })
+                                    // A `[[test]]` target cargo never runs
+                                    // also leaves its root unreached (#8016).
+                                    || !unrun_test_roots(&manifest, package_dir).is_empty()
                             })
                     })
             });
@@ -7359,6 +7362,60 @@ fn absent_delimiter_boundary_returns_head() {
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_test_targets_cargo_test_never_runs() -> Result<(), String> {
+        // #8016: `test = false`, `harness = false` and `required-features`
+        // outside the default set leave a declared target's `#[test]` items
+        // uncollected, so the file relates nothing. The same declarations
+        // with a default-enabled feature (and an undeclared sibling) keep it.
+        let test_source = "use shop::used::discount;\n\n#[test]\nfn discount_applies() {\n    assert_eq!(discount(150), 140);\n}\n";
+        let cases = [
+            ("test-false", "[[test]]\nname='gate'\ntest=false\n", false),
+            (
+                "harness-false",
+                "[[test]]\nname='gate'\nharness=false\n",
+                false,
+            ),
+            (
+                "features-unmet",
+                "[features]\ndefault=[]\nspecial=[]\n[[test]]\nname='gate'\nrequired-features=['special']\n",
+                false,
+            ),
+            (
+                "path-spelling",
+                "[[test]]\nname='gate'\npath='tests/../tests/gate.rs'\ntest=false\n",
+                false,
+            ),
+            (
+                "features-default",
+                "[features]\ndefault=['special']\nspecial=[]\n[[test]]\nname='gate'\nrequired-features=['special']\n",
+                true,
+            ),
+            ("declared-live", "[[test]]\nname='gate'\n", true),
+        ];
+        for (label, targets, relates) in cases {
+            let root = temp_root(&format!("unrun-target-{label}"))?;
+            write(
+                &root.join("Cargo.toml"),
+                &format!("[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n{targets}"),
+            )?;
+            write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+            write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+            write(&root.join("tests/gate.rs"), test_source)?;
+
+            let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+            let related = related_test_names(&root, &result, "src/used.rs");
+            assert_eq!(
+                related.iter().any(|name| name == "discount_applies"),
+                relates,
+                "{label}: {related:?}"
+            );
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
         Ok(())
     }
 

@@ -120,7 +120,11 @@ target reaches is never compiled, so diff analysis drops it before
 indexing: a changed file its own orphan check proved unreached, and an
 unchanged file the walk proves unreached. Target roots honor `autotests`,
 `autobenches` and `autoexamples = false`: only declared targets are roots,
-and a name-only declaration keeps its default paths. An incomplete walk
+and a name-only declaration keeps its default paths. A declared `[[test]]`
+target `cargo test` never runs (`test = false`, `harness = false`, or
+`required-features` outside the manifest's default feature set, #8016) is
+not a root either; a file another live target also names stays one. An
+incomplete walk
 keeps the file, and so does the production-like opt-in for a changed
 file, since it still seeds probes. The production-like opt-in still wins. Evidence-role files remain fully indexed:
 functions stay available for owner relations, activation input,
@@ -318,6 +322,10 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
   or added by the diff) and a `tests/` file that `autotests = false`
   leaves undeclared relate to nothing, while the declared file and the
   name-only `[[test]]` target keep their relation.
+- Unrun targets (#8016): a test in a `[[test]]` target with `test = false`,
+  `harness = false` or unmet `required-features` (also under a
+  `tests/../tests/x.rs` path spelling) relates to nothing, while a target whose
+  required feature is a default feature keeps its relation.
 - Comment/string module mentions (#6979): an unchanged orphan named only
   inside a block comment, nested block comment, doc comment, plain string or
   raw string supplies no related test; real `cfg(test)` and renamed

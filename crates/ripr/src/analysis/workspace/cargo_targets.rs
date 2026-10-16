@@ -138,6 +138,83 @@ pub(super) fn collect_explicit_paths(
     }
 }
 
+/// Target files of `[[test]]` entries that `cargo test` never runs (#8016):
+/// `test = false`, `harness = false` (libtest collects no `#[test]` item from
+/// a target with its own `main`), or `required-features` outside cargo's
+/// default feature set. The default set is read from the manifest's own
+/// `[features]` table, as the metadata path reads it (#7266); a malformed
+/// `required-features` fails closed to unrun, like an unmet one.
+///
+/// A name-only entry stands for both `tests/<name>.rs` and
+/// `tests/<name>/main.rs`. A path that another, live entry also names is not
+/// returned, so a file kept alive by any target stays a root. Paths are
+/// normalized the way [`declared_targets_from_manifest`] normalizes them.
+pub(crate) fn unrun_test_roots(manifest: &toml::Value, manifest_dir: &Path) -> BTreeSet<PathBuf> {
+    let Some(entries) = manifest.get("test").and_then(toml::Value::as_array) else {
+        return BTreeSet::new();
+    };
+    let features: BTreeMap<String, Vec<String>> = manifest
+        .get("features")
+        .and_then(toml::Value::as_table)
+        .map(|table| {
+            table
+                .iter()
+                .filter_map(|(name, enables)| {
+                    let items = enables.as_array()?;
+                    Some((
+                        name.clone(),
+                        items
+                            .iter()
+                            .filter_map(toml::Value::as_str)
+                            .map(str::to_string)
+                            .collect(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let enabled = expand_default_features(&features);
+    let mut unrun = BTreeSet::new();
+    let mut live = BTreeSet::new();
+    for entry in entries {
+        let roots: Vec<PathBuf> = if let Some(path) = entry
+            .get("path")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+        {
+            vec![lexical(&normalize(&manifest_dir.join(path)))]
+        } else if let Some(name) = entry
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            [format!("tests/{name}.rs"), format!("tests/{name}/main.rs")]
+                .iter()
+                .map(|path| lexical(&normalize(&manifest_dir.join(path))))
+                .collect()
+        } else {
+            continue;
+        };
+        let flag_off = |key: &str| entry.get(key).and_then(toml::Value::as_bool) == Some(false);
+        let features_unmet = match entry.get("required-features") {
+            None => false,
+            Some(toml::Value::Array(items)) => !items
+                .iter()
+                .all(|item| item.as_str().is_some_and(|name| enabled.contains(name))),
+            Some(_) => true,
+        };
+        if flag_off("test") || flag_off("harness") || features_unmet {
+            unrun.extend(roots);
+        } else {
+            live.extend(roots);
+        }
+    }
+    unrun.retain(|root| !live.contains(root));
+    unrun
+}
+
 /// One declared Cargo test target with its effective `harness` flag
 /// (#3608): the parsed Cargo target metadata the harness-registry
 /// validation consumes. `harness` carries Cargo's default (`true`) when
@@ -1817,6 +1894,40 @@ mod harness_verdict {
         );
         assert!(skipped("pkg/tests/gate.rs"));
         let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn unrun_test_roots_names_only_targets_cargo_test_skips() -> Result<(), String> {
+        let manifest: toml::Value = toml::from_str(
+            "[features]\ndefault=['on']\non=['chained']\nchained=[]\noff=[]\n\
+             [[test]]\nname='skipped'\ntest=false\n\
+             [[test]]\nname='bare'\nharness=false\n\
+             [[test]]\nname='needs_off'\nrequired-features=['off']\n\
+             [[test]]\nname='malformed'\nrequired-features='on'\n\
+             [[test]]\nname='needs_chained'\nrequired-features=['on','chained']\n\
+             [[test]]\nname='plain'\n\
+             [[test]]\nname='shared'\ntest=false\npath='tests/plain.rs'\n\
+             [[test]]\nname='pathed'\npath='checks/p.rs'\nharness=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let dir = Path::new("pkg");
+        let expected: BTreeSet<PathBuf> = [
+            "tests/skipped.rs",
+            "tests/skipped/main.rs",
+            "tests/bare.rs",
+            "tests/bare/main.rs",
+            "tests/needs_off.rs",
+            "tests/needs_off/main.rs",
+            "tests/malformed.rs",
+            "tests/malformed/main.rs",
+            "checks/p.rs",
+        ]
+        .iter()
+        .map(|path| lexical(&normalize(&dir.join(path))))
+        .collect();
+        // `tests/plain.rs` is also a live target's file, so it stays a root.
+        assert_eq!(unrun_test_roots(&manifest, dir), expected);
         Ok(())
     }
 

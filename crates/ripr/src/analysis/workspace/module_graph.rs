@@ -35,7 +35,8 @@
 //! a file-level edge no Rust source in the workspace spells.
 //! Roots are over-collected on purpose (every declared target, and every
 //! autodiscovered one except the tests, benches and examples a manifest's
-//! `autotests`/`autobenches`/`autoexamples = false` turns off, #6965): an
+//! `autotests`/`autobenches`/`autoexamples = false` turns off, #6965, and the
+//! `[[test]]` targets `cargo test` never runs, #8016): an
 //! extra root can only reach more files, which keeps a verdict of
 //! "unreached" conservative.
 //!
@@ -51,7 +52,7 @@ use rayon::prelude::*;
 
 use super::cargo_targets::{
     collect_explicit_paths, declared_targets_from_manifest, lexical, nearest_manifest_dir,
-    normalize, owning_package_dir,
+    normalize, owning_package_dir, unrun_test_roots,
 };
 use super::source_role::SourceRoleContext;
 use crate::analysis::syntax::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
@@ -698,9 +699,14 @@ fn evidence_roots(
             roots.extend(named_default_roots(manifest.get(section), &dir));
         }
     }
+    // A `[[test]]` target `cargo test` never runs (`test = false`,
+    // `harness = false`, unmet `required-features`) roots nothing: its
+    // `#[test]` items are not collected (#8016).
+    let unrun = unrun_test_roots(manifest, package_dir);
     roots
         .into_iter()
         .map(|root| lexical(&normalize(&root)))
+        .filter(|root| !unrun.contains(root))
         .collect()
 }
 
