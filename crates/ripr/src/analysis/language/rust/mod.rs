@@ -7419,7 +7419,7 @@ fn absent_delimiter_boundary_returns_head() {
         for name in ["off", "gated", "nomain"] {
             let test = format!("discount_applies_{name}");
             assert!(
-                !related.iter().any(|related| *related == test),
+                !related.contains(&test),
                 "`{name}` is never run by cargo test and must not relate: {related:?}"
             );
         }
