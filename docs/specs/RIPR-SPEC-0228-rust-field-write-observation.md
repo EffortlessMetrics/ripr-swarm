@@ -176,6 +176,18 @@ these reads too (Decision 2): `c.history()` observes `self.log` only when
 `history` resolves to a body returning `self.log`, and a shared name alone
 never confirms a field-path collection write (examples 12 and 13).
 
+A count-only read of a written map (`c.stock.len()`,
+`c.stock.is_empty()`) does not confirm a deleted `insert` when the
+test may already hold the inserted key (#8204): overwriting a
+pre-existing key leaves the count unchanged, so
+`shelf.stock.insert("A", 1); shelf.restock("A", 2);
+assert_eq!(shelf.stock.len(), 1)` stays `weakly_exposed`, pinned by
+`fixtures/rust_map_overwrite_count` in the RIPR-SPEC-0108 honesty
+corpus. The same count from an empty start still confirms, as
+`fixtures/rust_map_insert_count_empty` pins. A `push` count is
+unaffected: appending changes the count whether or not the
+collection started empty.
+
 A read of only element zero of the written collection (`c.items.first()`,
 `c.items.get(0)`, `c.items[0]`, typed or underscore spellings such as
 `get(0usize)` and `[0_usize]`, first-element ranges such as `[..1]` and
