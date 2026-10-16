@@ -595,6 +595,11 @@ fn submodule_ignore_settings_cannot_hide_pointer_changes() -> Result<(), String>
                 false,
                 None,
             )?;
+            check(
+                &["check", "--base", "main", "--format", format],
+                false,
+                None,
+            )?;
         }
         git(&outer, &["config", "--local", "--unset", key])?;
     }
@@ -634,6 +639,23 @@ fn submodule_ignore_settings_cannot_hide_pointer_changes() -> Result<(), String>
                     true,
                     None,
                 )?;
+                check(&["check", "--base", "main", "--format", format], true, None)?;
+            }
+            if !staged {
+                let doctor = ripr(&outer, &["doctor"], &[])?;
+                assert_sane(&doctor, "submodule doctor guidance")?;
+                let command = doctor
+                    .stdout
+                    .lines()
+                    .find(|line| line.starts_with("- Recommended first command:"));
+                if !command
+                    .is_some_and(|line| line.contains("--worktree") && line.contains("--base HEAD"))
+                {
+                    return Err(format!(
+                        "doctor lost the tracked edit: {}\n{}",
+                        doctor.stdout, doctor.stderr
+                    ));
+                }
             }
             git(&outer, &["config", "--local", "--unset", key])?;
         }
@@ -701,6 +723,47 @@ fn submodule_ignore_settings_cannot_hide_pointer_changes() -> Result<(), String>
             {
                 return Err(format!("range consumer lost the gitlink: {patch}"));
             }
+        }
+        let packet = ripr(
+            &outer,
+            &["pr-evidence", "--base", "main", "--head", "HEAD"],
+            &[],
+        )?;
+        assert_sane(&packet, "submodule evidence packet")?;
+        if packet.code != Some(0)
+            || !packet
+                .stderr
+                .contains("skipped 1 submodule pointer change(s)")
+        {
+            return Err(format!(
+                "evidence packet lost the pointer: {}\n{}",
+                packet.stdout, packet.stderr
+            ));
+        }
+        let packet: serde_json::Value = serde_json::from_slice(
+            &fs::read(outer.join("target/ripr/pr/repo-exposure.json"))
+                .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        // The independent denominator is one parent source file plus one
+        // gitlink. The packet's own checker would accept an identically
+        // suppressed producer/checker inventory, so it is not this oracle.
+        if packet["summary"]["changed_files"].as_u64() != Some(2) {
+            return Err(format!(
+                "evidence inventory concealed the gitlink: {packet}"
+            ));
+        }
+        let verified = ripr(
+            &outer,
+            &["pr-evidence", "--base", "main", "--head", "HEAD", "--check"],
+            &[],
+        )?;
+        assert_sane(&verified, "submodule evidence packet check")?;
+        if verified.code != Some(0) {
+            return Err(format!(
+                "evidence packet check failed: {}\n{}",
+                verified.stdout, verified.stderr
+            ));
         }
         git(&outer, &["config", "--local", "--unset", key])?;
     }

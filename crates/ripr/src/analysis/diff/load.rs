@@ -1391,6 +1391,7 @@ fn uncommitted_changes_probe(
             "--porcelain",
             "-z",
             "--untracked-files=no",
+            "--ignore-submodules=none",
             "--",
             ".",
         ],
@@ -1565,7 +1566,13 @@ fn working_tree_probe(root: &Path) -> WorkingTreeProbe {
 fn working_tree_probe_within(root: &Path, deadline: Option<Duration>) -> WorkingTreeProbe {
     let result = crate::git::run_git_output_with_deadline(
         root,
-        &["status", "--porcelain", "--", "."],
+        &[
+            "status",
+            "--porcelain",
+            "--ignore-submodules=none",
+            "--",
+            ".",
+        ],
         deadline,
     );
     match result {

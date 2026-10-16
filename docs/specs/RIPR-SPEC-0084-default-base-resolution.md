@@ -158,6 +158,11 @@ worktree, range and PR-evidence loads (#8209). Ambient `diff.ignoreSubmodules`
 and `submodule.<name>.ignore` settings cannot hide a changed gitlink before
 the existing skipped-submodule disclosure sees it. Submodule contents are
 still not analyzed; no source probes are invented for the pointer.
+The existing default-source and tracked-edit status probes pin the same option,
+so an ignored unstaged pointer cannot select committed history or clean-tree
+doctor guidance before the diff loader runs.
+The existing PR-evidence path inventory uses the same inclusion option, keeping
+its changed-file count aligned with retained gitlinks in the packet diff.
 
 ### Honesty bar
 
