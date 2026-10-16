@@ -72,7 +72,7 @@ pub(super) fn literal_json_tokens(tokens: &[ra_ap_syntax::SyntaxToken]) -> bool 
 /// made dogfood `ripr check` hang through the 3600s PR-evidence ceiling.
 pub(super) fn literal_json_uses(file: &ast::SourceFile) -> Vec<ast::Use> {
     #[cfg(test)]
-    USE_SCAN_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    USE_SCAN_COUNT.with(|count| count.set(count.get() + 1));
     file.syntax()
         .descendants()
         .filter_map(ast::Use::cast)
@@ -118,11 +118,13 @@ pub(super) fn literal_json_import_visible(call: &SyntaxNode) -> bool {
 }
 
 #[cfg(test)]
-static USE_SCAN_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+thread_local! {
+    static USE_SCAN_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 #[cfg(test)]
 pub(super) fn take_use_scan_count() -> usize {
-    USE_SCAN_COUNT.swap(0, std::sync::atomic::Ordering::Relaxed)
+    USE_SCAN_COUNT.with(|count| count.replace(0))
 }
 
 pub(super) fn json_namespace_rebound(node: &SyntaxNode) -> bool {
