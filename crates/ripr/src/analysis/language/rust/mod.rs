@@ -357,6 +357,12 @@ fn drop_unreached_test_files(
                 .map(|path| workspace::normalize_path(path)),
         );
     }
+    orphans.extend(cargo_skipped_test_files(
+        root,
+        test_harnesses,
+        &loaded_files,
+        &holds_tests,
+    ));
     if orphans.is_empty() {
         return loaded_files;
     }
@@ -364,6 +370,49 @@ fn drop_unreached_test_files(
         .into_iter()
         .filter(|(path, _)| !orphans.contains(&workspace::normalize_path(path)))
         .collect()
+}
+
+/// Test-holding files that a declared `[[test]]` target keeps out of
+/// `cargo test` (#8016): `test = false`, unmet default-feature
+/// `required-features` (both established by cargo metadata), or `harness =
+/// false` when no custom harness is registered, so nothing but libtest could
+/// have run the file's `#[test]` functions. Only packages whose manifest
+/// spells `[[test]]` are asked, because only a declaration can switch these
+/// keys; unavailable metadata is not a skip, so the file keeps its credit.
+fn cargo_skipped_test_files(
+    root: &Path,
+    test_harnesses: &[crate::config::TestHarnessRegistration],
+    loaded_files: &[(PathBuf, Vec<u8>)],
+    holds_tests: &dyn Fn(&[u8]) -> bool,
+) -> BTreeSet<String> {
+    let mut manifests = BTreeMap::new();
+    let mut declares_tests: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    let mut inventory = workspace::ManifestInventory::default();
+    let mut skipped = BTreeSet::new();
+    for (path, bytes) in loaded_files {
+        if !holds_tests(bytes) {
+            continue;
+        }
+        let Some(package) = owning_manifest_dir(root, path, &mut manifests) else {
+            continue;
+        };
+        let declares = *declares_tests.entry(package.clone()).or_insert_with(|| {
+            std::fs::read_to_string(root.join(&package).join("Cargo.toml"))
+                .is_ok_and(|text| text.contains("[[test]]"))
+        });
+        if !declares {
+            continue;
+        }
+        let harness_off = test_harnesses.is_empty()
+            && matches!(
+                inventory.verdict(root, path),
+                workspace::CargoHarnessVerdict::HarnessDisabled
+            );
+        if harness_off || inventory.cargo_test_collection_skipped(root, path) {
+            skipped.insert(workspace::normalize_path(path));
+        }
+    }
+    skipped
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
@@ -7177,6 +7226,46 @@ fn absent_delimiter_boundary_returns_head() {
                 related.iter().any(|name| name == "discount_applies"),
                 declared,
                 "declared={declared}: {related:?}"
+            );
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_tests_in_a_declared_test_target_cargo_skips() -> Result<(), String> {
+        // #8016: `tests/x.rs` pins the changed function, but its `[[test]]`
+        // entry keeps `cargo test` from running it. The empty entry (the
+        // control) is a normal target and keeps the relation.
+        let test_source = "use shop::used::discount;\n\n#[test]\nfn discount_applies() {\n    assert_eq!(discount(150), 140);\n}\n\nfn main() {}\n";
+        for (label, key, runs) in [
+            ("control", "", true),
+            ("test-false", "test = false\n", false),
+            ("harness-false", "harness = false\n", false),
+            (
+                "required-features",
+                "required-features = [\"never\"]\n",
+                false,
+            ),
+        ] {
+            let root = temp_root(&format!("skipped-test-target-{label}"))?;
+            write(
+                &root.join("Cargo.toml"),
+                &format!(
+                    "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n\n[features]\nnever = []\n\n[[test]]\nname = \"x\"\n{key}"
+                ),
+            )?;
+            write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+            write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+            write(&root.join("tests/x.rs"), test_source)?;
+
+            let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+            let related = related_test_names(&root, &result, "src/used.rs");
+            assert_eq!(
+                related.iter().any(|name| name == "discount_applies"),
+                runs,
+                "{label}: {related:?}"
             );
             fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         }
