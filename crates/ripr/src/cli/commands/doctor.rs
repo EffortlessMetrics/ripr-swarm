@@ -353,6 +353,20 @@ fn failure_block(evidence: &str) -> Vec<String> {
     lines
 }
 
+fn runtime_failure_block(probe: &output::doctor::DoctorRuntimeProbe) -> Vec<String> {
+    vec![
+        format!(
+            "! {} verify-route runtime: {}",
+            probe.language, probe.evidence
+        ),
+        format!("  Fix: {}", probe.hint),
+    ]
+}
+
+fn primary_runtime_probe(probe: &output::doctor::DoctorRuntimeProbe) -> bool {
+    primary_runtime(&probe.language).is_some_and(|(tool, _)| tool == probe.tool)
+}
+
 fn join_compact(label: &str, parts: &[String]) -> Option<String> {
     if parts.is_empty() {
         return None;
@@ -416,7 +430,7 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     }
     for probe in &report.runtime_probes {
         if probe.required && probe.status == output::doctor::DoctorStatus::Fail {
-            lines.push(language_runtime_probe_display_line(probe));
+            lines.extend(runtime_failure_block(probe));
         }
     }
 
@@ -548,7 +562,13 @@ Point RIPR_CACHE_DIR at a writable directory."
         if probe.required && probe.status == output::doctor::DoctorStatus::Fail {
             continue;
         }
-        if verbose || (probe.required && probe.status == output::doctor::DoctorStatus::Pass) {
+        // Compact keeps enabled primary runtimes visible so source-build
+        // still reports them as advisory (RIPR-SPEC-0007). Optional extras
+        // (pnpm, pytest, …) stay behind `-v`.
+        if verbose
+            || (probe.required && probe.status == output::doctor::DoctorStatus::Pass)
+            || primary_runtime_probe(probe)
+        {
             lines.push(language_runtime_probe_display_line(probe));
         }
     }
@@ -2758,10 +2778,26 @@ mod tests {
         verbose: bool,
         passed: bool,
     ) -> Vec<String> {
+        render_screen_with_profile(
+            report,
+            environment,
+            output::doctor::DoctorProfile::Analysis,
+            verbose,
+            passed,
+        )
+    }
+
+    fn render_screen_with_profile(
+        report: &output::doctor::DoctorReport,
+        environment: &DoctorEnvironment,
+        profile: output::doctor::DoctorProfile,
+        verbose: bool,
+        passed: bool,
+    ) -> Vec<String> {
         let binary = quiet_binary();
         render_doctor_human_screen(DoctorHumanScreen {
             root: Path::new("."),
-            profile: output::doctor::DoctorProfile::Analysis,
+            profile,
             report,
             config: &Ok(RiprConfig::default()),
             environment,
@@ -2870,6 +2906,109 @@ mod tests {
         assert!(
             !text.contains("Safe next action: run the recommended first command below"),
             "{text}"
+        );
+    }
+
+    #[test]
+    fn required_runtime_failure_gets_a_fix_line() {
+        let mut report = passing_report();
+        report.add_runtime_probe(
+            "python",
+            "python3",
+            output::doctor::DoctorStatus::Fail,
+            "python3 not available",
+            true,
+            "install python3 (e.g. apt install python3)",
+        );
+        let environment = empty_environment();
+        let lines = render_screen(&report, &environment, false, false);
+        assert!(
+            lines.len() <= DOCTOR_HUMAN_SCREEN_BUDGET,
+            "required runtime failure must still fit 80x24 ({} lines):\n{}",
+            lines.len(),
+            lines.join("\n")
+        );
+        let text = lines.join("\n");
+        let fail_at = text
+            .find("! python verify-route runtime: python3 not available")
+            .unwrap_or(usize::MAX);
+        let fix_at = text
+            .find("  Fix: install python3 (e.g. apt install python3)")
+            .unwrap_or(usize::MAX);
+        let pass_at = text.find("✓ Workspace:").unwrap_or(usize::MAX);
+        assert!(
+            fail_at < fix_at && fix_at < pass_at && pass_at != usize::MAX,
+            "{text}"
+        );
+        assert!(
+            !text.contains("python3 not available — install python3"),
+            "required runtime fail must not bury the fix on the bang line:\n{text}"
+        );
+    }
+
+    #[test]
+    fn source_build_compact_reports_enabled_runtime_as_advisory() {
+        let mut report = passing_report();
+        report.profile = output::doctor::DoctorProfile::SourceBuild;
+        report.add_runtime_probe(
+            "typescript",
+            "node",
+            output::doctor::DoctorStatus::Fail,
+            "node not available",
+            false,
+            "install Node.js",
+        );
+        let environment = empty_environment();
+        let lines = render_screen_with_profile(
+            &report,
+            &environment,
+            output::doctor::DoctorProfile::SourceBuild,
+            false,
+            true,
+        );
+        assert!(
+            lines.len() <= DOCTOR_HUMAN_SCREEN_BUDGET,
+            "source-build compact must still fit 80x24 ({} lines):\n{}",
+            lines.len(),
+            lines.join("\n")
+        );
+        let text = lines.join("\n");
+        assert!(
+            text.contains("typescript verify-route runtime: node not available"),
+            "SPEC-0007: source-build still reports enabled language runtimes:\n{text}"
+        );
+        assert!(
+            text.contains("optional"),
+            "source-build runtime failure must stay advisory:\n{text}"
+        );
+        assert!(
+            !text.contains("! typescript verify-route runtime"),
+            "source-build must not fail the profile on an enabled runtime:\n{text}"
+        );
+        assert!(text.contains("✓ doctor checks passed"), "{text}");
+    }
+
+    #[test]
+    fn compact_hides_optional_non_primary_runtime() {
+        let mut report = passing_report();
+        report.add_runtime_probe(
+            "typescript",
+            "pnpm",
+            output::doctor::DoctorStatus::Fail,
+            "pnpm not available",
+            false,
+            "install pnpm",
+        );
+        let environment = empty_environment();
+        let compact = render_screen(&report, &environment, false, true).join("\n");
+        assert!(
+            !compact.contains("pnpm"),
+            "optional non-primary runtimes stay behind --verbose:\n{compact}"
+        );
+        let verbose = render_screen(&report, &environment, true, true).join("\n");
+        assert!(
+            verbose.contains("pnpm not available"),
+            "verbose must restore optional runtime probes:\n{verbose}"
         );
     }
 

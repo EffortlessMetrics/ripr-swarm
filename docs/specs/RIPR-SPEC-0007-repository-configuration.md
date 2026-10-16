@@ -297,6 +297,12 @@ states, proof-rail note, or "Recommended first command: ripr check";
 and enabled language runtimes are reported but do not decide that profile's
 status.
 
+Default human `ripr doctor` is a compact screen (≤24 lines) with failures
+first and a `Fix:` line each; `-v`/`--verbose` restores the full detail dump.
+`ripr doctor --json` remains the complete typed report. Compact
+`--profile source-build` still reports enabled primary language runtimes as
+advisory lines; optional extra tools stay behind verbose.
+
 Given a selected root with its own rustup toolchain selection,
 when doctor probes cargo or rustc,
 then the probe runs in the selected root rather than the caller's directory.
@@ -421,6 +427,9 @@ Current tests:
 - `crates/ripr/src/cli/commands/doctor.rs::tests::doctor_human_projection_fails_for_file_root`
 - `crates/ripr/tests/cli_smoke.rs::doctor_file_root_is_not_reported_as_missing`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::source_build_profile_keeps_enabled_language_runtime_failure_advisory`
+- `crates/ripr/src/cli/commands/doctor.rs::tests::required_runtime_failure_gets_a_fix_line`
+- `crates/ripr/src/cli/commands/doctor.rs::tests::source_build_compact_reports_enabled_runtime_as_advisory`
+- `crates/ripr/src/cli/commands/doctor.rs::tests::compact_hides_optional_non_primary_runtime`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::path_command_in_ignores_a_repo_local_prove_cmd`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::path_command_in_prefers_path_prove_over_repo_local_prove_cmd`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::path_command_in_windows_prefers_pathext_over_extensionless`
