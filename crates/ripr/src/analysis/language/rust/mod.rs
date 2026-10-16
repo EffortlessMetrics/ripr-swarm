@@ -346,6 +346,22 @@ fn drop_unreached_test_files(
             })
         })
         .collect::<BTreeSet<_>>();
+    // #8016: a target root that a `[[test]]` entry gates off (`test = false`
+    // or `required-features` outside the default set) is reached by the
+    // walk, yet `cargo test` never runs it. The manifest entry only nominates
+    // the file; Cargo's own metadata inventory decides.
+    let mut inventory = workspace::ManifestInventory::default();
+    let mut declared_skips = BTreeMap::new();
+    orphans.extend(
+        loaded_files
+            .iter()
+            .filter(|(path, bytes)| {
+                !changed.contains(&workspace::normalize_path(path)) && holds_tests(bytes)
+            })
+            .filter(|(path, _)| may_be_cargo_skipped(root, path, &mut declared_skips))
+            .filter(|(path, _)| inventory.cargo_test_collection_skipped(root, path))
+            .map(|(path, _)| workspace::normalize_path(path)),
+    );
     if !suspects.is_empty() {
         let mut probe = source_role_context.clone();
         probe.module_graph_orphans.clear();
@@ -465,6 +481,71 @@ fn mentioned_module_names(
         }
     }
     mentioned
+}
+
+/// The names of `[[test]]` entries in the package beside `tests/` that a
+/// manifest gates off: `test = false`, or any `required-features` (whether
+/// those are in the default set is Cargo metadata's call, not this
+/// prefilter's). `None` when no manifest sits there.
+type GatedTestNames = Option<BTreeSet<String>>;
+
+/// Whether `path` is a `tests/` target root (`tests/x.rs` or
+/// `tests/x/main.rs`) whose cargo target name a `[[test]]` entry gates off.
+/// A prefilter only: it nominates the file so `cargo metadata` is not spawned
+/// for packages that gate nothing.
+fn may_be_cargo_skipped(
+    root: &Path,
+    path: &Path,
+    gated: &mut BTreeMap<PathBuf, GatedTestNames>,
+) -> bool {
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    let file_name = path.file_name().and_then(|name| name.to_str());
+    let (package_dir, target_name) = match (parent.file_name().and_then(|n| n.to_str()), file_name)
+    {
+        (Some("tests"), Some(file)) => (
+            parent.parent().unwrap_or(Path::new("")),
+            file.strip_suffix(".rs"),
+        ),
+        (Some(dir), Some("main.rs"))
+            if parent.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new("tests")) =>
+        {
+            (
+                parent
+                    .parent()
+                    .and_then(Path::parent)
+                    .unwrap_or(Path::new("")),
+                Some(dir),
+            )
+        }
+        _ => return false,
+    };
+    let Some(target_name) = target_name else {
+        return false;
+    };
+    gated
+        .entry(package_dir.to_path_buf())
+        .or_insert_with(|| {
+            let bytes = committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
+                .ok()
+                .flatten()?;
+            let manifest = toml::from_str::<toml::Value>(&String::from_utf8(bytes).ok()?).ok()?;
+            Some(
+                manifest
+                    .get("test")
+                    .and_then(toml::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter(|entry| {
+                        entry.get("test").and_then(toml::Value::as_bool) == Some(false)
+                            || entry.get("required-features").is_some()
+                    })
+                    .filter_map(|entry| entry.get("name").and_then(toml::Value::as_str))
+                    .map(str::to_string)
+                    .collect(),
+            )
+        })
+        .as_ref()
+        .is_some_and(|names| names.contains(target_name))
 }
 
 /// Whether `path` could be a file no target reaches: a module file whose
@@ -7359,6 +7440,91 @@ fn absent_delimiter_boundary_returns_head() {
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    /// #8016: an autodiscovered `tests/x.rs` that a `[[test]]` entry turns
+    /// off (`test = false`) or gates on a feature the default set lacks is
+    /// built-or-skipped by `cargo test`, never run. The live sibling keeps
+    /// its credit, so the drop discriminates the skip from the layout.
+    fn cargo_skipped_test_target_fixture(name: &str, test_entry: &str) -> Result<PathBuf, String> {
+        let root = temp_root(name)?;
+        write(
+            &root.join("Cargo.toml"),
+            &format!(
+                "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n\n[features]\nspecial=[]\n\n[[test]]\nname='skipped'\n{test_entry}\n"
+            ),
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        write(
+            &root.join("tests/skipped.rs"),
+            "use shop::used::discount;\n\n#[test]\nfn discount_applies_skipped() {\n    assert_eq!(discount(150), 140);\n}\n",
+        )?;
+        write(
+            &root.join("tests/live.rs"),
+            "use shop::used::discount;\n\n#[test]\nfn discount_applies_live() {\n    assert_eq!(discount(150), 140);\n}\n",
+        )?;
+        Ok(root)
+    }
+
+    fn assert_skipped_target_unrelated(root: &Path) -> Result<(), String> {
+        let result = module_graph_diff(root, &predicate_change_diff("src/used.rs"))?;
+        let related = related_test_names(root, &result, "src/used.rs");
+        if !related.iter().any(|name| name == "discount_applies_live") {
+            return Err(format!("the live target must relate: {related:?}"));
+        }
+        if related
+            .iter()
+            .any(|name| name == "discount_applies_skipped")
+        {
+            return Err(format!(
+                "a target cargo test never runs must not relate: {related:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_test_target_with_test_false() -> Result<(), String> {
+        let root = cargo_skipped_test_target_fixture("cargo-skip-test-false", "test=false")?;
+        let outcome = assert_skipped_target_unrelated(&root);
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        outcome
+    }
+
+    #[test]
+    fn diff_analysis_ignores_test_target_with_unmet_required_features() -> Result<(), String> {
+        let root = cargo_skipped_test_target_fixture(
+            "cargo-skip-required-features",
+            "required-features=['special']",
+        )?;
+        let outcome = assert_skipped_target_unrelated(&root);
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        outcome
+    }
+
+    #[test]
+    fn diff_analysis_keeps_test_target_with_default_required_feature() -> Result<(), String> {
+        let root = cargo_skipped_test_target_fixture(
+            "cargo-keep-default-feature",
+            "required-features=['special']",
+        )?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n\n[features]\ndefault=['special']\nspecial=[]\n\n[[test]]\nname='skipped'\nrequired-features=['special']\n",
+        )?;
+        let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+        let related = related_test_names(&root, &result, "src/used.rs");
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        if !related
+            .iter()
+            .any(|name| name == "discount_applies_skipped")
+        {
+            return Err(format!(
+                "a default-satisfied required-features target runs: {related:?}"
+            ));
+        }
         Ok(())
     }
 

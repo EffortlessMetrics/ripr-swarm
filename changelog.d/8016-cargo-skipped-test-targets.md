@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A `tests/` target that a `[[test]]` entry gates off with `test = false`, or with `required-features` outside Cargo's default feature set, is no longer credited as test evidence, because `cargo test` never runs it. Cargo's own metadata inventory decides; an unavailable probe keeps the existing credit. `harness = false`, `[lib]`/`[[bin]]` `test = false`, examples, benches, `default-members` and nested workspaces remain unmodeled (#8016).
