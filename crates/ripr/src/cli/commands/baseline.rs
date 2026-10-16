@@ -23,7 +23,8 @@ pub(in crate::cli) fn baseline(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {
-        return Err("baseline requires subcommand `create`, `diff`, or `update`".to_string());
+        help::print_baseline_help();
+        return Ok(());
     };
     match subcommand.as_str() {
         "create" => baseline_create(rest),
@@ -365,10 +366,7 @@ mod tests {
 
     #[test]
     fn baseline_create_requires_source_and_rejects_unknown_args() {
-        assert_eq!(
-            baseline(&args(&[])),
-            Err("baseline requires subcommand `create`, `diff`, or `update`".to_string())
-        );
+        assert_eq!(baseline(&args(&[])), Ok(()));
         assert_eq!(
             baseline(&args(&["unknown"])),
             Err(

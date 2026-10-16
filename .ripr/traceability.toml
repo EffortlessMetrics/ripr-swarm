@@ -11831,11 +11831,18 @@ tests = [
   "crates/ripr/src/cli/command.rs::tests::known_commands_covers_every_parser_spelling",
   "crates/ripr/src/cli/help.rs::tests::help_all_documents_every_public_command",
   "crates/ripr/tests/cli_help_hierarchy.rs::default_help_keeps_the_task_roles_distinct",
+  "crates/ripr/tests/cli_help_hierarchy.rs::bare_groups_display_their_documented_help",
+  "crates/ripr/tests/cli_help_hierarchy.rs::group_help_preserves_explicit_errors_and_gate_flag_alias",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/cli/command_catalog.rs",
   "crates/ripr/src/cli/command.rs",
+  "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/baseline.rs",
+  "crates/ripr/src/cli/commands/cache.rs",
+  "crates/ripr/src/cli/commands/config.rs",
+  "crates/ripr/src/cli/commands/gate.rs",
   "crates/ripr/src/cli/help.rs",
 ]
 outputs = [
