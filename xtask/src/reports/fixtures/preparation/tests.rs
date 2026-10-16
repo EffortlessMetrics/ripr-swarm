@@ -168,9 +168,20 @@ fn proxy_directory() -> Result<PathBuf, String> {
 fn control_environment(
     root: &OwnedRoot,
     rustup: &Path,
+    directory: &Path,
     server: &RejectingDistribution,
-) -> Vec<(&'static str, String)> {
-    vec![
+) -> Result<Vec<(&'static str, String)>, String> {
+    let inherited = std::env::var_os("PATH").ok_or("PATH required for proxy controls")?;
+    let search = std::env::join_paths(
+        std::iter::once(directory.to_path_buf()).chain(std::env::split_paths(&inherited)),
+    )
+    .map_err(|e| e.to_string())?
+    .into_string()
+    .map_err(|_| "control PATH must be UTF-8")?;
+    Ok(vec![
+        ("PATH", search),
+        ("NO_PROXY", "*".into()),
+        ("no_proxy", "*".into()),
         (
             "CARGO_HOME",
             root.0.join("cargo").to_string_lossy().into_owned(),
@@ -182,7 +193,7 @@ fn control_environment(
         ("RUSTUP_UPDATE_ROOT", server.url.clone()),
         ("CARGO_NET_OFFLINE", "true".into()),
         ("CARGO_REGISTRIES_CRATES_IO_PROTOCOL", "sparse".into()),
-    ]
+    ])
 }
 
 fn invoke_proxy(
@@ -257,7 +268,7 @@ fn absent_pin_refuses_all_offline_proxies_without_installation() -> Result<(), S
     let root = OwnedRoot::new()?;
     let server = RejectingDistribution::new()?;
     let directory = proxy_directory()?;
-    let environment = control_environment(&root, &root.0.join("rustup"), &server);
+    let environment = control_environment(&root, &root.0.join("rustup"), &directory, &server)?;
     for (program, args) in [
         ("cargo", vec!["--version".into()]),
         ("rustc", vec!["--version".into()]),
@@ -349,8 +360,9 @@ fn installed_pin_missing_locked_dependency_refuses_then_seeded_cache_succeeds() 
     let environment = control_environment(
         &root,
         &std::path::absolute(rustup).map_err(|e| e.to_string())?,
+        &directory,
         &server,
-    );
+    )?;
     let output = invoke_proxy(&directory, "cargo", &metadata_args(), &environment, true)?;
     assert!(!output.timed_out);
     assert!(output.status.is_some_and(|s| !s.success()));
