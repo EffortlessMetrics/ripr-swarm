@@ -1,0 +1,47 @@
+{
+  "timestamp_utc": "2026-10-16T05:04:22.381948+00:00",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "packet_commit": "f975e98e2eecc4126c1aaca9846e934975e2266c",
+  "packet_path": "evidence/8004/independent-shadow8e",
+  "transport": "fresh separate bare Git fetch from remote commit;git show immutable blobs;separate network packet and full restore paths",
+  "root_files": [
+    {
+      "path": "README.md",
+      "bytes": 6223,
+      "sha256": "e210b50ecb6c2e29faef43b694e145ec990b093db167dce346fa24e223af1936",
+      "equals_published_local_bytes": true
+    },
+    {
+      "path": "receipt.json",
+      "bytes": 51352,
+      "sha256": "cfea7bf0f96a91b00ea7c6e442814c7254804dc957df48648c7ece91390d6613",
+      "equals_published_local_bytes": true
+    },
+    {
+      "path": "MANIFEST.json",
+      "bytes": 443020,
+      "sha256": "89d26c58d1c77678e0019d04cffee0cc99de49ba8921f1f10b4879b562f20882",
+      "equals_published_local_bytes": true
+    },
+    {
+      "path": "raw.tar.xz",
+      "bytes": 350280,
+      "sha256": "3fed0f5b8f217a0af52b6d2a8899b93abd51ae9e8cfc2096ca99ce3da7e8291c",
+      "equals_published_local_bytes": true
+    },
+    {
+      "path": "SHA256SUMS",
+      "bytes": 312,
+      "sha256": "dcda03a73f455fd2f456554961016ada6957ab399e55bd19eb4ac9d680dddcb9",
+      "equals_published_local_bytes": true
+    }
+  ],
+  "member_files": 2169,
+  "member_bytes": 82717513,
+  "all_member_bytes_sizes_modes_inventory_verified": true,
+  "staging_correction": "Initial local snapshot included an empty self-output verification placeholder;original snapshot/restoredcopy retained locally;final packet excludes self-output files. No source/test/timing bytes changed.",
+  "source_head_unchanged": "8e0444b1a62ead18584d40b18278c6e8716dc56c",
+  "source_state": "open Draft on final connected GitHub readback",
+  "publication_delta": "GitHub compare31c295d2\u2192f975e98e confirms exactly5evidence-only additions",
+  "limits": "Readback verifies transport/identity/inventory,not correctness/full qualification;runtime dispositions remain in packet."
+}
