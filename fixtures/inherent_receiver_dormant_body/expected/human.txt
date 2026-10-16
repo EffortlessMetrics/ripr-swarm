@@ -4,12 +4,12 @@ root: fixtures/inherent_receiver_dormant_body/input
 
 Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
 
 Start here:
   State: a test gap to inspect or repair (top_gap)
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:6
   Static exposure: weak (weakly_exposed, warning, confidence 0.66)
   Why weak: a related test reaches this change but does not observe the exact changed value
@@ -19,7 +19,7 @@ Start here:
   Related test (1 of 2 matched rows): src/lib.rs:12 decoy (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The indexed related tests do not establish a call to the changed owner. Inspect
     existing tests, doctests and examples before changing assertions; they may already constrain the
-    changed behavior. Add or strengthen a test only if that inspection finds a gap.
+    changed behavior. Add or strengthen a test only if that inspection finds a gap
   Evidence: reach weak · infection yes · propagation yes · observation yes · discriminator weak
     - reach weak: No test is seen calling as_object; tests share only its file or a name token: decoy
     - infection yes: Reachable tests can plausibly activate this changed behavior
