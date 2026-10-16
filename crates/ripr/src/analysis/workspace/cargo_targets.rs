@@ -97,6 +97,97 @@ pub(crate) fn declared_targets_from_manifest(
     targets
 }
 
+/// Declared `[[test]]` targets that `cargo test` builds but never runs
+/// libtest on (#8016), by effective source path.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct UnrunTestTargets {
+    /// `test = false`, or `required-features` outside the package's
+    /// default feature set: cargo skips the target entirely.
+    pub(crate) skipped: BTreeSet<PathBuf>,
+    /// `harness = false`: cargo runs the file as a plain executable, so its
+    /// `#[test]` items never run. A registered custom harness may still
+    /// drive such a file, so callers weigh this set against registrations.
+    pub(crate) harness_off: BTreeSet<PathBuf>,
+}
+
+/// The unrun `[[test]]` targets of one manifest. A name-only entry
+/// contributes both layouts cargo resolves (`tests/<name>.rs` and
+/// `tests/<name>/main.rs`). Malformed manifests yield nothing, and a
+/// malformed `required-features` counts as unmet, as in the metadata
+/// inventory.
+pub(crate) fn unrun_test_targets_from_manifest(
+    manifest_text: &str,
+    manifest_dir: &Path,
+) -> UnrunTestTargets {
+    let mut unrun = UnrunTestTargets::default();
+    let Ok(value) = toml::from_str::<toml::Value>(manifest_text) else {
+        return unrun;
+    };
+    let Some(entries) = value.get("test").and_then(toml::Value::as_array) else {
+        return unrun;
+    };
+    let features = value
+        .get("features")
+        .and_then(toml::Value::as_table)
+        .map(|table| {
+            table
+                .iter()
+                .filter_map(|(name, enables)| {
+                    let items = enables.as_array()?;
+                    Some((
+                        name.clone(),
+                        items
+                            .iter()
+                            .filter_map(toml::Value::as_str)
+                            .map(str::to_string)
+                            .collect::<Vec<_>>(),
+                    ))
+                })
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let enabled = expand_default_features(&features);
+    for entry in entries {
+        let paths = if let Some(path) = entry.get("path").and_then(toml::Value::as_str) {
+            let path = path.trim();
+            if path.is_empty() {
+                continue;
+            }
+            vec![manifest_dir.join(path)]
+        } else {
+            let Some(name) = entry
+                .get("name")
+                .and_then(toml::Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+            else {
+                continue;
+            };
+            vec![
+                manifest_dir.join(format!("tests/{name}.rs")),
+                manifest_dir.join(format!("tests/{name}/main.rs")),
+            ]
+        };
+        let test_flag = entry.get("test").and_then(toml::Value::as_bool);
+        let features_unmet = match entry.get("required-features") {
+            None => false,
+            Some(toml::Value::Array(items)) => !items
+                .iter()
+                .all(|item| item.as_str().is_some_and(|name| enabled.contains(name))),
+            Some(_) => true,
+        };
+        let target = if test_flag == Some(false) || features_unmet {
+            &mut unrun.skipped
+        } else if entry.get("harness").and_then(toml::Value::as_bool) == Some(false) {
+            &mut unrun.harness_off
+        } else {
+            continue;
+        };
+        target.extend(paths.iter().map(|path| lexical(&normalize(path))));
+    }
+    unrun
+}
+
 /// Cargo's build-script resolution for one package manifest: no
 /// `[package]` (a virtual workspace) builds nothing; `build = false`
 /// disables the script; `build = "path"` names it; otherwise (`build`
@@ -1734,6 +1825,40 @@ mod harness_verdict {
     /// must not return `HarnessEnabled`. The same target stays live when
     /// `special` is in the package default set the metadata probe uses
     /// (ripr does not thread `--features` / `--all-features`).
+    #[test]
+    fn unrun_test_targets_split_skipped_from_harness_off() {
+        let manifest = "[package]\nname='p'\n[features]\ndefault=['a']\na=['b']\nb=[]\nz=[]\n\
+            [[test]]\nname='off'\ntest=false\n\
+            [[test]]\nname='mimic'\nharness=false\n\
+            [[test]]\nname='gated'\npath='t/gated.rs'\nrequired-features=['z']\n\
+            [[test]]\nname='live'\nrequired-features=['a','b']\n\
+            [[test]]\nname='bad'\nrequired-features='a'\n";
+        let unrun = unrun_test_targets_from_manifest(manifest, Path::new("pkg"));
+        let paths = |set: &BTreeSet<PathBuf>| {
+            set.iter()
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            paths(&unrun.skipped),
+            [
+                "pkg/t/gated.rs",
+                "pkg/tests/bad/main.rs",
+                "pkg/tests/bad.rs",
+                "pkg/tests/off/main.rs",
+                "pkg/tests/off.rs"
+            ]
+        );
+        assert_eq!(
+            paths(&unrun.harness_off),
+            ["pkg/tests/mimic/main.rs", "pkg/tests/mimic.rs"]
+        );
+        assert_eq!(
+            unrun_test_targets_from_manifest("not toml [", Path::new("pkg")),
+            UnrunTestTargets::default()
+        );
+    }
+
     #[test]
     fn required_features_unmet_target_is_not_harness_enabled() -> Result<(), String> {
         let dir = unique_workspace("req-features");

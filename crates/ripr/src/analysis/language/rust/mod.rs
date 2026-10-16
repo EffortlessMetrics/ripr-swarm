@@ -357,6 +357,44 @@ fn drop_unreached_test_files(
                 .map(|path| workspace::normalize_path(path)),
         );
     }
+    // #8016: a `[[test]]` target cargo builds but never runs libtest on
+    // (`test = false`, unmet `required-features`, `harness = false`) holds
+    // no evidence, though the module walk reaches it. A `harness = false`
+    // file a registration names stays: the registered adapter drives it.
+    let registered = test_harnesses
+        .iter()
+        .map(|registration| workspace::normalize_path(&registration.target))
+        .collect::<BTreeSet<_>>();
+    let mut unrun_by_package = BTreeMap::new();
+    for (path, bytes) in &loaded_files {
+        if !holds_tests(bytes) {
+            continue;
+        }
+        let Some(package) = owning_manifest_dir(root, path, &mut manifests) else {
+            continue;
+        };
+        let unrun = unrun_by_package.entry(package.clone()).or_insert_with(|| {
+            committed_source::read_source_bytes(root, &package.join("Cargo.toml"))
+                .ok()
+                .flatten()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .map(|text| workspace::unrun_test_targets_from_manifest(&text, &package))
+                .unwrap_or_default()
+        });
+        let key = workspace::normalize_path(path);
+        let unrun_file = unrun
+            .skipped
+            .iter()
+            .any(|unrun| workspace::normalize_path(unrun) == key)
+            || (unrun
+                .harness_off
+                .iter()
+                .any(|unrun| workspace::normalize_path(unrun) == key)
+                && !registered.contains(&key));
+        if unrun_file && !workspace::seeds_diff_probes(Path::new(&key), source_role_context) {
+            orphans.insert(key);
+        }
+    }
     if orphans.is_empty() {
         return loaded_files;
     }
@@ -7358,6 +7396,83 @@ fn absent_delimiter_boundary_returns_head() {
                 .any(|name| name == "discount_applies_unbuilt"),
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_tests_in_targets_cargo_test_never_runs() -> Result<(), String> {
+        // #8016: each `[[test]]` below is a declared target the module walk
+        // reaches, yet `cargo test` runs none of its `#[test]` items. The
+        // live controls (default feature on, plain declaration) must relate.
+        for (label, entry, related_expected) in [
+            ("test-false", "test=false", false),
+            ("harness-false", "harness=false", false),
+            ("unmet-feature", "required-features=['never']", false),
+            ("met-feature", "required-features=['on']", true),
+            ("plain", "", true),
+        ] {
+            let root = temp_root(&format!("unrun-test-target-{label}"))?;
+            write(
+                &root.join("Cargo.toml"),
+                &format!(
+                    "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[features]\ndefault=['on']\non=[]\nnever=[]\n\n[[test]]\nname='gate'\n{entry}\n"
+                ),
+            )?;
+            write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+            write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+            write(
+                &root.join("tests/gate.rs"),
+                "use shop::used::discount;\n\n#[test]\nfn discount_applies_gate() {\n    assert_eq!(discount(150), 140);\n}\n",
+            )?;
+
+            let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+            let related = related_test_names(&root, &result, "src/used.rs");
+            assert_eq!(
+                related.iter().any(|name| name == "discount_applies_gate"),
+                related_expected,
+                "{label}: {related:?}"
+            );
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_registered_harness_off_target_survives_the_unrun_target_drop() -> Result<(), String> {
+        // #8016: `harness = false` files drop, except one a registration
+        // names, whose registered adapter drives it.
+        let root = temp_root("unrun-harness-off-registered")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\n\n[[test]]\nname='mimic'\nharness=false\n",
+        )?;
+        let file = PathBuf::from("tests/mimic.rs");
+        write(&root.join(&file), "#[test]\nfn t() {}\n")?;
+        let loaded = vec![(file.clone(), b"#[test]\nfn t() {}\n".to_vec())];
+        let registration = crate::config::TestHarnessRegistration {
+            registration_id: "mimic".to_string(),
+            target: file.clone(),
+            kind: crate::config::TestHarnessKind::CustomHarnessTarget,
+            adapter: crate::config::TestHarnessAdapter::LibtestMimicV1,
+            marker: "libtest_mimic".to_string(),
+        };
+        let context = crate::analysis::workspace::SourceRoleContext::empty();
+        for registered in [false, true] {
+            let harnesses = if registered {
+                vec![registration.clone()]
+            } else {
+                Vec::new()
+            };
+            let kept =
+                super::drop_unreached_test_files(&root, &context, &[], &harnesses, loaded.clone());
+            assert_eq!(
+                kept.len(),
+                usize::from(registered),
+                "registered={registered}"
+            );
+        }
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
