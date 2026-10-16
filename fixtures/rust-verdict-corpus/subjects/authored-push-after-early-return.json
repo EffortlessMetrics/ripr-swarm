@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-push-after-early-return",
+  "origin": "authored",
+  "version_label": "authored 2026-10-15 for #8051 (empty-collection expectation after an early return)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "61f8de44f633cfd41a80c1a5f048759e580152c6196223f3c8e7a3697d8169a0"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "8bd26770762be6ab4c0f7621ca887cdd0fbb66303994a394a92864be2c59f1d7"
+    }
+  ]
+}

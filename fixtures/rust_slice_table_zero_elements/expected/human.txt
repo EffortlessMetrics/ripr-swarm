@@ -4,12 +4,12 @@ root: fixtures/rust_slice_table_zero_elements/input
 
 Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
 
 Start here:
   State: a test gap to inspect or repair (top_gap)
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:18
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
@@ -17,7 +17,7 @@ Start here:
   Changed behavior: samples.len() == 0
   Missing discriminator: samples.len() == 0
   Related test (1 of 6 matched rows): src/lib.rs:43 average_of_nothing_is_zero (no test input reaches `samples.len() == 0`)
-  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions.
+  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
     - reach yes: Related tests appear to reach mean_latency: mean_lies_between_min_and_max, average_of_nothing_is_zero, initial_table
     - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing

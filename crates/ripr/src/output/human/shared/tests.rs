@@ -183,7 +183,10 @@ fn different_guidance_and_window_disclosures_stay_local() {
     assert!(definitions_for(&report, "related tests (showing").is_empty());
     assert_eq!(report.matches("related tests (showing 1 of 10").count(), 2);
     assert!(!report.contains("  N1 [findings"));
-    assert!(report.contains("Inspect the other assertion first."));
+    // #7756: the unshared guidance line is a list-item value, so its
+    // trailing period is trimmed like every other labelled line.
+    assert!(report.contains("  - Inspect the other assertion first\n"));
+    assert!(!report.contains("Inspect the other assertion first."));
 }
 
 #[test]

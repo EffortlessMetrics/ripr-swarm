@@ -379,7 +379,8 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput) {
         return;
     };
     out.push_str(&format!(
-        "Analysis outcome: {} ({}; {}).\n",
+        // #7756: labelled field line — no trailing period.
+        "Analysis outcome: {} ({}; {})\n",
         outcome.kind.plain_label(),
         if outcome.kind.is_complete() {
             "analysis complete"
@@ -390,7 +391,8 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput) {
     ));
     if outcome.limitations.is_empty() {
         out.push_str(&format!(
-            "  Counts: {} changed file(s), {} changed line(s), {} candidate line(s), {} probe(s), {} finding(s).\n\n",
+            // #7756: labelled field line — no trailing period.
+            "  Counts: {} changed file(s), {} changed line(s), {} candidate line(s), {} probe(s), {} finding(s)\n\n",
             outcome.counts.changed_file_count,
             outcome.counts.changed_line_count,
             outcome.counts.candidate_line_count,
@@ -467,10 +469,13 @@ fn render_language_file_breakdown(out: &mut String, output: &CheckOutput) {
     let parts = counts
         .iter()
         .filter(|count| count.files > 0)
-        .map(|count| format!("{}: {}", count.language, count.files))
+        // #7755: `=` keeps the key/value boundary readable without a second
+        // colon under the "Changed file(s) by language:" field label.
+        .map(|count| format!("{} = {}", count.language, count.files))
         .collect::<Vec<_>>()
         .join(", ");
-    out.push_str(&format!("Changed file(s) by language: {parts}.\n\n"));
+    // #7756: labelled field line — no trailing period.
+    out.push_str(&format!("Changed file(s) by language: {parts}\n\n"));
 }
 
 /// Emit the `--suppression-policy` application block (#1441): which policy
@@ -981,6 +986,8 @@ fn push_powershell_variant(out: &mut String, indent: &str, command: &str) {
 
 mod evidence_lines;
 mod explain;
+#[cfg(test)]
+mod hidden_locations_tests;
 mod sections;
 mod shared;
 mod triage;
@@ -1858,7 +1865,7 @@ mod tests {
         assert!(rendered.contains("(no_actionable_gap)"), "{rendered}");
         assert!(
             rendered.contains(
-                "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n"
+                "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable\n"
             ),
             "{rendered}"
         );
@@ -1916,7 +1923,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "  Safe next action: no finding is resolved to the candidate (subject currentness unresolved); rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n"
+                "  Safe next action: no finding is resolved to the candidate (subject currentness unresolved); rerun with --format human-full to inspect the full evidence before treating this run as actionable\n"
             ),
             "{rendered}"
         );
@@ -1946,7 +1953,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "  Safe next action: no finding is a candidate edit target (1 base-side, 1 unresolved currentness); rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n"
+                "  Safe next action: no finding is a candidate edit target (1 base-side, 1 unresolved currentness); rerun with --format human-full to inspect the full evidence before treating this run as actionable\n"
             ),
             "{rendered}"
         );
@@ -2450,7 +2457,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("Changed file(s) by language: python: 5, rust: 1."),
+            rendered.contains("Changed file(s) by language: python = 5, rust = 1"),
             "expected per-language breakdown line; got:\n{rendered}"
         );
 
@@ -2459,7 +2466,7 @@ mod tests {
         python_only.summary.changed_files_by_language[1].files = 0;
         let rendered = render(&python_only);
         assert!(
-            rendered.contains("Changed file(s) by language: python: 5.\n"),
+            rendered.contains("Changed file(s) by language: python = 5\n"),
             "zero-count languages are omitted; got:\n{rendered}"
         );
     }
@@ -2643,7 +2650,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "Safe next action: the working tree has no changed tracked files against `main`; make a change, or `git add -N <path>` a new file, and re-run."
+                "Safe next action: the working tree has no changed tracked files against `main`; make a change, or `git add -N <path>` a new file, and re-run"
             ),
             "{rendered}"
         );
@@ -2765,7 +2772,7 @@ mod tests {
         let mut finding = sample_finding();
         finding.class = ExposureClass::Exposed;
         finding.missing = vec![
-            "Related test reaches `applyDiscount` with a `exact_value` oracle; behavior observed."
+            "Related test reaches `applyDiscount` with an `exact_value` oracle; behavior observed."
                 .to_string(),
         ];
 
@@ -3065,7 +3072,7 @@ mod tests {
 
         assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
         let expected = format!(
-            "  Safe next action: this TypeScript preview finding's repair packet is not ready ({}); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`.\n",
+            "  Safe next action: this TypeScript preview finding's repair packet is not ready ({}); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`\n",
             super::sections::one_line(&why)
         );
         assert!(rendered.contains(&expected), "{rendered}");
@@ -3105,7 +3112,7 @@ mod tests {
                 .unwrap_or_default();
             assert!(
                 line.ends_with(
-                    "…); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`."
+                    "…); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`"
                 ),
                 "{class:?}: {line}"
             );
@@ -3184,7 +3191,7 @@ mod tests {
             "{rendered}"
         );
         assert!(rendered.contains(
-            "  Safe next action: preview-language evidence is advisory; a related test appears to observe this change, so there is no repair to make; verify independently before relying on it.\n"
+            "  Safe next action: preview-language evidence is advisory; a related test appears to observe this change, so there is no repair to make; verify independently before relying on it\n"
         ), "{rendered}");
         assert!(!rendered.contains("complete the missing repair-packet fields"));
         assert!(!rendered.contains("repair packet is not ready"));
@@ -3202,7 +3209,7 @@ mod tests {
         // command instead of a bare "verify independently" with no route.
         assert!(
             rendered.contains(
-                "  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/discount.test.ts`, add a focused assertion for the missing discriminator `amount == threshold`, shaped like `expect(result).toBe(expected)`; run `jest tests/discount.test.ts`, then rerun `ripr check`.\n"
+                "  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/discount.test.ts`, add a focused assertion for the missing discriminator `amount == threshold`, shaped like `expect(result).toBe(expected)`; run `jest tests/discount.test.ts`, then rerun `ripr check`\n"
             ),
             "{rendered}"
         );
@@ -3227,7 +3234,7 @@ mod tests {
 
         assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
         assert!(rendered.contains(
-            "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields; resolve the limitation and rerun preview evidence before acting.\n"
+            "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields; resolve the limitation and rerun preview evidence before acting\n"
         ));
         assert!(!rendered.contains("complete the missing repair-packet fields before acting"));
         assert!(!rendered.contains("the repair packet is complete but remains advisory"));
@@ -3277,7 +3284,7 @@ mod tests {
             "{rendered}"
         );
         assert!(rendered.contains(
-            "  Safe next action: this Python preview finding has no repair card (no Python test reaches this code), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add a test that calls it by hand, then rerun `ripr check`.\n"
+            "  Safe next action: this Python preview finding has no repair card (no Python test reaches this code), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add a test that calls it by hand, then rerun `ripr check`\n"
         ), "{rendered}");
         assert!(!rendered.contains("complete the missing repair-packet fields"));
     }
@@ -4219,7 +4226,7 @@ mod tests {
             "missing discriminator enabled == false: related tests do not use the changed value"
         ));
         assert!(rendered.contains("Next step\n"));
-        assert!(rendered.contains("Add assertion for disabled path result."));
+        assert!(rendered.contains("Add assertion for disabled path result"));
     }
 
     /// #4320: the 5-related-test window must disclose the total — the number
@@ -5078,7 +5085,7 @@ mod tests {
             digest.lines().all(|line| line.chars().count() <= 180),
             "no digest line exceeds the budget; got:\n{digest}"
         );
-        assert!(digest.contains("remedy."), "{digest}");
+        assert!(digest.contains("remedy"), "{digest}");
     }
 
     /// #4323: the default no-path guidance is ~330 characters and ends with
@@ -5111,7 +5118,7 @@ mod tests {
 
         assert!(
             flattened.ends_with(
-                "add a co-located test that reaches and observes the changed behavior so a discriminator exists."
+                "add a co-located test that reaches and observes the changed behavior so a discriminator exists"
             ),
             "digest must keep the remedy; got:\n{digest}"
         );

@@ -4950,8 +4950,10 @@ pub(crate) fn classify_change_with_alias_state(
             StageState::Yes,
             StageState::Yes,
             vec![format!(
-                "Related test reaches `{}` with a `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.",
+                // #7752: the article follows the oracle-kind label ("an `exact_value`").
+                "Related test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.",
                 owner.name,
+                crate::domain::indefinite_article(strongest_kind.as_str()),
                 strongest_kind.as_str()
             )],
         )
@@ -5147,7 +5149,9 @@ pub(crate) fn classify_change_with_alias_state(
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() && observation_confirmed {
         format!(
-            "Related test uses a `{}` oracle; static evidence suggests the changed behavior is discriminated.",
+            // #7752: the article follows the oracle-kind label ("an `exact_value`").
+            "Related test uses {} `{}` oracle; static evidence suggests the changed behavior is discriminated.",
+            crate::domain::indefinite_article(strongest_kind.as_str()),
             strongest_kind.as_str()
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() && !boundary_witnessed {

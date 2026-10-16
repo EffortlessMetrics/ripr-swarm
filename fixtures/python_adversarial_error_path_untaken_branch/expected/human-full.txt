@@ -5,10 +5,10 @@ config: <cwd>/fixtures/python_adversarial_error_path_untaken_branch/input/ripr.t
 
 Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
 
-Changed file(s) by language: python: 1.
+Changed file(s) by language: python = 1
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
 
 WARNING src/parseint.py:3
   id: probe:src_parseint.py:python_preview:0f645328
@@ -33,14 +33,14 @@ Static exposure
 Evidence
   - reach yes: 1 related Python test(s) found for owner `parse`
   - infection yes: Changed Python error path can alter raised exception/control behavior: `raise KeyError("empty")`
-  - propagation yes: Changed Python error path propagates through the exception/control boundary.
-  - observation weak: No related Python assertion observes the changed error path; the strongest related assertion observes another behavior (`exact_value`).
-  - discriminator weak: Python preview adapter found no strong discriminator; missing proof: `raises KeyError matching "empty"`.
+  - propagation yes: Changed Python error path propagates through the exception/control boundary
+  - observation weak: No related Python assertion observes the changed error path; the strongest related assertion observes another behavior (`exact_value`)
+  - discriminator weak: Python preview adapter found no strong discriminator; missing proof: `raises KeyError matching "empty"`
   - local flow reaches error variant: raise KeyError("empty") (line 3)
   - related test tests/test_parseint.py:4 test_parse_ok uses unknown unknown oracle
 
 Weakness
-  - Related Python test reaches `parse`, but its assertions observe a different behavior (strongest: `exact_value`) and none observes the changed error path; add or strengthen a focused assertion for the exact exception type/message.
+  - Related Python test reaches `parse`, but its assertions observe a different behavior (strongest: `exact_value`) and none observes the changed error path; add or strengthen a focused assertion for the exact exception type/message
   - missing discriminator raises KeyError matching "empty": changed Python exception at line 3 lacks a concrete repair discriminator
 
 Python repair card (preview/advisory)
@@ -70,7 +70,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with an exception assertion for missing discriminator `raises KeyError matching "empty"`.
+  Python preview: strengthen the existing related test with an exception assertion for missing discriminator `raises KeyError matching "empty"`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_adversarial_error_path_untaken_branch/input --diff <cwd>/fixtures/python_adversarial_error_path_untaken_branch/diff.patch --mode fast probe:src_parseint.py:python_preview:0f645328
   ripr context --root <cwd>/fixtures/python_adversarial_error_path_untaken_branch/input --diff <cwd>/fixtures/python_adversarial_error_path_untaken_branch/diff.patch --mode fast --at probe:src_parseint.py:python_preview:0f645328

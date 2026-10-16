@@ -14,6 +14,11 @@ pub(crate) struct InitOptions {
 pub(crate) enum InitCi {
     Github,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PilotStdoutFormat {
+    Human,
+    Json,
+}
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct PilotOptions {
     pub(crate) root: PathBuf,
@@ -25,6 +30,7 @@ pub(crate) struct PilotOptions {
     /// `--timeout-ms` was given, so `timeout_ms` is a hard limit.
     pub(crate) timeout_explicit: bool,
     pub(crate) quiet: bool,
+    pub(crate) format: PilotStdoutFormat,
 }
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct OutcomeOptions {

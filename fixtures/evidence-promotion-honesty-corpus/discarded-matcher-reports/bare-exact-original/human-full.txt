@@ -4,8 +4,8 @@ root: fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bare
 
 Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 1 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
 
 WARNING ./src/lib.rs:2
   id: probe:src_lib.rs:return_value:519eff0d
@@ -39,7 +39,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.
+  Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect
 Drill in:
   ripr explain --root fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bare-exact-original --diff fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bare-exact-original/diff.patch --mode fast probe:src_lib.rs:return_value:519eff0d
   ripr context --root fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bare-exact-original --diff fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bare-exact-original/diff.patch --mode fast --at probe:src_lib.rs:return_value:519eff0d

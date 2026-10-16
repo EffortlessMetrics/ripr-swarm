@@ -364,6 +364,29 @@ changes `self.count += 2` to `self.count += 1`.
   (`call_deletion`), since a changed argument leaves the count alone. A getter confirms only when it is an inherent method whose body
   is `self.f`, `&self.f`, `&self.f[..]`, `self.f.clone()` or
   `self.f.as_slice()`.
+- An empty-collection expectation is implemented (#8051, #8141 review):
+  `assertion_expects_empty_collection` in `propagation_witness.rs` and the
+  `empty_after_skipped_push` cap in `reveal.rs` recognize
+  `assert_eq!(p.log, vec![])` (either operand, `vec![]`, `Vec::new()`,
+  `Vec::<T>::new()` or `[]`), `assert_eq!(p.log.len(), 0)` and
+  `assert!(p.log.is_empty())` (the receiver must be a plain path without
+  operators). When the owner may leave before the changed push
+  (`owner_may_exit_before_line`, sharing `may_exit_early`, including a
+  guard on the changed line before the expression), such an assertion
+  neither confirms observation nor counts as a strong oracle for
+  `side_effect` or `call_deletion` probes on a field collection write
+  (`field_collection_write_path`, `direct_collection_mutation_receiver`):
+  a test that passes with the collection empty took that exit, so it
+  cannot tell a deleted or changed push from the original. Without an
+  earlier exit the push ran, and a test that empties the collection again
+  (`add(1); remove(1)`) can still catch a changed argument, so the
+  assertion keeps its strength. Known limit: the early-exit flag is
+  owner-wide, so a test that provably bypasses the exit and then removes
+  the pushed value is capped with the tests that took the exit; the cap
+  cannot read which path one test took. The shared `may_exit_early` also
+  counts any `else`, since a `let .. else` block may exit through a
+  never-typed call no token catches, so an ordinary `if/else` completed
+  before the push widens the same conservative cap.
 - Keyed reads of a field-map insert are implemented (examples 16-20):
   `field_collection_insert_key` and `assertion_keyed_getter_reads` in
   `propagation_witness.rs`, `keyed_field_read_confirms` and

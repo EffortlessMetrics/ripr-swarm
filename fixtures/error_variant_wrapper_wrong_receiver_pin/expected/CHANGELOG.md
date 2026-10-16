@@ -266,3 +266,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — error_variant_wrapper_wrong_receiver_pin (21)
+
+Reason:
+RIPR-SPEC-0002: re-bless human render copy/grammar fixes #7755 (double-colon labels), #7752 (a/an oracle articles), #7756 (trailing-period rule); formatting-only drift
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_wrong_receiver_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
