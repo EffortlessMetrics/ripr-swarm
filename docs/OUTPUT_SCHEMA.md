@@ -16224,8 +16224,7 @@ recommendation is elsewhere in the repo and name `ripr check --root <root>` for
 the change itself, adding `--worktree` when the diff came from the working tree
 (plain `ripr check` reads committed history only). The partial (timeout) summary carries no `current_change`.
 
-When the repo-exposure inventory limit triggers a successful current-change
-supplement. Independently of that supplement, when Rust is enabled and the
+Independently of the current-change supplement, when Rust is enabled and the
 loaded change names Rust source files, `current_change.absent_changed_files`
 records the shared source-admission observation as an optional array of portable
 root-relative paths absent from the working tree. These paths project the
