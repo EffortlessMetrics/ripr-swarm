@@ -51,7 +51,7 @@ python3 verify_native.py corpus.json replay-native.json
 python3 verify_cli.py /absolute/path/to/ripr replay
 ```
 
-The first command should exit 0. At the recorded source/executable, the second must exit 1 on the five named mismatches. A future coherent repair should make all eleven literal static expectations pass without changing those labels. Every CLI child has a 30-second deadline. Source build recipe at the recorded source:
+The first command should exit 0. At the recorded source/executable, the second must exit 1 on the five named mismatches. For a repair that retains the existing syntactic related-test relation, all eleven literal static expectations should pass without changing those labels. A separately justified relation-layer correction to `no_static_path` also refuses false promotion and requires an explicit corpus-contract revision; it does not justify blessing the current `exposed` results. Every CLI child has a 30-second deadline. Source build recipe at the recorded source:
 
 ```bash
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo build --locked -p ripr --bin ripr --message-format=json
@@ -73,6 +73,10 @@ The review identified additional source-supported leads: same-file duplicate tes
 
 ## Ownership and state
 
-Current native GitHub issue/PR searches preceded selection; [ownership-search.json](ownership-search.json) retains results and limits. No exact active local-shadow repair was found. The active None-message repair under [#7849](https://github.com/EffortlessMetrics/ripr-swarm/issues/7849) remains with its existing owner and unpublished candidate; this corpus does not duplicate that work. [#5574](https://github.com/EffortlessMetrics/ripr-swarm/issues/5574) is a per-row tri-state refactor with explicit classification invariance, not this corrective promotion claim.
+Current native GitHub issue/PR searches preceded selection; [ownership-search.json](ownership-search.json) retains results and limits. No exact active local-shadow repair was found in those bounded searches; this is the author selection judgment, with unknown search state/assignee fields and possible truncation retained explicitly. [Final query arguments and source-premise check](publication-selection.json) are included. The active None-message repair under [#7849](https://github.com/EffortlessMetrics/ripr-swarm/issues/7849) remains with its existing owner and unpublished candidate; this corpus does not duplicate that work. [#5574](https://github.com/EffortlessMetrics/ripr-swarm/issues/5574) is a per-row tri-state refactor with explicit classification invariance, not this corrective promotion claim.
 
 Classification: **verified_current** for the five CLI false-credit reductions at the stated source. No production repair, full golden run, full test suite, hosted CI, merge, installed artifact, release or aggregate 0.11 readiness is claimed. Source repair and its honest regression graduation remain the next engineering transition.
+
+## Independent evidence review
+
+A read-only reviewer replayed exact evidence head `846dede69db91a8a43040c3e7803fb110b51a924` from a review-owned Git archive, verified all 93 original manifest hashes, independently matched the frozen binary hash/version, passed all 22 native controls, and reproduced the same eleven complete CLI subjects and five false credits. [Independent receipt](independent-review-receipt.json). No blocking evidence finding was emitted. This supports evidence publication and defect filing, with no source merge-readiness disposition. The successor metadata commit adds this receipt, exact query arguments/limits, and the relation-layer classification caveat; corpus, verifiers, inputs, native results and CLI results are unchanged.

@@ -1,0 +1,178 @@
+{
+  "observed_date": "2026-10-16",
+  "method": "Final bounded native GitHub claim search. Null search state/owner fields are unknown, not unowned.",
+  "current_main": "0b8dad52d85dc7271e4ddfeef8b6d375dc02784c",
+  "source_premise_check": "git diff --name-only e00018da7d224bd13b4c4e3466d1e626ca0b15f6..origin/main -- crates/ripr/src/analysis/language/python.rs crates/ripr/src/analysis/language/python returned no paths; no new CLI execution at current main is claimed.",
+  "searches": [
+    {
+      "query": "repo:EffortlessMetrics/ripr-swarm \"python\" \"local owner\" \"shadow\"",
+      "kind": "issues",
+      "state": "not filtered",
+      "topn": 10,
+      "items": [
+        {
+          "number": 7260,
+          "title": "fix(rust): resolve const-bound expectations before granting oracle credit",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7260",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 5520,
+          "title": "epic(go): deliver a trustworthy Go preview adapter end to end",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5520",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 5506,
+          "title": "test(typescript): lock row-local miss reasons across mixed tests and projections",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5506",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 6654,
+          "title": "typescript: verdict-corpus false verdicts not covered by #6594 (27/62 false actionable, 9/39 false exposed)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6654",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 1601,
+          "title": "analysis(rust): close the governed pilot missing-discriminator route family",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/1601",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 5090,
+          "title": "ci(durations): measured matrix table — routed gates 34.6 min (nextest ~50%), ~55 min/PR-event parallel advisory legs, self-hosted legs skip 16/16",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5090",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 1693,
+          "title": "program: converge ripr from usable to workable to release-ready without cutting a release",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/1693",
+          "state": null,
+          "assignees": null
+        }
+      ]
+    },
+    {
+      "query": "repo:EffortlessMetrics/ripr-swarm \"python\" \"shadowed\"",
+      "kind": "prs",
+      "state": "all",
+      "topn": 15,
+      "items": [
+        {
+          "number": 7833,
+          "title": "fix(evidence): retain source file across colliding assertion lines",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7833",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 7560,
+          "title": "fix(python): close the last five Python false verdicts (#6603, #6733)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7560",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 4461,
+          "title": "fix(python): relate tests that call an owner through its package re-export",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4461",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 5414,
+          "title": "fix(python): gate oracle credit on test activation",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/5414",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 5424,
+          "title": "fix(evidence): name every examined test and why it misses the change",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/5424",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 6870,
+          "title": "feat(analysis): populate Finding.canonical_gap for Rust (#5268)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/6870",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 4612,
+          "title": "fix(python): five test-pattern accuracy fixes from OSS mutation replay (#4559 #4560 #4562 #4565 #4567)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4612",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 8004,
+          "title": "fix(analysis): require bounded inherent receiver attribution",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 6759,
+          "title": "fix(check): bind the drill-in --root to the resolved repository (#3948)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/6759",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 4477,
+          "title": "fix(python): relate tests that call an owner through its package re-export",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4477",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 7590,
+          "title": "fix(typescript): recognize awaited test roots with honest runner admission",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7590",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 7754,
+          "title": "fix(python): credit a mock passed to a classmethod owner (#7634, #7719)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7754",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 5436,
+          "title": "fix(typescript): withhold Node expected-failure oracle credit",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/5436",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 7323,
+          "title": "fix(typescript): distinguish literal rejection equality from return equality",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7323",
+          "state": null,
+          "assignees": null
+        },
+        {
+          "number": 5041,
+          "title": "fix(analysis): require execution provenance for error and predicate oracles (#5027)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/5041",
+          "state": null,
+          "assignees": null
+        }
+      ]
+    }
+  ]
+}

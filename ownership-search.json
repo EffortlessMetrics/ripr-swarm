@@ -93,7 +93,7 @@
         },
         {
           "number": 5090,
-          "title": "ci(durations): measured matrix table — routed gates 34.6 min (nextest ~50%), ~55 min/PR-event parallel advisory legs, self-hosted legs skip 16/16",
+          "title": "ci(durations): measured matrix table \u2014 routed gates 34.6 min (nextest ~50%), ~55 min/PR-event parallel advisory legs, self-hosted legs skip 16/16",
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5090"
         },
         {
@@ -168,7 +168,7 @@
         },
         {
           "number": 7616,
-          "title": "main: golden drift on owner_return_pin_fallible_literal (exposed → weakly_exposed) at 6bd4e76",
+          "title": "main: golden drift on owner_return_pin_fallible_literal (exposed \u2192 weakly_exposed) at 6bd4e76",
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7616"
         },
         {
@@ -217,7 +217,14 @@
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7472"
         }
       ],
-      "error": null
+      "error": null,
+      "arguments": {
+        "query": "repo:EffortlessMetrics/ripr-swarm python oracle",
+        "topn": 40,
+        "sort": "updated"
+      },
+      "returned_count": 40,
+      "may_be_truncated_at_limit": true
     },
     {
       "key": "initial_1",
@@ -424,7 +431,15 @@
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8025"
         }
       ],
-      "error": null
+      "error": null,
+      "arguments": {
+        "query": "repo:EffortlessMetrics/ripr-swarm python oracle",
+        "topn": 40,
+        "sort": "updated",
+        "state": "all"
+      },
+      "returned_count": 40,
+      "may_be_truncated_at_limit": true
     },
     {
       "key": "python-shadow-issue",
@@ -452,7 +467,7 @@
         },
         {
           "number": 5090,
-          "title": "ci(durations): measured matrix table — routed gates 34.6 min (nextest ~50%), ~55 min/PR-event parallel advisory legs, self-hosted legs skip 16/16",
+          "title": "ci(durations): measured matrix table \u2014 routed gates 34.6 min (nextest ~50%), ~55 min/PR-event parallel advisory legs, self-hosted legs skip 16/16",
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5090"
         },
         {
@@ -502,7 +517,7 @@
         },
         {
           "number": 6847,
-          "title": "ux(lsp): packet-not-ready TypeScript preview findings never publish as editor diagnostics in either profile — preview_actionability shadows the delivery_eligible producer stamp, so diagnosticProfile=full publishes nothing while finding_count=1",
+          "title": "ux(lsp): packet-not-ready TypeScript preview findings never publish as editor diagnostics in either profile \u2014 preview_actionability shadows the delivery_eligible producer stamp, so diagnosticProfile=full publishes nothing while finding_count=1",
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/6847"
         },
         {
@@ -542,7 +557,7 @@
         },
         {
           "number": 3745,
-          "title": "refactor(analysis): decompose analysis/language/rust.rs — the #1719-successor behavior-preserving split",
+          "title": "refactor(analysis): decompose analysis/language/rust.rs \u2014 the #1719-successor behavior-preserving split",
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/3745"
         },
         {
@@ -552,11 +567,18 @@
         },
         {
           "number": 2269,
-          "title": "analysis(typescript): owner-module mock over-credits exposed — Function-owner DirectOwnerCall path lacks test_mocks_owner_module guard",
+          "title": "analysis(typescript): owner-module mock over-credits exposed \u2014 Function-owner DirectOwnerCall path lacks test_mocks_owner_module guard",
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/2269"
         }
       ],
-      "error": null
+      "error": null,
+      "arguments": {
+        "query": "repo:EffortlessMetrics/ripr-swarm python shadow",
+        "topn": 30,
+        "sort": "updated"
+      },
+      "returned_count": 25,
+      "may_be_truncated_at_limit": false
     },
     {
       "key": "python-shadow-pr",
@@ -713,7 +735,15 @@
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7712"
         }
       ],
-      "error": null
+      "error": null,
+      "arguments": {
+        "query": "repo:EffortlessMetrics/ripr-swarm python shadow",
+        "topn": 30,
+        "sort": "updated",
+        "state": "all"
+      },
+      "returned_count": 30,
+      "may_be_truncated_at_limit": true
     },
     {
       "key": "python-mock-issue",
@@ -870,7 +900,14 @@
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5575"
         }
       ],
-      "error": null
+      "error": null,
+      "arguments": {
+        "query": "repo:EffortlessMetrics/ripr-swarm python mock",
+        "topn": 30,
+        "sort": "updated"
+      },
+      "returned_count": 30,
+      "may_be_truncated_at_limit": true
     },
     {
       "key": "python-mock-pr",
@@ -1027,7 +1064,15 @@
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7419"
         }
       ],
-      "error": null
+      "error": null,
+      "arguments": {
+        "query": "repo:EffortlessMetrics/ripr-swarm python mock",
+        "topn": 30,
+        "sort": "updated",
+        "state": "all"
+      },
+      "returned_count": 30,
+      "may_be_truncated_at_limit": true
     },
     {
       "key": "python-exception-issue",
@@ -1060,7 +1105,7 @@
         },
         {
           "number": 5090,
-          "title": "ci(durations): measured matrix table — routed gates 34.6 min (nextest ~50%), ~55 min/PR-event parallel advisory legs, self-hosted legs skip 16/16",
+          "title": "ci(durations): measured matrix table \u2014 routed gates 34.6 min (nextest ~50%), ~55 min/PR-event parallel advisory legs, self-hosted legs skip 16/16",
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5090"
         },
         {
@@ -1184,7 +1229,14 @@
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5575"
         }
       ],
-      "error": null
+      "error": null,
+      "arguments": {
+        "query": "repo:EffortlessMetrics/ripr-swarm python exception",
+        "topn": 30,
+        "sort": "updated"
+      },
+      "returned_count": 30,
+      "may_be_truncated_at_limit": true
     },
     {
       "key": "python-exception-pr",
@@ -1341,13 +1393,27 @@
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7694"
         }
       ],
-      "error": null
+      "error": null,
+      "arguments": {
+        "query": "repo:EffortlessMetrics/ripr-swarm python exception",
+        "topn": 30,
+        "sort": "updated",
+        "state": "all"
+      },
+      "returned_count": 30,
+      "may_be_truncated_at_limit": true
     },
     {
       "key": "shadow-title-issues",
       "isError": false,
       "items": [],
-      "error": null
+      "error": null,
+      "arguments": {
+        "query": "repo:EffortlessMetrics/ripr-swarm python shadow in:title",
+        "topn": 10
+      },
+      "returned_count": 0,
+      "may_be_truncated_at_limit": false
     },
     {
       "key": "shadow-title-pr",
@@ -1424,7 +1490,14 @@
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4117"
         }
       ],
-      "error": null
+      "error": null,
+      "arguments": {
+        "query": "repo:EffortlessMetrics/ripr-swarm shadow in:title",
+        "topn": 30,
+        "state": "all"
+      },
+      "returned_count": 14,
+      "may_be_truncated_at_limit": false
     },
     {
       "key": "shadowed-python-pr",
@@ -1481,7 +1554,14 @@
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4477"
         }
       ],
-      "error": null
+      "error": null,
+      "arguments": {
+        "query": "repo:EffortlessMetrics/ripr-swarm python \"shadowed\" ",
+        "topn": 10,
+        "state": "all"
+      },
+      "returned_count": 10,
+      "may_be_truncated_at_limit": true
     },
     {
       "key": "claimsearch_0",
@@ -1503,7 +1583,13 @@
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/1266"
         }
       ],
-      "error": null
+      "error": null,
+      "arguments": {
+        "query": "repo:EffortlessMetrics/ripr-swarm \"strong_test_imports_owner_from_module\"",
+        "topn": 10
+      },
+      "returned_count": 3,
+      "may_be_truncated_at_limit": false
     },
     {
       "key": "claimsearch_1",
@@ -1530,7 +1616,14 @@
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/3650"
         }
       ],
-      "error": null
+      "error": null,
+      "arguments": {
+        "query": "repo:EffortlessMetrics/ripr-swarm \"strong_test_imports_owner_from_module\"",
+        "topn": 10,
+        "state": "all"
+      },
+      "returned_count": 4,
+      "may_be_truncated_at_limit": false
     },
     {
       "key": "selection_0",
@@ -1558,7 +1651,7 @@
         },
         {
           "number": 5090,
-          "title": "ci(durations): measured matrix table — routed gates 34.6 min (nextest ~50%), ~55 min/PR-event parallel advisory legs, self-hosted legs skip 16/16",
+          "title": "ci(durations): measured matrix table \u2014 routed gates 34.6 min (nextest ~50%), ~55 min/PR-event parallel advisory legs, self-hosted legs skip 16/16",
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5090"
         },
         {
@@ -1628,16 +1721,23 @@
         },
         {
           "number": 3745,
-          "title": "refactor(analysis): decompose analysis/language/rust.rs — the #1719-successor behavior-preserving split",
+          "title": "refactor(analysis): decompose analysis/language/rust.rs \u2014 the #1719-successor behavior-preserving split",
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/3745"
         },
         {
           "number": 2269,
-          "title": "analysis(typescript): owner-module mock over-credits exposed — Function-owner DirectOwnerCall path lacks test_mocks_owner_module guard",
+          "title": "analysis(typescript): owner-module mock over-credits exposed \u2014 Function-owner DirectOwnerCall path lacks test_mocks_owner_module guard",
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/2269"
         }
       ],
-      "error": null
+      "error": null,
+      "arguments": {
+        "query": "repo:EffortlessMetrics/ripr-swarm python \"shadow\" \"oracle\"",
+        "topn": 25,
+        "sort": "updated"
+      },
+      "returned_count": 20,
+      "may_be_truncated_at_limit": false
     },
     {
       "key": "selection_1",
@@ -1769,7 +1869,17 @@
           "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7711"
         }
       ],
-      "error": null
+      "error": null,
+      "arguments": {
+        "query": "repo:EffortlessMetrics/ripr-swarm python \"local\" \"shadow\" ",
+        "topn": 25,
+        "sort": "updated",
+        "state": "all"
+      },
+      "returned_count": 25,
+      "may_be_truncated_at_limit": true
     }
-  ]
+  ],
+  "selection_judgment": "No exact active corrective candidate found in these bounded searches. This is the author selection judgment, not an exhaustive proof of ownership absence.",
+  "limitations": "Search snapshots often omit state and assignees; missing values are unknown. Queries at their result limit may be truncated. No issue-state filter means all states. Explicit state=all was supplied for PRs. Direct issue/comments fetched for #7849 confirmed its open state, active prior owner and candidate; do not infer unowned from null search fields."
 }

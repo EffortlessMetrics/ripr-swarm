@@ -1,0 +1,42 @@
+{
+  "reviewed_head": "846dede69db91a8a43040c3e7803fb110b51a924",
+  "review_directory": "/tmp/python-oracle-review-846dede-o5xe297j",
+  "manifest_files_verified": 93,
+  "corpus_cases": 11,
+  "native_executions": 22,
+  "cli_subjects": 11,
+  "binary_sha256": "a8b026b503edbc2d0dd3a0a462095eb8ebe8f27723fadeca95b5878a3e19810a",
+  "mismatches": [
+    "local_def",
+    "local_lambda",
+    "mock_payload",
+    "alias_mock_payload",
+    "bare_shadow_with_other_alias"
+  ],
+  "runs": [
+    {
+      "argv": [
+        "python3",
+        "-B",
+        "verify_native.py",
+        "corpus.json",
+        "review-native.json"
+      ],
+      "exit": 0,
+      "stdout": "22 native Python executions matched independently literal expectations\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "python3",
+        "-B",
+        "verify_cli.py",
+        "/workspace/python-oracle-evidence/base-ripr",
+        "review"
+      ],
+      "exit": 1,
+      "stdout": "direct_literal exposed exposed\nlocal_def weakly_exposed exposed\nlocal_lambda weakly_exposed exposed\nmock_payload weakly_exposed exposed\nalias_mock_payload weakly_exposed exposed\nexception_only weakly_exposed weakly_exposed\nunrelated_local_def exposed exposed\nbare_shadow_with_other_alias weakly_exposed exposed\nreal_alias exposed exposed\nlocal_import exposed exposed\nnested_helper_local_shadow exposed exposed\n",
+      "stderr": ""
+    }
+  ]
+}
