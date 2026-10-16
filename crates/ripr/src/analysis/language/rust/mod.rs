@@ -410,8 +410,10 @@ fn cargo_skipped_test_files(
             continue;
         };
         let declares = *declares_tests.entry(package.clone()).or_insert_with(|| {
-            std::fs::read_to_string(root.join(&package).join("Cargo.toml"))
-                .is_ok_and(|text| text.contains("[[test]]"))
+            committed_source::read_source_bytes(root, &package.join("Cargo.toml"))
+                .ok()
+                .flatten()
+                .is_some_and(|bytes| contains_bytes(&bytes, b"[[test]]"))
         });
         if !declares {
             continue;
@@ -7331,14 +7333,21 @@ fn absent_delimiter_boundary_returns_head() {
         root: &Path,
         harnesses: &[crate::config::TestHarnessRegistration],
     ) -> Result<BTreeSet<String>, String> {
-        let loaded = ["src/lib.rs", "tests/old.rs"]
-            .iter()
-            .map(|file| {
-                fs::read(root.join(file))
-                    .map(|bytes| (PathBuf::from(file), bytes))
-                    .map_err(|err| err.to_string())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let loaded = [
+            "src/lib.rs",
+            "tests/old.rs",
+            "src/main.rs",
+            "build.rs",
+            "src/bin/tool.rs",
+        ]
+        .iter()
+        .filter(|file| root.join(file).is_file())
+        .map(|file| {
+            fs::read(root.join(file))
+                .map(|bytes| (PathBuf::from(file), bytes))
+                .map_err(|err| err.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
         Ok(cargo_skipped_test_files(
             root,
             harnesses,
@@ -7355,6 +7364,16 @@ fn absent_delimiter_boundary_returns_head() {
         let root =
             skipped_target_fixture("skipped-target-shares-lib", "test = false\n", "src/lib.rs")?;
         assert!(skipped_files(&root, &[])?.is_empty());
+        for crate_root in ["src/main.rs", "build.rs", "src/bin/tool.rs"] {
+            let name = format!("skipped-target-shares-{}", crate_root.replace('/', "-"));
+            let shared = skipped_target_fixture(&name, "test = false\n", crate_root)?;
+            write(
+                &shared.join(crate_root),
+                "#[test]\nfn root_test() {}\n\nfn main() {}\n",
+            )?;
+            assert!(skipped_files(&shared, &[])?.is_empty(), "{crate_root}");
+            fs::remove_dir_all(shared).map_err(|error| format!("remove fixture: {error}"))?;
+        }
         let own =
             skipped_target_fixture("skipped-target-own-file", "test = false\n", "tests/old.rs")?;
         assert_eq!(
