@@ -75,7 +75,7 @@ use crate::analysis::syntax::{
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
-    AstNode, SyntaxNode, TextRange,
+    AstNode, SyntaxNode,
     ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasModuleItem, HasName},
 };
 use rayon::prelude::*;
@@ -9805,7 +9805,7 @@ fn named_or_slice(
         || file_renames_to(source, base)
         || file_renames_to(source, raw.as_str())
         || file_aliases_type(source, base)
-        || test_module_shadows_type(test, source, base, owner.in_file(&test.file))
+        || test_module_shadows_type(test, source, base, Some(owner), index)
         || parent_chain_shadows_type(test, base, owner, index)
     {
         return None;
@@ -9867,8 +9867,9 @@ pub(in crate::analysis) fn test_module_shadows_type(
     source: &str,
     base: &str,
     owner: Option<OwnerScope<'_>>,
+    index: &RustIndex,
 ) -> bool {
-    test_module_shadows_item(test, source, base, owner, ShadowKind::Type)
+    test_module_shadows_item(test, source, base, owner, ShadowKind::Type, index)
 }
 
 /// Whether the test's own inline-module scope declares a `trait` named like
@@ -9881,8 +9882,9 @@ pub(in crate::analysis) fn test_module_shadows_trait(
     source: &str,
     trait_name: &str,
     owner: Option<OwnerScope<'_>>,
+    index: &RustIndex,
 ) -> bool {
-    test_module_shadows_item(test, source, trait_name, owner, ShadowKind::Trait)
+    test_module_shadows_item(test, source, trait_name, owner, ShadowKind::Trait, index)
 }
 
 /// The kind of declaration a test-module shadow check looks for.
@@ -9898,79 +9900,85 @@ fn test_module_shadows_item(
     base: &str,
     owner: Option<OwnerScope<'_>>,
     kind: ShadowKind,
+    index: &RustIndex,
 ) -> bool {
-    let masked = mask_comments_and_strings(source);
-    // `r#Window` denotes `Window`: a raw-identifier declaration shadows too.
-    let raw = format!("r#{base}");
-    let declared = match kind {
-        ShadowKind::Type => declares_type(&masked, base) || file_aliases_type(source, base),
-        ShadowKind::Trait => declares_trait(&masked, base),
-    };
-    if !declared && !masked.contains(raw.as_str()) {
-        return false;
-    }
-    let Some(parse) = parse_clean_source_file(source) else {
-        return true;
-    };
-    // 1-based file lines, matching `TestSummary`.
-    let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
-    let root = parse.tree().syntax().clone();
-    let owner_module = owner.and_then(|owner| owner_enclosing_module(&root, source, owner));
-    // The owner's own module is the production declaration's scope, never a
-    // shadow; every other enclosing module still counts.
-    let counts = |module: &ast::Module| {
-        owner_module.is_none_or(|exempt| module.syntax().text_range() != exempt)
-    };
-    // Exact scope first: the test fn's own ancestor modules. Line spans can
-    // coincide for same-line siblings (`mod s { struct W; } #[test] fn t()
-    // {...}`), where byte-exact ancestry refuses nothing, so ancestry
-    // decides whenever the test fn resolves. Macro-shaped tests whose fn
-    // has no matching node keep the line-span fallback below.
-    let test_name = test.name.strip_prefix("r#").unwrap_or(&test.name);
-    let test_fns: Vec<_> = root
-        .descendants()
-        .filter_map(ast::Fn::cast)
-        .filter(|func| {
-            func.name().is_some_and(|name| {
-                let text = name.text().to_string();
-                text.strip_prefix("r#").unwrap_or(&text) == test_name
-            }) && {
-                let range = func.syntax().text_range();
-                let start: u32 = range.start().into();
-                let end: u32 = range.end().into();
-                line_of(start) <= test.end_line && test.start_line <= line_of(end)
-            }
-        })
-        .collect();
-    if !test_fns.is_empty() {
-        return test_fns.iter().any(|func| {
-            func.syntax()
-                .ancestors()
-                .filter_map(ast::Module::cast)
-                .filter(|module| counts(module))
-                .any(|module| {
-                    module.item_list().is_some_and(|items| {
-                        items
-                            .items()
-                            .any(|item| module_item_names(&item, base, kind))
-                    })
-                })
+    // A caller supplying different source bytes must never borrow the indexed
+    // snapshot. Standalone/macro-shaped inputs retain the same fallback logic.
+    let snapshot = index
+        .files()
+        .get(&test.file)
+        .filter(|facts| std::ptr::eq(facts.source.as_ref(), source))
+        .and_then(|_| index.source_syntax.get(index, &test.file))
+        .unwrap_or_else(|| Arc::new(crate::analysis::syntax::SourceSnapshot::new(source)));
+    let key = (
+        test.name.clone(),
+        test.start_line,
+        test.end_line,
+        base.to_string(),
+        kind == ShadowKind::Trait,
+        owner.map(|o| (o.file.to_path_buf(), o.name.to_string(), o.start_line)),
+    );
+    snapshot.shadow_answer(key, || {
+        let masked = mask_comments_and_strings(source);
+        let raw = format!("r#{base}");
+        let declared = match kind {
+            ShadowKind::Type => declares_type(&masked, base) || file_aliases_type(source, base),
+            ShadowKind::Trait => declares_trait(&masked, base),
+        };
+        if !declared && !masked.contains(raw.as_str()) {
+            return false;
+        }
+        let Some(scopes) = snapshot.lexical_items() else {
+            return true;
+        };
+        let Some(tree) = snapshot.tree() else {
+            return true;
+        };
+        let root = tree.syntax();
+        let owner_module = owner.and_then(|o| o.in_file(&test.file)).and_then(|o| {
+            let name = o.name.strip_prefix("r#").unwrap_or(o.name);
+            let mut found = scopes.functions.iter().filter(|f| {
+                f.name == name && f.start_line <= o.start_line && o.start_line <= f.end_line
+            });
+            let first = found.next()?;
+            found
+                .next()
+                .is_none()
+                .then(|| first.modules.first().copied())
+                .flatten()
         });
-    }
-    root.descendants()
-        .filter_map(ast::Module::cast)
-        .filter_map(|module| module.item_list().map(|items| (module, items)))
-        .any(|(module, items)| {
-            let range = module.syntax().text_range();
-            let start: u32 = range.start().into();
-            let end: u32 = range.end().into();
-            line_of(start) <= test.start_line
-                && test.end_line <= line_of(end)
-                && counts(&module)
-                && items
+        let counts = |range| owner_module != Some(range);
+        let names = |module: ast::Module| {
+            module.item_list().is_some_and(|items| {
+                items
                     .items()
                     .any(|item| module_item_names(&item, base, kind))
+            })
+        };
+        let name = test.name.strip_prefix("r#").unwrap_or(&test.name);
+        let mut found = scopes
+            .functions
+            .iter()
+            .filter(|f| {
+                f.name == name && f.start_line <= test.end_line && test.start_line <= f.end_line
+            })
+            .peekable();
+        // Keep all ambiguous same-line matches, never choose the first one.
+        if found.peek().is_some() {
+            return found.any(|f| {
+                scopes.modules.iter().any(|m| {
+                    f.modules.contains(&m.range) && counts(m.range) && names(m.item.to_node(root))
+                })
+            });
+        }
+        // Macro-shaped tests retain inclusive-line fallback, including end lines.
+        scopes.modules.iter().any(|m| {
+            m.start_line <= test.start_line
+                && test.end_line <= m.end_line
+                && counts(m.range)
+                && names(m.item.to_node(root))
         })
+    })
 }
 
 /// Whether an out-of-line parent module of the test file declares the
@@ -10150,27 +10158,6 @@ fn owner_module_ancestors(owner: OwnerScope<'_>, index: &RustIndex) -> Vec<PathB
                 .map(|edge| edge.parent.clone()),
         )
         .collect()
-}
-
-/// The text range of the inline module directly enclosing the owner
-/// (#6957): for inline code the owner's own nearest enclosing `mod`
-/// is the `impl`'s module, and a same-name type declared there is the
-/// production declaration, not a shadow. `None` keeps the fail-closed
-/// shadow check: a root-level owner has no enclosing module, and an owner
-/// whose `fn` node does not resolve exactly once (macro-shaped, out-of-line
-/// or ambiguous) resolves to no scope. Byte-exact ancestry, not line spans,
-/// decides, so a same-line sibling module is never the owner's scope.
-fn owner_enclosing_module(
-    root: &SyntaxNode,
-    source: &str,
-    owner: OwnerScope<'_>,
-) -> Option<TextRange> {
-    resolve_owner_fn(root, source, owner)?
-        .syntax()
-        .ancestors()
-        .filter_map(ast::Module::cast)
-        .next()
-        .map(|module| module.syntax().text_range())
 }
 
 /// Whether the owner fn resolves in `source` at the file root: exactly one

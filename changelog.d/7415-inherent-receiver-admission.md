@@ -23,3 +23,7 @@
 - Complete-source declaration and lexical facts are reused within each source
   snapshot across helper candidates and owners, retaining ambiguous/unknown
   declaration refusal and conservative scope boundaries (#7415, #8004).
+- Test-module shadows share exact-source parse, line and ancestry facts and
+  complete test/owner/type-or-trait answers. Executable callers and assertion
+  operands reuse immutable syntax while retaining original lexical anchors and
+  conservative execution and binding refusals (#7415, #8004).

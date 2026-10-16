@@ -3123,7 +3123,11 @@ fn executable_call_resolves(
     pin_syntax: &super::OwnerPinSyntax,
     resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
 ) -> bool {
-    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&test.body) else {
+    let parse = match index {
+        Some(index) => index.source_syntax.parse_fragment(&test.body),
+        None => crate::analysis::syntax::parse_clean_source_file(&test.body),
+    };
+    let Some(parse) = parse else {
         return false;
     };
     let syntax = parse.tree().syntax().clone();
@@ -3156,7 +3160,7 @@ fn executable_call_resolves(
                         )
                     })
                 });
-                binding_admitted && assertion_arguments_resolve(&call, resolves)
+                binding_admitted && assertion_arguments_resolve(&call, index, resolves)
             })
 }
 
@@ -3234,6 +3238,7 @@ fn inherent_call_node_resolves(
 /// the lexical scope anchor. Diagnostics and unsupported macros add no proof.
 fn assertion_arguments_resolve(
     call: &ast::MacroCall,
+    index: Option<&RustIndex>,
     resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
 ) -> bool {
     let Some(path) = call.path() else {
@@ -3268,9 +3273,12 @@ fn assertion_arguments_resolve(
         return false;
     };
     arguments.into_iter().take(operands).any(|argument| {
-        let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&format!(
-            "fn ripr_receiver_operand() {{ let _ = {argument}; }}"
-        )) else {
+        let text = format!("fn ripr_receiver_operand() {{ let _ = {argument}; }}");
+        let parse = match index {
+            Some(index) => index.source_syntax.parse_fragment(&text),
+            None => crate::analysis::syntax::parse_clean_source_file(&text),
+        };
+        let Some(parse) = parse else {
             return false;
         };
         let syntax = parse.tree().syntax().clone();
@@ -3508,7 +3516,8 @@ fn owner_call_relation_reason(
                         test,
                         source,
                         trait_name,
-                        owner_scope.in_file(&test.file),
+                        Some(owner_scope),
+                        index,
                     )
                 }) || super::owner_pin::parent_chain_shadows_trait(
                     test,
@@ -3567,7 +3576,8 @@ fn owner_call_relation_reason(
             test,
             source,
             &impl_type,
-            owner_scope.in_file(&test.file),
+            Some(owner_scope),
+            index,
         ) || super::owner_pin::file_renames_to(source, &impl_type)
             || super::owner_pin::file_renames_to(source, raw_impl_type.as_str())
     }) || super::owner_pin::parent_chain_shadows_type(test, &impl_type, owner_scope, index)
@@ -3589,7 +3599,8 @@ fn owner_call_relation_reason(
                 test,
                 source,
                 trait_name,
-                owner_scope.in_file(&test.file),
+                Some(owner_scope),
+                index,
             )
         })
     }) || owner_trait.as_deref().is_some_and(|trait_name| {

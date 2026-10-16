@@ -41,4 +41,4 @@ pub(crate) use ra::{
     GovernedCfgTestModule, ModuleItemScopes, fn_name_binding_count, governed_cfg_test_modules,
     inline_unit_module_layout, module_item_scopes,
 };
-pub(crate) use source_snapshot::{ItemNesting, SourceSyntaxMemos};
+pub(crate) use source_snapshot::{ItemNesting, SourceSnapshot, SourceSyntaxMemos};

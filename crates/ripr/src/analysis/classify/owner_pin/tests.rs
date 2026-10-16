@@ -1,4 +1,203 @@
 mod json_construction;
+#[test]
+fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
+    let source = "mod production {\nstruct Widget;\nimpl Widget { fn read() {} }\n#[test] fn subject() {}\nmod nested { struct Widget; trait Render {}\n#[test] fn subject() {}\n}\n}\nmod peer { struct Widget;\n#[test] fn subject() {}\n}\n";
+    let index = index(&[(LIB, source)]);
+    let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+    let snapshot = index
+        .source_syntax
+        .get(&index, Path::new(LIB))
+        .ok_or("snapshot")?;
+    let test = index
+        .tests()
+        .iter()
+        .find(|t| t.start_line == 4)
+        .ok_or("production subject")?;
+    let owner = OwnerScope::new("read", 3, Path::new(LIB));
+    for _ in 0..20 {
+        assert!(!test_module_shadows_type(
+            test,
+            source,
+            "Widget",
+            Some(owner),
+            &index
+        ));
+    }
+    assert_eq!(
+        snapshot.shadow_computations(),
+        1,
+        "identical shadow queries must compute once"
+    );
+    let scopes = snapshot.lexical_items().ok_or("scope facts")?;
+    assert!(std::ptr::eq(
+        scopes,
+        snapshot.lexical_items().ok_or("scope facts")?
+    ));
+    // Owner file/name/line all affect the exemption, even at the same test.
+    for wrong in [
+        OwnerScope::new("read", 3, Path::new(HELPERS)),
+        OwnerScope::new("missing", 3, Path::new(LIB)),
+        OwnerScope::new("read", 100, Path::new(LIB)),
+    ] {
+        assert!(test_module_shadows_type(
+            test,
+            source,
+            "Widget",
+            Some(wrong),
+            &index
+        ));
+    }
+    let nested = index
+        .tests()
+        .iter()
+        .find(|t| t.start_line == 6)
+        .ok_or("nested subject")?;
+    assert!(test_module_shadows_type(
+        nested,
+        source,
+        "Widget",
+        Some(owner),
+        &index
+    ));
+    assert!(test_module_shadows_trait(
+        nested,
+        source,
+        "Render",
+        Some(owner),
+        &index
+    ));
+    assert!(!test_module_shadows_type(
+        nested,
+        source,
+        "Render",
+        Some(owner),
+        &index
+    ));
+    assert!(!test_module_shadows_type(
+        nested,
+        source,
+        "Absent",
+        Some(owner),
+        &index
+    ));
+    let peer = index
+        .tests()
+        .iter()
+        .find(|t| t.start_line == 10)
+        .ok_or("peer subject")?;
+    assert!(test_module_shadows_type(
+        peer,
+        source,
+        "Widget",
+        Some(owner),
+        &index
+    ));
+    // Name and both coordinates remain in the key, including macro-shaped
+    // callers that have no matching function and require the line fallback.
+    let before = snapshot.shadow_computations();
+    for changed in 0..3 {
+        let mut other = test.clone();
+        match changed {
+            0 => other.name = "macro_subject".into(),
+            1 => other.start_line = 5,
+            _ => other.end_line = 6,
+        }
+        let _ = test_module_shadows_type(&other, source, "Widget", Some(owner), &index);
+    }
+    assert_eq!(snapshot.shadow_computations(), before + 3);
+    Ok(())
+}
+
+#[test]
+fn module_shadow_snapshot_replacement_and_external_source_cannot_borrow_answers()
+-> Result<(), String> {
+    let original = "mod tests { struct Widget; #[test] fn subject() {} }";
+    let mut index = index(&[(LIB, original)]);
+    let test = index.tests().iter().next().ok_or("subject")?.clone();
+    let old = index
+        .source_syntax
+        .get(&index, Path::new(LIB))
+        .ok_or("snapshot")?;
+    let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+    assert!(test_module_shadows_type(
+        &test, source, "Widget", None, &index
+    ));
+    assert!(!test_module_shadows_type(
+        &test,
+        "mod tests { #[test] fn subject() {} }",
+        "Widget",
+        None,
+        &index
+    ));
+    assert!(test_module_shadows_type(
+        &test,
+        "mod tests { struct Widget; fn broken( {",
+        "Widget",
+        None,
+        &index
+    ));
+    let clone = index.clone();
+    let cloned = clone
+        .source_syntax
+        .get(&clone, Path::new(LIB))
+        .ok_or("clone")?;
+    assert!(!Arc::ptr_eq(&old, &cloned));
+    assert_eq!(cloned.shadow_computations(), 0);
+    index.file_data_mut(Path::new(LIB)).ok_or("file")?.source =
+        "mod tests { #[test] fn subject() {} }".into();
+    let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+    assert!(!test_module_shadows_type(
+        &test, source, "Widget", None, &index
+    ));
+    let new = index
+        .source_syntax
+        .get(&index, Path::new(LIB))
+        .ok_or("new snapshot")?;
+    assert!(!Arc::ptr_eq(&old, &new));
+    assert_eq!(old.shadow_computations(), 1);
+    assert_eq!(new.shadow_computations(), 1);
+    Ok(())
+}
+
+#[test]
+fn module_shadow_snapshot_keeps_raw_alias_same_line_and_owner_ambiguity() -> Result<(), String> {
+    for (source, expected) in [
+        (
+            "mod sibling { struct Widget; } #[test] fn subject() {}",
+            false,
+        ),
+        (
+            "mod a { struct Widget; #[test] fn subject() {} } mod b { #[test] fn subject() {} }",
+            true,
+        ),
+        ("mod a { struct r#Widget; #[test] fn r#subject() {} }", true),
+        (
+            "mod a { type Widget = Other; #[test] fn subject() {} }",
+            true,
+        ),
+        (
+            "mod a { use foreign::Other as Widget; #[test] fn subject() {} }",
+            true,
+        ),
+        (
+            "mod a { struct Widget; fn read() {} fn read() {} #[test] fn subject() {} }",
+            true,
+        ),
+    ] {
+        let index = index(&[(LIB, source)]);
+        let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+        let owner = OwnerScope::new("read", 1, Path::new(LIB));
+        for test in index.tests().iter() {
+            assert_eq!(
+                test_module_shadows_type(test, source, "Widget", Some(owner), &index),
+                expected,
+                "{source}"
+            );
+        }
+        assert!(!index.tests().is_empty());
+    }
+    Ok(())
+}
 
 use super::*;
 use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleProvenanceEdge};

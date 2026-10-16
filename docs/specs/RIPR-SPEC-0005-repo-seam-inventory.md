@@ -302,9 +302,15 @@ credit. Genuine root/imported helpers and same-name inherent wrapper delegation
 retain repository reach. Diff helper evidence remains conservative; repository
 helper reach is not a new diff-helper claim. The executable-identity
 fixtures and their paired native/full/compact/diff matrix pin this boundary.
-Repeated parsing and per-call `OwnerPinSyntax` cache loss remain substantive,
-unbenchmarked performance concerns tracked by #8005; correctness controls do
-not refute them.
+Complete-source shadow queries reuse snapshot parse, inclusive lines and byte
+ancestry. Answer keys retain the test name and both coordinates, requested name
+and type-versus-trait kind, and owner file/name/start coordinate. Source replacement
+invalidates the snapshot and clones start empty. Caller and assertion-operand
+parses share only immutable syntax by exact bytes; executable scope, owner
+resolution and the original macro invocation anchor remain per-query authority.
+Malformed source, ambiguous owners and same-line test candidates retain their
+conservative behavior. Performance measurements remain separate from correctness
+controls; residual per-call work and unsupported semantic boundaries remain visible.
 
 The verdict corpus keeps the accuracy cost of this boundary visible: arbitrary
 `ByteSize::gb`/`ByteSize::kib` factories, rstest parameter receivers and bare
