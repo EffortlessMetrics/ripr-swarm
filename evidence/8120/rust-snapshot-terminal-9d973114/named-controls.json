@@ -1,0 +1,49 @@
+{
+  "run": 38890260714,
+  "job": 116937876333,
+  "raw_log_characters": 3689909,
+  "checkout_lines": [
+    "2026-10-16T10:54:33.2613939Z Uses: EffortlessMetrics/ripr-swarm/.github/workflows/rust-gates.yml@refs/pull/8251/merge (b3c9aa138e6edcd3ddd0ec27b0df195b8675102e)",
+    "2026-10-16T10:54:33.4846772Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/* +b3c9aa138e6edcd3ddd0ec27b0df195b8675102e:refs/remotes/pull/8251/merge",
+    "2026-10-16T10:54:44.3699407Z  * [new ref]             b3c9aa138e6edcd3ddd0ec27b0df195b8675102e -> pull/8251/merge",
+    "2026-10-16T10:54:45.0217878Z HEAD is now at b3c9aa138 Merge 9d9731148780613ec27b70b0d77fe612fdd282e5 into b0d507333e98f3cf30af4c72fa43c7d2bdaf1659",
+    "2026-10-16T10:54:45.0254332Z [command]/usr/bin/git log -1 --format=%H",
+    "2026-10-16T10:54:45.0273805Z b3c9aa138e6edcd3ddd0ec27b0df195b8675102e"
+  ],
+  "named_passes": {
+    "independent_literal_field_assertion_remains_strong_beside_a_snapshot": [
+      "2026-10-16T11:14:36.9924212Z         PASS [   0.116s] (12458/16362) ripr::snapshot_field_admission independent_literal_field_assertion_remains_strong_beside_a_snapshot"
+    ],
+    "inline_expect_test_field_comparison_keeps_its_existing_grade": [
+      "2026-10-16T11:14:37.0708184Z         PASS [   0.068s] (12460/16362) ripr::snapshot_field_admission inline_expect_test_field_comparison_keeps_its_existing_grade"
+    ],
+    "inline_snapshot_expected_text_cannot_borrow_another_receiver_field": [
+      "2026-10-16T11:14:37.0966445Z         PASS [   0.075s] (12461/16362) ripr::snapshot_field_admission inline_snapshot_expected_text_cannot_borrow_another_receiver_field"
+    ],
+    "snapshot_of_another_receiver_cannot_close_the_owner_field": [
+      "2026-10-16T11:14:37.1129370Z         PASS [   0.052s] (12462/16362) ripr::snapshot_field_admission snapshot_of_another_receiver_cannot_close_the_owner_field"
+    ],
+    "snapshot_only_expected_edits_do_not_invent_field_discrimination": [
+      "2026-10-16T11:14:37.2890830Z         PASS [   0.192s] (12465/16362) ripr::snapshot_field_admission snapshot_only_expected_edits_do_not_invent_field_discrimination"
+    ],
+    "snapshot_without_an_expected_file_cannot_close_the_owner_field": [
+      "2026-10-16T11:14:37.1792978Z         PASS [   0.066s] (12463/16362) ripr::snapshot_field_admission snapshot_without_an_expected_file_cannot_close_the_owner_field"
+    ],
+    "unbound_snapshot_owner_result_field_stays_weak": [
+      "2026-10-16T11:07:26.5829904Z         PASS [   0.018s] ( 5399/16362) ripr analysis::test_grip_evidence::tests::unbound_snapshot_owner_result_field_stays_weak"
+    ],
+    "exact_owner_result_field_equality_stays_already_gripped": [
+      "2026-10-16T11:07:23.7787921Z         PASS [   0.025s] ( 5093/16362) ripr analysis::test_grip_evidence::tests::exact_owner_result_field_equality_stays_already_gripped"
+    ],
+    "pin_strength_gate_keeps_exact_pins_strong_and_defers_bool_pins_to_owner_pin": [
+      "2026-10-16T11:06:40.8907336Z         PASS [   0.017s] ( 1364/16362) ripr analysis::classify::reveal::tests::pin_strength_gate_keeps_exact_pins_strong_and_defers_bool_pins_to_owner_pin"
+    ]
+  },
+  "summaries": [
+    "2026-10-16T11:03:22.3483470Z   printf 'profile=ci\\ncommand=cargo nextest run --workspace --profile ci\\n'",
+    "2026-10-16T11:03:22.3485149Z cargo nextest run --workspace --profile ci",
+    "2026-10-16T11:20:57.5232212Z      Summary [ 877.656s] 16362 tests run: 16362 passed (12 slow), 3 skipped",
+    "2026-10-16T11:20:59.2635903Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "2026-10-16T11:21:03.6488249Z test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+  ]
+}

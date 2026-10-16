@@ -1,0 +1,301 @@
+{
+  "run_id": 38890260714,
+  "source_head": "9d9731148780613ec27b70b0d77fe612fdd282e5",
+  "rust_gate": {
+    "id": 116937876333,
+    "name": "Ripr Rust Small on GitHub Hosted / Rust gates",
+    "status": "completed",
+    "conclusion": "success",
+    "run_id": 38890260714,
+    "logs_url": null,
+    "steps": [
+      {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1
+      },
+      {
+        "name": "Run actions/checkout@v6",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 2
+      },
+      {
+        "name": "Acquire scratch lease",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 3
+      },
+      {
+        "name": "Reclaim terminal scratch",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 4
+      },
+      {
+        "name": "Prepare toolchain temp",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 5
+      },
+      {
+        "name": "Configure scratch environment",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 6
+      },
+      {
+        "name": "Prepare scratch",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 7
+      },
+      {
+        "name": "Run dtolnay/rust-toolchain@v1",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 8
+      },
+      {
+        "name": "Formatting preflight",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 9
+      },
+      {
+        "name": "Install CI tools",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 10
+      },
+      {
+        "name": "Restore hosted Rust cache",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 11
+      },
+      {
+        "name": "Start sccache server",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 12
+      },
+      {
+        "name": "Agent skill contracts",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 13
+      },
+      {
+        "name": "Prepare locked owner-return fixture dependencies",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 14
+      },
+      {
+        "name": "Repository policy preflight",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 15
+      },
+      {
+        "name": "Evidence promotion honesty",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 16
+      },
+      {
+        "name": "Dependency policy",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 17
+      },
+      {
+        "name": "Process policy",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 18
+      },
+      {
+        "name": "Network policy",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 19
+      },
+      {
+        "name": "Workspace and all-target check",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 20
+      },
+      {
+        "name": "All-features ripr target check",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 21
+      },
+      {
+        "name": "Strict workspace Clippy",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 22
+      },
+      {
+        "name": "Required Rust tests",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 23
+      },
+      {
+        "name": "Upload required Rust test results",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 24
+      },
+      {
+        "name": "Required Rust doctests",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 25
+      },
+      {
+        "name": "Golden output contracts",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 26
+      },
+      {
+        "name": "Retain wildcard calibration producer outputs",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 27
+      },
+      {
+        "name": "Fixture contracts",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 28
+      },
+      {
+        "name": "Verdict corpora",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 29
+      },
+      {
+        "name": "PR evidence",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 30
+      },
+      {
+        "name": "Proof route dry-run (advisory)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 31
+      },
+      {
+        "name": "Advisory reports",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 32
+      },
+      {
+        "name": "Show sccache stats",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 33
+      },
+      {
+        "name": "Write gate summary",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 34
+      },
+      {
+        "name": "Remove RIPR analysis cache before artifact upload",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 35
+      },
+      {
+        "name": "Upload RIPR reports",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 36
+      },
+      {
+        "name": "Clean scratch",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 37
+      },
+      {
+        "name": "Release scratch lease",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 38
+      },
+      {
+        "name": "Post Restore hosted Rust cache",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 75
+      },
+      {
+        "name": "Post Run actions/checkout@v6",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 76
+      },
+      {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 77
+      }
+    ]
+  },
+  "result": {
+    "id": 116963986906,
+    "name": "Ripr Rust Small Result",
+    "status": "completed",
+    "conclusion": "success",
+    "run_id": 38890260714,
+    "logs_url": null,
+    "steps": [
+      {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1
+      },
+      {
+        "name": "Summarize routed result",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 2
+      },
+      {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3
+      }
+    ]
+  },
+  "nextest_pass_rows": 16362,
+  "nextest_unique_counters": 16362,
+  "not_run_scope": {
+    "nextest_skipped": 3,
+    "skip_names": "not emitted in retained decoded log",
+    "doctests_ignored": 1
+  },
+  "policy_access": {
+    "status": "HELD_PENDING_PRIOR_DENIAL_RECORD",
+    "target": "Classic main branch protection and active main branch rulesets for EffortlessMetrics/ripr-swarm",
+    "reason": "Parent explicitly requires preserving existing protection denials; exact previous endpoint/result not present in lane records. No supported policy-read connector action discovered. Requested exact denial context; Personal Context unavailable. No policy endpoint retried and no alternate route attempted.",
+    "merge_attempted": false
+  }
+}

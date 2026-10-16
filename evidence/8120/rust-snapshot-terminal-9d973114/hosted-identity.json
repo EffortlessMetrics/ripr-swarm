@@ -1,0 +1,11 @@
+{
+  "source_head": "9d9731148780613ec27b70b0d77fe612fdd282e5",
+  "actual_checkout": "b3c9aa138e6edcd3ddd0ec27b0df195b8675102e",
+  "decoded_log_sha256": "a897e82aad9e84d37856f65b3672d3df003ac6e77f4998d29c7f4b1f731160c9",
+  "decoded_log_bytes": 3690226,
+  "nextest_passed": 16362,
+  "nextest_skipped": 3,
+  "doctests_passed": 2,
+  "doctests_ignored": 1,
+  "artifact_zip": "No retrieval requested; existing denial for artifact12035929570 remains binding."
+}

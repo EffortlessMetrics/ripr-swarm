@@ -1,0 +1,56 @@
+{
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "pr": 8251,
+  "source_head": "9d9731148780613ec27b70b0d77fe612fdd282e5",
+  "source_tree": "77aa5a4041e5686b8a38b005ae9eb472202c5739",
+  "run_id": 38890260714,
+  "rust_gate_job_id": 116937876333,
+  "required_result_job_id": 116963986906,
+  "result": "success",
+  "actual_checkout": "b3c9aa138e6edcd3ddd0ec27b0df195b8675102e",
+  "actual_checkout_tree": "77aa5a4041e5686b8a38b005ae9eb472202c5739",
+  "actual_checkout_parents": [
+    "b0d507333e98f3cf30af4c72fa43c7d2bdaf1659",
+    "9d9731148780613ec27b70b0d77fe612fdd282e5"
+  ],
+  "nextest": {
+    "passed": 16362,
+    "skipped": 3,
+    "pass_rows": 16362,
+    "unique_pass_counters": 16362,
+    "binaries": 108,
+    "skip_identities": "not emitted in retained log"
+  },
+  "doctests": {
+    "passed": 2,
+    "ignored": 1
+  },
+  "named_relevant_passes": 9,
+  "honesty_default_scope": {
+    "total": 301,
+    "passed": 300,
+    "failed": 0,
+    "not_run": 1,
+    "not_run_case": "rust_semver_matches_greater_external_limitation"
+  },
+  "corpus_union_cases_preserved": 301,
+  "inspected_current_main": "14afcde1c5e7777ecb5697bdbfb80394dd9e5fb2",
+  "clean_current_main_composition_preview": "82bba3cd0e7d390db3c3f357d746313a623c0534",
+  "preview_execution": "not claimed; affected-source review is unchanged and behind-only update is unwarranted",
+  "packet_members_reverified": [
+    315,
+    84
+  ],
+  "policy_status": "HELD_PENDING_PRIOR_DENIAL_RECORD: no protection endpoint retried, alternate route or merge attempted",
+  "artifact_limit": "Artifact12035929570 supplied-URL ZIP retrieval was denied by proxy403 in a prior pass. No retry or alternate route; no ZIP retrieved for this inspection.",
+  "historical_only": {
+    "run": 38876223230,
+    "source_head": "014238d1256fa283fece5679d520e511bcd460d0",
+    "checkout": "4990b322c7fef18ea998f759b3164809c8e57f20"
+  },
+  "non_claims": [
+    "Broader8120/8121 snapshot binding/projection and non-field seam repair remain open.",
+    "Snapshot presence or pass alone is not owner-field relevance proof.",
+    "Source/build/install/package/platform/release equivalence is not established."
+  ]
+}

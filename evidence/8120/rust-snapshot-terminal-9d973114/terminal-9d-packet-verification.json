@@ -1,0 +1,136 @@
+{
+  "packets": [
+    {
+      "packet_commit": "7ca3a3353967dc258ffcd202ab50e498f12d5e0f",
+      "readback_commit": "a32b64d544a63c444681db2c8d4c731015d8278b",
+      "prefix": "evidence/8120/rust-snapshot-repair/",
+      "public_files": {
+        "README.md": "e43c6527bbc4f09d85918b43237f4f4805ee80b730c2566750e366c4532fb71b",
+        "SHA256SUMS": "c01ddbdfec114b928f4f8e5c49bcfffebdad260e57160d0ea434a53cba6ef45c",
+        "archive-manifest.json": "7f5a44b0bdf5be9228492ced7f31c362a835b13f7ea08fbcaee42ac27d76c565",
+        "repair-evidence.tar.gz.b64.txt": "7619e4c0d87dff77a23886f4739b5403c21ffee4fea4c76653704867fa49c20a",
+        "summary.json": "c0b20a921750653281a73edd66bea4eea5f4c84d79691541bf64cc4015422c37"
+      },
+      "members_verified": 315,
+      "inventory_bytes_size_mode_hash_verified": true,
+      "readback": {
+        "packet_commit": "7ca3a3353967dc258ffcd202ab50e498f12d5e0f",
+        "packet_url": "https://github.com/EffortlessMetrics/ripr-swarm/tree/7ca3a3353967dc258ffcd202ab50e498f12d5e0f/evidence/8120/rust-snapshot-repair",
+        "source_head": "014238d1256fa283fece5679d520e511bcd460d0",
+        "fresh_network_git_store": true,
+        "fetch_depth": 1,
+        "public_files_verified": [
+          {
+            "path": "evidence/8120/rust-snapshot-repair/README.md",
+            "sha256": "e43c6527bbc4f09d85918b43237f4f4805ee80b730c2566750e366c4532fb71b",
+            "size": 6049,
+            "blob": "bdf3d59b2acd6583e427c2e31ccb3e793534210b"
+          },
+          {
+            "path": "evidence/8120/rust-snapshot-repair/SHA256SUMS",
+            "sha256": "c01ddbdfec114b928f4f8e5c49bcfffebdad260e57160d0ea434a53cba6ef45c",
+            "size": 340,
+            "blob": "a1c1098d2490c963a28a42b5016b0a662be8c0df"
+          },
+          {
+            "path": "evidence/8120/rust-snapshot-repair/archive-manifest.json",
+            "sha256": "7f5a44b0bdf5be9228492ced7f31c362a835b13f7ea08fbcaee42ac27d76c565",
+            "size": 67181,
+            "blob": "dcf2e89c505d11e92c7fcb1cff80551a478567a7"
+          },
+          {
+            "path": "evidence/8120/rust-snapshot-repair/repair-evidence.tar.gz.b64.txt",
+            "sha256": "7619e4c0d87dff77a23886f4739b5403c21ffee4fea4c76653704867fa49c20a",
+            "size": 528825,
+            "blob": "d8953d87f61f15587b414e658a028132eef5d8f7"
+          },
+          {
+            "path": "evidence/8120/rust-snapshot-repair/summary.json",
+            "sha256": "c0b20a921750653281a73edd66bea4eea5f4c84d79691541bf64cc4015422c37",
+            "size": 23472,
+            "blob": "ce0b5759b99f8e10e5acc7796743935daa44d46f"
+          }
+        ],
+        "archive_members_verified": 315,
+        "complete_member_inventory": true,
+        "member_bytes_sizes_modes_sha256_verified": true,
+        "gzip_sha256": "9ca3914154ca9b8eb5ab85bff3a6ee0ee4063ea53ef849603952413d2158d6d9",
+        "tar_sha256": "36ac24757b531371eddf0fc9f94fad055be9e4b939ef0446ff79b7d6210c8ba5",
+        "claim_boundary": "Publication recovery verified through fresh network Git; no package/install or hosted qualification claim."
+      },
+      "gzip_sha256": "9ca3914154ca9b8eb5ab85bff3a6ee0ee4063ea53ef849603952413d2158d6d9",
+      "tar_sha256": "36ac24757b531371eddf0fc9f94fad055be9e4b939ef0446ff79b7d6210c8ba5",
+      "summary_keys": [
+        "repository",
+        "source_pr",
+        "candidate",
+        "claim",
+        "ownership",
+        "baseline",
+        "red",
+        "committed_focused_tests",
+        "independent_review",
+        "native_literal",
+        "local_validation",
+        "golden_preparation",
+        "final_cli",
+        "remote_merge_at_capture",
+        "transport_recovery",
+        "resources",
+        "unclaimed"
+      ],
+      "packet_parents": [
+        "97aceafc852d21ad278b6682f7679ccbdbc51995"
+      ],
+      "readback_parents": [
+        "7ca3a3353967dc258ffcd202ab50e498f12d5e0f"
+      ]
+    },
+    {
+      "packet_commit": "f6eb54c35a6c4174c5b369b2189199aa52563f2c",
+      "readback_commit": "d611735cd0a5bbce7f4d2c1ae76bcd297c813c0e",
+      "prefix": "evidence/8120/rust-snapshot-repair-resume-9d973114/",
+      "public_files": {
+        "README.md": "eacd08c06d4b11bb028068c6834b6d6e65cea0a7fb93c9792d1d77577b038456",
+        "SHA256SUMS": "f03b9d4e13d4d5ab044eb7338fbefd6e2e2a88dd95891c1379f0186e9aeb3f49",
+        "archive-manifest.json": "7055e9e9e1144c87cd01fe2bd81d8faa28058b1c5cf5665ed0e9c2b630238512",
+        "continuation-evidence.tar.gz.b64.txt": "7b64c565e471060868bd8b68676b103119de331eb7d72ef8cb42a482656273bf",
+        "summary.json": "409366d8d2d5e5ed32f1d8f341ae6f8bed8e0f52f216c664af5a82d36ea29930"
+      },
+      "members_verified": 84,
+      "inventory_bytes_size_mode_hash_verified": true,
+      "readback": {
+        "published_commit": "f6eb54c35a6c4174c5b369b2189199aa52563f2c",
+        "remote_readback_commit": "f6eb54c35a6c4174c5b369b2189199aa52563f2c",
+        "public_files_verified": 5,
+        "archive_members_verified": 84,
+        "all_inventory_bytes_size_mode_hashes_equal": true,
+        "packet_url": "https://github.com/EffortlessMetrics/ripr-swarm/tree/f6eb54c35a6c4174c5b369b2189199aa52563f2c/evidence/8120/rust-snapshot-repair-resume-9d973114",
+        "boundary": "Independent Git source/task packet, not the denied nextest artifact ZIP; no alternate artifact retrieval."
+      },
+      "gzip_sha256": "0eb64e23c81d383cc886649240ced8f7ddf24094f3f66ecc6225425f86bac6e6",
+      "tar_sha256": "5b100786ca2c5ae44a2178b4382b51b8c1ff99478fa5328d37b3ca78703196af",
+      "summary_keys": [
+        "head",
+        "tree",
+        "integration_basis",
+        "remote_merge_subject",
+        "validation",
+        "binary_witness",
+        "report_denominators",
+        "later_main_relevance",
+        "thread_disposition",
+        "historical_hosted_subject",
+        "artifact_denial",
+        "limits"
+      ],
+      "packet_parents": [
+        "a32b64d544a63c444681db2c8d4c731015d8278b"
+      ],
+      "readback_parents": [
+        "f6eb54c35a6c4174c5b369b2189199aa52563f2c"
+      ]
+    }
+  ],
+  "boundary": "Local immutable Git source evidence and readbacks. These are independent of denied artifact12035929570; no artifact retrieval or protection route attempted."
+}

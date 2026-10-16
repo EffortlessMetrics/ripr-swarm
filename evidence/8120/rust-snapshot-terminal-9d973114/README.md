@@ -1,0 +1,11 @@
+# PR #8251 — terminal successor qualification
+
+Source head `9d9731148780613ec27b70b0d77fe612fdd282e5` qualified through run `38890260714`. The actual Rust-gate checkout was `b3c9aa138e6edcd3ddd0ec27b0df195b8675102e`, with parents `b0d50733` + `9d973114` and the exact candidate tree. Nine relevant named controls passed once. Nextest reports 16,362 passed / 3 skipped across 108 binaries; doctests report 2 passed / 1 ignored. Skip identities were not emitted in the decoded log. `hosted-identity.json` pins that complete decoded log by UTF-8 bytes/hash; `named-controls.json` preserves the relevant checkout, PASS and summary lines. The original decoded log remains task-local and is available through the supported job-log API.
+
+All 301 corpus payloads remain intact. Default honesty scope is 300 passed, zero failed, one pinned-external case not run. Both immutable source packets were rechecked by complete inventory, bytes/hash, sizes and modes: 315 predecessor members and 84 successor members. Those source packets and the supported job log are independent of the denied nextest ZIP. Artifact `12035929570` remains unverified after its prior supplied-URL proxy 403; no retry or alternate retrieval route was used.
+
+Current inspected main is still `14afcde1`; the clean local composition preview is `82bba3cd`. The affected-source assessment remains unchanged. That preview is not a claim of actual combined execution. Old run `38876223230` covers only historical head `014238d1` / checkout `4990b322`.
+
+Branch-policy eligibility is held pending the exact prior protection/ruleset denial record and authorized current policy evidence. The user explicitly requires preserving those denials; no policy endpoint has been retried, no alternate route used, and no merge attempted. Green source/tests and resolved conversations do not establish absent protection. The independent review keeps source/hosted-proof readiness separate from this finish-pr policy boundary.
+
+This is the bounded field-construction snapshot guard. Raw weak/unknown observations and existing literal/expect-test equality behavior remain; broader #8120/#8121 and non-field seams stay open. No package, installation, platform or release equivalence is claimed.
