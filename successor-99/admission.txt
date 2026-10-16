@@ -1,0 +1,1 @@
+Successor99 exact-head negative qualification; same matched dev/default baseline347. Source55 artifacts and source-only findings retained separately. Own clean detached checkout reused only after all readers/builders terminal. Current free13.55GB fits2GiB peak additional build/freeze budget above10GiB reserve. No full-input timing pending semantic parity.

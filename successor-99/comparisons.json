@@ -1,0 +1,117 @@
+[
+  {
+    "case": "clean",
+    "baseline_equal": true,
+    "head55_equal": true,
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 2,
+      "weakly_exposed": 0,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  },
+  {
+    "case": "scoped-rest",
+    "baseline_equal": true,
+    "head55_equal": true,
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 0,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 2,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  },
+  {
+    "case": "trusted-subset",
+    "baseline_equal": false,
+    "head55_equal": true,
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 0,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 2,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  },
+  {
+    "case": "same-path-rank",
+    "baseline_equal": true,
+    "head55_equal": true,
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 0,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 2,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  },
+  {
+    "case": "scoped-public-only",
+    "baseline_equal": false,
+    "head55_equal": true,
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 0,
+      "reachable_unrevealed": 2,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  }
+]

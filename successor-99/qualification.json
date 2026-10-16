@@ -1,0 +1,17 @@
+{
+  "head": "99ddc596b81787a30c0ed438fe40e3f1cd3ef328",
+  "tree": "34d86f03e0498dccd788289dd196165e302fc6bc",
+  "base": "3477bf95a9ead7f35ec099a4e6cf17af96708003",
+  "binary_sha256": "3b3c4beb2e7a1bd1ef12485fdf11db8a5ebd41e6b5413f47cc34e6fc6f858aee",
+  "default_feature_completed_cases": 5,
+  "outputs_identical_to55": 5,
+  "baseline_parity_failures": [
+    "scoped-public-only",
+    "trusted-subset"
+  ],
+  "disposition": "REPAIR_REQUIRED; public scoped-rest false-gap promotion and trusted-subset disclosure mismatch persist",
+  "same_path_direct_oracle": "executed at55 only;99source changes only roots retrieval borrow placement, ordering logic unchanged; no fresh internal lookup claim",
+  "full_frozen_input_timing": "not started; held on demonstrated semantic parity failure, not executor failure",
+  "hosted_ci": "not launched/rerun",
+  "source_pr_edits": false
+}
