@@ -5375,6 +5375,65 @@ index 0000000..1111111 100644
         Ok(())
     }
 
+    /// #4908: the skipped-scope limitation names the files it skipped. A
+    /// JavaScript-only skip says JavaScript under the TypeScript/JavaScript
+    /// adapter, a mixed skip says TypeScript/JavaScript, and a TypeScript-only
+    /// skip keeps the exact existing wording.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn skipped_scope_limitation_names_javascript_only_when_javascript_files_are_skipped()
+    -> Result<(), String> {
+        let cases = [
+            (
+                "js-only",
+                vec!["vendor/a.js"],
+                "1 changed JavaScript file(s) were skipped",
+                "Not analyzed by the TypeScript/JavaScript preview adapter",
+            ),
+            (
+                "mixed",
+                vec!["vendor/a.js", "vendor/b.ts"],
+                "2 changed TypeScript/JavaScript file(s) were skipped",
+                "Not analyzed by the TypeScript/JavaScript preview adapter",
+            ),
+            (
+                "ts-only",
+                vec!["vendor/b.ts"],
+                "1 changed TypeScript file(s) were skipped",
+                "Not analyzed by the TypeScript preview adapter",
+            ),
+        ];
+        for (label, paths, expected_detail, expected_recovery) in cases {
+            let root = temp_root(&format!("issue-4908-skipped-{label}"))?;
+            let diff_file = root.join("change.diff");
+            write(&diff_file, &added_file_diff(&paths))?;
+            let result = run_diff_pipeline_with_oracle_policy(
+                &excluded_path_advisory_options(&root, diff_file),
+                &OraclePolicy::default(),
+                &[LanguageId::TypeScript],
+            )?;
+            let outcome = result
+                .analysis_outcome
+                .ok_or_else(|| format!("{label}: expected an analysis outcome"))?;
+            let limitation = outcome
+                .limitations
+                .iter()
+                .find(|limitation| {
+                    limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+                })
+                .ok_or_else(|| format!("{label}: expected the skipped-scope limitation"))?;
+            let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+            assert!(detail.starts_with(expected_detail), "{label}: {detail}");
+            assert!(
+                limitation.recovery.detail.starts_with(expected_recovery),
+                "{label}: {}",
+                limitation.recovery.detail
+            );
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
     /// #4372 (repo scope): the workspace-walk advisory applies the same
     /// authority. With TypeScript enabled, a vendored or `*.generated.*`
     /// file is not counted as analyzed; with it not enabled, the advisory
