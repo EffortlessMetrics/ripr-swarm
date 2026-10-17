@@ -20,6 +20,7 @@ use super::related_tests::{
 };
 use super::sink_alignment::{SinkAlignment, classify_sink_alignment_with_old};
 use super::static_limits::{implicit_dunder_dispatch_limit, static_limit_for_focused_change};
+use super::table_rows::python_unvaried_table_operand;
 use super::term_activation::python_inactive_term_evidence;
 use super::transitive_reach::apply_python_no_static_path_limit;
 use super::{
@@ -442,6 +443,20 @@ pub(super) fn classify_change_for_owner(
         })
         .flatten();
     let mut guarded_arm_downgraded = false;
+    // Table-driven expected values that never vary the changed returned
+    // operand cannot discriminate `return default` -> `return None` (#6651).
+    // A non-table strong test, or a row that varies the operand, keeps the
+    // existing oracle verdict.
+    let unvaried_table = (static_limit.is_none()
+        && matches!(family, ProbeFamily::ReturnValue)
+        && boundary_gap.is_none()
+        && inactive_term.is_none()
+        && guarded_arm_gap.is_none())
+    .then(|| {
+        python_unvaried_table_operand(line_text, old_line_text, owner, &related_candidates, &focus)
+    })
+    .flatten();
+    let mut table_downgraded = false;
     // An existing exact-list assertion cannot justify prescribing the same
     // assertion again when this bounded path cannot prove unequal values.
     let unproven_list_equality = !alignment.observes()
@@ -508,6 +523,7 @@ pub(super) fn classify_change_for_owner(
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && guarded_arm_gap.is_none()
+        && unvaried_table.is_none()
     {
         (
             ExposureClass::Exposed,
@@ -598,6 +614,24 @@ pub(super) fn classify_change_for_owner(
             vec![format!(
                 "A strong Python oracle reaches `{}`, but {}. Add a test input where `{}`.",
                 owner.name, term.reason, term.discriminator,
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(gap) = &unvaried_table
+    {
+        // A strong exact oracle observes the owner's output, but every
+        // table-driven expected value comes from rows that never vary the
+        // changed operand, so the assertion passes either way (#6651).
+        table_downgraded = true;
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but {}; static evidence cannot confirm the changed operand is discriminated. Add a table row that varies `{}`.",
+                owner.name, gap.reason, gap.operand,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() {
@@ -720,7 +754,11 @@ pub(super) fn classify_change_for_owner(
     let infect = StageEvidence::new(
         if static_limit.is_some() {
             StageState::Unknown
-        } else if boundary_downgraded || term_downgraded || guarded_arm_downgraded {
+        } else if boundary_downgraded
+            || term_downgraded
+            || guarded_arm_downgraded
+            || table_downgraded
+        {
             StageState::Weak
         } else {
             StageState::Yes
@@ -737,6 +775,14 @@ pub(super) fn classify_change_for_owner(
             "Related tests reach the changed owner, but every strong related test call provably fails the guarding arm, so the changed line never executes under an observed input.".to_string()
         } else if term_downgraded {
             "Related tests reach the changed term, but every strong related test call gives it the value 0.".to_string()
+        } else if table_downgraded {
+            format!(
+                "Related tests reach the changed return, but {}.",
+                unvaried_table
+                    .as_ref()
+                    .map(|gap| gap.reason.as_str())
+                    .unwrap_or("table rows do not vary the changed operand")
+            )
         } else {
             python_infection_evidence(&family, line_text).summary
         },
@@ -786,6 +832,16 @@ pub(super) fn classify_change_for_owner(
                 .map(|term| MissingDiscriminatorFact {
                     value: term.discriminator.clone(),
                     reason: term.reason.clone(),
+                    flow_sink: flow_sink.clone(),
+                })
+                .into_iter()
+                .collect()
+        } else if table_downgraded {
+            unvaried_table
+                .as_ref()
+                .map(|gap| MissingDiscriminatorFact {
+                    value: format!("a table row that varies {}", gap.operand),
+                    reason: gap.reason.clone(),
                     flow_sink: flow_sink.clone(),
                 })
                 .into_iter()
