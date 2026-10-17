@@ -2901,6 +2901,16 @@ impl OwnerReturnPin {
             (true, None) => return false,
             (false, _) => expected,
         };
+        // #8097: an expected operand read from a file the test itself may
+        // write fixes nothing: the test rewrites the golden from the owner
+        // before comparing, so every mutant of the owner survives.
+        let renamed_fs_import = index
+            .files()
+            .get(&test.file)
+            .is_some_and(|facts| file_renames_fs_or_env_import(&facts.source));
+        if expected_reads_written_file(test, renamed_fs_import, expected) {
+            return false;
+        }
         // `assert_eq!(f(4), f(2) + f(2))` compares the owner with itself.
         if expected_reaches_owner(test, &assertion.text, expected, &self.name)
             || expected_reaches_fixture(test, expected)
@@ -6982,6 +6992,87 @@ fn test_may_write_files(body: &str) -> bool {
                 })
             })
         })
+}
+
+/// #8097: whether the expected operand's value comes from reading a file
+/// that the same test body may write. The read may be inline
+/// (`fs::read_to_string(..)`) or through plain bindings
+/// (`let want = fs::read_to_string(..); assert_eq!(.., want)`), following
+/// a few identifier hops and trivial wrappers (`&want`, `want.as_str()`).
+/// Fail-closed with [`test_may_write_files`]: any writer in the body
+/// taints any file read, and a file-scope renamed `std::fs`/`std::env`
+/// import taints it too, as for the golden-file guard above. A writer in
+/// a helper outside the test body is not visible here and remains a
+/// known limitation.
+fn expected_reads_written_file(
+    test: &TestSummary,
+    renamed_fs_import: bool,
+    expected: &str,
+) -> bool {
+    let may_write = test_may_write_files(&test.body) || renamed_fs_import;
+    if !may_write {
+        return false;
+    }
+    let reads_file = |text: &str| {
+        let compact: String = mask_comments_and_strings(text)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        ["read_to_string", "fs::read", "read_to_end", "File::open"]
+            .iter()
+            .any(|marker| compact.contains(marker))
+    };
+    if reads_file(expected) {
+        return true;
+    }
+    // Reduce `&want`, `want.as_str()`, `want.clone()`, `want.trim()` to
+    // the plain identifier whose binding may hold the file read.
+    let mut operand = expected.trim().trim_start_matches('&').trim();
+    for suffix in [".as_str()", ".clone()", ".trim()", ".as_ref()"] {
+        if let Some(stripped) = operand.strip_suffix(suffix) {
+            operand = stripped.trim();
+        }
+    }
+    if !is_plain_identifier(operand) {
+        return false;
+    }
+    // Follow plain-identifier bindings (`let [mut] w2 = want;`,
+    // `w2 = want;`) a few hops; a hop whose statement reads a file
+    // settles it.
+    let masked = mask_comments_and_strings(&test.body);
+    let statements: Vec<&str> = masked.split(';').collect();
+    let mut current = operand;
+    for _ in 0..4 {
+        let binding = statements.iter().find_map(|statement| {
+            let statement = statement.trim();
+            let rest = statement
+                .strip_prefix("let ")
+                .map(|rest| rest.trim_start().strip_prefix("mut ").unwrap_or(rest))
+                .unwrap_or(statement);
+            let rest = rest.trim_start();
+            let after = rest.strip_prefix(current)?;
+            after
+                .chars()
+                .next()
+                .is_some_and(|next| !(next.is_alphanumeric() || next == '_'))
+                .then_some(statement)
+        });
+        let Some(binding) = binding else {
+            return false;
+        };
+        if reads_file(binding) {
+            return true;
+        }
+        let Some(rhs) = binding.split('=').nth(1) else {
+            return false;
+        };
+        let rhs = rhs.trim().trim_start_matches('&').trim();
+        if !is_plain_identifier(rhs) {
+            return false;
+        }
+        current = rhs;
+    }
+    false
 }
 
 /// RIPR-SPEC-0197: the compared operands of a plain `assert!(lhs == rhs)`
