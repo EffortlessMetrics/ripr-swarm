@@ -1,3 +1,4 @@
 <!-- section: Fixed -->
-- Reuse immutable source syntax while ranking and producing seam evidence to avoid
-  parsing the same test file repeatedly within an analysis pass (#8082).
+- Preserve the landed context-owned syntax sharing while ranking and producing
+  seam evidence; retain the unique discarded-oracle short circuit and its
+  cache-isolation controls when composing the caller candidate (#8082).

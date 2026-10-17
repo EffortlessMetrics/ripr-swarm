@@ -30,9 +30,9 @@ use related_tests::{
 };
 
 use super::classify::{
-    assertion_observes_collection_argument, assertion_observes_direct_collection,
-    call_text_may_call_free_function, direct_collection_mutation_receiver, owner_call_text,
-    reach_evidence as classify_reach_evidence, relation_establishes_reach,
+    assertion_observes_direct_collection, call_text_may_call_free_function,
+    direct_collection_mutation_receiver, mutexed_assertion_observes_collection_argument,
+    owner_call_text, reach_evidence as classify_reach_evidence, relation_establishes_reach,
     test_calls_free_function,
 };
 use super::facts::{CallFact, FunctionImplContext};
@@ -56,6 +56,7 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
@@ -297,36 +298,27 @@ impl<'index> EvidencePass<'index> {
         let token = cancellation::current_token();
         let overlay = crate::analysis::committed_source::current_overlay();
         let processed = AtomicUsize::new(0);
-        // OwnerPinSyntax contains Rc/RefCell state. Rayon initializes it privately
-        // inside each job; no syntax memo crosses this invocation's immutable
-        // index/source overlay or survives a clear_window_memos boundary.
         let mut out: Vec<TestGripEvidence> = seams
             .par_iter()
-            .map_init(
-                crate::analysis::classify::OwnerPinSyntax::default,
-                |pin_syntax, seam| {
-                    cancellation::with_optional_token(token.as_ref(), || {
-                        crate::analysis::committed_source::with_overlay(overlay.clone(), || {
-                            cancellation::checkpoint().ok()?;
-                            let evidence = evidence_for_seam_with_context_and_syntax(
-                                seam, context, pin_syntax,
+            .filter_map(|seam| {
+                cancellation::with_optional_token(token.as_ref(), || {
+                    crate::analysis::committed_source::with_overlay(overlay.clone(), || {
+                        cancellation::checkpoint().ok()?;
+                        let evidence = evidence_for_seam_with_context(seam, context);
+                        let processed = processed.fetch_add(1, Ordering::Relaxed) + 1;
+                        if processed.is_multiple_of(EVIDENCE_PROGRESS_CHUNK)
+                            || processed == seams.len()
+                        {
+                            trace_latency_phase(
+                                "evidence_for_seams_progress",
+                                &format!("processed_{processed}_of_{}", seams.len()),
+                                evidence_started.elapsed(),
                             );
-                            let processed = processed.fetch_add(1, Ordering::Relaxed) + 1;
-                            if processed.is_multiple_of(EVIDENCE_PROGRESS_CHUNK)
-                                || processed == seams.len()
-                            {
-                                trace_latency_phase(
-                                    "evidence_for_seams_progress",
-                                    &format!("processed_{processed}_of_{}", seams.len()),
-                                    evidence_started.elapsed(),
-                                );
-                            }
-                            Some(evidence)
-                        })
+                        }
+                        Some(evidence)
                     })
-                },
-            )
-            .filter_map(std::convert::identity)
+                })
+            })
             .collect();
         out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
         out
@@ -340,32 +332,13 @@ pub(crate) fn evidence_for_seam(seam: &RepoSeam, index: &RustIndex) -> TestGripE
     evidence_for_seam_with_context(seam, &context)
 }
 
-#[cfg(test)]
 fn evidence_for_seam_with_context(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
 ) -> TestGripEvidence {
-    evidence_for_seam_with_context_and_syntax(
-        seam,
-        context,
-        &crate::analysis::classify::OwnerPinSyntax::default(),
-    )
-}
-
-fn evidence_for_seam_with_context_and_syntax(
-    seam: &RepoSeam,
-    context: &CompactGripContext<'_>,
-    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
-) -> TestGripEvidence {
     let mut related_with_reason = find_related_tests_with_context(seam, context);
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
-    sort_related_tests_for_seam(
-        seam,
-        context,
-        owner_fn,
-        &mut related_with_reason,
-        pin_syntax,
-    );
+    sort_related_tests_for_seam(seam, context, owner_fn, &mut related_with_reason);
     let related_indexed: Vec<&CompactTest<'_>> = related_with_reason
         .iter()
         .map(|(indexed, _reason)| *indexed)
@@ -380,6 +353,7 @@ fn evidence_for_seam_with_context_and_syntax(
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
+    let pin_syntax = context.pin_syntax_mutex();
     let propagate = propagate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&related);
     let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
@@ -447,8 +421,7 @@ pub(crate) fn compact_evidence_for_seam(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
 ) -> TestGripEvidence {
-    let pin_syntax = crate::analysis::classify::OwnerPinSyntax::default();
-    let ranked = find_related_tests_ranked(seam, context, &pin_syntax);
+    let ranked = find_related_tests_ranked(seam, context);
     let related_reasons: Vec<(&TestSummary, RelationReason)> = ranked
         .iter()
         .map(|(indexed, reason)| (indexed.test, *reason))
@@ -464,9 +437,10 @@ pub(crate) fn compact_evidence_for_seam(
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
-    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
+    let pin_syntax = context.pin_syntax_mutex();
+    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&related);
-    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
+    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
     let statically_contradicted_related_tests = related
         .iter()
         .filter(|test| test_has_contradicted_assertion(test, owner_fn))
@@ -509,6 +483,9 @@ fn reach_evidence(
     owner_fn: Option<&FunctionSummary>,
     context: &CompactGripContext<'_>,
 ) -> StageEvidence {
+    if let Some(summary) = reach_limit::outside_module_tree_summary(seam, context) {
+        return StageEvidence::new(StageState::Opaque, Confidence::Low, summary);
+    }
     if related.is_empty() {
         return reach_limit::reach_without_related_tests(seam.owner(), owner_fn, context);
     }
@@ -1916,7 +1893,7 @@ fn propagate_evidence(
     related: &[&TestSummary],
     owner_fn: Option<&FunctionSummary>,
     index: &RustIndex,
-    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> StageEvidence {
     if related.is_empty() {
         return StageEvidence::new(
@@ -1950,7 +1927,7 @@ fn oracles_match_sink(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
     index: &RustIndex,
-    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> bool {
     test.assertions
         .iter()
@@ -2014,7 +1991,7 @@ fn discriminate_evidence(
     related: &[&TestSummary],
     owner_fn: Option<&FunctionSummary>,
     index: &RustIndex,
-    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> StageEvidence {
     if related.is_empty() {
         return StageEvidence::new(
@@ -2141,14 +2118,14 @@ fn oracle_discriminates_seam_in_test(
     test: &TestSummary,
     owner: Option<&FunctionSummary>,
     index: &RustIndex,
-    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> bool {
     oracle_discriminates_seam(seam, oracle)
         || direct_collection_mutation_receiver(seam.expression())
             .zip(owner)
             .is_some_and(|(receiver, owner)| {
                 collection_state_write_oracle_kind(&oracle.kind)
-                    && assertion_observes_collection_argument(
+                    && mutexed_assertion_observes_collection_argument(
                         receiver, owner, index, test, oracle, pin_syntax,
                     )
             })
@@ -2818,7 +2795,7 @@ fn related_test_grip(
     reason: RelationReason,
     context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
-    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> RelatedTestGrip {
     let (kind, strength, contradiction) =
         best_oracle(test, seam, owner_fn, context.index, pin_syntax);
@@ -2891,7 +2868,7 @@ fn best_oracle(
     seam: &RepoSeam,
     owner_fn: Option<&FunctionSummary>,
     index: &RustIndex,
-    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> (OracleKind, OracleStrength, Option<String>) {
     let mut best_kind = OracleKind::Unknown;
     let mut best_strength = OracleStrength::None;

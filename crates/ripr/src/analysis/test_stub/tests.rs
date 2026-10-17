@@ -1257,3 +1257,233 @@ fn owners_behind_a_non_test_cfg_are_refused() -> Result<(), String> {
     assert!(rust_test_stub(&seam, None, kept).is_ok(), "{kept}");
     Ok(())
 }
+
+#[test]
+fn relational_boundary_over_a_field_names_the_equal_inputs() -> Result<(), String> {
+    const SOURCE: &str = "pub struct Bucket {
+    tokens: u32,
+}
+
+impl Bucket {
+    pub fn allow(&mut self, n: u32) -> bool {
+        self.tokens > n
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        SOURCE,
+        "self.tokens > n",
+        SeamKind::PredicateBoundary,
+        boundary("self.tokens > n"),
+    )?;
+    let stub = rust_test_stub(&seam, None, SOURCE).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text.contains("choose `n` so that self.tokens == n"),
+        "{}",
+        stub.text
+    );
+    assert!(
+        stub.text
+            .contains("when self.tokens == n (where `>` and its neighbor differ)"),
+        "{}",
+        stub.text
+    );
+    assert!(
+        !stub.text.contains("so that self.tokens > n"),
+        "inputs satisfying the changed comparison itself do not separate `>` from `>=`: {}",
+        stub.text
+    );
+    Ok(())
+}
+
+#[test]
+fn unsized_mut_reference_parameters_bind_an_owned_stand_in() {
+    assert_eq!(
+        owned_mut_binding("dyn Sink", "sink"),
+        (
+            "std::boxed::Box<dyn Sink>".to_string(),
+            "&mut *sink".to_string()
+        )
+    );
+    assert_eq!(
+        owned_mut_binding("[u8]", "buf"),
+        ("std::vec::Vec<u8>".to_string(), "&mut buf".to_string())
+    );
+    assert_eq!(
+        owned_mut_binding("str", "name"),
+        ("std::string::String".to_string(), "&mut name".to_string())
+    );
+    // A slice of arrays is still unsized; a parenthesized object type too.
+    assert_eq!(
+        owned_mut_binding("[[u8; 4]]", "rows"),
+        (
+            "std::vec::Vec<[u8; 4]>".to_string(),
+            "&mut rows".to_string()
+        )
+    );
+    assert_eq!(
+        owned_mut_binding("(dyn Sink + Send)", "sink"),
+        (
+            "std::boxed::Box<dyn Sink + Send>".to_string(),
+            "&mut *sink".to_string()
+        )
+    );
+    // A fixed-size array is sized: it stays as written.
+    assert_eq!(
+        owned_mut_binding("[u8; 4]", "buf"),
+        ("[u8; 4]".to_string(), "&mut buf".to_string())
+    );
+    assert_eq!(
+        owned_mut_binding("Vec<u8>", "v"),
+        ("Vec<u8>".to_string(), "&mut v".to_string())
+    );
+}
+
+/// #6300: an owner that returns `()` or `Result<(), _>` hands the changed
+/// value out through a `&mut` input, so the stub asserts that input after the
+/// call. `Ok(())` alone cannot tell the old arm from the new one.
+#[test]
+fn unit_result_owner_asserts_the_mut_input_after_the_call() -> Result<(), String> {
+    let source = "pub fn add_unit(unit: u8, out: &mut u64) -> Result<(), String> {
+    match unit {
+        1 => *out += 1,
+        2 => *out += 14,
+        _ => return Err(String::new()),
+    }
+    Ok(())
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "2 => *out += 14",
+        SeamKind::MatchArm,
+        RequiredDiscriminator::MatchArmTaken {
+            arm: "2".to_string(),
+        },
+    )?;
+    let stub = rust_test_stub(&seam, None, source).map_err(|refusal| refusal.as_str())?;
+    for expected in [
+        "let mut out: u64 = todo!(",
+        "let actual = add_unit(unit, &mut out);",
+        "let expected_out: u64 = todo!(",
+        "assert_eq!(out, expected_out);",
+    ] {
+        assert!(stub.text.contains(expected), "{expected}\n{}", stub.text);
+    }
+    assert!(
+        stub.fill_ins
+            .iter()
+            .any(|fill_in| fill_in.contains("`out` should hold after `add_unit` runs")),
+        "{:?}",
+        stub.fill_ins
+    );
+    Ok(())
+}
+
+#[test]
+fn unit_owner_with_a_mut_input_is_stubbed_without_a_unit_binding() -> Result<(), String> {
+    let source = "pub fn bump(x: u8, total: &mut u32) { if x > 3 { *total += 1; } }\n";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "x > 3",
+        SeamKind::PredicateBoundary,
+        boundary(""),
+    )?;
+    let stub = rust_test_stub(&seam, None, source).map_err(|refusal| refusal.as_str())?;
+    assert!(stub.text.contains("bump(x, &mut total);"), "{}", stub.text);
+    assert!(
+        !stub.text.contains("let actual"),
+        "a unit call has no value to bind:\n{}",
+        stub.text
+    );
+    assert!(
+        stub.text.contains("assert_eq!(total, expected_total);"),
+        "{}",
+        stub.text
+    );
+    Ok(())
+}
+
+#[test]
+fn mut_self_is_asserted_and_an_unknown_type_leaves_the_assertion_to_fill_in() -> Result<(), String>
+{
+    let source = "pub struct Counter(u32);
+impl Counter {
+    pub fn tick(&mut self, n: u8) { if n > 1 { self.0 += 1; } }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "n > 1",
+        SeamKind::PredicateBoundary,
+        boundary(""),
+    )?;
+    let stub = rust_test_stub(&seam, None, source).map_err(|refusal| refusal.as_str())?;
+    assert!(stub.text.contains("subject.tick("), "{}", stub.text);
+    assert!(stub.text.contains("let _ = &subject;"), "{}", stub.text);
+    assert!(
+        stub.fill_ins
+            .iter()
+            .any(|fill_in| fill_in.contains("`subject` should hold after `tick` runs")),
+        "{:?}",
+        stub.fill_ins
+    );
+    Ok(())
+}
+
+#[test]
+fn match_arm_on_a_unit_result_owner_without_a_mut_input_needs_an_observer() -> Result<(), String> {
+    let source = "pub fn check(unit: u8) -> Result<(), String> {
+    let _secs = match unit {
+        1 => 60,
+        2 => 120,
+        _ => return Err(String::new()),
+    };
+    Ok(())
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "2 => 120",
+        SeamKind::MatchArm,
+        RequiredDiscriminator::MatchArmTaken {
+            arm: "2".to_string(),
+        },
+    )?;
+    assert_eq!(
+        rust_test_stub(&seam, None, source),
+        Err(TestStubRefusal::ObserverRequired)
+    );
+    Ok(())
+}
+
+#[test]
+fn returns_unit_recognizes_unit_and_unit_results_only() {
+    for unit in [
+        "()",
+        " () ",
+        "Result<(), Error>",
+        "io::Result<()>",
+        "Result<(), Vec<u8>>",
+        "Result<(), HashMap<K, V>>",
+        "Result<(), (A, B)>",
+    ] {
+        assert!(returns_unit(unit), "{unit}");
+    }
+    for value in [
+        "u8",
+        "Option<()>",
+        "Result<u8, ()>",
+        "Result<(u8, u8), E>",
+        "Vec<()>",
+        "Result<HashMap<K, V>, E>",
+        "Result<Vec<()>, E>",
+    ] {
+        assert!(!returns_unit(value), "{value}");
+    }
+}

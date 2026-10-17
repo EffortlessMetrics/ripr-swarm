@@ -59,20 +59,11 @@ fn ranking_skips_unused_matching_while_full_evidence_retains_syntax_reuse() -> R
     assert_eq!(related.len(), 12, "every actual test remains selected");
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
     let owner = seam_owner_activation(seam, &context);
-    let shared = OwnerPinSyntax::default();
     let before = OwnerPinSyntax::std_rooted_file_parse_count();
     let shared_keys: Vec<_> = related
         .iter()
         .map(|(test, reason)| {
-            related_test_rank_key(
-                seam,
-                &context,
-                test,
-                *reason,
-                owner.as_ref(),
-                owner_fn,
-                &shared,
-            )
+            related_test_rank_key(seam, &context, test, *reason, owner.as_ref(), owner_fn)
         })
         .collect();
     assert_eq!(
@@ -81,17 +72,17 @@ fn ranking_skips_unused_matching_while_full_evidence_retains_syntax_reuse() -> R
         "non-field ranking must not evaluate discarded collection matching"
     );
     let before = OwnerPinSyntax::std_rooted_file_parse_count();
+    let fresh_context = CompactGripContext::new(&index);
     let fresh_keys: Vec<_> = related
         .iter()
         .map(|(test, reason)| {
             related_test_rank_key(
                 seam,
-                &context,
+                &fresh_context,
                 test,
                 *reason,
                 owner.as_ref(),
                 owner_fn,
-                &OwnerPinSyntax::default(),
             )
         })
         .collect();
@@ -99,7 +90,7 @@ fn ranking_skips_unused_matching_while_full_evidence_retains_syntax_reuse() -> R
     assert_eq!(
         OwnerPinSyntax::std_rooted_file_parse_count() - before,
         0,
-        "ranking needs no collection admission even with fresh syntax per test"
+        "ranking needs no collection admission with a fresh run context"
     );
 
     // Keep an actual owning-path positive: avoiding ranking work must not
@@ -109,10 +100,15 @@ fn ranking_skips_unused_matching_while_full_evidence_retains_syntax_reuse() -> R
         .assertions
         .first()
         .ok_or("missing actual literal equality")?;
-    let direct = OwnerPinSyntax::default();
+    let direct_context = CompactGripContext::new(&index);
     let before = OwnerPinSyntax::std_rooted_file_parse_count();
     assert!(oracle_discriminates_seam_in_test(
-        seam, oracle, test, owner_fn, &index, &direct
+        seam,
+        oracle,
+        test,
+        owner_fn,
+        &index,
+        direct_context.pin_syntax_mutex()
     ));
     assert_eq!(
         OwnerPinSyntax::std_rooted_file_parse_count() - before,
@@ -122,7 +118,7 @@ fn ranking_skips_unused_matching_while_full_evidence_retains_syntax_reuse() -> R
 
     let before = OwnerPinSyntax::std_rooted_file_parse_count();
     let workspace_before = OwnerPinSyntax::projected_workspace_counts();
-    let first = evidence_for_seam_with_context_and_syntax(seam, &context, &shared);
+    let first = evidence_for_seam_with_context(seam, &context);
     assert_eq!(first.related_tests.len(), 12);
     assert_eq!(first.discriminate.state, StageState::Yes);
     assert_eq!(
@@ -140,7 +136,7 @@ fn ranking_skips_unused_matching_while_full_evidence_retains_syntax_reuse() -> R
         workspace_first.1 > workspace_before.1,
         "full evidence must reach workspace constructor parsing"
     );
-    let repeated = evidence_for_seam_with_context_and_syntax(seam, &context, &shared);
+    let repeated = evidence_for_seam_with_context(seam, &context);
     assert_eq!(
         OwnerPinSyntax::projected_workspace_counts(),
         workspace_first,
@@ -149,7 +145,7 @@ fn ranking_skips_unused_matching_while_full_evidence_retains_syntax_reuse() -> R
     assert_eq!(
         OwnerPinSyntax::std_rooted_file_parse_count() - before,
         0,
-        "repeated complete evidence reuses the invocation-local syntax"
+        "repeated complete evidence reuses the run-scoped syntax"
     );
     assert_eq!(
         serde_json::to_value(first).map_err(|e| e.to_string())?,
@@ -197,9 +193,7 @@ fn equal_paths_in_a_new_index_or_overlay_cannot_reuse_macro_admission() -> Resul
     let rebound_seam = push_seam(&rebound_seams)?;
     let trusted_context = CompactGripContext::new(&trusted);
     let rebound_context = CompactGripContext::new(&rebound);
-    let stale = OwnerPinSyntax::default();
-    let trusted_evidence =
-        evidence_for_seam_with_context_and_syntax(trusted_seam, &trusted_context, &stale);
+    let trusted_evidence = evidence_for_seam_with_context(trusted_seam, &trusted_context);
     let fresh = evidence_for_seam_with_context(rebound_seam, &rebound_context);
     assert_eq!(trusted_evidence.discriminate.state, StageState::Yes);
     assert_eq!(
@@ -207,11 +201,36 @@ fn equal_paths_in_a_new_index_or_overlay_cannot_reuse_macro_admission() -> Resul
         StageState::Weak,
         "changed macro binding must change actual matching verdict"
     );
-    let wrong = evidence_for_seam_with_context_and_syntax(rebound_seam, &rebound_context, &stale);
-    assert_eq!(
-        wrong.discriminate.state,
-        StageState::Yes,
+    let rebound_related = find_related_tests_with_context(rebound_seam, &rebound_context);
+    let rebound_test = rebound_related
+        .first()
+        .ok_or("missing rebound test")?
+        .0
+        .test;
+    let rebound_oracle = rebound_test
+        .assertions
+        .first()
+        .ok_or("missing rebound assertion")?;
+    let rebound_owner =
+        rebound_context.owner_function(rebound_seam.file(), rebound_seam.display_line());
+    let observes = |syntax| {
+        oracle_discriminates_seam_in_test(
+            rebound_seam,
+            rebound_oracle,
+            rebound_test,
+            rebound_owner,
+            &rebound,
+            syntax,
+        )
+    };
+    assert!(
+        observes(trusted_context.pin_syntax_mutex()),
         "cross-index stale-cache negative control must falsely promote"
+    );
+    let cold_rebound = CompactGripContext::new(&rebound);
+    assert!(
+        !observes(cold_rebound.pin_syntax_mutex()),
+        "the same rebound subject must refuse with cold syntax"
     );
     let overlay = |fixture: &FixtureIndex, source: &'static str| -> Result<_, String> {
         assert_eq!(
