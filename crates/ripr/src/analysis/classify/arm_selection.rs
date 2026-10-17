@@ -38,6 +38,105 @@ use crate::analysis::extract::{mask_comments_and_strings, mask_with_char_literal
 use crate::analysis::syntax::HelperLoan;
 use crate::domain::Probe;
 
+/// Name an unsupported selector without extending `ArmSelector`'s proof rules.
+/// Only an unambiguous direct arm/header of a statement-free tail match qualifies.
+#[cfg(feature = "lang-rust")]
+pub(in crate::analysis) fn unresolved_parameter_field_selector(
+    probe: &Probe,
+    owner: &FunctionSummary,
+) -> Option<String> {
+    use ra_ap_syntax::{
+        AstNode,
+        ast::{self, HasName},
+    };
+    if probe.owner.as_ref() != Some(&owner.id)
+        || !probe.location.file.ends_with(&owner.file)
+        || probe.family != crate::domain::ProbeFamily::MatchArm
+    {
+        return None;
+    }
+    let parse = crate::analysis::syntax::parse_clean_source_file(&owner.body)?;
+    let tree = parse.tree();
+    let mut items = tree.syntax().children().filter_map(ast::Item::cast);
+    let Some(ast::Item::Fn(function)) = items.next() else {
+        return None;
+    };
+    if items.next().is_some() || function.name()?.text() != owner.name {
+        return None;
+    }
+    let body = function.body()?;
+    if body.stmt_list()?.statements().next().is_some() {
+        return None;
+    }
+    let ast::Expr::MatchExpr(matched) = body.tail_expr()? else {
+        return None;
+    };
+    let ast::Expr::FieldExpr(field) = matched.expr()? else {
+        return None;
+    };
+    let ast::Expr::PathExpr(base) = field.expr()? else {
+        return None;
+    };
+    let base_text = base.syntax().text().to_string();
+    let identifier = |text: &str| {
+        let mut chars = text.chars();
+        chars.next().is_some_and(|c| c == '_' || c.is_alphabetic())
+            && chars.all(|c| c == '_' || c.is_alphanumeric())
+    };
+    let field_text = field.name_ref()?.text().to_string();
+    if !identifier(&base_text) || !identifier(&field_text) {
+        return None;
+    }
+    if !function.param_list()?.params().any(|param| {
+        matches!(param.pat(), Some(ast::Pat::IdentPat(pat))
+            if pat.name().is_some_and(|name| name.text() == base_text)
+                && pat.pat().is_none())
+    }) {
+        return None;
+    }
+    let line_at = |offset: ra_ap_syntax::TextSize| {
+        owner.start_line
+            + owner.body[..usize::from(offset)]
+                .bytes()
+                .filter(|b| *b == b'\n')
+                .count()
+    };
+    let header_line = line_at(matched.syntax().text_range().start());
+    let arms = matched.match_arm_list()?.arms().collect::<Vec<_>>();
+    if arms.is_empty()
+        || arms.iter().any(|arm| {
+            arm.guard().is_some()
+                || arm.syntax().descendants().any(|node| {
+                    ast::MatchExpr::can_cast(node.kind()) || ast::ClosureExpr::can_cast(node.kind())
+                })
+        })
+    {
+        return None;
+    }
+    let arm_lines = arms
+        .iter()
+        .map(|arm| line_at(arm.syntax().text_range().start()))
+        .collect::<Vec<_>>();
+    // Same-line arms/headers cannot identify a unique changed syntax subject.
+    let hits = usize::from(header_line == probe.location.line)
+        + arm_lines
+            .iter()
+            .filter(|line| **line == probe.location.line)
+            .count();
+    if hits != 1 {
+        return None;
+    }
+    Some(format!("{base_text}.{field_text}"))
+}
+
+#[cfg(not(feature = "lang-rust"))]
+pub(in crate::analysis) fn unresolved_parameter_field_selector(
+    _probe: &Probe,
+    _owner: &FunctionSummary,
+) -> Option<String> {
+    None
+}
+
 mod guard_entry;
 pub(in crate::analysis) use guard_entry::{GuardEntry, named_integer_bound};
 
@@ -2954,6 +3053,44 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "lang-rust")]
+    fn field_selector_limit_refuses_ambiguous_or_computed_subjects() {
+        let valid = "fn reason(lease: &Lease) -> u64 {\n    match lease.elapsed {\n        Some(ms) => ms,\n        None => 600,\n    }\n}";
+        let owner = self::owner(valid, "reason");
+        for line in [2, 3, 4] {
+            assert_eq!(
+                unresolved_parameter_field_selector(&arm_probe("", line), &owner).as_deref(),
+                Some("lease.elapsed")
+            );
+            // Metadata must never turn this field into a credited selector.
+            assert!(ArmSelector::establish(&arm_probe("None => 600,", line), &owner).is_none());
+        }
+        assert!(unresolved_parameter_field_selector(&arm_probe("", 5), &owner).is_none());
+        let mut wrong_owner = arm_probe("", 3);
+        wrong_owner.owner = None;
+        assert!(unresolved_parameter_field_selector(&wrong_owner, &owner).is_none());
+        for unsupported in [
+            valid.replace("lease.elapsed", "lease.elapsed.as_ref()"),
+            valid.replace("lease.elapsed", "lease.inner.elapsed"),
+            valid.replace("lease.elapsed", "lease.0"),
+            valid.replace("match lease.elapsed", "let lease = other();\n    match lease.elapsed"),
+            valid.replace("match lease.elapsed", "if ready() { return 1; }\n    match lease.elapsed"),
+            valid.replace("Some(ms) =>", "Some(ms) if ms > 0 =>"),
+            valid.replace("Some(ms) => ms,", "Some(ms) => match ms.field { A => 1, B => 2 },"),
+            valid.replace("Some(ms) => ms,", "Some(ms) => (|| ms)(),"),
+            valid.replace("    match lease.elapsed {", "    (|| match lease.elapsed {").replace("    }\n}", "    })()\n}"),
+            valid.replace("lease.elapsed", "unknown.elapsed"),
+            "fn reason(lease: &Lease) -> u64 { match lease.elapsed { Some(ms) => ms, None => 600 } }".to_string(),
+            "fn reason(lease: &Lease) -> u64 {\n match lease.elapsed { Some(ms) => ms, None => 600 }\n}".to_string(),
+        ] {
+            let owner = self::owner(&unsupported, "reason");
+            for line in 1..=unsupported.lines().count() {
+                assert!(unresolved_parameter_field_selector(&arm_probe("", line), &owner).is_none(), "unexpected selector on line {line}: {unsupported}");
+            }
         }
     }
 
