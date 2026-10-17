@@ -904,6 +904,33 @@ reason = "Committed agent-as-user run harness output that docs/PUBLIC_PROOF.md i
 covered_by = ["cargo test -p xtask --bin xtask public_proof"]
 
 [[allow]]
+glob = ".ci/contabo-product.sh"
+kind = "ci-entrypoint"
+owner = "ci"
+surface = "ci"
+classification = "tooling"
+reason = "#4988: pinned EM CI requires a Bash script path; minimal shim prepares workspace temp and delegates command ownership to Rust and existing Rust Gates."
+covered_by = ["cargo test -p xtask --example contabo_product_proof"]
+
+[[allow]]
+glob = ".ci/contabo-result.sh"
+kind = "ci-entrypoint"
+owner = "ci"
+surface = "ci"
+classification = "tooling"
+reason = "#4988: EM CI requires a Bash result script; bounded jq policy consumes the centrally authenticated product import without Cargo bootstrap, another uploader or native-auth implementation."
+covered_by = ["cargo test -p xtask --test contabo_result_policy"]
+
+[[allow]]
+glob = ".ci/contabo-product-contract.json"
+kind = "ci-artifact-contract"
+owner = "ci"
+surface = "ci"
+classification = "metadata"
+reason = "#4988/#7164: exact source-owned product member declaration recognized by the reviewed central ripr-product transport; preserves native producer paths and bounded custody without authorizing arbitrary .ci files."
+covered_by = ["cargo test -p xtask --example contabo_product_proof product_members_are_bound_to_actual_producer_paths"]
+
+[[allow]]
 glob = "benchmarks/stub_quality/cases/**/Cargo.toml"
 kind = "fixture_input"
 owner = "analysis-fixtures"

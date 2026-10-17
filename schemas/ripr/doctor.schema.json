@@ -43,6 +43,11 @@
     },
     "binary": { "$ref": "#/$defs/binary_identity" },
     "canonical_next_action": { "$ref": "#/$defs/canonical_next_action" },
+    "elapsed_ms": {
+      "description": "How long the whole doctor run took, in milliseconds, measured by the command adapter (additive, #8540). Omitted when the report was produced without a clock.",
+      "type": "integer",
+      "minimum": 0
+    },
     "detected_languages": {
       "description": "Languages the root marker scan found, whether or not the configuration enables them (schema 0.4). Omitted when no marker was found.",
       "type": "array",
@@ -193,7 +198,12 @@
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "status": { "$ref": "#/$defs/check_status" },
-        "evidence": { "$ref": "#/$defs/nullable_string" }
+        "evidence": { "$ref": "#/$defs/nullable_string" },
+        "elapsed_ms": {
+          "description": "How long this check's computation took, in milliseconds (additive, #8540). Omitted for skipped checks.",
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "runtime_probe": {
@@ -207,7 +217,12 @@
         "status": { "$ref": "#/$defs/doctor_status" },
         "evidence": { "type": "string" },
         "required": { "type": "boolean" },
-        "hint": { "type": "string" }
+        "hint": { "type": "string" },
+        "elapsed_ms": {
+          "description": "How long this probe took, in milliseconds (additive, #8540).",
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "detected_language": {

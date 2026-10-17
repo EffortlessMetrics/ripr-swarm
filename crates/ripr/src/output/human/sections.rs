@@ -1,7 +1,7 @@
 use crate::config::RiprConfig;
 use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, ExposureClass, Finding, LanguageId, LanguageStatus,
-    MISSING_DISCRIMINATOR_VALUE_PREFIX, RiprEvidence, StageState,
+    MISSING_DISCRIMINATOR_VALUE_PREFIX, ProbeFamily, RiprEvidence, StageState,
 };
 use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
@@ -88,7 +88,7 @@ pub(crate) fn render_finding_digest_with_config(
     ));
     // #2614: add a brief classification hint so the digest reader understands
     // WHY the finding is at this class without reading the full form.
-    if let Some(hint) = classification_hint(&finding.class, &finding.ripr) {
+    if let Some(hint) = classification_hint(&finding.class, &finding.ripr, &finding.probe.family) {
         out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
     }
     // The refusal names a file and a blocker; a cut would drop the blocker,
@@ -521,7 +521,7 @@ pub(super) fn render_finding_with_shared_sections(
         out.push_str(&format!(
             "  {} \u{2014} {}\n",
             static_limit_kind.as_str(),
-            static_limit_kind.describe()
+            static_limit_kind.describe_for_family(&finding.probe.family)
         ));
     }
 
@@ -1206,7 +1206,11 @@ fn is_callee_only_reach(reach: &crate::domain::StageEvidence) -> bool {
     reach.summary.starts_with(CALLEE_ONLY_REACH_PREFIX)
 }
 
-fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<String> {
+fn classification_hint(
+    class: &ExposureClass,
+    ripr: &RiprEvidence,
+    family: &ProbeFamily,
+) -> Option<String> {
     let reveal = &ripr.reveal;
     // #7003: "reaches this change" is a reach claim — a callee-only finding
     // has no test seen calling the owner, so every claim site below falls
@@ -1225,10 +1229,14 @@ fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<Str
         }
         ExposureClass::ReachableUnrevealed => {
             if reveal.observe.summary == crate::domain::ASSERTION_CONTEXT_UNESTABLISHED {
-                Some(
-                    "a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`"
-                        .to_string(),
-                )
+                let macro_name = if *family == ProbeFamily::MatchArm {
+                    "assert"
+                } else {
+                    "assert_eq"
+                };
+                Some(format!(
+                    "a related test asserts here, but ripr could not establish that the assertion runs and is the standard `{macro_name}!`"
+                ))
             } else if reveal.observe.state == StageState::No && !callee_only {
                 Some(
                     "a related test reaches this change, but no assertion observes the changed behavior"
@@ -1297,7 +1305,9 @@ fn should_render_language_metadata(finding: &Finding) -> bool {
 
 #[cfg(test)]
 mod classification_hint_tests {
-    use super::classification_hint;
+    fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<String> {
+        super::classification_hint(class, ripr, &crate::domain::ProbeFamily::ReturnValue)
+    }
     use crate::domain::{
         CALLEE_ONLY_REACH_PREFIX, Confidence, ExposureClass, RevealEvidence, RiprEvidence,
         StageEvidence, StageState,

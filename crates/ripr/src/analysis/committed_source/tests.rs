@@ -580,3 +580,58 @@ fn ignored_sources_read_absent_unless_tracked() -> Result<(), String> {
     assert!(overlay.dirty_source_paths().is_empty());
     Ok(())
 }
+
+/// #7467: the ignored disclosure set names the ignored routed files — the
+/// ignored-file records plus routed files walked from ignored directories —
+/// while tracked force-added files, unignored siblings, and non-ignored
+/// untracked files stay out of it. The combined working-tree probe splits
+/// the untracked and ignored halves from one status call.
+#[test]
+fn ignored_source_paths_name_files_and_directories_but_not_tracked_or_untracked()
+-> Result<(), String> {
+    let repo = fixture_root("ignored-disclosure")?;
+    write(&repo.0, ".gitignore", "tests/local.rs\nscratch/\nbuild/\n")?;
+    write(&repo.0, "src/lib.rs", "pub fn one() -> u8 { 1 }\n")?;
+    write(&repo.0, "build2/lib.rs", "pub fn two() -> u8 { 2 }\n")?;
+    write(&repo.0, "scratch/kept.rs", "pub fn kept() {}\n")?;
+    git(&repo.0, &["add", "-f", "scratch/kept.rs"])?;
+    commit_all(&repo.0, "base")?;
+    write(&repo.0, "tests/local.rs", "#[test]\nfn local() {}\n")?;
+    write(&repo.0, "scratch/probe.rs", "#[test]\nfn probe() {}\n")?;
+    write(&repo.0, "build/gen/out.rs", "#[test]\nfn generated() {}\n")?;
+    // A non-ignored untracked file belongs to the untracked half, not the
+    // ignored half; an ignored non-source file is not routed at all.
+    write(&repo.0, "src/fresh.rs", "pub fn fresh() {}\n")?;
+    write(&repo.0, "scratch/notes.txt", "scratch\n")?;
+
+    let Some(overlay) = probe(&repo.0, DEADLINE)? else {
+        return Err("ignored sources need an overlay".to_string());
+    };
+    assert_eq!(
+        overlay.ignored_source_paths(),
+        vec![
+            "build/gen/out.rs".to_string(),
+            "scratch/probe.rs".to_string(),
+            "tests/local.rs".to_string(),
+        ],
+        "ignored file plus ignored-directory contents, ordered; the tracked force-add, the unignored sibling, and the plain untracked file stay out"
+    );
+    assert_eq!(
+        overlay.untracked_source_paths(),
+        vec!["src/fresh.rs".to_string()],
+        "the non-ignored untracked file stays in the untracked set"
+    );
+
+    let (untracked, ignored) = untracked_and_ignored_routed_paths(&repo.0, DEADLINE)?;
+    assert_eq!(untracked, vec!["src/fresh.rs".to_string()]);
+    assert_eq!(
+        ignored,
+        vec![
+            "build/gen/out.rs".to_string(),
+            "scratch/probe.rs".to_string(),
+            "tests/local.rs".to_string(),
+        ],
+        "the working-tree probe splits the same halves from one status call"
+    );
+    Ok(())
+}
