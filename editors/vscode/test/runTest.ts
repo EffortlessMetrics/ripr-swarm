@@ -140,7 +140,8 @@ const DOWNLOAD_ATTEMPTS = 3;
 
 // The VS Code build is fetched at test time; one transient connect error
 // (ETIMEDOUT/ENETUNREACH, #5072) should not fail the whole lane. The download
-// is cached under `cachePath`, so the runTests calls below reuse it.
+// is cached under `cachePath`; the returned executable is handed to every
+// run so none of them repeats the version lookup.
 async function downloadVSCodeWithRetry(
   cachePath: string,
   extensionDevelopmentPath: string
@@ -161,12 +162,11 @@ async function downloadVSCodeWithRetry(
 }
 
 async function runUntrustedTests(
-  cachePath: string,
+  vscodeExecutablePath: string,
   extensionDevelopmentPath: string,
   extensionTestsPath: string,
   launchArgs: string[]
 ): Promise<void> {
-  const vscodeExecutablePath = await downloadVSCodeWithRetry(cachePath, extensionDevelopmentPath);
   const args = [
     '--no-sandbox',
     '--disable-gpu-sandbox',
@@ -261,12 +261,12 @@ async function main() {
       );
     }
 
-    await downloadVSCodeWithRetry(cachePath, extensionDevelopmentPath);
+    const vscodeExecutablePath = await downloadVSCodeWithRetry(cachePath, extensionDevelopmentPath);
     if (workspaceTrustMode === 'untrusted') {
-      await runUntrustedTests(cachePath, extensionDevelopmentPath, extensionTestsPath, launchArgs);
+      await runUntrustedTests(vscodeExecutablePath, extensionDevelopmentPath, extensionTestsPath, launchArgs);
     } else if (process.env.RIPR_TEST_MULTIROOT_ONLY !== '1') {
       await runTests({
-        cachePath,
+        vscodeExecutablePath,
         extensionDevelopmentPath,
         extensionTestsPath,
         launchArgs,
@@ -304,7 +304,7 @@ async function main() {
       process.env.RIPR_TEST_MULTIROOT_RECEIPT = path.join(matrixRoot, 'acceptance.json');
       process.env.RIPR_TEST_CLIPBOARD_CAPTURE_PATH = path.join(matrixUserData, 'clipboard.txt');
       await runTests({
-        cachePath,
+        vscodeExecutablePath,
         extensionDevelopmentPath,
         extensionTestsPath,
         launchArgs: [
