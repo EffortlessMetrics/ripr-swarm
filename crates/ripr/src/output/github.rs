@@ -428,8 +428,11 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
                 "`{base}...HEAD` contains no changed files, so there was nothing to analyze; the compared base was `{base}`. An empty result means no behavior changed against it — it does NOT mean your changes are covered."
             )
         } else {
-            "No analysis scope was provided — `ripr check` is diff-first. Run `ripr check --base BASE` with BASE set to an existing ref to analyze your changes. An empty result here does NOT mean your changed behavior is covered."
-                .to_string()
+            format!(
+                "No analysis scope was provided — `ripr check` is diff-first. Run `{}` with BASE set to an existing ref to analyze your changes, or `{}` for whole-repository exploration. An empty result here does NOT mean your changed behavior is covered.",
+                crate::domain::NO_SCOPE_BASE_COMMAND,
+                crate::domain::WHOLE_REPO_PILOT_COMMAND,
+            )
         };
         warnings.push(format!(
             "::warning title=ripr no analysis scope::{}\n",

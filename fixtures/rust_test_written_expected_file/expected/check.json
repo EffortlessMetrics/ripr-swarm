@@ -41,7 +41,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach render: renders", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: x * 3", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: x * 3 (line 2)", "related test tests/render.rs:2 renders uses smoke smoke only oracle: std::fs::write(\"tests/w.txt\", written_expected::render(4).to_string()).unwrap()", "related test tests/render.rs:2 renders uses strong exact value oracle: assert_eq!(written_expected::render(4), std::fs::read_to_string(\"tests/w.txt\").unwrap().trim().parse::<i32>().unwrap());", "source function argument value x = 4 at line 3", "source assertion argument value \"tests/w.txt\" at line 4", "source function argument value x = 4 at line 4"],
+      "evidence_path": ["reach yes: Related tests appear to reach render: renders", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: x * 3", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: x * 3 (line 2)", "related test tests/render.rs:2 renders uses strong exact value oracle: assert_eq!(written_expected::render(4), std::fs::read_to_string(\"tests/w.txt\").unwrap().trim().parse::<i32>().unwrap());", "source function argument value x = 4 at line 3", "source assertion argument value \"tests/w.txt\" at line 4", "source function argument value x = 4 at line 4"],
       "flow_sinks": [
         {"kind":"return_value","text":"x * 3","line":2}
       ],
@@ -91,20 +91,8 @@
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 2,
+      "related_tests_total": 1,
       "related_tests": [
-        {
-          "name": "renders",
-          "file": "tests/render.rs",
-          "line": 2,
-          "oracle_strength": "smoke",
-          "oracle_kind": "smoke_only",
-          "oracle": "std::fs::write(\"tests/w.txt\", written_expected::render(4).to_string()).unwrap()",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "weak_assertion",
-          "why": "assertion too weak to tell the old behavior from the new"
-        },
         {
           "name": "renders",
           "file": "tests/render.rs",

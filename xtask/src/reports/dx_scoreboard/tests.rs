@@ -1202,7 +1202,18 @@ fn first_run_rows_map_to_gates_and_list_verdicts() {
             .collect()
     };
     assert_eq!(get("first_run.failed_steps")[0]["value"], json!(1));
-    assert_eq!(get("first_run.over_budget_steps")[0]["value"], json!(2));
+    // Only the slow `check` step is over its time budget; the 2374-line
+    // workflow is counted on its own metric.
+    assert_eq!(get("first_run.over_budget_steps")[0]["value"], json!(1));
+    assert_eq!(
+        get("first_run.over_budget_steps")[0]["evidence"],
+        json!("a/check secs 12 > 10")
+    );
+    assert_eq!(get("first_run.over_budget_workflows")[0]["value"], json!(1));
+    assert_eq!(
+        get("first_run.over_budget_workflows")[0]["evidence"],
+        json!("a/init_ci workflow_lines 2374 > 1500")
+    );
     assert_eq!(get("first_run.friction_events")[0]["value"], json!(2.0));
     assert_eq!(get("first_run.unknown_verdicts")[0]["value"], json!(1));
     assert_eq!(

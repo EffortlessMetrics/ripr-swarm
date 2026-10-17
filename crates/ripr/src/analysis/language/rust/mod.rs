@@ -1319,6 +1319,8 @@ fn apply_probe_and_oracle_limits(
     oracles::apply_wrapper_error_binding_limit(finding, probe);
     probes::attach_changed_binding_predicate_evidence(finding, binding_relation);
     oracles::apply_cross_language_limit(finding, probe, index);
+    // Existing FFI limits own their detail and guidance before this narrower annotation.
+    probes::apply_rust_field_match_selector_limit(finding, probe, index);
     // #7133: a captured log record the test asserts on is a named limit.
     classify::withhold_log_capture_gap(finding, index, owner_name.as_deref());
     // RIPR-SPEC-0240: a `#[should_panic]` test's panic outcome is an oracle

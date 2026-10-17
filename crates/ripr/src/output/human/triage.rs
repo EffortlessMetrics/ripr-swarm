@@ -288,9 +288,14 @@ pub(crate) fn render_human_triage(
                     "  Safe next action: no changed files were compared against `{base}`; commit a change and re-run, or add `--worktree` to include uncommitted tracked edits\n"
                 ));
             } else {
-                out.push_str(
-                    "  Safe next action: provide an analysis scope; this empty output is not an all-clear\n",
-                );
+                // No base was established: name the same canonical pair
+                // every format names (domain::next_action) — provide a diff
+                // scope, or explore the whole repository with pilot.
+                out.push_str(&format!(
+                    "  Safe next action: no analysis scope was provided; run `{}` with BASE set to an existing ref to analyze your changes, or `{}` for whole-repository exploration; this empty output is not an all-clear\n",
+                    crate::domain::NO_SCOPE_BASE_COMMAND,
+                    crate::domain::WHOLE_REPO_PILOT_COMMAND,
+                ));
             }
         }
     }

@@ -115,7 +115,7 @@ returns a named, actionable `Err` rather than a raw git error or a silent
 empty result. The message is:
 
 ```
-could not resolve a default base (no origin/main, origin/master, or local main/master found).<context> Pass `--base <ref>` to diff against a specific ref, or run `ripr check --root . --format repo-exposure-md` for a full-repo scan.
+could not resolve a default base (no origin/main, origin/master, or local main/master found).<context> Pass `--base <ref>` to diff against a specific ref, or run `ripr pilot --root .` for whole-repository exploration.
 ```
 
 `<context>` is empty or one sentence naming the repository fact that

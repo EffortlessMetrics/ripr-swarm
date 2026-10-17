@@ -398,10 +398,13 @@ fn publish_staged(
 #[cfg(test)]
 mod tests {
     use super::{
-        CreateNewError, STALE_TEMP_GRACE, TEMP_FILE_SEQUENCE, create_new,
-        ensure_default_output_contained_with, is_stranded_temp_name, sweep_stale_temp_files, write,
-        write_cache,
+        CreateNewError, STALE_TEMP_GRACE, TEMP_FILE_SEQUENCE, create_new, is_stranded_temp_name,
+        sweep_stale_temp_files, write, write_cache,
     };
+    // Only the unix symlink-escape guard test calls this; importing it
+    // unconditionally is an unused import on Windows (#8485).
+    #[cfg(unix)]
+    use super::ensure_default_output_contained_with;
     use std::path::{Path, PathBuf};
 
     fn isolated_dir(label: &str) -> PathBuf {

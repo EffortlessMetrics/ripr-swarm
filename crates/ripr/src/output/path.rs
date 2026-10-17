@@ -714,6 +714,8 @@ mod tests {
             super::host_paths_case_insensitive(),
             cfg!(any(windows, target_os = "macos"))
         );
-        assert!(!cfg!(target_os = "linux") || !super::host_paths_case_insensitive());
+        if cfg!(target_os = "linux") {
+            assert!(!super::host_paths_case_insensitive());
+        }
     }
 }
