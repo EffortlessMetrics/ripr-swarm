@@ -15634,6 +15634,7 @@ tests = [
   "crates/ripr/tests/doctest_owner_pins.rs::an_example_that_may_rebind_assert_eq_pins_nothing",
   "crates/ripr/tests/doctest_owner_pins.rs::a_rival_owner_of_the_same_name_leaves_a_doc_example_unpinned",
   "crates/ripr/tests/doctest_owner_pins.rs::a_method_call_in_a_doc_example_pins_nothing",
+  "crates/ripr/tests/unindexed_guidance.rs::a_runnable_doc_example_is_indexed_and_pins_the_owner",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus",
