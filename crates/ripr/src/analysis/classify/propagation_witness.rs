@@ -1891,10 +1891,11 @@ fn collection_written_between(body: &str, start: usize, end: usize, receiver: &s
                 return true;
             }
         }
-        if let Some(assign) = after.strip_prefix('=') {
-            if !assign.starts_with('=') && !assign.starts_with('>') {
-                return true;
-            }
+        if after
+            .strip_prefix('=')
+            .is_some_and(|assign| !assign.starts_with('=') && !assign.starts_with('>'))
+        {
+            return true;
         }
     }
     false
