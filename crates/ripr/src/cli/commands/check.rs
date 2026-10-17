@@ -1249,6 +1249,9 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         eprintln!("{disclosure}");
     }
     if matches!(format, OutputFormat::RepoExposureJson) {
+        // #7781: this path never reaches `check_with_progress`, so it needs
+        // its own containment check before the inventory caches write.
+        crate::atomic_file::ensure_default_output_contained(&input.root)?;
         // #4945: this early return renders straight from the inventory, so it
         // brackets the walk itself with repo-scope stage boundaries instead of
         // relying on `check_with_progress` (which this path never reaches).
@@ -1539,11 +1542,21 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         .as_ref()
         .map(|_| app::FindingDrillIn::Commands(navigation.clone()));
     let navigation = if matches!(format, OutputFormat::Human) && analyzed_live_files {
-        navigation.with_stub_route(app::test_stub::check_stub_route(
-            &limited_check_input.root,
-            &config,
-            &output,
-        ))
+        navigation
+            .with_stub_route(app::test_stub::check_stub_route(
+                &limited_check_input.root,
+                &config,
+                &output,
+            ))
+            // #8166 Slice C: the repair line reuses the producer-owned
+            // admission gate over the live seam inventory, for the same
+            // live-files reason as the stub route above. Other formats
+            // keep their existing next-step contracts unchanged.
+            .with_repair_route(crate::app::task_first::check_repair_route(
+                &limited_check_input.root,
+                &config,
+                &output,
+            ))
     } else {
         navigation
     };

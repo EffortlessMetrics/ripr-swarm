@@ -38,6 +38,18 @@ impl CheckDiffProvenance {
     }
 }
 
+/// The repair route the check pipeline computed for its selected finding
+/// (#8166 Slice C): the seam identity `ripr repair` accepts for that
+/// finding, established by the producer-owned repair-admission gate in
+/// `app::task_first`. Absent means no repair line is printed: ineligible,
+/// ambiguous, truncated, and unbound findings get no route.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RepairRoute {
+    pub(crate) finding_id: String,
+    /// The exact seam ID the repair resolver accepts for this finding.
+    pub(crate) seam_id: String,
+}
+
 /// Copy-pasteable sibling commands for a selected finding.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FindingNavigation {
@@ -45,9 +57,13 @@ pub(crate) struct FindingNavigation {
     context_prefix: String,
     list_prefix: String,
     stub_prefix: String,
+    repair_suffix: String,
     /// The `ripr agent stub` decision the check pipeline computed for its
     /// selected finding (#5471). Absent means no route is printed.
     stub_route: Option<StubRoute>,
+    /// The repair route the check pipeline computed for its selected
+    /// finding (#8166 Slice C). Absent means no route is printed.
+    repair_route: Option<RepairRoute>,
 }
 
 impl FindingNavigation {
@@ -57,7 +73,9 @@ impl FindingNavigation {
             context_prefix: "ripr context".to_string(),
             list_prefix: "ripr check".to_string(),
             stub_prefix: "ripr agent stub".to_string(),
+            repair_suffix: String::new(),
             stub_route: None,
+            repair_route: None,
         }
     }
 
@@ -65,6 +83,27 @@ impl FindingNavigation {
     pub(crate) fn with_stub_route(mut self, stub_route: Option<StubRoute>) -> Self {
         self.stub_route = stub_route;
         self
+    }
+
+    /// Carry the check pipeline's repair-route decision to the renderer.
+    pub(crate) fn with_repair_route(mut self, repair_route: Option<RepairRoute>) -> Self {
+        self.repair_route = repair_route;
+        self
+    }
+
+    /// The repair route for `finding_id`, when one was computed for that
+    /// finding.
+    pub(crate) fn repair_route_for(&self, finding_id: &str) -> Option<&RepairRoute> {
+        self.repair_route
+            .as_ref()
+            .filter(|route| route.finding_id == finding_id)
+    }
+
+    /// The `ripr repair` start for one seam identity. Repair reads the live
+    /// tree at the bound root, so unlike explain/context it carries no
+    /// diff scope: the item comes first, then `--root`.
+    pub(crate) fn repair_command(&self, seam_id: &str) -> String {
+        format!("ripr repair {}{}", shell_arg(seam_id), self.repair_suffix)
     }
 
     /// The stub-route decision for `finding_id`, when one was computed for
@@ -148,7 +187,12 @@ pub(crate) fn finding_navigation_with_worktree(
             "ripr agent stub --root {}",
             shell_arg(&bound_root(&input.root.display().to_string()))
         ),
+        repair_suffix: format!(
+            " --root {}",
+            shell_arg(&bound_root(&input.root.display().to_string()))
+        ),
         stub_route: None,
+        repair_route: None,
     }
 }
 
@@ -327,6 +371,39 @@ mod tests {
                 bound(".")
             )
         );
+    }
+
+    /// #8166 Slice C: the repair command names the seam item first and the
+    /// bound root after it (`ripr repair [<item>] [--root PATH]`), with no
+    /// diff scope carried over from the explain/context prefixes.
+    #[test]
+    fn finding_navigation_repair_command_names_item_then_bound_root() {
+        let input = CheckInput {
+            root: PathBuf::from("repo"),
+            base: Some("HEAD".to_string()),
+            ..CheckInput::default()
+        };
+        let navigation = finding_navigation_with_worktree(&input, None, false, true);
+        assert_eq!(
+            navigation.repair_command("67fc764ba37d77bd"),
+            format!("ripr repair 67fc764ba37d77bd --root {}", bound("repo"))
+        );
+        assert_eq!(
+            FindingNavigation::legacy().repair_command("67fc764ba37d77bd"),
+            "ripr repair 67fc764ba37d77bd"
+        );
+        // The route only answers for its own finding.
+        let routed = navigation.with_repair_route(Some(RepairRoute {
+            finding_id: "probe:one".to_string(),
+            seam_id: "67fc764ba37d77bd".to_string(),
+        }));
+        assert_eq!(
+            routed
+                .repair_route_for("probe:one")
+                .map(|route| route.seam_id.as_str()),
+            Some("67fc764ba37d77bd")
+        );
+        assert!(routed.repair_route_for("probe:two").is_none());
     }
 
     #[test]
