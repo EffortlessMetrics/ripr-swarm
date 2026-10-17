@@ -610,7 +610,16 @@ fn packet_to_findings_with_currentness(
         // established-sink-alignment Exposed promotion; we downgrade advisory
         // relations and override to StaticUnknown on a blocking boundary.
         let sink_aligned_evidence = sink_aligned_observation(&related_evidence, change, packet);
-        let class = if class_blocked {
+        // #8352: a `partial` packet may simply not have emitted the relation
+        // that would link a test to this change, and `file_proximity` is
+        // co-location, not a link. With no change-linked relation, neither
+        // "no static path" nor "reachable but unrevealed" is an assessed
+        // result, so the class is unknown rather than a coverage claim.
+        let partial_without_change_link = packet.packet_status == PacketStatus::Partial
+            && related_evidence
+                .iter()
+                .all(|ev| ev.relation_kind == RelationKind::FileProximity);
+        let class = if class_blocked || partial_without_change_link {
             ExposureClass::StaticUnknown
         } else if related.is_empty() {
             ExposureClass::NoStaticPath

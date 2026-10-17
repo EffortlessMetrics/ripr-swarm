@@ -304,6 +304,7 @@
         "adapter_compiled",
         "producer",
         "ignored_configured_executable",
+        "canonical_exporter_on_path",
         "exporter",
         "expected_schema",
         "test_roots",
@@ -323,6 +324,10 @@
         "ignored_configured_executable": {
           "description": "A configured `[perl].executable` the opt-in gate refused to run. Reported so a user can see why the configured path was not probed.",
           "$ref": "#/$defs/nullable_string"
+        },
+        "canonical_exporter_on_path": {
+          "description": "Whether the canonical `perl-ripr-facts` exporter resolves on PATH. PATH-only; says nothing about compatibility (see `exporter`).",
+          "type": "boolean"
         },
         "exporter": { "$ref": "#/$defs/perl_exporter" },
         "expected_schema": { "type": "string", "minLength": 1 },

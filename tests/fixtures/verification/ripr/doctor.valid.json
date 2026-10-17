@@ -57,6 +57,7 @@
     "adapter_compiled": true,
     "producer": null,
     "ignored_configured_executable": null,
+    "canonical_exporter_on_path": false,
     "exporter": { "state": "incompatible", "executable": "bin/perllsp", "version": "perllsp 0.17.0" },
     "expected_schema": "ripr-perl-facts-v1",
     "test_roots": ["t/"],
