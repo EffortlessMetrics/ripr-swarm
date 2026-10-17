@@ -643,7 +643,10 @@ pub fn repository_owned_review_thread_mutation_violations() -> Result<Vec<String
         }
         for path in collect_files(root)? {
             let normalized = normalize_path(&path);
-            if normalized.ends_with("xtask/src/tests.rs") {
+            if normalized.ends_with("xtask/src/tests.rs")
+                || normalized.ends_with("xtask/src/tests/misc_b.rs")
+                || normalized.ends_with("xtask/src/tests/misc_c.rs")
+            {
                 continue;
             }
             let text = read_text_lossy(&path)?;

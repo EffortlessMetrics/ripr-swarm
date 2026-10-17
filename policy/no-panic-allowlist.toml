@@ -39,7 +39,7 @@ receiver_fingerprint = "fs::create_dir_all(parent)"
 
 [[allow]]
 id = "panic-0004"
-path = "xtask/src/tests.rs"
+path = "xtask/src/tests/test_analysis.rs"
 family = "expect"
 classification = "test_only"
 explanation = "Test harness: expects supported test intent kinds to parse successfully"

@@ -141,15 +141,15 @@ A packet directory contains `manifest.json`, the native payload
 
 ## Test Mapping
 
-- `xtask/src/tests.rs::file_policy_allowlist_accepts_host_scoped_coverage`
-- `xtask/src/tests.rs::file_policy_allowlist_rejects_malformed_host_coverage`
-- `xtask/src/tests.rs::file_policy_allowlist_toml_comments_preserve_coverage_commands`
-- `xtask/src/tests.rs::file_policy_allowlist_toml_strings_preserve_decoded_selectors`
-- `xtask/src/tests.rs::file_policy_allowlist_toml_spans_preserve_entry_order_and_lines`
-- `xtask/src/tests.rs::file_policy_allowlist_toml_keeps_legacy_fields_and_common_empty_array`
-- `xtask/src/tests.rs::file_policy_allowlist_toml_preserves_value_admission_for_ignored_metadata`
-- `xtask/src/tests.rs::file_policy_allowlist_toml_keeps_governed_field_refusals`
-- `xtask/src/tests.rs::policy_checker_facade_runs_current_repo_checks`
+- `xtask/src/tests/misc_a.rs::file_policy_allowlist_accepts_host_scoped_coverage`
+- `xtask/src/tests/misc_a.rs::file_policy_allowlist_rejects_malformed_host_coverage`
+- `xtask/src/tests/misc_a.rs::file_policy_allowlist_toml_comments_preserve_coverage_commands`
+- `xtask/src/tests/misc_a.rs::file_policy_allowlist_toml_strings_preserve_decoded_selectors`
+- `xtask/src/tests/misc_a.rs::file_policy_allowlist_toml_spans_preserve_entry_order_and_lines`
+- `xtask/src/tests/misc_a.rs::file_policy_allowlist_toml_keeps_legacy_fields_and_common_empty_array`
+- `xtask/src/tests/misc_a.rs::file_policy_allowlist_toml_preserves_value_admission_for_ignored_metadata`
+- `xtask/src/tests/misc_a.rs::file_policy_allowlist_toml_keeps_governed_field_refusals`
+- `xtask/src/tests/misc_b.rs::policy_checker_facade_runs_current_repo_checks`
 - `xtask/src/policy/file_policy.rs::tests::test_covered_by_host_selection_retains_common_and_discloses_inapplicable`
 - `xtask/src/policy/file_policy.rs::tests::test_covered_by_empty_applicable_host_selector_is_rejected`
 - `xtask/src/policy/file_policy.rs::tests::test_covered_by_unknown_host_family_is_rejected`
