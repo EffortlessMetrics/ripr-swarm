@@ -260,15 +260,19 @@ pub(super) fn status_tool_result(
 /// A successful tool result envelope. The document is carried once at full
 /// fidelity (#6021): `content[0].text` is the compact JSON serialization —
 /// hosts parse it as JSON — and `structuredContent` repeats the same
-/// document only while the complete double-carry envelope still measures
-/// under `max_envelope_bytes`, the caller's id-aware response budget
-/// ([`super::outer_envelope_budget`], #7768). The former pretty-printed
-/// text copy escaped inside the outer JSON inflated the wire response to
-/// ~2.4x the document, so a budget-approved listing could fail
-/// `result_too_large` after the document guard had passed. When even the
-/// compact-text envelope cannot fit the budget, this fails closed with both
-/// sizes so the caller answers with the typed `result_too_large` failure
-/// instead of a response the wire would have to replace.
+/// document. Every tool here advertises an `outputSchema`, so a success
+/// without its structured copy is an undeclared contract break (#7768):
+/// when the complete double-carry envelope does not measure under
+/// `max_envelope_bytes`, the caller's id-aware response budget
+/// ([`super::outer_envelope_budget`]), this fails closed and the caller
+/// answers with the typed `result_too_large` failure carrying its recovery
+/// route. The former text-only fallback — ship the compact text, silently
+/// drop `structuredContent` past the budget — made that loss
+/// undetectable on the wire exactly where a document fit only as compact
+/// text, so it was removed rather than marked (#7768). Paging callers
+/// pre-shrink their pages against the same budget
+/// ([`structured_envelope_overflows`]); single-item producers refuse
+/// through their document guard and this envelope guard.
 pub(super) fn tool_result(document: Value, max_envelope_bytes: usize) -> Result<Value, String> {
     let text = serde_json::to_string(&document)
         .map_err(|error| format!("render tool document: {error}"))?;
@@ -277,21 +281,14 @@ pub(super) fn tool_result(document: Value, max_envelope_bytes: usize) -> Result<
         "structuredContent": document,
         "isError": false,
     });
-    if envelope_bytes(&structured)? <= max_envelope_bytes {
-        return Ok(structured);
-    }
-    let text_only = json!({
-        "content": [{ "type": "text", "text": text }],
-        "isError": false,
-    });
-    let bytes = envelope_bytes(&text_only)?;
+    let bytes = envelope_bytes(&structured)?;
     if bytes > max_envelope_bytes {
         return Err(format!(
-            "tool document cannot fit the response envelope: compact text renders {bytes} bytes against the {max_envelope_bytes}-byte envelope budget ({}-byte response bound minus the request id and outer reserve)",
+            "tool document's complete envelope renders {bytes} bytes against the {max_envelope_bytes}-byte envelope budget ({}-byte response bound minus the request id and outer reserve); a success without structuredContent would break the advertised output schema",
             super::MAX_RESPONSE_BYTES
         ));
     }
-    Ok(text_only)
+    Ok(structured)
 }
 
 fn envelope_bytes(envelope: &Value) -> Result<usize, String> {
@@ -316,11 +313,11 @@ fn envelope_bytes(envelope: &Value) -> Result<usize, String> {
 
 /// Whether the complete double-carry envelope for `document` measures over
 /// `max_envelope_bytes`, the caller's id-aware response budget
-/// ([`super::outer_envelope_budget`]) — the point where `tool_result` would
-/// ship the text-only fallback without `structuredContent`. Paging callers
-/// shrink their page until this is `false`, so a tool that advertises an
-/// `outputSchema` always returns a structured result on the wire whatever
-/// request id the client sent (#6021 review, #7768).
+/// ([`super::outer_envelope_budget`]) — the point where `tool_result`
+/// fails closed instead of shipping a success. Paging callers shrink their
+/// page until this is `false`, so a tool that advertises an `outputSchema`
+/// always returns a structured result on the wire whatever request id the
+/// client sent (#6021 review, #7768).
 pub(super) fn structured_envelope_overflows(
     document: &Value,
     max_envelope_bytes: usize,
@@ -1345,9 +1342,10 @@ mod tests {
     /// document guard approved at ~96 KB died on the wire at ~236 KB with
     /// `result_too_large` after every budget layer had passed. The envelope
     /// must carry the document once at full fidelity: compact text always,
-    /// `structuredContent` only while the complete envelope still measures
-    /// under the response bound, and a typed failure when even the compact
-    /// text cannot fit.
+    /// `structuredContent` in every success, and a typed failure whenever
+    /// the complete envelope cannot fit — a success without
+    /// `structuredContent` is not a shippable outcome for a tool that
+    /// advertises an `outputSchema` (#7768).
     #[test]
     fn tool_result_carries_the_document_once_when_the_double_envelope_overflows()
     -> Result<(), String> {
@@ -1399,43 +1397,37 @@ mod tests {
         }
 
         // A document the old document guard approved (~70 KB compact) but
-        // whose doubled envelope (~164 KB) terminated the response: it must
-        // now ship, with the compact text and no structured copy. It sits
-        // past the paging ceiling, so this exercises the envelope alone.
+        // whose doubled envelope (~164 KB) cannot fit the response bound:
+        // it fails closed here. The former text-only fallback answered this
+        // window with a success whose `structuredContent` was silently
+        // absent — an undeclared break of the advertised output schema
+        // (#7768). Only the pagers pre-shrink against this boundary
+        // instead of refusing.
         let approved = rows(480);
         let approved_bytes = serde_json::to_string(&approved).map_err(|error| error.to_string())?;
         if approved_bytes.len() <= super::super::MAX_TOOL_DOCUMENT_BYTES
             || approved_bytes.len() >= super::super::MAX_RESPONSE_BYTES
         {
             return Err(format!(
-                "fixture drifted: the approved document must sit between the paging ceiling and the raw cap, got {} bytes",
+                "fixture drifted: the window document must sit between the paging ceiling and the raw cap, got {} bytes",
                 approved_bytes.len()
             ));
         }
-        let shipped = tool_result(approved, super::super::MAX_RESPONSE_BYTES).map_err(|error| {
-            format!("a guard-approved document must not die in the envelope: {error}")
-        })?;
-        let shipped_bytes = serde_json::to_vec(&shipped).map_err(|error| error.to_string())?;
-        if shipped_bytes.len() > super::super::MAX_RESPONSE_BYTES {
+        let refusal = match tool_result(approved, super::super::MAX_RESPONSE_BYTES) {
+            Err(refusal) => refusal,
+            Ok(envelope) => {
+                return Err(format!(
+                    "a window document must fail closed, not ship a success without structuredContent: {envelope}"
+                ));
+            }
+        };
+        if !refusal.contains("envelope budget")
+            || !refusal.contains("structuredContent")
+            || !refusal.contains(&super::super::MAX_RESPONSE_BYTES.to_string())
+        {
             return Err(format!(
-                "the shipped envelope must fit the wire bound, got {} bytes",
-                shipped_bytes.len()
+                "the window refusal must name the budget, the dropped field, and the bound: {refusal}"
             ));
-        }
-        if shipped.get("structuredContent").is_some() {
-            return Err(
-                "the doubled envelope would overflow: structuredContent must be dropped, not shipped"
-                    .to_string(),
-            );
-        }
-        let shipped_text = shipped
-            .pointer("/content/0/text")
-            .and_then(Value::as_str)
-            .ok_or_else(|| "shipped envelope lost its text copy".to_string())?;
-        let reparsed: Value = serde_json::from_str(shipped_text)
-            .map_err(|error| format!("shipped text is not JSON: {error}"))?;
-        if reparsed.pointer("/rows/0/canonical_id").is_none() {
-            return Err("shipped text lost the document payload".to_string());
         }
 
         // A document that cannot fit even as compact text fails closed
@@ -1485,9 +1477,22 @@ mod tests {
         if under.get("structuredContent").is_none() {
             return Err("budget-1 must keep structuredContent".into());
         }
-        let over = tool_result(document(513), budget).map_err(|error| error.to_string())?;
-        if over.get("structuredContent").is_some() {
-            return Err("budget+1 must ship the text-only fallback".into());
+        // One byte past the budget the complete envelope cannot carry the
+        // document with its structured copy (#7768): refuse typed instead
+        // of silently dropping the copy the advertised output schema
+        // promises.
+        let refused = match tool_result(document(513), budget) {
+            Err(detail) => detail,
+            Ok(envelope) => {
+                return Err(format!(
+                    "budget+1 must fail closed, not ship a success without structuredContent: {envelope}"
+                ));
+            }
+        };
+        if !refused.contains("envelope budget") || !refused.contains(&budget.to_string()) {
+            return Err(format!(
+                "the budget+1 refusal must name the budget and the bound: {refused}"
+            ));
         }
         // A document that cannot fit even as compact text fails closed with
         // the typed refusal detail naming both the budget and the bound.

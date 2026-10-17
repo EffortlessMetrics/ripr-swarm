@@ -45,7 +45,10 @@ including the named `\a`, `\b`, `\v`, and `\f` escapes for bytes `07`, `08`,
 extend native Windows filename support. Successfully decoded quoted old/new
 headers remain file boundaries in plain unified input when the previous hunk
 has ended. A header-looking pair still inside a declared hunk remains source
-payload. Unquoted plausibility and native path confinement remain in force.
+payload. Unquoted paths with spaces are also file boundaries when a tab
+separates the path from optional metadata: Git emits ASCII space paths in
+this form without C-quoting them. Undelimited unquoted whitespace remains
+ambiguous with payload. Native path confinement remains in force.
 
 The `%25` rule reserves `%XX` for the Unix invalid-byte representation. Thus a
 Unix raw byte `0xFF` renders as `%FF`, while a valid path literally containing
@@ -63,6 +66,14 @@ the three characters `%FF` renders as `%25FF`.
   committed selection excludes it, and untracked source stays disclosed.
 - Literal two-section plain patches preserve quoted whitespace paths and each
   section's exact old/new lines through bounded and unbounded parser entrypoints.
+- Tab-delimited unquoted space paths preserve each section's old/new coordinates;
+  a header-looking pair inside declared hunk spans remains source payload.
+- Real Git plain and extended patches yield the same nonempty public findings
+  for ordinary, spaced and Unicode/non-BMP Rust and Python paths with CRLF
+  contents. Repeated CLI JSON is deterministic and its existing Python
+  source-subject entries name each exact path with the digest of its original
+  CRLF bytes. Generic Rust predicate findings do not currently produce those
+  stamp entries; the control checks their file and line locations separately.
 
 ## Non-Goals
 
@@ -88,6 +99,9 @@ the three characters `%FF` renders as `%25FF`.
 - `crates/ripr/src/analysis/diff/path.rs::tests::named_c_control_escapes_keep_native_path_identity`
 - `crates/ripr/src/analysis/diff/path.rs::tests::quoted_whitespace_old_headers_keep_plain_file_sections_separate`
 - `crates/ripr/src/analysis/diff/path.rs::tests::quoted_control_header_pair_inside_declared_hunk_stays_source_payload`
+- `crates/ripr/src/analysis/diff/path.rs::tests::tab_delimited_plain_headers_keep_paths_and_line_coordinates`
+- `crates/ripr/src/analysis/diff/path.rs::tests::tab_delimited_header_pair_inside_declared_hunk_stays_source`
+- `crates/ripr/tests/cli_smoke/portable_diff_paths.rs::plain_patch_json_keeps_portable_locations_and_exact_crlf_provenance`
 - `crates/ripr/tests/cli_smoke/diff_selection.rs::git_named_control_paths_select_the_live_predicate_from_root_and_subdirectory`
 
 ## Implementation Mapping

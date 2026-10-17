@@ -107,10 +107,17 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
             .chain(scope.names.iter().cloned())
             .collect();
         withhold_rebound_scope_receivers(source, &masked, &scope.sites, &mut tests);
-        let helpers = identity_helpers(&ret.program.body, &blank_ranges(source, &masked));
+        let code = blank_ranges(source, &masked);
+        let helpers = identity_helpers(&ret.program.body, &code);
         if !helpers.is_empty() {
             for test in &mut tests {
                 test.identity_helpers_in_file = helpers.clone();
+            }
+        }
+        let factories = mock_factories(&ret.program.body, &code);
+        if !factories.is_empty() {
+            for test in &mut tests {
+                test.mock_factories_in_file = factories.clone();
             }
         }
         tests
@@ -1235,11 +1242,7 @@ fn withhold_rebound_scope_receivers(
 /// withholds it. A file holding `eval`, a `with (` statement or a `\u`
 /// escape, any of which can rebind a name without spelling it, has none.
 fn identity_helpers(statements: &[Statement<'_>], code: &str) -> Vec<String> {
-    let opaque = identifier_occurrences(code, "eval").next().is_some()
-        || identifier_occurrences(code, "with")
-            .any(|at| code[at + "with".len()..].trim_start().starts_with('('))
-        || code.contains("\\u");
-    if opaque {
+    if file_is_opaque(code) {
         return Vec::new();
     }
     statements
@@ -1251,6 +1254,126 @@ fn identity_helpers(statements: &[Statement<'_>], code: &str) -> Vec<String> {
         })
         .map(|(name, _)| name)
         .collect()
+}
+
+/// Top-level mock factories (`function f() { return { ... }; }` or
+/// `const f = () => ({ ... });`) whose name the file uses only as a direct
+/// call `f(`, each with the source of its returned object literal. A file
+/// that can reach a name without spelling it (`eval`, `with`, a `\u`
+/// escape) has none.
+fn mock_factories(statements: &[Statement<'_>], code: &str) -> Vec<(String, String)> {
+    if file_is_opaque(code) {
+        return Vec::new();
+    }
+    statements
+        .iter()
+        .filter_map(|stmt| mock_factory_declaration(stmt, code))
+        .filter(|(name, declared_at, _)| {
+            word_occurrences(code, name)
+                .all(|at| at == *declared_at || is_direct_call(code, at, name))
+        })
+        .map(|(name, _, literal)| (name, literal))
+        .collect()
+}
+
+/// The name, name offset and returned literal source of one top-level
+/// parameterless factory that returns an object literal and does nothing
+/// else.
+fn mock_factory_declaration(stmt: &Statement<'_>, code: &str) -> Option<(String, usize, String)> {
+    let literal = |object: &oxc_ast::ast::ObjectExpression<'_>| {
+        code.get(object.span.start as usize..object.span.end as usize)
+            .map(str::to_string)
+    };
+    match stmt {
+        Statement::FunctionDeclaration(function)
+            if !function.r#async
+                && !function.generator
+                && function.this_param.is_none()
+                && no_parameters(&function.params) =>
+        {
+            let id = function.id.as_ref()?;
+            let body = function.body.as_ref()?;
+            let object = returned_object(&body.directives, &body.statements)?;
+            Some((
+                id.name.to_string(),
+                id.span.start as usize,
+                literal(object)?,
+            ))
+        }
+        Statement::VariableDeclaration(declaration)
+            if !declaration.declare
+                && declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const
+                && declaration.declarations.len() == 1 =>
+        {
+            let declarator = declaration.declarations.first()?;
+            let BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                return None;
+            };
+            let Some(Expression::ArrowFunctionExpression(arrow)) = &declarator.init else {
+                return None;
+            };
+            if arrow.r#async || !no_parameters(&arrow.params) {
+                return None;
+            }
+            let body = &arrow.body;
+            let object = if arrow.expression {
+                if !body.directives.is_empty() {
+                    return None;
+                }
+                let [Statement::ExpressionStatement(statement)] = body.statements.as_slice() else {
+                    return None;
+                };
+                object_expression(&statement.expression)?
+            } else {
+                returned_object(&body.directives, &body.statements)?
+            };
+            Some((
+                id.name.to_string(),
+                id.span.start as usize,
+                literal(object)?,
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// `true` when a parameter list is empty.
+fn no_parameters(params: &FormalParameters<'_>) -> bool {
+    params.rest.is_none() && params.items.is_empty()
+}
+
+/// The object literal of a body that is exactly `return { ... };`.
+fn returned_object<'b, 'a>(
+    directives: &[oxc_ast::ast::Directive<'a>],
+    statements: &'b [Statement<'a>],
+) -> Option<&'b oxc_ast::ast::ObjectExpression<'a>> {
+    if !directives.is_empty() {
+        return None;
+    }
+    let [Statement::ReturnStatement(statement)] = statements else {
+        return None;
+    };
+    object_expression(statement.argument.as_ref()?)
+}
+
+/// The object literal an expression is, through parentheses only.
+fn object_expression<'b, 'a>(
+    expression: &'b Expression<'a>,
+) -> Option<&'b oxc_ast::ast::ObjectExpression<'a>> {
+    match expression {
+        Expression::ObjectExpression(object) => Some(object),
+        Expression::ParenthesizedExpression(inner) => object_expression(&inner.expression),
+        _ => None,
+    }
+}
+
+/// `true` when the file can reach a name without spelling it: `eval`, a
+/// `with` statement, or a `\u` escape.
+fn file_is_opaque(code: &str) -> bool {
+    identifier_occurrences(code, "eval").next().is_some()
+        || identifier_occurrences(code, "with")
+            .any(|at| code[at + "with".len()..].trim_start().starts_with('('))
+        || code.contains("\\u")
 }
 
 /// The name and name offset of one top-level identity declaration.
@@ -1968,6 +2091,7 @@ pub(crate) fn test_from_statement(
         imports_in_file: Vec::new(),
         scope_bindings: Vec::new(),
         identity_helpers_in_file: Vec::new(),
+        mock_factories_in_file: Vec::new(),
         // Replaced by `collect_tests_from_statements`, which has the file's
         // admission context; fail-closed until then.
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -3079,14 +3203,18 @@ fn tagged_template_tag_is_test_each(tag: &Expression<'_>) -> bool {
 
 /// Single-line, length-bounded source snippet for limitation details.
 pub(crate) fn snippet_for_span(source: &str, start: usize, end: usize) -> String {
-    let snippet: String = source
+    // Normalize before clipping: raw indentation can consume the display
+    // budget while hiding the rest of a short multiline registration.
+    // Only one character beyond the bound is needed to detect real overflow.
+    let collapsed: String = source
         .get(start..end)
         .unwrap_or_default()
-        .chars()
-        .take(80)
+        .split_whitespace()
+        .flat_map(|word| std::iter::once(' ').chain(word.chars()))
+        .skip(1)
+        .take(81)
         .collect();
-    let collapsed = snippet.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.chars().count() > 77 {
+    if collapsed.chars().count() > 80 {
         format!("{}...", collapsed.chars().take(77).collect::<String>())
     } else {
         collapsed

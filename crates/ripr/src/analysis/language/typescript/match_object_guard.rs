@@ -16,7 +16,7 @@ use super::*;
 /// `{ name: "ana", adult: false }`, or `None` when the text is not one.
 /// Callers pass only matcher arguments `is_literal_argument` accepted, whose
 /// values are scalar literals.
-fn flat_object_keys(object_text: &str) -> Option<Vec<String>> {
+pub(crate) fn flat_object_keys(object_text: &str) -> Option<Vec<String>> {
     let masked = ts_mask_literals_and_comments(object_text);
     if masked.len() != object_text.len() {
         return None;
@@ -52,6 +52,13 @@ fn flat_object_keys(object_text: &str) -> Option<Vec<String>> {
             .unwrap_or(raw_key);
         if key.is_empty() {
             return None;
+        }
+        // `{ __proto__: v }` (quoted or not) sets the prototype, not an own
+        // field. Computed `["__proto__"]` keeps a different spelling here
+        // and is a real property; shorthand has no colon in this split.
+        // Any escape sequence in the key (e.g. `\u005f_proto__`) fails closed (#8148).
+        if key == "__proto__" || key.contains('\\') {
+            continue;
         }
         keys.push(key.to_string());
     }
@@ -196,6 +203,11 @@ pub(crate) fn ts_owner_returned_field_key(owner_source: &str, line_text: &str) -
     let target = target.trim();
     let key = leading_identifier(target)?;
     let value = target[key.len()..].trim_start().strip_prefix(':')?;
+    // Colon `__proto__: v` sets the prototype. Computed `["__proto__"]` and
+    // shorthand `__proto__,` never reach this colon read.
+    if key == "__proto__" {
+        return None;
+    }
     // The value stays on this line: no nested literal or block opens here.
     // A string value blanks to spaces, so emptiness reads the quotes.
     let quoted = ts_mask_literals_and_comments(line_text);

@@ -107,6 +107,7 @@ fn check_output(findings: Vec<Finding>) -> CheckOutput {
         no_scope_provided: false,
         unanalyzed_working_tree: false,
         untracked_working_tree_source_paths: Vec::new(),
+        ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
         suppression: None,
         analysis_outcome: None,
@@ -841,6 +842,63 @@ fn badge_plus_parses_test_efficiency_metrics() -> Result<(), String> {
     assert_eq!(summary.unsuppressed_test_efficiency_findings, 0);
     assert_eq!(summary.intentional_test_efficiency_findings, 0);
     assert_eq!(summary.unknowns_test_efficiency, 0);
+    Ok(())
+}
+
+#[test]
+fn badge_plus_accepts_empty_not_run_report_with_optional_explanation() -> Result<(), String> {
+    // The report status describes evidence availability; the badge parser's
+    // contract is the ledger/count projection, not a report-status projection.
+    let legacy = r#"{"schema_version":"0.1","tests":[],"metrics":{"tests_scanned":0}}"#;
+    let explained = r#"{
+  "schema_version": "0.1",
+  "status": "not_run",
+  "advisory": true,
+  "explanation": "No tests were selected; test-efficiency evidence was not established for this report. Run the report from the workspace root containing the Rust test sources.",
+  "tests": [],
+  "metrics": {"tests_scanned": 0}
+}"#;
+    let summary = parse_test_efficiency_badge_summary(explained)?;
+    assert_eq!(summary, parse_test_efficiency_badge_summary(legacy)?);
+    assert_eq!(summary.analyzed_tests, 0);
+    assert!(summary.entries.is_empty());
+    assert_eq!(summary.unsuppressed_test_efficiency_findings, 0);
+    assert_eq!(summary.unknowns_test_efficiency, 0);
+    // A version bump is not an interchangeable way to add this optional field.
+    let unsupported = explained.replace("\"0.1\"", "\"0.2\"");
+    let error = parse_test_efficiency_badge_summary(&unsupported)
+        .err()
+        .ok_or("unsupported report schema was accepted")?;
+    assert!(error.contains("schema_version"));
+    Ok(())
+}
+
+#[test]
+fn badge_plus_optional_explanation_preserves_nonempty_ledger() -> Result<(), String> {
+    for (class, status, actionable) in [
+        ("strong_discriminator", "pass", 0),
+        ("smoke_only", "warn", 1),
+    ] {
+        let legacy = format!(
+            r#"{{"schema_version":"0.1","tests":[{{"class":"{class}"}}],"metrics":{{"tests_scanned":1}}}}"#
+        );
+        let mut explained: serde_json::Value =
+            serde_json::from_str(&legacy).map_err(|err| err.to_string())?;
+        explained["status"] = serde_json::json!(status);
+        explained["explanation"] = serde_json::json!("Additional advisory context.");
+        // Exercise both reordered/pretty and compact JSON at the real reader.
+        for text in [
+            explained.to_string(),
+            serde_json::to_string_pretty(&explained).map_err(|err| err.to_string())?,
+        ] {
+            let summary = parse_test_efficiency_badge_summary(&text)?;
+            assert_eq!(summary, parse_test_efficiency_badge_summary(&legacy)?);
+            assert_eq!(summary.analyzed_tests, 1);
+            assert_eq!(summary.entries.len(), 1);
+            assert_eq!(summary.entries[0].class, class);
+            assert_eq!(summary.unsuppressed_test_efficiency_findings, actionable);
+        }
+    }
     Ok(())
 }
 
@@ -2013,6 +2071,7 @@ fn check_output_with_preview_advisory(
         no_scope_provided: false,
         unanalyzed_working_tree: false,
         untracked_working_tree_source_paths: Vec::new(),
+        ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
         suppression: None,
         analysis_outcome: None,

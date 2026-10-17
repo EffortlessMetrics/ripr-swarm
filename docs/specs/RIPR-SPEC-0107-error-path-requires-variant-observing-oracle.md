@@ -386,3 +386,17 @@ sink-alignment branch. This spec's Rust rules do not apply to Python.
 - `error_path_variant_positive_unchanged`: existing `strong_error_oracle` /
   `weak_error_oracle_assert_matches` / `unwrap_err_variant_positive` fixtures
   still report `exposed` (no regression).
+
+Issue #7063 (2026-10-15) narrows Control B to a change the variant shows. When the
+changed construction carries a payload (`Err(ParseError::TooLong(len))`) and
+its old text builds the same variant, or there is no old text, the change may
+sit only in the payload, which `assert!(matches!(err, ParseError::TooLong(_)))`
+cannot see. Observation is then confirmed only by the owner-return pin, a
+whole-value equality tied to the owner call (RIPR-SPEC-0197 "Early
+error-variant pins", rule 7). The Control B unit tests pair their probes with
+an old text of another variant (`ParseError::Empty`);
+`error_path_exact_variant_oracle_keeps_discriminate_yes` and
+`error_path_parser_context_cannot_replace_emitted_probe_variant` also check
+that with no old text the same equality confirms with the owner pin and not
+without it, and `error_path_matches_variant_oracle_keeps_discriminate_yes`
+checks that the same `matches!` does not confirm a payload-only change.

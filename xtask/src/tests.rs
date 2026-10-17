@@ -3,6 +3,7 @@
 //! body moved verbatim; test names and module path (`crate::tests`) are
 //! unchanged.
 
+mod build_feature_reuse;
 mod discarded_matcher_honesty;
 mod fixture_cache;
 #[path = "precommit_source_oracle.rs"]
@@ -1471,6 +1472,7 @@ fn evidence_promotion_semantic_assertions_retain_related_test_identity() -> Resu
             kind: "relational_check".to_string(),
             strength: "weak".to_string(),
             relation_reason: None,
+            miss: None,
         },
     ];
     let original: serde_json::Value = serde_json::from_str(include_str!(
@@ -1534,6 +1536,7 @@ fn evidence_promotion_related_test_relation_pin_is_optional_and_exact() -> Resul
                 kind: "relational_check".to_string(),
                 strength: "weak".to_string(),
                 relation_reason: relation_reason.map(str::to_string),
+                miss: None,
             },
         ]
     };
@@ -8120,7 +8123,12 @@ fn create_zip_archive_writes_flat_package_contents() -> Result<(), String> {
             let entry = archive
                 .by_index(index)
                 .map_err(|err| format!("zip entry {index}: {err}"))?;
-            names.push(entry.name().to_string());
+            names.push(
+                entry
+                    .name()
+                    .map_err(|err| format!("zip entry {index} name: {err}"))?
+                    .into_owned(),
+            );
         }
         names.sort();
         assert_eq!(
@@ -8881,6 +8889,9 @@ fn non_rust_programming_policy_requires_retention_rule() {
             .is_some()
     );
     assert!(non_rust_programming_retention_reason("scripts/check.py").is_none());
+    assert!(non_rust_programming_retention_reason(".ci/contabo-product.sh").is_some());
+    assert!(non_rust_programming_retention_reason(".ci/contabo-result.sh").is_some());
+    assert!(non_rust_programming_retention_reason(".ci/arbitrary.sh").is_none());
     assert!(
         non_rust_programming_retention_reason("tools/python/portable-ripr-consumer/run.py")
             .is_some()
@@ -12649,6 +12660,51 @@ fn report_status_parser_reads_markdown_and_json() {
 }
 
 #[test]
+fn report_index_preserves_test_efficiency_not_run_with_explanation() -> Result<(), String> {
+    with_temp_cwd("report-index-efficiency-not-run", |root| {
+        write(
+            &root.join("target/ripr/reports/test-efficiency.json"),
+            r#"{
+  "schema_version": "0.1",
+  "status": "not_run",
+  "advisory": true,
+  "explanation": "No tests were selected; test-efficiency evidence was not established for this report. Run the report from the workspace root containing the Rust test sources.",
+  "tests": [],
+  "metrics": {"tests_scanned": 0}
+}"#,
+        );
+        write(
+            &root.join("target/ripr/reports/test-efficiency.md"),
+            "# ripr test efficiency\n\nStatus: not_run\n\nTests scanned: 0\n\nExplanation: No tests were selected; test-efficiency evidence was not established for this report. Run the report from the workspace root containing the Rust test sources.\n",
+        );
+        let reports = super::report_index_entries()?;
+        assert_eq!(reports.len(), 2);
+        for entry in &reports {
+            assert_eq!(entry.status, "not_run", "{}", entry.file);
+        }
+        let json: Value =
+            serde_json::from_str(&super::report_index_json("pass", &reports, &[], &[], &[]))
+                .map_err(|err| err.to_string())?;
+        let indexed = json["reports"]
+            .as_array()
+            .ok_or("missing indexed reports")?;
+        assert_eq!(indexed.len(), 2);
+        for entry in indexed {
+            assert_eq!(entry["status"], "not_run");
+        }
+        let markdown = super::report_index_markdown("pass", &reports, &[], &[], &[]);
+        for file in ["test-efficiency.json", "test-efficiency.md"] {
+            assert!(
+                markdown
+                    .lines()
+                    .any(|line| line.contains(file) && line.contains("not_run"))
+            );
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn report_index_missing_expected_tracks_changed_surfaces() {
     let reports = vec![ReportIndexEntry {
         file: "pr-summary.md".to_string(),
@@ -13737,6 +13793,85 @@ fn creates_invoice_smoke() {
             .iter()
             .any(|limitation| limitation.contains("broad oracle"))
     );
+}
+
+#[test]
+fn test_efficiency_empty_selection_is_not_evidence_of_pass() -> Result<(), String> {
+    with_temp_cwd("efficiency-empty-selection", |root| {
+        for with_source in [false, true] {
+            if with_source {
+                let source_root = root.join("crates/ripr/src");
+                fs::create_dir_all(&source_root).map_err(|e| e.to_string())?;
+                fs::write(source_root.join("lib.rs"), "pub fn value() -> u32 { 1 }\n")
+                    .map_err(|e| e.to_string())?;
+            }
+            super::test_efficiency_report_impl()?;
+            let report_dir = root.join("target/ripr/reports");
+            let markdown = fs::read_to_string(report_dir.join("test-efficiency.md"))
+                .map_err(|e| e.to_string())?;
+            let json: Value = serde_json::from_str(
+                &fs::read_to_string(report_dir.join("test-efficiency.json"))
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            assert_eq!(json["status"], "not_run", "with_source={with_source}");
+            assert_eq!(json["metrics"]["tests_scanned"], 0);
+            assert_eq!(json["tests"], serde_json::json!([]));
+            assert_eq!(json["advisory"], true);
+            let explanation = json["explanation"].as_str().ok_or("missing explanation")?;
+            assert!(explanation.contains("No tests were selected"));
+            assert!(explanation.contains("evidence was not established"));
+            assert!(explanation.contains("workspace root"));
+            assert!(markdown.contains("Status: not_run"));
+            assert!(markdown.contains(explanation));
+            assert!(markdown.contains("Tests scanned: 0"));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn test_efficiency_nonempty_selection_keeps_pass_and_warn() -> Result<(), String> {
+    with_temp_cwd("efficiency-selected-controls", |root| {
+        let source_root = root.join("crates/ripr/src");
+        fs::create_dir_all(&source_root).map_err(|e| e.to_string())?;
+        for (body, class, status) in [
+            (
+                "assert_eq!(create_invoice(100), expected_invoice);",
+                "strong_discriminator",
+                "pass",
+            ),
+            (
+                "let status = run_cli();\n    assert!(status.success());",
+                "smoke_only",
+                "warn",
+            ),
+        ] {
+            fs::write(
+                source_root.join("lib.rs"),
+                format!("#[test]\nfn selected() {{\n    {body}\n}}\n"),
+            )
+            .map_err(|e| e.to_string())?;
+            super::test_efficiency_report_impl()?;
+            let report_dir = root.join("target/ripr/reports");
+            let markdown = fs::read_to_string(report_dir.join("test-efficiency.md"))
+                .map_err(|e| e.to_string())?;
+            let json: Value = serde_json::from_str(
+                &fs::read_to_string(report_dir.join("test-efficiency.json"))
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            assert_eq!(json["metrics"]["tests_scanned"], 1);
+            assert_eq!(json["tests"].as_array().map(Vec::len), Some(1));
+            assert_eq!(json["tests"][0]["class"], class);
+            assert_eq!(json["status"], status);
+            assert_eq!(json["advisory"], true);
+            assert!(json.get("explanation").is_none());
+            assert!(markdown.contains(&format!("Status: {status}")));
+            assert!(!markdown.contains("Explanation:"));
+        }
+        Ok(())
+    })
 }
 
 #[test]
@@ -29561,6 +29696,7 @@ fn gh_pr_status_pr(checks: Vec<PrTriageCheck>) -> GhPrStatusPullRequest {
         title: "devex: merge readiness".to_string(),
         is_draft: false,
         merge_state_status: "CLEAN".to_string(),
+        head_ref_oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
         head_ref_name: "devex-gh-pr-status".to_string(),
         base_ref_name: "main".to_string(),
         review_decision: "APPROVED".to_string(),
@@ -29568,6 +29704,7 @@ fn gh_pr_status_pr(checks: Vec<PrTriageCheck>) -> GhPrStatusPullRequest {
         reviews: vec![GhPrStatusReview {
             author: "droid".to_string(),
             state: "APPROVED".to_string(),
+            commit_oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
         }],
         provider_review_observations: Default::default(),
     }
@@ -29764,7 +29901,9 @@ fn gh_pr_status_behind_packet_reports_integration_judgment() -> Result<(), Strin
             "headRefName": "candidate",
             "baseRefName": "main",
             "reviewDecision": "APPROVED",
-            "latestReviews": [],
+            "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "latestReviews": [{"author": {"login": "reviewer"}, "state": "APPROVED", "submittedAt": "2026-10-14T01:00:00Z"}],
+            "reviews": [{"author": {"login": "reviewer"}, "state": "APPROVED", "submittedAt": "2026-10-14T01:00:00Z", "commit": {"oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}],
             "statusCheckRollup": [
                 {"__typename": "CheckRun", "name": "rust", "status": "COMPLETED", "conclusion": "SUCCESS"}
             ]
@@ -54601,6 +54740,130 @@ fn pr_change_inventory_bytes_accept_empty() -> Result<(), String> {
     Ok(())
 }
 
+/// Use the real gh JSON shape: latestReviews does not contain commit identity.
+fn gh_pr_status_subject_fixture(commit: &str) -> Value {
+    serde_json::json!({
+        "number": 42, "title": "exact review subject fixture", "isDraft": false,
+        "mergeStateStatus": "CLEAN", "headRefName": "candidate", "baseRefName": "main",
+        "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "reviewDecision": "APPROVED",
+        "latestReviews": [{"author": {"login": "reviewer"}, "state": "APPROVED", "submittedAt": "2026-10-14T01:00:00Z"}],
+        "reviews": [{"author": {"login": "reviewer"}, "state": "APPROVED", "submittedAt": "2026-10-14T01:00:00Z", "commit": {"oid": commit}}],
+        "statusCheckRollup": [{"__typename": "CheckRun", "name": "rust", "status": "COMPLETED", "conclusion": "SUCCESS"}]
+    })
+}
+
+#[test]
+fn gh_pr_status_stale_review_head_must_wait() -> Result<(), String> {
+    let fixture = gh_pr_status_subject_fixture("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    let pr = parse_gh_pr_status_pull_request(&fixture.to_string())?;
+    assert_eq!(
+        pr.reviews.len(),
+        1,
+        "fixture must retain its review subject"
+    );
+    assert_eq!(
+        pr.checks.len(),
+        1,
+        "fixture must contain its successful check"
+    );
+    assert_eq!(pr.head_ref_oid, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    assert_eq!(
+        pr.reviews[0].commit_oid,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
+    assert_eq!(
+        readiness.safe_next_action, "wait",
+        "approval of aaaa must not qualify head bbbb"
+    );
+    let report: Value = serde_json::from_str(&gh_pr_status_json(&pr, &[], &readiness))
+        .map_err(|e| e.to_string())?;
+    assert_eq!(
+        report["head_commit"],
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    );
+    assert_eq!(
+        report["reviews"][0]["commit"],
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    assert_eq!(report["reviews"][0]["currentness"], "stale_for_head");
+    assert_eq!(report["safe_next_action"], "wait");
+    let markdown = gh_pr_status_markdown(&pr, &[], &readiness);
+    assert!(markdown.contains("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
+    assert!(markdown.contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+    assert!(markdown.contains("stale_for_head"));
+    assert!(!readiness.warnings.is_empty());
+    Ok(())
+}
+
+#[test]
+fn gh_pr_status_current_review_subject_control() -> Result<(), String> {
+    let fixture = gh_pr_status_subject_fixture("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    let pr = parse_gh_pr_status_pull_request(&fixture.to_string())?;
+    assert_eq!(
+        crate::gh_pr_review_currentness(&pr, &pr.reviews[0]),
+        "current_head"
+    );
+    let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
+    assert_eq!(readiness.safe_next_action, "merge");
+    assert!(readiness.warnings.is_empty());
+    Ok(())
+}
+
+#[test]
+fn gh_pr_status_review_subject_refusals() -> Result<(), String> {
+    for case in [
+        "missing head",
+        "short head",
+        "missing subject",
+        "short subject",
+        "nonhex subject",
+        "missing author",
+        "missing time",
+        "wrong author",
+        "wrong time",
+        "wrong state",
+        "ambiguous subject",
+        "missing latest",
+    ] {
+        let mut fixture = gh_pr_status_subject_fixture("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        match case {
+            "missing head" => fixture["headRefOid"] = Value::Null,
+            "short head" => fixture["headRefOid"] = Value::String("bbbb".to_string()),
+            "missing subject" => fixture["reviews"] = Value::Null,
+            "short subject" => {
+                fixture["reviews"][0]["commit"]["oid"] = Value::String("bbbb".to_string())
+            }
+            "nonhex subject" => {
+                fixture["reviews"][0]["commit"]["oid"] = Value::String("z".repeat(40))
+            }
+            "missing author" => fixture["latestReviews"][0]["author"] = Value::Null,
+            "missing time" => fixture["latestReviews"][0]["submittedAt"] = Value::Null,
+            "wrong author" => {
+                fixture["reviews"][0]["author"]["login"] = Value::String("other".to_string())
+            }
+            "wrong time" => {
+                fixture["reviews"][0]["submittedAt"] =
+                    Value::String("2026-10-13T01:00:00Z".to_string())
+            }
+            "wrong state" => {
+                fixture["reviews"][0]["state"] = Value::String("COMMENTED".to_string())
+            }
+            "ambiguous subject" => {
+                let second = fixture["reviews"][0].clone();
+                fixture["reviews"] = serde_json::json!([second.clone(), second]);
+            }
+            _ => fixture["latestReviews"] = Value::Null,
+        }
+        let pr = parse_gh_pr_status_pull_request(&fixture.to_string())?;
+        let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
+        assert_eq!(readiness.safe_next_action, "wait", "{case}");
+        assert!(!readiness.warnings.is_empty(), "{case}");
+    }
+    Ok(())
+}
+
 #[test]
 fn ci_policy_dispatch_and_catalog_expand_the_existing_policy_owner() -> Result<(), String> {
     assert_eq!(
@@ -54632,6 +54895,27 @@ fn ci_policy_dispatch_and_catalog_expand_the_existing_policy_owner() -> Result<(
         super::expand_precommit_ci_invocations(&mut enforced);
         assert!(enforced.is_empty(), "advisory expansion: {enforced:?}");
     }
+    Ok(())
+}
+
+#[test]
+fn gh_pr_status_review_join_preserves_latest_author_subject() -> Result<(), String> {
+    let mut fixture = gh_pr_status_subject_fixture("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    let mut old_current_approval = fixture["reviews"][0].clone();
+    old_current_approval["submittedAt"] = Value::String("2026-10-13T01:00:00Z".to_string());
+    old_current_approval["commit"]["oid"] =
+        Value::String("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string());
+    fixture["reviews"] = serde_json::json!([old_current_approval, fixture["reviews"][0].clone()]);
+    let pr = parse_gh_pr_status_pull_request(&fixture.to_string())?;
+    assert_eq!(
+        pr.reviews[0].commit_oid,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
+    assert_eq!(
+        readiness.safe_next_action, "wait",
+        "an older matching approval must not replace the latest subject"
+    );
     Ok(())
 }
 

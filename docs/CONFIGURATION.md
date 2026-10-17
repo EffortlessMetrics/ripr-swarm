@@ -123,6 +123,14 @@ If neither spelling represents the selected root losslessly in a portable comman
 and names the UTF-8-parent/alias remedy. A lossless absolute UTF-8 alias to a physical root
 with non-UTF-8 bytes still provides a usable command spelling.
 
+Existing-file refusals also print complete retry commands bound to the selected
+root. The config overwrite resets customizations; its dry-run preview writes
+nothing, and the `--ci github --force` alternative keeps the config while
+refreshing the workflow. These commands can be pasted from another directory.
+If the root cannot be represented losslessly, the refusal omits executable
+retries and names the UTF-8-parent/alias remedy; existing files remain intact.
+Where quoting differs, a labeled PowerShell form accompanies the command.
+
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `--root PATH` | current directory | Workspace root where `ripr.toml` should be written. |
@@ -215,7 +223,7 @@ that needs the tuning.
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `RIPR_CACHE_DIR` | (none) | Relocate the entire cache base directory (the cache is disposable; see below). When set to a non-empty path, all cache reads and writes use that path instead of `{workspace_root}/target/ripr/cache`. Useful for read-only or immutable source checkouts and for redirecting the cache to a faster or larger volume. When unset or empty, default behaviour is unchanged. `ripr doctor` reports whether `RIPR_CACHE_DIR` is active and shows the resolved location and total size. |
+| `RIPR_CACHE_DIR` | (none) | Relocate the entire cache base directory (the cache is disposable; see below). When set to a non-empty path, all cache reads and writes use that path instead of `{workspace_root}/target/ripr/cache`. Useful for read-only or immutable source checkouts and for redirecting the cache to a faster or larger volume. When unset or empty, default behaviour is unchanged, except that `ripr check` refuses to run when `target`, `target/ripr`, `target/ripr/cache` or `target/ripr/reports` under the workspace is a symlink resolving outside it (a checked-in link could otherwise redirect where ripr writes); set `RIPR_CACHE_DIR` to choose the location explicitly (#7781). `ripr doctor` reports whether `RIPR_CACHE_DIR` is active and shows the resolved location and total size. |
 | `RIPR_MAX_DIFF_CHANGED_RUST_LINES` | `2000` | Maximum added plus removed Rust diff lines that `ripr check` will expand into probes before failing closed with `diff_scope_oversized`. With `--json`, the command still exits non-zero but emits a limited artifact with `analysis_scope.run_status = "diff_scope_oversized"` and `downstream_consumable = false`. This protects constrained runners from large code-motion diffs that touch few files but produce thousands of probes. Raise only for a single command on a machine with enough memory, or split the extraction PR. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
 | `RIPR_MAX_DIFF_INDEX_FILES` | `10000` | Maximum Rust files that diff-scoped analysis will load into the Rust index before failing closed with `diff_scope_oversized`. This is a memory guard: measured runs cost about 0.1 to 0.35 MB per indexed file, so the default stays within a 7 GB runner. Speed is bounded separately by `RIPR_DIFF_NARROW_INDEX_FILES`; a selection that stays above that threshold after narrowing (for example a changed package that alone holds more files) still runs up to this limit. With `--json`, the command still exits non-zero but emits a limited artifact with `analysis_scope.run_status = "diff_scope_oversized"` and `downstream_consumable = false`. Lower it on a constrained runner; raise it only for a single command on a machine with enough memory, or reduce the diff scope. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. The same value bounds the number of changed files a parsed diff may name. |
 | `RIPR_DIFF_NARROW_INDEX_FILES` | `1200` | Index size above which a Draft/Fast selection narrows the packages that depend on the changed ones under `RIPR_DIFF_DEPENDENT_SCOPE=auto`, and at which the on-demand reach widening stops and names `rust_transitive_reach_unresolved` instead. It bounds time, not memory, and never refuses a run. Values above the effective `RIPR_MAX_DIFF_INDEX_FILES` are clamped to it, so lowering the hard limit keeps narrowing at or below it. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
@@ -521,12 +529,13 @@ into LSP `initializationOptions` and server-launch arguments.
 | `ripr.enabled` | boolean | `true` | Enables the VS Code saved-workspace server, diagnostics, hovers, status, and code actions. Set to `false` for an explicit disabled editor state without starting the language server. |
 | `ripr.server.path` | string | `""` | Absolute path to a `ripr` executable. Wins over bundled, downloaded, and `PATH` resolution. |
 | `ripr.server.args` | string array | `["lsp", "--stdio"]` | Arguments used to start the language server. |
-| `ripr.server.autoDownload` | boolean | `true` | Auto-download a matching server binary when no configured, bundled, or cached one is available. |
+| `ripr.server.autoDownload` | boolean | `true` | Auto-download a matching server binary when no configured, bundled, cached, or (while `ripr.server.version` is empty) compatible `PATH` one is available. |
 | `ripr.server.version` | string | `""` | Pin a specific server version. Empty means match the extension version. |
 | `ripr.server.downloadBaseUrl` | string | `""` | Override the server manifest base URL (e.g. internal mirror). Empty uses GitHub Releases. |
 
 For the full resolution order (configured → bundled → cached → first-run
-download → `PATH`), see
+download → `PATH`; an unpinned install checks a compatible `PATH` `ripr` before the
+download), see
 [Server provisioning](SERVER_PROVISIONING.md).
 
 ### Analysis
@@ -1078,7 +1087,7 @@ instead of publishing phantom preview diagnostics.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `resolve_tsconfig_paths` | boolean | `false` | Resolve TypeScript path aliases from `tsconfig.json` or `jsconfig.json` during owner-to-test discovery. Imports of an in-workspace package by its own name (`@scope/pkg/sub`) resolve through that package's `package.json` without this setting. |
+| `resolve_tsconfig_paths` | boolean | `true` | Resolve TypeScript path aliases from `tsconfig.json` or `jsconfig.json` during owner-to-test discovery; set `false` to leave aliased imports unresolved (they then stay `no_static_path` with the `typescript_path_alias_unresolved` disclosure). Imports of an in-workspace package by its own name (`@scope/pkg/sub`) resolve through that package's `package.json` without this setting. |
 
 ### `[perl]`
 

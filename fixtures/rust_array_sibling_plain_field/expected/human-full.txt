@@ -1,0 +1,62 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_array_sibling_plain_field/input
+
+Summary: 2 probe(s), 2 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+Shared evidence and guidance
+  E1 [findings 1, 2]: reach yes: Related tests appear to reach rows: pins_second_row
+  E2 [findings 1, 2]: infection yes: Reachable tests can plausibly activate this changed behavior
+  E3 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
+  E4 [findings 1, 2]: discriminator yes: Strong oracle found: exact value or pattern assertion
+  E5 [findings 1, 2]: related test src/lib.rs:14 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33);
+  E6 [findings 1, 2]: source function argument value a = 30 at line 15
+  E7 [findings 1, 2]: source function argument value b = 3 at line 15
+  E8 [findings 1, 2]: source assertion argument value 33 at line 16
+
+Finding 1: INFO ./src/lib.rs:6
+  id: probe:src_lib.rs:field_construction:d6d7c327
+Changed
+  before: total: a - b
+  after:  total: a + b
+Probe
+  family: field_construction
+  delta:  value
+  owner:  src/lib.rs::rows
+  canonical gap: gap:rust:src/lib.rs:rows:field_construction:field_construction:total_a+b
+Static exposure
+  exposed (info, confidence 1.00)
+Evidence
+  shared evidence: E1, E2
+  - propagation yes: Complete propagation witness reaches constructed field: total: a + b
+  shared evidence: E3, E4
+  - local flow reaches constructed field: total: a + b (line 6)
+  shared evidence: E5, E6, E7, E8
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_array_sibling_plain_field/input --diff <cwd>/fixtures/rust_array_sibling_plain_field/diff.patch --mode fast probe:src_lib.rs:field_construction:d6d7c327
+  ripr context --root <cwd>/fixtures/rust_array_sibling_plain_field/input --diff <cwd>/fixtures/rust_array_sibling_plain_field/diff.patch --mode fast --at probe:src_lib.rs:field_construction:d6d7c327
+
+Finding 2: INFO ./src/lib.rs:6
+  id: probe:src_lib.rs:return_value:0587a603
+Changed
+  before: [Row { total: a }, Row { total: a - b }]
+  after:  [Row { total: a }, Row { total: a + b }]
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::rows
+  canonical gap: gap:rust:src/lib.rs:rows:return_value:return_value:[row_total_a_row_total_a+b]
+Static exposure
+  exposed (info, confidence 1.00)
+Evidence
+  shared evidence: E1, E2
+  - propagation yes: Complete propagation witness reaches returned value: [Row { total: a }, Row { total: a + b }]
+  shared evidence: E3, E4
+  - local flow reaches returned value: [Row { total: a }, Row { total: a + b }] (line 6)
+  shared evidence: E5, E6, E7, E8
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_array_sibling_plain_field/input --diff <cwd>/fixtures/rust_array_sibling_plain_field/diff.patch --mode fast probe:src_lib.rs:return_value:0587a603
+  ripr context --root <cwd>/fixtures/rust_array_sibling_plain_field/input --diff <cwd>/fixtures/rust_array_sibling_plain_field/diff.patch --mode fast --at probe:src_lib.rs:return_value:0587a603

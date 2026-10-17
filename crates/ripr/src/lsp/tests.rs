@@ -678,7 +678,14 @@ fn workspace_pull_reuses_each_document_result_id() -> Result<(), String> {
 }
 
 #[test]
-fn pull_diagnostics_before_first_snapshot_return_empty_full_reports() -> Result<(), String> {
+fn pull_diagnostics_before_first_snapshot_disclose_analysis_pending() -> Result<(), String> {
+    // Pre-analysis state (#7774): before the first snapshot commit an empty
+    // report is indistinguishable from "analysis ran and found nothing", so
+    // both pull paths disclose the never-analyzed state with one typed
+    // Information marker under the stable `ripr:analysis-pending` identity
+    // instead of serving bare emptiness. A cold workspace report with no
+    // previous result ids still has no document URI to attach the marker
+    // to, so it stays empty; the document pull covers every open file.
     let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
     let backend = service.inner();
     let uri = test_uri("file:///workspace/src/pricing.rs")?;
@@ -689,7 +696,7 @@ fn pull_diagnostics_before_first_snapshot_return_empty_full_reports() -> Result<
 
     let document = runtime
         .block_on(backend.diagnostic(DocumentDiagnosticParams {
-            text_document: TextDocumentIdentifier { uri },
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
             identifier: None,
             previous_result_id: None,
             work_done_progress_params: Default::default(),
@@ -703,12 +710,27 @@ fn pull_diagnostics_before_first_snapshot_return_empty_full_reports() -> Result<
         .and_then(serde_json::Value::as_str)
         != Some("full")
         || document_json
-            .get("items")
-            .and_then(serde_json::Value::as_array)
-            .is_none_or(|items| !items.is_empty())
+            .get("resultId")
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(|id| !id.starts_with("ripr:analysis-pending"))
     {
         return Err(format!(
-            "expected an empty full document report before the first snapshot: {document_json}"
+            "expected a full pending report under the stable pending identity: {document_json}"
+        ));
+    }
+    let items = document_json
+        .get("items")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| format!("pending document items missing: {document_json}"))?;
+    if items.len() != 1
+        || items
+            .first()
+            .and_then(|item| item.get("code"))
+            .and_then(serde_json::Value::as_str)
+            != Some(crate::lsp::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE)
+    {
+        return Err(format!(
+            "expected exactly one analysis-pending marker: {document_json}"
         ));
     }
 
@@ -728,7 +750,7 @@ fn pull_diagnostics_before_first_snapshot_return_empty_full_reports() -> Result<
         .is_none_or(|items| !items.is_empty())
     {
         return Err(format!(
-            "expected an empty workspace report before the first snapshot: {workspace_json}"
+            "a cold workspace report has no URI to attach the marker to: {workspace_json}"
         ));
     }
     Ok(())
@@ -6034,6 +6056,32 @@ fn code_action_response_emitted_kinds_stay_within_the_advertised_set() -> Result
     Ok(())
 }
 
+#[test]
+fn code_action_response_every_advertised_kind_is_emitted() -> Result<(), String> {
+    // Reverse kind parity invariant (#7773, RIPR-SPEC-0129): the advertised
+    // `CodeActionOptions.code_action_kinds` set must not promise a kind no
+    // emitter produces. The seam scenario alone exercises all three emitted
+    // families — per-diagnostic `quickfix.ripr.inspect` and
+    // `quickfix.ripr.navigate` actions plus the workspace-level
+    // `source.ripr.refresh` — so its emitted set must equal the advertised
+    // constant exactly. A future reserved kind that is advertised before
+    // its emitter lands fails here instead of silently starving clients
+    // that filter or keybind on the advertised set.
+    let vscode = vscode_client_features()?;
+    let (seam_params, seam_snapshot) = seam_code_action_request()?;
+    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
+    let mut emitted = code_action_kinds(&actions)?;
+    emitted.sort();
+    emitted.dedup();
+    let mut advertised = ADVERTISED_CODE_ACTION_KINDS.to_vec();
+    advertised.sort();
+    assert_eq!(
+        emitted, advertised,
+        "advertised code-action kinds must equal the emitted set (no reserved-only kinds)"
+    );
+    Ok(())
+}
+
 /// Collect the kind string of every action, failing when an action carries
 /// no kind (a kind-less action would fail closed under `context.only`).
 fn code_action_kinds(actions: &[CodeActionOrCommand]) -> Result<Vec<String>, String> {
@@ -7826,6 +7874,7 @@ fn agent_loop_command_payloads_stay_root_anchored_for_platform_roots() -> Result
     // literally: both build from the same resolution rule).
     let workspace = snapshot.root.to_string_lossy().into_owned();
     let root = shell_arg(&bound_root(&workspace));
+    let base = shell_arg("origin/main with space");
     let anchored = |tail: &str| shell_arg(&anchored_redirect_target(&workspace, tail));
     let commands = code_action_commands(&actions)?;
     let expected_commands = [
@@ -7854,7 +7903,7 @@ fn agent_loop_command_payloads_stay_root_anchored_for_platform_roots() -> Result
             "after_snapshot",
             "target/ripr/pilot/after.repo-exposure.json",
             format!(
-                "ripr check --root {root} --base 'origin/main with space' --mode ready --format repo-exposure-json > {}",
+                "ripr check --root {root} --base {base} --mode ready --format repo-exposure-json > {}",
                 anchored("target/ripr/pilot/after.repo-exposure.json"),
             ),
         ),
@@ -7921,7 +7970,9 @@ fn agent_loop_command_payloads_stay_root_anchored_for_platform_roots() -> Result
         // reproduces the validated location from any working directory; the
         // `--out` receipt form stays root-relative (ripr resolves it).
         if let Some(target) = copied.split("> ").nth(1) {
-            let unquoted = target.trim_matches('\'');
+            // Host-aware quoting (#7729): single quotes off Windows, the
+            // Windows console double-quote form on it.
+            let unquoted = target.trim_matches(|ch| ch == '\'' || ch == '"');
             assert!(
                 Path::new(unquoted).is_absolute(),
                 "redirect target must be absolute, got {copied}"
@@ -9140,6 +9191,306 @@ async fn did_close_clears_the_saved_content_digest() -> Result<(), String> {
     if backend.workspace_revision() != after_reopen + 1 {
         return Err(format!(
             "reopened document kept its digest: record={after_record} reopen={after_reopen} now={}",
+            backend.workspace_revision()
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn did_open_matching_persisted_content_skips_revision_and_refresh() -> Result<(), String> {
+    let root = unique_lsp_test_root("did-open-matching-open")?;
+    let file = root.path().join("lib.rs");
+    std::fs::write(&file, "fn persisted() {}\n")
+        .map_err(|error| format!("write fixture: {error}"))?;
+    let uri = crate::lsp::uri::file_uri_for_path(&file)?;
+    let (service, _socket) =
+        LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+    let backend = service.inner();
+    // Phase 1 runs deliberately authority-uninitialized: the fresh-session
+    // contract under test is the revision advance, and the uninitialized
+    // authority keeps the scheduled analysis from running inline on this
+    // bare temp root.
+
+    // Fresh session: the first matching open must keep today's refresh path
+    // — the first opened document establishes the session's analysis — so
+    // the revision advances even though the buffer matches persisted bytes.
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(
+                uri.clone(),
+                "rust".to_string(),
+                1,
+                "fn persisted() {}\n".to_string(),
+            ),
+        })
+        .await;
+    if backend.workspace_revision() != 1 {
+        return Err(format!(
+            "a fresh session's first matching open must keep the refresh path: revision {}",
+            backend.workspace_revision()
+        ));
+    }
+
+    // The workspace-root authority is initialized here so phase 2's
+    // scheduler assertion is meaningful: with the authority selected, a
+    // regressed matching open WOULD reach RefreshScheduler through
+    // refresh_diagnostics.
+    backend.initialize_test_workspace_root();
+    let did_open_requests_baseline = backend.refresh_telemetry_for_test().did_open_requests;
+
+    // With session analysis state (a completed refresh record), the same
+    // matching open adds no saved-workspace input: it must not advance the
+    // workspace revision or supersede the snapshot evidence readers cite.
+    let state_request = backend.refresh_scheduler_for_test().request(
+        root.path().to_path_buf(),
+        crate::lsp::config::LspAnalysisConfig::default(),
+        1,
+        0,
+        RefreshScope::Full,
+        RefreshReason::ExplicitRefresh,
+    );
+    let RefreshDecision::Start(active) = state_request else {
+        return Err("fabricated state request should start".to_string());
+    };
+    backend.refresh_scheduler_for_test().finish(&active, true);
+
+    let other = root.path().join("other.rs");
+    std::fs::write(&other, "pub fn other() {}\n")
+        .map_err(|error| format!("write second fixture: {error}"))?;
+    let other_uri = crate::lsp::uri::file_uri_for_path(&other)?;
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(
+                other_uri,
+                "rust".to_string(),
+                1,
+                "pub fn other() {}\n".to_string(),
+            ),
+        })
+        .await;
+    if backend.workspace_revision() != 1 {
+        return Err(format!(
+            "a matching open with analysis state advanced the revision to {}",
+            backend.workspace_revision()
+        ));
+    }
+    if backend.refresh_telemetry_for_test().did_open_requests != did_open_requests_baseline {
+        return Err(format!(
+            "a matching open with analysis state reached the scheduler: did_open_requests={} \
+             baseline={}",
+            backend.refresh_telemetry_for_test().did_open_requests,
+            did_open_requests_baseline
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn did_open_matching_disk_bytes_with_stale_committed_snapshot_keeps_refresh()
+-> Result<(), String> {
+    let root = unique_lsp_test_root("did-open-stale-snapshot-open")?;
+    let file = root.path().join("lib.rs");
+    let original = "fn persisted() {}\n";
+    let changed_later = "fn persisted() {}\nfn added_while_closed() {}\n";
+    std::fs::write(&file, original).map_err(|error| format!("write fixture: {error}"))?;
+    let uri = crate::lsp::uri::file_uri_for_path(&file)?;
+    let (service, _socket) =
+        LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+    let backend = service.inner();
+
+    // The refresh path under test would run a real analysis on this bare
+    // temp root; this proof's oracle is the scheduler REQUEST, not the
+    // analysis outcome. The backend's own analysis config (the minimum
+    // deadline applied through initialization) makes the fabricated
+    // completion record's input identity match the request a regressed or
+    // fixed open produces, so the scheduled interactive refresh takes the
+    // deterministic deduplicated return instead of running an analysis.
+    let initialize_params = InitializeParams {
+        initialization_options: Some(serde_json::json!({
+            "refreshDeadlineMs": super::config::MIN_LSP_REFRESH_DEADLINE_MS,
+        })),
+        ..InitializeParams::default()
+    };
+    backend
+        .initialize(initialize_params)
+        .await
+        .map_err(|error| format!("initialize failed: {error}"))?;
+    let analysis_config = backend
+        .analysis_config()
+        .ok_or_else(|| "initialized analysis config must be present".to_string())?;
+
+    // The committed snapshot names the bytes it analyzed: the file's
+    // pre-change content. Preparation must never mint that claim from a
+    // later disk read.
+    let mut rust_consumed_sources =
+        crate::analysis::consumed_source::ConsumedRustSources::default();
+    rust_consumed_sources.record(Path::new("lib.rs"), Some(original.as_bytes()));
+    let snapshot = AnalysisSnapshot {
+        root: root.path().to_path_buf(),
+        rust_consumed_sources,
+        input_identity: None,
+        base: None,
+        mode: Mode::Draft,
+        refresh: RefreshMetadata::generated_now(),
+        findings: Vec::new(),
+        analysis_outcome: None,
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+        classified_seams: Vec::new(),
+        repair_card_candidate_seams: None,
+        gap_artifacts: Vec::new(),
+        gap_artifact_rejections: Vec::new(),
+        harness_facts: HarnessFactsOnSnapshot::NotRegistered,
+        diagnostics_by_uri: BTreeMap::new(),
+        diagnostic_uri_index: None,
+        delivery_selection: None,
+        seams_deferred: false,
+        partial_scope: None,
+        component_outcomes: Vec::new(),
+        out_of_scope_test_file_findings: 0,
+        unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+    };
+    backend
+        .refresh_plan(WorkspaceDiagnostics {
+            snapshot,
+            batches: Vec::new(),
+        })
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    // Session analysis state exists (a completed refresh record), so the
+    // matching-open skip is reachable; the authority is initialized so a
+    // regressed open would reach the scheduler through refresh_diagnostics.
+    let state_request = backend.refresh_scheduler_for_test().request(
+        root.path().to_path_buf(),
+        analysis_config.clone(),
+        backend.workspace_revision(),
+        0,
+        RefreshScope::Full,
+        RefreshReason::ExplicitRefresh,
+    );
+    let RefreshDecision::Start(active) = state_request else {
+        return Err("fabricated state request should start".to_string());
+    };
+    backend.refresh_scheduler_for_test().finish(&active, true);
+    backend.initialize_test_workspace_root();
+    let baseline_requests = backend.refresh_telemetry_for_test().did_open_requests;
+
+    // Control: a clean open whose buffer, persisted bytes, and committed
+    // snapshot digest all agree carries no new input and stays skipped.
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(
+                uri.clone(),
+                "rust".to_string(),
+                1,
+                original.to_string(),
+            ),
+        })
+        .await;
+    if backend.workspace_revision() != 0 {
+        return Err(format!(
+            "a clean open over matching committed snapshot bytes must stay skipped: revision {}",
+            backend.workspace_revision()
+        ));
+    }
+    if backend.refresh_telemetry_for_test().did_open_requests != baseline_requests {
+        return Err(
+            "a clean open over matching committed snapshot bytes reached the scheduler".into(),
+        );
+    }
+    if backend.document_quarantine(&uri).is_some() {
+        return Err(
+            "a clean open of bytes the committed snapshot analyzed must not be quarantined as never analyzed"
+                .into(),
+        );
+    }
+
+    // The file changed on disk while it was closed and no watch event
+    // arrived. The reopened buffer matches the new persisted bytes, so the
+    // saved-content matcher alone would skip; the committed snapshot still
+    // holds the pre-change digest, so this open must keep the interactive
+    // refresh instead of silently serving stale seam evidence. The
+    // completed Full record below matches the request this open produces
+    // after its revision advance (same root, config, revision 1), so the
+    // scheduled refresh deduplicates against it and no analysis body runs;
+    // the request telemetry and revision advance remain the oracle.
+    let dedup_request = backend.refresh_scheduler_for_test().request(
+        root.path().to_path_buf(),
+        analysis_config,
+        1,
+        0,
+        RefreshScope::Full,
+        RefreshReason::ExplicitRefresh,
+    );
+    let RefreshDecision::Start(dedup_active) = dedup_request else {
+        return Err("fabricated dedup request should start".to_string());
+    };
+    backend
+        .refresh_scheduler_for_test()
+        .finish(&dedup_active, true);
+    std::fs::write(&file, changed_later).map_err(|error| format!("rewrite fixture: {error}"))?;
+    let stale_open = backend.did_open(DidOpenTextDocumentParams {
+        text_document: TextDocumentItem::new(uri, "rust".to_string(), 2, changed_later.to_string()),
+    });
+    if tokio::time::timeout(std::time::Duration::from_secs(15), stale_open)
+        .await
+        .is_err()
+    {
+        return Err(
+            "the stale-snapshot open must return after its scheduler request; the scheduled \
+             refresh must not run a real analysis in this proof"
+                .into(),
+        );
+    }
+    if backend.workspace_revision() != 1 {
+        return Err(format!(
+            "a clean open over stale committed snapshot bytes must keep the refresh path: \
+             revision {}",
+            backend.workspace_revision()
+        ));
+    }
+    if backend.refresh_telemetry_for_test().did_open_requests != baseline_requests + 1 {
+        return Err(format!(
+            "a clean open over stale committed snapshot bytes did not reach the scheduler: \
+             did_open_requests={} baseline={}",
+            backend.refresh_telemetry_for_test().did_open_requests,
+            baseline_requests
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn did_open_diverging_persisted_content_keeps_the_interactive_refresh() -> Result<(), String>
+{
+    let root = unique_lsp_test_root("did-open-diverging-open")?;
+    let file = root.path().join("lib.rs");
+    std::fs::write(&file, "fn persisted() {}\n")
+        .map_err(|error| format!("write fixture: {error}"))?;
+    let uri = crate::lsp::uri::file_uri_for_path(&file)?;
+    let (service, _socket) =
+        LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+    let backend = service.inner();
+    // The backend is deliberately authority-uninitialized: the conservative
+    // contract under test is the handler-owned revision advance, and the
+    // uninitialized authority keeps the scheduled analysis from running
+    // inline on this bare temp root.
+
+    // Control: a diverging (recovered dirty) buffer keeps today's
+    // interactive refresh path, including the revision advance.
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(
+                uri,
+                "rust".to_string(),
+                2,
+                "fn diverged() {}\n".to_string(),
+            ),
+        })
+        .await;
+    if backend.workspace_revision() != 1 {
+        return Err(format!(
+            "a diverging open did not advance the revision exactly once: {}",
             backend.workspace_revision()
         ));
     }
@@ -11507,6 +11858,56 @@ fn workspace_folder_transitions_second_folder_becomes_ambiguous_without_fallback
             if status["repair_actions_available"].as_bool() != Some(false) {
                 return Err(format!(
                     "an ambiguous workspace must block repair authority: {status}"
+                ));
+            }
+            // #7461: the recovery route must name the end state the user can
+            // actually produce (one folder plus a restart), not a phantom
+            // root-selection step — no server command, setting, or request
+            // selects a root.
+            if status["root_recovery_route"].as_str()
+                != Some("use_single_workspace_root_and_restart")
+            {
+                return Err(format!(
+                    "an ambiguous workspace must route to a single-root restart: {status}"
+                ));
+            }
+            let full = client.run_command(COLLECT_WORKSPACE_STATUS_COMMAND).await?;
+            if full["top_limitation"]["recovery_route"].as_str()
+                != Some("use_single_workspace_root_and_restart")
+            {
+                return Err(format!(
+                    "the ambiguous top limitation must route to a single-root restart: {full}"
+                ));
+            }
+            // The hover carries the same actionable recovery: remove the
+            // extra folder (or give each repository its own window), then
+            // restart the server.
+            let hover_file = file_uri_for_path(&root_a.path().join("src").join("lib.rs"))?;
+            let id = client.request_id();
+            write_lsp_message(
+                &mut client.writer,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": "textDocument/hover",
+                    "params": {
+                        "textDocument": {"uri": hover_file.as_str()},
+                        "position": {"line": 0, "character": 0}
+                    }
+                }),
+            )
+            .await?;
+            let hover = read_lsp_response(&mut client.reader, id).await?;
+            let value = hover["result"]["contents"]["value"]
+                .as_str()
+                .unwrap_or_default();
+            if !value.contains("analysis is stopped (workspace_ambiguous)")
+                || !value.contains("Remove the extra folder")
+                || !value.contains("restart the language server")
+                || !value.contains("ripr: Select Workspace Root")
+            {
+                return Err(format!(
+                    "the ambiguous hover must name the real recovery: {hover}"
                 ));
             }
             client.finish().await

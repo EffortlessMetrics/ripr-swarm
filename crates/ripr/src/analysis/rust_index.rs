@@ -10,9 +10,9 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 pub(crate) use super::extract::contains_macro_invocation;
 pub(crate) use super::extract::{
-    OracleTextShape, classify_assertion, err_return_guard_oracles, extract_assertions,
-    extract_call_facts, extract_identifier_tokens, extract_line_scanned_oracles,
-    extract_literal_facts, extract_literals, extract_return_facts,
+    OracleTextShape, classify_assertion, classify_assertion_in, err_return_guard_oracles,
+    extract_assertions, extract_assertions_in, extract_call_facts, extract_identifier_tokens,
+    extract_line_scanned_oracles, extract_literal_facts, extract_literals, extract_return_facts,
     guarded_result_match_scan_with_shadow_authority, has_oracle_text_shape,
     is_inequality_assertion, is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
 };
@@ -1638,6 +1638,7 @@ fn feature_gated_test() {}
                 role_provenance: crate::analysis::facts::SourceRoleProvenance {
                     edges: Vec::new(),
                     earliest_unresolved_reason: Some("rust_module_ambiguous_parent".to_string()),
+                    ..Default::default()
                 },
                 ..FileFacts::default()
             },

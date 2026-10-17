@@ -1,0 +1,125 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/one_hop_field_projection_sibling/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":1,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:3fb55ad86040f1a32f0a1b2160746e2b5d37a82f961410eb6585ae17218c6a5c","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:field_construction:42ec5018",
+      "canonical_gap_id": "gap:rust:src/lib.rs:stats:field_construction:field_construction:missing_duration_count_total-known",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:stats:field_construction:field_construction:missing_duration_count_total-known",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "stats",
+        "behavior_kind": "field_construction",
+        "probe_kind": "field_construction",
+        "normalized_discriminator": "missing_duration_count_total-known"
+
+      },
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:field_construction:42ec5018",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 5,
+        "expression": "missing_duration_count: total - known"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach stats: pin"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation unknown: the related tests reach `stats` only through a caller that does not forward its result unchanged (helper_result_not_forwarded)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach stats: pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation unknown: the related tests reach `stats` only through a caller that does not forward its result unchanged (helper_result_not_forwarded)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches constructed field: missing_duration_count: total - known (line 5)", "related test src/lib.rs:12 pin uses strong exact value oracle: assert_eq!(projected(20, 1), 19);", "source assertion argument value 1 at line 12", "source assertion argument value 19 at line 12", "source assertion argument value 20 at line 12", "missing discriminator missing_duration_count: total - known: No field-value assertion observes the constructed field: missing_duration_count: total - known"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"missing_duration_count: total - known","line":5}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Propagation unknown: the related tests reach `stats` only through a caller that does not forward its result unchanged (helper_result_not_forwarded)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach stats: pin"],
+      "missing": ["Missing discriminator value: missing_duration_count: total - known", "No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "12": "assert_eq!(projected(20, 1), 19);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 12,
+            "value": "1",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 12,
+            "value": "19",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 12,
+            "value": "20",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "missing_duration_count: total - known",
+            "reason": "No field-value assertion observes the constructed field: missing_duration_count: total - known",
+            "flow_sink": {"kind":"struct_field","text":"missing_duration_count: total - known","line":5}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 12,
+          "value": "1",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 12,
+          "value": "19",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 12,
+          "value": "20",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "missing_duration_count: total - known",
+          "reason": "No field-value assertion observes the constructed field: missing_duration_count: total - known",
+          "flow_sink": {"kind":"struct_field","text":"missing_duration_count: total - known","line":5}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "pin",
+          "file": "src/lib.rs",
+          "line": 12,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(projected(20, 1), 19);",
+          "relation_reason": "helper_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

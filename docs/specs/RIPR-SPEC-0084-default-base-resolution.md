@@ -115,7 +115,7 @@ returns a named, actionable `Err` rather than a raw git error or a silent
 empty result. The message is:
 
 ```
-could not resolve a default base (no origin/main, origin/master, or local main/master found).<context> Pass `--base <ref>` to diff against a specific ref, or run `ripr check --root . --format repo-exposure-md` for a full-repo scan.
+could not resolve a default base (no origin/main, origin/master, or local main/master found).<context> Pass `--base <ref>` to diff against a specific ref, or run `ripr pilot --root .` for whole-repository exploration.
 ```
 
 `<context>` is empty or one sentence naming the repository fact that
@@ -152,6 +152,17 @@ type change, and resumes normal parsing at the next file boundary (#4577).
 `first-pr` names the same
 no-merge-base cause and, in a shallow clone, offers `git fetch --unshallow`
 as its next command.
+
+The shared Git diff byte owner pins `--ignore-submodules=none` for committed,
+worktree, range and PR-evidence loads (#8209). Ambient `diff.ignoreSubmodules`
+and `submodule.<name>.ignore` settings cannot hide a changed gitlink before
+the existing skipped-submodule disclosure sees it. Submodule contents are
+still not analyzed; no source probes are invented for the pointer.
+The existing default-source and tracked-edit status probes pin the same option,
+so an ignored unstaged pointer cannot select committed history or clean-tree
+doctor guidance before the diff loader runs.
+The existing PR-evidence path inventory uses the same inclusion option, keeping
+its changed-file count aligned with retained gitlinks in the packet diff.
 
 ### Honesty bar
 
@@ -196,14 +207,21 @@ as its next command.
 When no scope is given and the result is empty, `ripr check` resolves the
 default base and `HEAD` again after analysis. If each resolves to the same
 commit (typically a clone of a feature branch, where `origin/HEAD` tracks the
-checked-out branch), it writes one line to stderr stating that observation,
+checked-out branch) and another branch could serve as a usable `--base`
+(the exception below), it writes one line to stderr stating that observation,
 that the empty result alone is not a clean pass, and naming `--base`. The two
 resolutions are later observations, not the analyzed snapshot, so the line
 does not attribute the cause of the analyzed range; stdout and JSON are
 unchanged.
 The warning is silent when either commit fails to resolve, when the commits
 differ, and whenever the scope is explicit (`--base`, `--diff`,
-`--candidate-tree`, `--worktree`).
+`--candidate-tree`, `--worktree`). It is also silent when no other branch
+could serve as the advised base (#7644): only a branch whose
+`<branch>...HEAD` range contains changed files within the analyzed
+root counts, so an alias at
+`HEAD`'s commit (such as a fresh clone's remote-tracking counterpart) or
+a range that restores the same tree yields the same empty result, and the
+Start-here action owns the remediation instead.
 
 ### Non-claims
 
@@ -263,6 +281,7 @@ differ, and whenever the scope is explicit (`--base`, `--diff`,
 
 ## Test Mapping
 
+- `crates/ripr/tests/hostile_repos.rs::submodule_ignore_settings_cannot_hide_pointer_changes`
 - `crates/ripr/src/analysis/diff/load.rs::tests::resolve_default_base_uses_origin_master_when_symbolic_ref_points_there`
 - `crates/ripr/src/analysis/diff/load.rs::tests::resolve_default_base_uses_local_main_when_no_remote`
 - `crates/ripr/src/analysis/diff/load.rs::tests::resolve_default_base_returns_named_error_when_nothing_resolves`

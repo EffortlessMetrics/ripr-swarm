@@ -10,6 +10,23 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
+fn tsconfig_path_aliases_resolve_by_default_and_explicit_false_opts_out() -> Result<(), String> {
+    let absent = tests_only_parse("")?;
+    if !absent.typescript().resolve_tsconfig_paths() {
+        return Err("a config without [typescript] must resolve tsconfig paths".to_string());
+    }
+    let empty_table = tests_only_parse("[typescript]\n")?;
+    if !empty_table.typescript().resolve_tsconfig_paths() {
+        return Err("an empty [typescript] table must keep the default".to_string());
+    }
+    let opted_out = tests_only_parse("[typescript]\nresolve_tsconfig_paths = false\n")?;
+    if opted_out.typescript().resolve_tsconfig_paths() {
+        return Err("explicit false must leave tsconfig paths unresolved".to_string());
+    }
+    Ok(())
+}
+
+#[test]
 fn semantic_config_diagnostic_locates_canonical_value_not_comment_or_other_leaf() {
     let source = "# reachable_unrevealed = \"eror\"\n[severity.seams]\nreachable_unrevealed = \"warning\"\n[severity.findings]\nreachable_unrevealed = \"eror\"\n";
     let diagnostic = parse_config_diagnostic(source).expect_err("invalid nested severity");
@@ -1442,7 +1459,7 @@ fn check_artifact_config_identity_hash_tracks_finding_affecting_fields_only() ->
     }
 
     // A finding-affecting change (TypeScript adapter option) changes it too.
-    let ts_changed = tests_only_parse("[typescript]\nresolve_tsconfig_paths = true\n")?;
+    let ts_changed = tests_only_parse("[typescript]\nresolve_tsconfig_paths = false\n")?;
     if check_artifact_config_identity_hash(&ts_changed) == base_hash {
         return Err(
             "typescript.resolve_tsconfig_paths change must change the config identity".to_string(),
@@ -1949,6 +1966,100 @@ fn an_unknown_key_gets_no_table_hint() -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+#[test]
+fn a_recorded_retired_key_names_its_release_and_replacement() -> Result<(), String> {
+    // #7453: no released key is retired yet, so the production table is empty
+    // and the lookup is proved through an injected table.
+    let retired = [
+        RetiredKey {
+            key: "old_mode",
+            retired_in: "9.9.0",
+            replacement: Some("analysis.mode"),
+        },
+        RetiredKey {
+            key: "gone_key",
+            retired_in: "9.9.0",
+            replacement: None,
+        },
+    ];
+    let err = "TOML parse error at line 1, column 1\n  |\n1 | old_mode = 1\n  | ^^^^^^^^\nunknown field `old_mode`, expected one of `analysis`";
+    let hint = retired_key_hint_in(&retired, err)
+        .ok_or_else(|| "a recorded retired key must produce a hint".to_string())?;
+    assert_eq!(
+        hint,
+        "\n`old_mode` was retired in ripr 9.9.0; use `analysis.mode` instead"
+    );
+    let removed = retired_key_hint_in(&retired, &err.replace("old_mode", "gone_key"))
+        .ok_or_else(|| "a removed key must produce a hint".to_string())?;
+    assert!(removed.ends_with("`gone_key` was retired in ripr 9.9.0; remove it from ripr.toml"));
+    // A key that is not recorded keeps the plain serde error.
+    assert_eq!(
+        retired_key_hint_in(&retired, &err.replace("old_mode", "typo_key")),
+        None
+    );
+    // The shipped table records nothing, so today's errors are unchanged.
+    assert_eq!(retired_key_hint(err), None);
+    // An error that is not an unknown-field refusal never yields a hint.
+    assert_eq!(
+        retired_key_hint_in(&retired, "invalid type: integer `1`, expected a string"),
+        None
+    );
+    // The hint also reads the error the real parser produces, so the lookup is
+    // tied to serde's wording and not only to a hand-built string.
+    let Err(real) = parse_config("old_mode = 1\n") else {
+        return Err("an unknown top-level key must be refused".to_string());
+    };
+    assert_eq!(
+        retired_key_hint_in(&retired, &real),
+        Some("\n`old_mode` was retired in ripr 9.9.0; use `analysis.mode` instead".to_string()),
+        "real parser error: {real}"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_real_parse_path_keeps_the_misplaced_hint_and_adds_no_retirement_note() -> Result<(), String>
+{
+    // A valid key in the wrong table still gets its table hint, and the
+    // retirement lookup contributes nothing while no key is retired.
+    let Err(misplaced) = parse_config_diagnostic("mode = \"fast\"\n") else {
+        return Err("a top-level `mode` must be refused".to_string());
+    };
+    assert!(
+        misplaced
+            .message
+            .contains(&misplaced_key_hint_line("mode", "analysis")),
+        "misplaced hint must win: {}",
+        misplaced.message
+    );
+    assert!(!misplaced.message.contains("was retired in"));
+    // A key matching neither list keeps the plain serde error.
+    let Err(typo) = parse_config_diagnostic("zzz_not_a_key = 1\n") else {
+        return Err("an unknown key must be refused".to_string());
+    };
+    assert!(!typo.message.contains("is a valid key"), "{}", typo.message);
+    assert!(!typo.message.contains("was retired in"), "{}", typo.message);
+    assert_eq!(retired_key_hint(&typo.message), None);
+    Ok(())
+}
+
+#[test]
+fn a_config_error_summary_keeps_a_recorded_retirement_but_drops_forged_lines() {
+    let retired = [RetiredKey {
+        key: "old_mode",
+        retired_in: "9.9.0",
+        replacement: Some("analysis.mode"),
+    }];
+    let line = retired_key_hint_line(&retired[0]);
+    let error = format!("TOML parse error\n{line}");
+    assert_eq!(
+        config_error_summary_with(&retired, &error),
+        format!("TOML parse error; {line}")
+    );
+    // Without the record the same text is file content and is dropped.
+    assert_eq!(config_error_summary_with(&[], &error), "TOML parse error");
 }
 
 #[test]
@@ -2541,4 +2652,52 @@ fn load_for_root_parse_error_uses_the_human_path_and_keeps_canonical_source_path
         ));
     }
     Ok(())
+}
+
+#[test]
+fn config_error_display_keeps_misplaced_mode_hint_without_source() {
+    let err = tests_only_parse("mode = \"deep\"\n").expect_err("top-level mode must fail");
+    let compact = config_error_display_lines(&err, false);
+    assert_eq!(compact.len(), 1, "{compact:?}");
+    assert!(
+        compact[0].contains("belongs under [analysis]"),
+        "compact must keep the allowlisted hint: {compact:?}"
+    );
+    assert!(
+        !compact.join("\n").contains("mode = \"deep\""),
+        "compact must not print the source assignment: {compact:?}"
+    );
+    let verbose = config_error_display_lines(&err, true);
+    assert!(
+        verbose
+            .iter()
+            .any(|line| line.contains("unknown field `mode`")),
+        "verbose must keep the parser reason: {verbose:?}"
+    );
+    assert!(
+        verbose
+            .iter()
+            .any(|line| line.contains("belongs under [analysis]")),
+        "verbose must keep the allowlisted hint: {verbose:?}"
+    );
+    assert!(
+        !verbose.join("\n").contains("mode = \"deep\""),
+        "verbose must not restore the source excerpt: {verbose:?}"
+    );
+}
+
+#[test]
+fn config_error_display_keeps_unclosed_table_reason() {
+    let err = tests_only_parse("[languages\n").expect_err("unclosed table must fail");
+    let verbose = config_error_display_lines(&err, true);
+    assert!(
+        verbose
+            .iter()
+            .any(|line| line.contains("unclosed") || line.contains("expected")),
+        "verbose must keep the unclosed-table reason: {verbose:?}"
+    );
+    assert!(
+        !verbose.iter().any(|line| is_toml_source_excerpt_line(line)),
+        "verbose must not reprint the TOML snippet: {verbose:?}"
+    );
 }

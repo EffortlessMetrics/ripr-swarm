@@ -10,7 +10,7 @@
 //! `evidence_promotion`, and `tests.rs`) compile unchanged.
 
 use crate::no_panic::contains_word;
-use crate::run::{run, run_output_optional, run_output_owned, run_output_owned_with_envs};
+use crate::run::{run_output_optional, run_output_owned_with_envs};
 use crate::{
     collect_pr_changes, forbidden_static_terms, has_markdown_heading, json_escape, markdown_cell,
     normalize_path, read_text_lossy, ripr_debug_binary, write_json_string_array, write_report,
@@ -20,6 +20,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+
+mod preparation;
 
 /// Result of a single fixture run: violation lines + optional run output.
 type FixtureResult = Result<(Vec<String>, Option<FixtureRun>), String>;
@@ -96,6 +98,7 @@ pub(crate) fn fixtures_impl(name: Option<&String>) -> Result<(), String> {
 
 pub(crate) fn goldens_impl(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
+        Some("prepare") => preparation::prepare(&args[1..]),
         Some("check") => goldens_check(),
         Some("bless") => {
             let Some(name) = args.get(1) else {
@@ -108,16 +111,35 @@ pub(crate) fn goldens_impl(args: &[String]) -> Result<(), String> {
             goldens_bless(name, &reason)
         }
         Some(other) => Err(format!(
-            "unknown goldens command `{other}`\nusage: cargo xtask goldens check\n       cargo xtask goldens bless <name> --reason <reason>"
+            "unknown goldens command `{other}`\nusage: cargo xtask goldens prepare [--offline]\n       cargo xtask goldens check\n       cargo xtask goldens bless <name> --reason <reason>"
         )),
         None => Err(
-            "missing goldens command\nusage: cargo xtask goldens check\n       cargo xtask goldens bless <name> --reason <reason>"
+            "missing goldens command\nusage: cargo xtask goldens prepare [--offline]\n       cargo xtask goldens check\n       cargo xtask goldens bless <name> --reason <reason>"
                 .to_string(),
         ),
     }
 }
 
 pub(crate) fn goldens_check() -> Result<(), String> {
+    match golden_check_run()? {
+        GoldenCheckRun::Clean => Ok(()),
+        GoldenCheckRun::Failed { message, .. } => Err(message),
+    }
+}
+
+/// What a `goldens check` run established, before the caller decides how to
+/// treat violations.
+enum GoldenCheckRun {
+    Clean,
+    Failed {
+        /// The console repair card `goldens check` prints.
+        message: String,
+        /// The raw violations behind the card.
+        violations: Vec<String>,
+    },
+}
+
+fn golden_check_run() -> Result<GoldenCheckRun, String> {
     let run_set = collect_golden_runs()?;
     // One provenance snapshot backs both the drift report and the console
     // failure card, so the two always name the same build (#7401).
@@ -126,14 +148,73 @@ pub(crate) fn goldens_check() -> Result<(), String> {
     let body = goldens_check_report_body(&run_set.fixtures, &run_set.runs, &run_set.violations);
     write_report("goldens.md", &body)?;
     if run_set.violations.is_empty() {
-        Ok(())
+        Ok(GoldenCheckRun::Clean)
     } else {
-        Err(goldens_check_failure_message(
-            &entries,
-            &run_set.violations,
-            &provenance,
-        ))
+        let message = goldens_check_failure_message(&entries, &run_set.violations, &provenance);
+        Ok(GoldenCheckRun::Failed {
+            message,
+            violations: run_set.violations,
+        })
     }
+}
+
+/// Start of the violation `preparation::preparation_error` produces when a
+/// fixture's locked dependencies cannot be prepared in this environment.
+const FIXTURE_PREPARATION_FAILURE_PREFIX: &str = "fixture dependency preparation failed";
+
+/// What `goldens check` established when run from `precommit`.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PrecommitGoldens {
+    /// Every fixture ran and matched its goldens.
+    Verified,
+    /// No fixture drifted, but some could not be compared because their locked
+    /// dependencies are unavailable here. This is an environment gap, not
+    /// drift and not a pass: hosted CI still owns those fixtures.
+    EnvironmentGap(Vec<String>),
+}
+
+/// Run `goldens check` for `precommit`. Real drift or any other fixture error
+/// fails; fixture-dependency preparation failures alone are reported as an
+/// environment gap so a sandbox without the dependency cache is neither told
+/// to bless availability drift nor shown a false pass.
+pub(crate) fn goldens_check_for_precommit() -> Result<PrecommitGoldens, String> {
+    match golden_check_run()? {
+        GoldenCheckRun::Clean => Ok(PrecommitGoldens::Verified),
+        GoldenCheckRun::Failed {
+            message,
+            violations,
+        } => classify_precommit_goldens(&violations).ok_or(message),
+    }
+}
+
+/// `Some(EnvironmentGap)` only when every violation is a preparation failure;
+/// `None` (a real failure) when any violation is drift or another error.
+fn classify_precommit_goldens(violations: &[String]) -> Option<PrecommitGoldens> {
+    let is_gap = |violation: &String| violation.starts_with(FIXTURE_PREPARATION_FAILURE_PREFIX);
+    if violations.is_empty() || !violations.iter().all(is_gap) {
+        return None;
+    }
+    Some(PrecommitGoldens::EnvironmentGap(
+        violations
+            .iter()
+            .map(|violation| violation.lines().next().unwrap_or(violation).to_string())
+            .collect(),
+    ))
+}
+
+fn is_fixture_expectation_path(path: &str) -> bool {
+    path.starts_with("fixtures/") && path.contains("/expected/")
+}
+
+/// The first changed path that can make a golden stale: output-surface code
+/// (the renderers and domain vocabulary every golden is produced from) or a
+/// fixture expectation itself. Analysis-only, docs-only and test-only diffs
+/// do not pay for the fixture run.
+pub(crate) fn golden_staleness_trigger(changed: &[String]) -> Option<&str> {
+    changed
+        .iter()
+        .map(String::as_str)
+        .find(|path| crate::is_output_surface_path(path) || is_fixture_expectation_path(path))
 }
 
 /// Run the assistant-loop-health corpus contract used by `goldens check`.
@@ -435,6 +516,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "issue_lifecycle_attempts"
                     | "issue_lifecycle_contract_plan"
                     | "issue_lifecycle_intake"
+                    | "issue_lifecycle_real_rows"
                     | "github_unanalyzed_states"
                     | "orchestration_attempt_receipts"
                     | "perl_lsp_facts_exporter"
@@ -457,6 +539,15 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "swarm-plan-packet-corpus"
                     | "work_portfolio"
                     | "work_selection_identity"
+                    | "work_result_identity"
+                    | "work_claim_identity"
+                    | "work_wave_identity"
+                    | "work_context_identity"
+                    | "work_synthesis_identity"
+                    | "work_burndown_identity"
+                    | "work_intake_identity"
+                    | "work_plan_identity"
+                    | "work_adapter_identity"
                     | "typescript-bun-ub-calibration"
                     | "typescript-preview-false-actionable-audit"
                     | "typescript-preview-repair-loop"
@@ -494,12 +585,16 @@ pub(crate) fn fixture_contract_violations(path: &Path) -> Result<Vec<String>, St
     }
 
     let text = read_text_lossy(&spec)?;
-    if !text
-        .lines()
-        .any(|line| line.starts_with("Spec: RIPR-SPEC-"))
-    {
+    if !text.lines().any(|line| line.starts_with(SPEC_LINE_PREFIX)) {
         violations.push(format!(
             "{} is missing `Spec: RIPR-SPEC-NNNN`",
+            normalize_path(&spec)
+        ));
+    } else if !text.lines().any(spec_line_cites_real_id) {
+        // #7399: the scaffold's literal `NNNN` placeholder used to satisfy the
+        // prefix check here and then fail `check-traceability` later.
+        violations.push(format!(
+            "{} cites no real spec id (a `Spec: RIPR-SPEC-` line needs four digits, not a placeholder); run `cargo xtask specs next` to allocate one or cite an existing docs/specs id",
             normalize_path(&spec)
         ));
     }
@@ -509,6 +604,23 @@ pub(crate) fn fixture_contract_violations(path: &Path) -> Result<Vec<String>, St
         }
     }
     Ok(violations)
+}
+
+const SPEC_LINE_PREFIX: &str = "Spec: RIPR-SPEC-";
+
+/// True when a `Spec: RIPR-SPEC-` line is followed by exactly four digits, the
+/// same id shape `check-traceability` requires.
+fn spec_line_cites_real_id(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix(SPEC_LINE_PREFIX) else {
+        return false;
+    };
+    let digits: String = rest.chars().take(4).collect();
+    digits.len() == 4
+        && digits.chars().all(|c| c.is_ascii_digit())
+        && !rest
+            .chars()
+            .nth(4)
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
 #[derive(Debug)]
@@ -715,6 +827,9 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
             normalize_path(path)
         ));
     }
+    if name == preparation::FIXTURE {
+        preparation::ensure_ready()?;
+    }
 
     let actual_dir = Path::new("target")
         .join("ripr")
@@ -814,7 +929,7 @@ pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
     // ripr_debug_binary() honors CARGO_TARGET_DIR (#2176 review): the
     // routed CI jobs set it, so `cargo build` writes there.
     ripr_fixture_binary_built_by(ripr_debug_binary(), &RIPR_BINARY_BUILD, &|| {
-        run("cargo", &["build", "-p", "ripr"]).map(|_status| ())
+        preparation::build(&["build", "-p", "ripr"])
     })
 }
 
@@ -836,7 +951,7 @@ pub(crate) fn ripr_perl_fixture_binary() -> Result<String, String> {
     let shared = ripr_debug_binary();
     let perl = shared.with_file_name(format!("ripr-lang-perl{}", std::env::consts::EXE_SUFFIX));
     ripr_fixture_binary_built_by(perl.clone(), &RIPR_PERL_BINARY_BUILD, &|| {
-        run("cargo", &["build", "-p", "ripr", "--features", "lang-perl"])?;
+        preparation::build(&["build", "-p", "ripr", "--features", "lang-perl"])?;
         fs::copy(&shared, &perl).map_err(|err| {
             format!(
                 "copy {} to {} failed: {err}",
@@ -846,7 +961,7 @@ pub(crate) fn ripr_perl_fixture_binary() -> Result<String, String> {
         })?;
         // Restore the default binary. Cargo keeps both feature sets'
         // artifacts, so this only relinks.
-        run("cargo", &["build", "-p", "ripr"]).map(|_status| ())
+        preparation::build(&["build", "-p", "ripr"])
     })
 }
 
@@ -877,6 +992,9 @@ fn ripr_fixture_binary_built_by(
 /// pass `None` — they analyze real repositories whose workspace cache is
 /// content-keyed on sources that change with the edit under test, so relocating
 /// it would buy nothing and cost every dogfood run a cold analysis.
+///
+/// Corpus children use one Rayon worker because the parent already runs cases
+/// in parallel. This bounds nested worker pools; helper/I/O threads remain.
 pub(crate) fn run_fixture_check(
     root: &str,
     diff_file: &str,
@@ -901,12 +1019,19 @@ pub(crate) fn run_fixture_check(
             args.push("human-full".to_string());
         }
     }
+    let environment = preparation::environment()?;
+    let mut envs = environment
+        .iter()
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect::<Vec<_>>();
     match cache_dir {
         Some(dir) => {
             let value = dir.to_string_lossy().into_owned();
-            run_output_owned_with_envs(&binary, &args, &[(FIXTURE_CACHE_DIR_ENV, &value)])
+            envs.push((FIXTURE_CACHE_DIR_ENV, &value));
+            envs.push(("RAYON_NUM_THREADS", "1"));
+            run_output_owned_with_envs(&binary, &args, &envs)
         }
-        None => run_output_owned(&binary, &args),
+        None => run_output_owned_with_envs(&binary, &args, &envs),
     }
 }
 
@@ -2252,7 +2377,7 @@ fn fixtures_new(name: &str) -> Result<(), String> {
         name
     );
     println!(
-        "  3. Edit {}/SPEC.md to fill in the Given/When/Then/Must Not.",
+        "  3. Edit {}/SPEC.md to fill in the Given/When/Then/Must Not, and replace the\n     `Spec: RIPR-SPEC-NNNN` placeholder with a real id (`cargo xtask specs next`\n     allocates one; or cite an existing docs/specs id). `fixtures` rejects the placeholder.",
         name
     );
     println!("{}", fixtures_new_step4(name));
@@ -2262,6 +2387,96 @@ fn fixtures_new(name: &str) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
+
+    // #8421: the precommit goldens trigger and gap classification.
+
+    #[test]
+    fn staleness_trigger_names_output_surface_and_golden_paths_only() {
+        let paths = |items: &[&str]| items.iter().map(|p| p.to_string()).collect::<Vec<_>>();
+        for path in [
+            "crates/ripr/src/output/human/triage.rs",
+            "crates/ripr/src/domain/classification.rs",
+            "fixtures/rust_map_overwrite_count/expected/human.txt",
+            "docs/OUTPUT_SCHEMA.md",
+            "policy/output_contracts.txt",
+            "crates/ripr/src/lsp.rs",
+        ] {
+            let changed = paths(&["README.md", path]);
+            assert_eq!(super::golden_staleness_trigger(&changed), Some(path));
+        }
+        for path in [
+            "crates/ripr/src/analysis/probe.rs",
+            "docs/ROADMAP.md",
+            "docs/golden-guide.md",
+            "xtask/src/main.rs",
+            "fixtures/rust_map_overwrite_count/input/src/lib.rs",
+        ] {
+            let changed = paths(&[path]);
+            assert_eq!(super::golden_staleness_trigger(&changed), None, "{path}");
+        }
+        assert_eq!(super::golden_staleness_trigger(&[]), None);
+    }
+
+    #[test]
+    fn precommit_goldens_treat_only_preparation_failures_as_an_environment_gap() {
+        let gap = "fixture dependency preparation failed for owner_return_pin_fallible_literal\nenvironment: X\nerror".to_string();
+        let drift = "drift for fixture `rust_map_overwrite_count` [human.txt]".to_string();
+        let other = "fixture contract violation".to_string();
+
+        assert_eq!(
+            super::classify_precommit_goldens(std::slice::from_ref(&gap)),
+            Some(super::PrecommitGoldens::EnvironmentGap(vec![
+                "fixture dependency preparation failed for owner_return_pin_fallible_literal"
+                    .to_string()
+            ]))
+        );
+        // Drift alongside a gap is still a failure: the gap must not hide it.
+        assert_eq!(
+            super::classify_precommit_goldens(&[gap.clone(), drift.clone()]),
+            None
+        );
+        assert_eq!(super::classify_precommit_goldens(&[drift]), None);
+        assert_eq!(super::classify_precommit_goldens(&[gap, other]), None);
+        assert_eq!(super::classify_precommit_goldens(&[]), None);
+    }
+    #[test]
+    fn spec_line_placeholder_is_not_a_real_spec_id() {
+        // #7399: the scaffold placeholder must not satisfy the fixture gate.
+        assert!(!spec_line_cites_real_id("Spec: RIPR-SPEC-NNNN"));
+        assert!(!spec_line_cites_real_id("Spec: RIPR-SPEC-12"));
+        assert!(!spec_line_cites_real_id("Spec: RIPR-SPEC-00011"));
+        assert!(!spec_line_cites_real_id("Spec: RIPR-SPEC-0001x"));
+        assert!(spec_line_cites_real_id("Spec: RIPR-SPEC-0001"));
+        assert!(spec_line_cites_real_id(
+            "Spec: RIPR-SPEC-0062, RIPR-SPEC-0063"
+        ));
+    }
+
+    #[test]
+    fn scaffolded_fixture_with_placeholder_spec_fails_the_contract() -> Result<(), String> {
+        let dir = unique_temp_path("7399-spec-placeholder");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("expected")).map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("diff.patch"), "").map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("expected/check.json"), "{}").map_err(|e| e.to_string())?;
+        let body = |id: &str| {
+            format!("# Fixture\n\nSpec: {id}\n\n## Given\n\n## When\n\n## Then\n\n## Must Not\n")
+        };
+        std::fs::write(dir.join("SPEC.md"), body("RIPR-SPEC-NNNN")).map_err(|e| e.to_string())?;
+        let placeholder = fixture_contract_violations(&dir)?;
+        std::fs::write(dir.join("SPEC.md"), body("RIPR-SPEC-0001")).map_err(|e| e.to_string())?;
+        let real = fixture_contract_violations(&dir)?;
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            placeholder
+                .iter()
+                .any(|v| v.contains("cites no real spec id")),
+            "{placeholder:#?}"
+        );
+        assert!(real.is_empty(), "{real:#?}");
+        Ok(())
+    }
+
     #[test]
     fn golden_drift_reports_record_the_producing_build() -> Result<(), String> {
         // #7401: neither the drift report nor the console card recorded which

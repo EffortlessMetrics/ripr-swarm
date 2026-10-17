@@ -10,6 +10,7 @@ Linked issues:
 
 - #4822 (command-discovery C1)
 - #1770 (parent controller under #1613; later slices remain separate)
+- #7747 (bare group examples display their help)
 
 Support-tier impact:
 
@@ -62,6 +63,13 @@ Authority:
    open a network, mutate a workspace, or write a product artifact.
 8. Ordering of normalized catalog text is deterministic and independent of
    source-row order.
+9. The bare `cache`, `baseline`, `policy`, `reports`, `calibrate`, `zero`,
+   `assistant-loop`, `config`, `pr-ledger`, `pr-review`, `coverage-grip`, and
+   `gate` catalog examples display their existing group help with exit 0 and
+   silent stderr. They do not read configuration or write artifacts. Explicit
+   subcommands keep their required inputs and unknown-subcommand errors;
+   flag-first gate evaluation remains accepted. The separate `pr-comments`
+   default plan action is unchanged.
 
 The top-level parser retains help/version flag dispatch and `help <command>`
 rewriting, then resolves remaining top-level spellings through the catalog.
@@ -77,6 +85,10 @@ children.
   each catalog child accepts `--help`.
 - Existing bounded `ripr --help`, `help <command>`, and `help --all` tests
   continue to pass.
+- Real CLI tests bind the twelve bare examples from machine discovery to
+  literal group identities and their rendered help. An invalid-config scratch
+  workspace stays unchanged. Unknown subcommands, explicit leaves missing
+  inputs, and the flag-first gate parser provide alternate controls.
 
 ## Non-Goals
 

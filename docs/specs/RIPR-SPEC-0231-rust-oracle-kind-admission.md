@@ -311,7 +311,22 @@ Two pattern terms are used below.
    `From`/`Into` path spellings of that conversion (`From::from(..)`,
    `<u8 as From<bool>>::from(..)`, `Into::<u8>::into(..)`,
    `std::primitive::u8::from(..)`; #8101); a cast of a value
-   still pins (`assert_eq!(x as u8, 3)`). A value wrapper holds the test
+   still pins (`assert_eq!(x as u8, 3)`). The same one-argument constructor
+   (`Some`, `Ok` or `Err`) around both sides compares what it wraps, so a
+   test compared with a non-literal through it caps
+   (`assert_eq!(Some(r == Err(E::Bad)), Some(expected))`; #8101). Arithmetic
+   over an integer-cast test and another non-literal term caps too, whatever
+   it is compared with (`assert_eq!(k * (r == Err(E::Bad)) as u32, n)`;
+   #8101); beside only literals it still pins
+   (`assert_eq!((r == Err(E::Bad)) as u32 + 1, 2)`). Two
+   arrays or `vec!` literals of the same length compare element by element, so
+   a test compared with a non-literal inside one caps
+   (`assert_eq!(vec![r == Err(E::Bad)], vec![expected])`; #8101). A side
+   that indexes by a test caps whatever it is compared with, because the table
+   may hold one value at both positions
+   (`assert_eq!(table[(r == Err(E::Bad)) as usize], expected)`; #8101),
+   including when a field, method or further index follows it. Beyond a shared
+   constructor, a value wrapper holds the test
    it wraps, and a boolean literal it wraps is that literal: a constructor
    (`Some(..)`, `Ok::<bool, ()>(..)`, `E::V(..)`), a `new` or `from` path
    call (`Box::new(..)`), a one-element or repeat array (`[..]`,
@@ -600,11 +615,12 @@ rejected alternative. Any can be reversed later without touching the rest.
    its probe-relative strength, because the assert fixes the owner's whole
    two-valued result. `owner_pin` is the authority for that shape and its
    runtime controls (`bool_owner_assert_pin_matched_static_and_runtime_controls`)
-   back it. The same holds for RIPR-SPEC-0197's inline expect-test pin
-   (`expect![["text"]].assert_eq(&owner(..))`, #6578): the oracle keeps
+   back it. The same holds for RIPR-SPEC-0197's inline and golden-file
+   expect-test pins (`expect![["text"]].assert_eq(&owner(..))` and
+   `expect_file!["path"].assert_eq(&owner(..))`, #6578): the oracle keeps
    step 6's `snapshot` / medium kind, and only an owner pin that admits that
-   exact spelling raises its probe-relative strength; `insta`,
-   `expect_file!` and `assert_debug_eq` snapshots never pin
+   exact spelling raises its probe-relative strength; `insta` and
+   `assert_debug_eq` snapshots never pin
    (`pin_strength_gate_keeps_exact_pins_strong_and_defers_bool_pins_to_owner_pin`).
    Rejected: requiring the classifier to read that shape as
    `exact_value` / strong, which would duplicate the owner-identity gates
@@ -665,7 +681,7 @@ rejected alternative. Any can be reversed later without touching the rest.
   assertions).
 - No change to reveal's token or owner-pin confirmation, except that an
   exact owner pin needs a strong oracle, apart from the bool-owner and
-  inline expect-test pins (decision 4).
+  inline and golden-file expect-test pins (decision 4).
 - No change to TypeScript or Python oracle classification.
 
 ## Acceptance Examples

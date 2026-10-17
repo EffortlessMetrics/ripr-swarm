@@ -422,6 +422,116 @@ test("rejects missing, wrong-version, wrong-target, traversal, symlink, director
   }
 });
 
+test("missing native executable gives exact recovery for every registered target", () => {
+  for (const selected of manifest.ripr.platforms) {
+    const fixture = nativeFixture({ selected, createExecutable: false });
+    try {
+      assert.ok(fs.statSync(path.join(fixture.packageRoot, "package.json")).isFile());
+      assert.equal(fs.existsSync(path.join(fixture.packageRoot, ...selected.executable.split("/"))), false);
+      assert.throws(
+        () => launcher.resolveNativeExecutable({ launcherRoot: fixture.launcherRoot, selectedPlatform: selected }),
+        (error) => {
+          assert.ok(error instanceof launcher.LauncherError);
+          assert.equal(error.code, "native_executable_missing");
+          assert.equal(error.cause.code, "ENOENT");
+          assert.equal(error.message,
+            `native package ${selected.package}@${manifest.version} does not contain ${selected.executable}; restore ${selected.executable} from the matching native package tarball, or reinstall ${manifest.name}@${manifest.version} in its owning npm environment with optional dependencies enabled`);
+          return true;
+        },
+      );
+    } finally {
+      cleanup(fixture.root);
+    }
+  }
+});
+
+test("public bin missing-native failure gives exact recovery after a directory move", (t) => {
+  const selected = hostPlatformOrSkip(t);
+  if (!selected) return;
+  const fixture = nativeFixture({ selected, createExecutable: false });
+  const foreignCwd = fixtureRoot("foreign native 工作 café");
+  const version = "0.11.0-rc.7";
+  const exactManifest = launcherManifest({ version });
+  for (const name of Object.keys(exactManifest.optionalDependencies)) exactManifest.optionalDependencies[name] = version;
+  writeJson(path.join(fixture.launcherRoot, "package.json"), exactManifest);
+  const nativeManifestPath = path.join(fixture.packageRoot, "package.json");
+  writeJson(nativeManifestPath, { ...JSON.parse(fs.readFileSync(nativeManifestPath, "utf8")), version });
+  writeJson(path.join(foreignCwd, "package.json"), { name: manifest.name, version: "9.9.9" });
+  const decoy = path.join(foreignCwd, process.platform === "win32" ? "ripr.cmd" : "ripr");
+  fs.writeFileSync(decoy, process.platform === "win32" ? "@echo PATH-FALLBACK\r\n" : "#!/bin/sh\necho PATH-FALLBACK\n");
+  fs.chmodSync(decoy, 0o755);
+  try {
+    for (const moved of [false, true]) {
+      if (moved) {
+        const newRoot = `${fixture.root} moved 工作 café`;
+        fs.renameSync(fixture.root, newRoot);
+        fixture.root = newRoot;
+        fixture.launcherRoot = path.join(newRoot, "launcher");
+        fixture.packageRoot = path.join(fixture.launcherRoot, "node_modules", ...selected.package.split("/"));
+      }
+      const executable = path.join(fixture.packageRoot, ...selected.executable.split("/"));
+      const bin = path.join(fixture.launcherRoot, "bin", "ripr.cjs");
+      assert.equal(fs.existsSync(executable), false);
+      const options = {
+        cwd: foreignCwd,
+        env: { ...process.env, PATH: `${foreignCwd}${path.delimiter}${process.env.PATH || ""}` },
+        encoding: "utf8",
+        timeout: 5000,
+      };
+      const missing = spawnSync(process.execPath, [bin, "--version"], options);
+      assert.ifError(missing.error);
+      assert.equal(missing.status, 1);
+      assert.equal(missing.stdout, "");
+      assert.equal(missing.stderr,
+        `ripr npm launcher: native package ${selected.package}@${version} does not contain ${selected.executable}; restore ${selected.executable} from the matching native package tarball, or reinstall ${manifest.name}@${version} in its owning npm environment with optional dependencies enabled\n`);
+      assert.doesNotMatch(missing.stderr, /PATH-FALLBACK|9\.9\.9|latest|node:internal/);
+
+      // Node bytes exercise recovery/transport only, not a qualified RIPR payload.
+      fs.mkdirSync(path.dirname(executable), { recursive: true });
+      fs.copyFileSync(process.execPath, executable);
+      fs.chmodSync(executable, 0o755);
+      const restored = spawnSync(process.execPath, [bin, "-e", "process.exit(23)"], options);
+      assert.ifError(restored.error);
+      assert.equal(restored.status, 23);
+      assert.equal(restored.stdout, "");
+      assert.equal(restored.stderr, "");
+      fs.unlinkSync(executable);
+    }
+  } finally {
+    cleanup(fixture.root);
+    cleanup(foreignCwd);
+  }
+});
+
+test("public bin simulated unsupported platforms fail without reinstall advice or stdout", () => {
+  const fixture = nativeFixture({ createExecutable: false });
+  const preload = path.join(fixture.root, "simulated-platform.cjs");
+  try {
+    for (const [platform, arch, report, reason] of [
+      ["linux", "x64", { sharedObjects: ["/lib/ld-musl-x86_64.so.1"] }, "unsupported Linux libc musl; this release provides glibc payloads only"],
+      ["linux", "x64", { header: {}, sharedObjects: [] }, "unsupported Linux libc unknown; this release provides glibc payloads only"],
+      ["freebsd", "x64", {}, "unsupported platform freebsd/x64/none"],
+      ["win32", "arm64", {}, "unsupported platform win32/arm64/none"],
+      ["linux", "riscv64", { header: { glibcVersionRuntime: "2.36" } }, "unsupported platform linux/riscv64/glibc"],
+    ]) {
+      fs.writeFileSync(preload,
+        `Object.defineProperty(process, "platform", { value: ${JSON.stringify(platform)} });\nObject.defineProperty(process, "arch", { value: ${JSON.stringify(arch)} });\nprocess.report.getReport = () => (${JSON.stringify(report)});\n`);
+      const result = spawnSync(process.execPath, ["--require", preload, path.join(fixture.launcherRoot, "bin", "ripr.cjs"), "--version"], {
+        cwd: fixture.root,
+        encoding: "utf8",
+        timeout: 5000,
+      });
+      assert.ifError(result.error);
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr, `ripr npm launcher: ${reason}\n`);
+      assert.doesNotMatch(result.stderr, /reinstall|restore|tarball|node:internal/);
+    }
+  } finally {
+    cleanup(fixture.root);
+  }
+});
+
 test("spawns an absolute executable with literal argv, inherited stdio, cwd, env, and no shell", async () => {
   const child = new EventEmitter();
   child.killed = false;
@@ -816,4 +926,87 @@ test("npm package contents are explicit and exclude tests and build residue", ()
   ]);
   assert.equal(report[0].name, "@effortlessmetrics/ripr");
   assert.equal(report[0].version, manifest.version);
+});
+test("non-executable native payload gives exact recovery for each POSIX target", { skip: process.platform === "win32" }, () => {
+  const platforms = manifest.ripr.platforms.filter((entry) => entry.nodePlatform !== "win32");
+  assert.equal(platforms.length, 4);
+  for (const selected of platforms) {
+    const fixture = nativeFixture({ selected, mode: 0o644 });
+    try {
+      const executable = path.join(fixture.packageRoot, ...selected.executable.split("/"));
+      assert.ok(fs.statSync(executable).isFile());
+      assert.equal(fs.statSync(executable).mode & 0o111, 0);
+      assert.throws(
+        () => launcher.resolveNativeExecutable({ launcherRoot: fixture.launcherRoot, selectedPlatform: selected }),
+        (error) => {
+          assert.ok(error instanceof launcher.LauncherError);
+          assert.equal(error.code, "native_executable_not_executable");
+          assert.equal(error.message,
+            `native package ${selected.package}@${manifest.version} executable is not executable: ${selected.executable}; restore ${selected.executable} from the matching native package tarball with executable permissions preserved, or reinstall ${manifest.name}@${manifest.version} in its owning npm environment with optional dependencies enabled`);
+          return true;
+        },
+      );
+      fs.chmodSync(executable, 0o755);
+      assert.equal(launcher.resolveNativeExecutable({ launcherRoot: fixture.launcherRoot, selectedPlatform: selected }).executablePath, fs.realpathSync(executable));
+    } finally {
+      cleanup(fixture.root);
+    }
+  }
+});
+
+test("public bin non-executable recovery survives a directory move and restores launch", { skip: process.platform === "win32" }, (t) => {
+  const selected = hostPlatformOrSkip(t);
+  if (!selected) return;
+  const fixture = nativeFixture({ selected });
+  const foreignCwd = fixtureRoot("foreign nonexec 工作 café");
+  const version = "0.11.0-rc.8";
+  const exactManifest = launcherManifest({ version });
+  for (const name of Object.keys(exactManifest.optionalDependencies)) exactManifest.optionalDependencies[name] = version;
+  writeJson(path.join(fixture.launcherRoot, "package.json"), exactManifest);
+  const nativeManifestPath = path.join(fixture.packageRoot, "package.json");
+  writeJson(nativeManifestPath, { ...JSON.parse(fs.readFileSync(nativeManifestPath, "utf8")), version });
+  writeJson(path.join(foreignCwd, "package.json"), { name: manifest.name, version: "9.9.9" });
+  const decoy = path.join(foreignCwd, "ripr");
+  fs.writeFileSync(decoy, "#!/bin/sh\necho PATH-FALLBACK\n");
+  fs.chmodSync(decoy, 0o755);
+  try {
+    for (const moved of [false, true]) {
+      if (moved) {
+        const newRoot = `${fixture.root} moved 工作 café`;
+        fs.renameSync(fixture.root, newRoot);
+        fixture.root = newRoot;
+        fixture.launcherRoot = path.join(newRoot, "launcher");
+        fixture.packageRoot = path.join(fixture.launcherRoot, "node_modules", ...selected.package.split("/"));
+      }
+      const executable = path.join(fixture.packageRoot, ...selected.executable.split("/"));
+      const bin = path.join(fixture.launcherRoot, "bin", "ripr.cjs");
+      fs.chmodSync(executable, 0o644);
+      assert.ok(fs.statSync(executable).isFile());
+      assert.equal(fs.statSync(executable).mode & 0o111, 0);
+      const options = {
+        cwd: foreignCwd,
+        env: { ...process.env, PATH: `${foreignCwd}${path.delimiter}${process.env.PATH || ""}` },
+        encoding: "utf8",
+        timeout: 5000,
+      };
+      const refused = spawnSync(process.execPath, [bin, "--version"], options);
+      assert.ifError(refused.error);
+      assert.equal(refused.status, 1);
+      assert.equal(refused.stdout, "");
+      assert.equal(refused.stderr,
+        `ripr npm launcher: native package ${selected.package}@${version} executable is not executable: ${selected.executable}; restore ${selected.executable} from the matching native package tarball with executable permissions preserved, or reinstall ${manifest.name}@${version} in its owning npm environment with optional dependencies enabled\n`);
+      assert.doesNotMatch(refused.stderr, /PATH-FALLBACK|9\.9\.9|latest|node:internal/);
+
+      // Synthetic Node bytes exercise launch restoration, not RIPR qualification.
+      fs.chmodSync(executable, 0o755);
+      const restored = spawnSync(process.execPath, [bin, "-e", "process.exit(23)"], options);
+      assert.ifError(restored.error);
+      assert.equal(restored.status, 23);
+      assert.equal(restored.stdout, "");
+      assert.equal(restored.stderr, "");
+    }
+  } finally {
+    cleanup(fixture.root);
+    cleanup(foreignCwd);
+  }
 });

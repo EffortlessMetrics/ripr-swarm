@@ -188,6 +188,33 @@ target/ripr/install-smoke-path/bin/ripr agent receipt \
 
 On Windows, use `target\ripr\install-smoke-path\bin\ripr.exe`.
 
+Run the generator self-pin smoke with the binary built from the release commit
+(#5245). `init --ci github` pins its own version only when
+`LATEST_RELEASED_VERSION` in `crates/ripr/src/cli/commands/init_workflow.rs` has
+been bumped with the package version; a forgotten bump makes the released binary
+warn and pin the previous release. `release-readiness` checks that constant from
+source (`init-pin-version`); this step checks the behavior of the built binary.
+
+```bash
+version=0.11.0
+smoke=target/ripr/install-smoke-path/init-pin
+rm -rf "$smoke" && mkdir -p "$smoke" && git init -q "$smoke"
+target/ripr/install-smoke-path/bin/ripr init --ci github --dry-run \
+  --root "$smoke" > "$smoke/stdout.txt" 2> "$smoke/stderr.txt" &&
+  test ! -s "$smoke/stderr.txt" &&
+  ! grep -q 'is unreleased' "$smoke/stdout.txt" &&
+  grep -q "cargo install ripr --version $version --locked" "$smoke/stdout.txt" &&
+  echo "init self-pin smoke: pass" || { echo "init self-pin smoke: FAIL" >&2; false; }
+```
+
+The step passes only when the dry run exits 0, prints no unreleased-generator
+warning on stderr, and pins `$version` in the rendered workflow. On a binary
+whose constant was not bumped it fails at the stderr check, because the warning
+is non-empty. To disprove the check, build a scratch binary from the release
+commit with `LATEST_RELEASED_VERSION` reverted to the previous release and
+confirm the step fails; do not commit that revert. This step applies to the
+release commit only: a development build is expected to fail it.
+
 Also confirm the generated CI and editor first-run front doors before release:
 
 ```bash
@@ -291,8 +318,9 @@ available. The extension resolves the server in this order:
 ripr.server.path
 bundled server binary, if present
 downloaded cached server binary
+ripr on PATH, when ripr.server.version is empty
 verified first-run download from GitHub Releases
-ripr on PATH
+ripr on PATH, as the fallback when the download fails or a version is pinned
 actionable error
 ```
 

@@ -580,8 +580,12 @@ mod tests {
     #[test]
     fn perl_receipt_command_is_canonical_receipt_write_shape() {
         let cmd = perl_receipt_command("gap:perl:lib/My/App.pm:discount", "prove t/app.t");
+        // Host-aware quoting (#7729).
         assert!(
-            cmd.starts_with("ripr receipt write --gap gap:perl:lib/My/App.pm:discount --verify-command 'prove t/app.t' --status not_run --out "),
+            cmd.starts_with(&format!(
+                "ripr receipt write --gap gap:perl:lib/My/App.pm:discount --verify-command {} --status not_run --out ",
+                "'prove t/app.t'"
+            )),
             "receipt must be the canonical receipt write command: {cmd}"
         );
         assert!(

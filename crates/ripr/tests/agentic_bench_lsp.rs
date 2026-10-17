@@ -287,6 +287,14 @@ impl BenchSession {
 
 impl Drop for BenchSession {
     fn drop(&mut self) {
+        // Closing stdin lets the server exit on its own; give an exiting
+        // instrumented process time to finish writing its coverage profile
+        // before the owned kill, which would otherwise truncate it (#4978).
+        self.stdin = None;
+        let grace = Instant::now() + Duration::from_secs(2);
+        while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < grace {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }

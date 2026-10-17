@@ -17448,7 +17448,7 @@ mod tests {
 }
 
 #[test]
-fn medium_snapshot_owner_result_field_stays_already_gripped() -> Result<(), String> {
+fn unbound_snapshot_owner_result_field_stays_weak() -> Result<(), String> {
     let case = refresh_plan_case(
         r#"
 #[cfg(test)]
@@ -17465,19 +17465,27 @@ mod tests {
     )?;
     let eligibility = repair_packet_eligibility(&case.classified);
     let readiness = &eligibility.readiness;
-    if case.classified.class != SeamGripClass::StronglyGripped
-        || case.classified.evidence.discriminate.state != StageState::Yes
+    if case.classified.class != SeamGripClass::WeaklyGripped
+        || case.classified.evidence.discriminate.state != StageState::Weak
         || !case.classified.evidence.missing_discriminators.is_empty()
-        || readiness.state != RepairRouteState::AlreadyGripped
+        || readiness.state == RepairRouteState::AlreadyGripped
         || is_safe_for_repair_packet(&case.classified)
     {
         return Err(format!(
-            "matching Medium snapshot must stay AlreadyGripped: class={:?}, discriminate={:?}, missing={:?}, readiness={:?}, eligible={}",
+            "unbound snapshot field must stay weak without inventing a repair route: class={:?}, discriminate={:?}, missing={:?}, readiness={:?}, eligible={}",
             case.classified.class,
             case.classified.evidence.discriminate.state,
             case.classified.evidence.missing_discriminators,
             readiness.state,
             eligibility.eligible()
+        ));
+    }
+    let context = CompactGripContext::new(&case.index);
+    let compact = compact_evidence_for_seam(&case.seam, &context);
+    if compact.discriminate.state != StageState::Weak {
+        return Err(format!(
+            "compact evidence must also withhold unbound snapshot discrimination: {:?}",
+            compact.discriminate
         ));
     }
     Ok(())
@@ -17863,12 +17871,11 @@ fn seam_behind_a_helper_chain_past_five_hops_is_opaque_not_ungripped() -> Result
         ),
     ])?;
     assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
-    assert!(
-        reach
-            .summary
-            .contains("`checks_out` (tests/checkout.rs:1) calls `checkout`"),
-        "the witness past the bound is named: {}",
-        reach.summary
+    // Pin the full seam summary, not a substring of the witness: a wording
+    // or location regression must fail (#8106).
+    assert_eq!(
+        reach.summary,
+        "Reach unresolved (rust_integration_public_api_path_unresolved): `checks_out` (tests/checkout.rs:1) calls `checkout`, which may lead to `surcharge` through a call path ripr does not fully trace; no gap is reported"
     );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())

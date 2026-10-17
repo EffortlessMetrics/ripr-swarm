@@ -112,16 +112,61 @@ function stageIntegrationWorkspace(templatePath: string, workspacePath: string):
   return baseRef;
 }
 
-async function runUntrustedTests(
+export function stageMultiRootWorkspace(templatePath: string, workspacePath: string): string {
+  // This run owns a fresh directory. Never erase another host's fixture or cache.
+  fs.mkdirSync(workspacePath);
+  for (const name of ['root-a', 'root-b']) {
+    const root = path.join(workspacePath, name);
+    fs.cpSync(path.join(templatePath, name, 'base'), root, { recursive: true });
+    runGit(root, ['init', '--initial-branch', 'main']);
+    runGit(root, ['config', 'user.name', 'ripr multi-root acceptance']);
+    runGit(root, ['config', 'user.email', 'ripr-multiroot@example.invalid']);
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-m', 'fixture: baseline']);
+    fs.cpSync(path.join(templatePath, name, 'head'), root, { recursive: true });
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-m', 'fixture: changed boundary']);
+    const changed = runGit(root, ['diff', '--name-only', 'HEAD~1', 'HEAD']);
+    if (changed !== (name === 'root-a' ? 'src/alpha.rs' : 'src/beta.rs')) {
+      throw new Error(`multi-root fixture ${name} has an unexpected diff: ${changed}`);
+    }
+  }
+  const workspaceFile = path.join(workspacePath, 'two-roots.code-workspace');
+  fs.copyFileSync(path.join(templatePath, 'two-roots.code-workspace'), workspaceFile);
+  return workspaceFile;
+}
+
+const DOWNLOAD_ATTEMPTS = 3;
+
+// The VS Code build is fetched at test time; one transient connect error
+// (ETIMEDOUT/ENETUNREACH, #5072) should not fail the whole lane. The download
+// is cached under `cachePath`; the returned executable is handed to every
+// run so none of them repeats the version lookup.
+async function downloadVSCodeWithRetry(
   cachePath: string,
+  extensionDevelopmentPath: string
+): Promise<string> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
+    try {
+      return await downloadAndUnzipVSCode({ cachePath, extensionDevelopmentPath });
+    } catch (caught) {
+      lastError = caught;
+      console.warn(`VS Code download attempt ${attempt}/${DOWNLOAD_ATTEMPTS} failed: ${String(caught)}`);
+      if (attempt < DOWNLOAD_ATTEMPTS) {
+        await new Promise<void>((resolve) => setTimeout(resolve, attempt * 5000));
+      }
+    }
+  }
+  throw lastError;
+}
+
+async function runUntrustedTests(
+  vscodeExecutablePath: string,
   extensionDevelopmentPath: string,
   extensionTestsPath: string,
   launchArgs: string[]
 ): Promise<void> {
-  const vscodeExecutablePath = await downloadAndUnzipVSCode({
-    cachePath,
-    extensionDevelopmentPath
-  });
   const args = [
     '--no-sandbox',
     '--disable-gpu-sandbox',
@@ -216,14 +261,57 @@ async function main() {
       );
     }
 
+    const vscodeExecutablePath = await downloadVSCodeWithRetry(cachePath, extensionDevelopmentPath);
     if (workspaceTrustMode === 'untrusted') {
-      await runUntrustedTests(cachePath, extensionDevelopmentPath, extensionTestsPath, launchArgs);
-    } else {
+      await runUntrustedTests(vscodeExecutablePath, extensionDevelopmentPath, extensionTestsPath, launchArgs);
+    } else if (process.env.RIPR_TEST_MULTIROOT_ONLY !== '1') {
       await runTests({
-        cachePath,
+        vscodeExecutablePath,
         extensionDevelopmentPath,
         extensionTestsPath,
         launchArgs,
+      });
+    }
+
+    if (workspaceTrustMode === 'trusted') {
+      // Same test-host lane, separate empty profile: other suites open files,
+      // mutate configuration and restart servers, which would mask ambiguity.
+      if (!testServerPath || !fs.existsSync(testServerPath)) {
+        throw new Error('real multi-root acceptance requires RIPR_TEST_SERVER_PATH');
+      }
+      const matrixRoot = path.join(artifactRoot, `multiroot-${runId}`);
+      const matrixWorkspace = stageMultiRootWorkspace(
+        path.resolve(__dirname, '../../test-fixtures/multiroot'),
+        matrixRoot
+      );
+      const matrixUserData = path.join(userDataPath, 'multiroot');
+      fs.mkdirSync(path.join(matrixUserData, 'User'), { recursive: true });
+      fs.writeFileSync(path.join(matrixUserData, 'User', 'settings.json'),
+        `${JSON.stringify({
+          'ripr.server.path': testServerPath,
+          'ripr.server.autoDownload': false,
+          // The matrix asserts real full-seam evidence (ripr-seam-weakly-gripped
+          // diagnostics, seam code actions and packets). That evidence only
+          // exists under the full diagnostic profile (RIPR-SPEC-0105 gates the
+          // seam inventory on it), so the matrix host must negotiate it
+          // explicitly instead of inheriting the actionable UI default.
+          'ripr.diagnosticProfile': 'full',
+          'security.workspace.trust.enabled': false,
+        }, null, 2)}\n`);
+      process.env.RIPR_TEST_MULTIROOT = '1';
+      process.env.RIPR_TEST_GREP = '^Real multi-root server acceptance';
+      process.env.RIPR_TEST_MULTIROOT_PATH = matrixRoot;
+      process.env.RIPR_TEST_MULTIROOT_RECEIPT = path.join(matrixRoot, 'acceptance.json');
+      process.env.RIPR_TEST_CLIPBOARD_CAPTURE_PATH = path.join(matrixUserData, 'clipboard.txt');
+      await runTests({
+        vscodeExecutablePath,
+        extensionDevelopmentPath,
+        extensionTestsPath,
+        launchArgs: [
+          '--disable-workspace-trust', matrixWorkspace,
+          '--disable-extensions', '--extensions-dir', extensionsPath,
+          '--user-data-dir', matrixUserData,
+        ],
       });
     }
   } catch (caught) {
@@ -239,7 +327,9 @@ async function main() {
   }
 }
 
-main();
+if (require.main === module) {
+  main();
+}
 
 function parseWorkspaceTrustMode(value: string | undefined): 'trusted' | 'untrusted' {
   const mode = value ?? 'trusted';

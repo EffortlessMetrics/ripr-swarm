@@ -138,7 +138,7 @@ pub(in crate::analysis) fn owner_may_be_reached_unseen(
 /// [`owner_may_be_reached_unseen`] answered from one scan of the workspace,
 /// for callers that ask about many owners (repo seam evidence asks once per
 /// owner whose related tests are all proximity).
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct UnseenReachNames {
     /// Every identifier some source names other than directly after `fn`.
     named: std::collections::HashSet<String>,
@@ -165,29 +165,50 @@ impl UnseenReachNames {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static EXTERNAL_DOCS_PARSE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(in crate::analysis) fn take_external_docs_parse_count() -> usize {
+    EXTERNAL_DOCS_PARSE_COUNT.with(|count| count.replace(0))
+}
+
 /// Macro-derived documentation can produce unindexed doctest calls, including
 /// external files and names assembled by `concat!` or supplied by `env!`.
 pub(in crate::analysis) fn includes_external_docs(source: &str) -> bool {
     if !source.contains("doc") || !source.contains('!') {
         return false;
     }
-    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
-        return true;
-    };
-    parse
-        .tree()
-        .syntax()
-        .descendants()
-        .filter_map(ast::Attr::cast)
-        .any(|attribute| {
-            attribute.meta().is_some_and(|meta| {
-                meta.skip_cfg_attrs().into_iter().any(|meta| {
-                    meta.simple_name().is_some_and(|name| name == "doc")
-                        && matches!(meta, ast::Meta::KeyValueMeta(value)
-                        if !matches!(value.expr(), Some(ast::Expr::Literal(_))))
+    // Pure in the source text, and rescanned for every overlapping index a
+    // diff run builds (#5363), so a run scope computes each text once.
+    crate::analysis::syntax::run_memo::memoize(
+        crate::analysis::syntax::run_memo::Product::ExternalDocs,
+        0,
+        source,
+        || {
+            #[cfg(test)]
+            EXTERNAL_DOCS_PARSE_COUNT.with(|count| count.set(count.get() + 1));
+            let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+                return true;
+            };
+            parse
+                .tree()
+                .syntax()
+                .descendants()
+                .filter_map(ast::Attr::cast)
+                .any(|attribute| {
+                    attribute.meta().is_some_and(|meta| {
+                        meta.skip_cfg_attrs().into_iter().any(|meta| {
+                            meta.simple_name().is_some_and(|name| name == "doc")
+                                && matches!(meta, ast::Meta::KeyValueMeta(value)
+                                if !matches!(value.expr(), Some(ast::Expr::Literal(_))))
+                        })
+                    })
                 })
-            })
-        })
+        },
+    )
 }
 
 /// Parser-backed owner ids carry their impl segment
@@ -325,8 +346,9 @@ pub(in crate::analysis) fn is_proximity_only(reason: RelationReason) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::facts::FunctionSourceRole;
+    use crate::analysis::facts::{FileFacts, FunctionSourceRole, OwnedRustIndex};
     use crate::domain::SymbolId;
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     #[test]
@@ -442,6 +464,124 @@ mod tests {
             "let cfn fragile_fee",
             "fragile_fee"
         ));
+    }
+
+    #[test]
+    fn unseen_reach_names_parses_each_file_once_not_per_owner() {
+        let mut files = BTreeMap::new();
+        let mut functions = Vec::new();
+        for file_i in 0..4 {
+            let path = PathBuf::from(format!("src/mod{file_i}.rs"));
+            // Three files parse `doc`+`!` but are not external docs, so the
+            // uncached `.any()` walk cannot short-circuit before the last file.
+            let mut source = if file_i == 3 {
+                String::from("#![doc = include_str!(\"README.md\")]\n")
+            } else {
+                String::from("#[doc = \"include_str! is described here\"]\n")
+            };
+            for fn_i in 0..10 {
+                let name = format!("owner_{file_i}_{fn_i}");
+                source.push_str(&format!("pub fn {name}() {{}}\n"));
+                let mut owner = function(&name);
+                owner.file = path.clone();
+                functions.push(owner);
+            }
+            files.insert(
+                path.clone(),
+                FileFacts {
+                    path,
+                    source: source.into(),
+                    ..FileFacts::default()
+                },
+            );
+        }
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            files,
+            functions: functions.clone(),
+            ..Default::default()
+        });
+        let _ = take_external_docs_parse_count();
+        let names = UnseenReachNames::build(&index);
+        assert_eq!(
+            take_external_docs_parse_count(),
+            4,
+            "workspace unseen-reach must parse each external-doc file once"
+        );
+        for _ in 0..5 {
+            for owner in &functions {
+                assert!(
+                    names.may_reach_unseen(owner),
+                    "external docs keep every owner possibly unseen"
+                );
+            }
+        }
+        assert_eq!(
+            take_external_docs_parse_count(),
+            0,
+            "cached may_reach_unseen must not reparse"
+        );
+        let _ = take_external_docs_parse_count();
+        for owner in &functions {
+            assert!(owner_may_be_reached_unseen(owner, &index));
+        }
+        assert_eq!(
+            take_external_docs_parse_count(),
+            4 * functions.len(),
+            "the uncached per-owner path still parses every file for every owner"
+        );
+    }
+
+    #[test]
+    fn unseen_reach_names_agrees_with_per_owner_scan() {
+        let named = "pub fn fragile_fee(w: u32) -> u32 { w }\nfn helper() { fragile_fee(1); }\n";
+        let silent = "pub fn lonely() {}\n";
+        let docs = "#![doc = include_str!(\"README.md\")]\npub fn unused() {}\n";
+        let file = |path: &str, source: &str| {
+            (
+                PathBuf::from(path),
+                FileFacts {
+                    path: PathBuf::from(path),
+                    source: source.into(),
+                    ..FileFacts::default()
+                },
+            )
+        };
+        let index_for = |files, functions| {
+            RustIndex::from_owned(OwnedRustIndex {
+                files,
+                functions,
+                ..Default::default()
+            })
+        };
+        let named_index = index_for(
+            BTreeMap::from([file("src/named.rs", named), file("src/silent.rs", silent)]),
+            vec![function("fragile_fee"), function("lonely")],
+        );
+        let docs_index = index_for(
+            BTreeMap::from([file("src/docs.rs", docs)]),
+            vec![function("unused"), function("lonely")],
+        );
+        let mut trait_owner = function("fmt");
+        trait_owner.id = SymbolId("src/lib.rs::impl Display for Money::fmt".to_string());
+        let trait_index = index_for(
+            BTreeMap::from([file("src/silent.rs", silent)]),
+            vec![trait_owner],
+        );
+        for index in [&named_index, &docs_index, &trait_index] {
+            let names = UnseenReachNames::build(index);
+            for owner in index.functions().iter() {
+                assert_eq!(
+                    names.may_reach_unseen(owner),
+                    owner_may_be_reached_unseen(owner, index),
+                    "{}",
+                    owner.name
+                );
+            }
+        }
+        let names = UnseenReachNames::build(&named_index);
+        assert!(names.may_reach_unseen(&function("fragile_fee")));
+        assert!(!names.may_reach_unseen(&function("lonely")));
+        assert!(UnseenReachNames::build(&docs_index).may_reach_unseen(&function("lonely")));
     }
 
     #[test]

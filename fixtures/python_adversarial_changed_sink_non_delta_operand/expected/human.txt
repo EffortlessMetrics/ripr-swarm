@@ -3,26 +3,26 @@ mode: fast
 root: fixtures/python_adversarial_changed_sink_non_delta_operand/input
 config: <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/input/ripr.toml
 
-Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
+Summary: 1 probe (0 exposed, 0 weak, 0 unrevealed, 0 no path, 1 unknown); 1 of 1 finding unsuppressed
 
-Changed file(s) by language: python: 1.
+Changed file(s) by language: python = 1
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
 
 Start here:
-  State: preview language, advisory only (preview_limited)
-  Safe next action: static limitation `decorator_indirection` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`.
+  State: preview language, advisory only
+  Safe next action: static limitation `decorator_indirection` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
   File: src/account.py:7
   Language: python
   Language status: preview
-  Static exposure: unknown (static_unknown, note, confidence 0.20)
+  Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: return max(0, self._balance)
-  Analyzer limit: Static limit `decorator_indirection`: owner `Account.balance` is decorated with `property`; syntax-first preview evidence does not resolve decorator-modified call behavior.
+  Analyzer limit: Static limit `decorator_indirection`: owner `Account.balance` is decorated with `property`; syntax-first preview evidence does not resolve decorator-modified call behavior
   Evidence: reach no · infection unknown · propagation unknown · observation no · discriminator no
     - reach no: 0 related Python test(s) found for owner `balance`
-    - infection unknown: Static limit `decorator_indirection` prevents a safe Python infection claim.
+    - infection unknown: Static limit `decorator_indirection` prevents a safe Python infection claim
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
@@ -34,10 +34,10 @@ More:
   Machine data: rerun with --format json
 
 
-Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
-  analyzed: 1 changed expression(s) and 0 statically linked related test(s). This is not a coverage
-  assessment. A test may already exercise these changes through macros, helper-call chains, or
-  integration tests that ripr's static model does not yet trace; if none does, add co-located tests
-  that observe the changed behavior.
+Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to
+  establish a static test path. Scope analyzed: 1 changed expression(s) and 0 statically linked
+  related test(s). This is not a coverage assessment. A test may already exercise these changes
+  through macros, helper-call chains, or integration tests that ripr's static model does not yet
+  trace; if none does, add co-located tests that observe the changed behavior.
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

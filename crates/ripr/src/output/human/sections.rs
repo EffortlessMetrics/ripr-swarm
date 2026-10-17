@@ -1,7 +1,7 @@
 use crate::config::RiprConfig;
 use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, ExposureClass, Finding, LanguageId, LanguageStatus,
-    MISSING_DISCRIMINATOR_VALUE_PREFIX, RiprEvidence, StageState,
+    MISSING_DISCRIMINATOR_VALUE_PREFIX, ProbeFamily, RiprEvidence, StageState,
 };
 use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
@@ -26,6 +26,40 @@ use unicode_width::UnicodeWidthStr;
 use super::evidence_lines::{JsonPointerWording, evidence_path_lines, weakness_lines};
 use super::{is_wrappable_advisory_prose, wrap_human_prose};
 
+/// #7756: trailing-period rule for the human render — a labelled field line
+/// (`  Label: value`) or a list-item value carries no trailing period;
+/// free-standing prose sentences keep theirs. Applied at the emit boundary so
+/// producer strings stay unchanged for the machine surfaces.
+///
+/// Only a single terminal period is stripped: a value ending in an ellipsis
+/// ("TypeScript preview advisory: ...") or an abbreviation keeps its dots.
+pub(super) fn trim_field_period(value: &str) -> &str {
+    if value.ends_with('.') && !value.ends_with("..") {
+        value.strip_suffix('.').unwrap_or(value)
+    } else {
+        value
+    }
+}
+
+/// #7755: field label for the finding's next-step line. Producer text that
+/// opens with its own "Label:" prefix stacked under "Next step: " reads as a
+/// parse error ("Next step: TypeScript preview advisory: ..."), so a value
+/// carrying a short leading label renders with a dash; plain text keeps the
+/// colon.
+fn next_step_prefix(step: &str) -> &'static str {
+    const NEXT_STEP_PREFIX: &str = "  Next step: ";
+    const NEXT_STEP_NESTED_PREFIX: &str = "  Next step — ";
+    // A leading producer label never runs past ~35 characters
+    // ("TypeScript preview advisory:" ends at 27, "Static limit
+    // `unsupported_syntax`:" at 33); a mid-sentence colon at 40+ is prose,
+    // not a label, and keeps the colon form.
+    const NESTED_LABEL_MAX: usize = 40;
+    match step.find(": ") {
+        Some(idx) if idx <= NESTED_LABEL_MAX => NEXT_STEP_NESTED_PREFIX,
+        _ => NEXT_STEP_PREFIX,
+    }
+}
+
 pub(crate) fn render_finding_digest_with_config(
     finding: &Finding,
     config: &RiprConfig,
@@ -47,14 +81,14 @@ pub(crate) fn render_finding_digest_with_config(
         }
     }
     out.push_str(&format!(
-        "  Static exposure: {}{}, confidence {:.2})\n",
+        "  Static exposure: {}severity: {}, confidence {:.2})\n",
         finding.class.human_lead(),
         severity,
         finding.confidence
     ));
     // #2614: add a brief classification hint so the digest reader understands
     // WHY the finding is at this class without reading the full form.
-    if let Some(hint) = classification_hint(&finding.class, &finding.ripr) {
+    if let Some(hint) = classification_hint(&finding.class, &finding.ripr, &finding.probe.family) {
         out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
     }
     // The refusal names a file and a blocker; a cut would drop the blocker,
@@ -123,7 +157,10 @@ pub(crate) fn render_finding_digest_with_config(
         } else {
             label.to_string()
         };
-        out.push_str(&format!("  {label}: {}\n", one_line(missing)));
+        out.push_str(&format!(
+            "  {label}: {}\n",
+            trim_field_period(&one_line(missing))
+        ));
     }
     if let Some(test) = finding.related_tests.first() {
         // #4320: the digest shows only the first related-test row; carry the
@@ -169,12 +206,15 @@ pub(crate) fn render_finding_digest_with_config(
         // ends with the imperative, so a hard cut deletes the remedy. Text
         // that fits the line budget keeps its single line.
         let next_step = reconcile_next_step(finding);
-        const NEXT_STEP_PREFIX: &str = "  Next step: ";
-        let collapsed = next_step.split_whitespace().collect::<Vec<_>>().join(" ");
-        if NEXT_STEP_PREFIX.chars().count() + collapsed.chars().count() <= LINE_BUDGET {
-            out.push_str(&format!("{NEXT_STEP_PREFIX}{collapsed}\n"));
+        let prefix = next_step_prefix(&next_step);
+        // #7756: labelled field line — no trailing period on the value.
+        let collapsed =
+            trim_field_period(&next_step.split_whitespace().collect::<Vec<_>>().join(" "))
+                .to_string();
+        if prefix.chars().count() + collapsed.chars().count() <= LINE_BUDGET {
+            out.push_str(&format!("{prefix}{collapsed}\n"));
         } else {
-            out.push_str(&wrap_human_prose(&collapsed, NEXT_STEP_PREFIX, "    "));
+            out.push_str(&wrap_human_prose(&collapsed, prefix, "    "));
             out.push('\n');
         }
     }
@@ -198,7 +238,8 @@ pub(crate) fn render_finding_digest_with_config(
             compact_discriminator_token(finding),
         ));
         for line in evidence.iter().take(2) {
-            out.push_str(&format!("    - {}\n", one_line(line)));
+            // #7756: list-item values carry no trailing period.
+            out.push_str(&format!("    - {}\n", trim_field_period(&one_line(line))));
         }
         if evidence.len() > 2 {
             out.push_str(&format!(
@@ -454,7 +495,8 @@ pub(super) fn render_finding_with_shared_sections(
     if !weakness.is_empty() {
         out.push_str("\nWeakness\n");
         for line in weakness {
-            out.push_str(&format!("  - {line}\n"));
+            // #7756: list-item values carry no trailing period.
+            out.push_str(&format!("  - {}\n", trim_field_period(&line)));
         }
     }
 
@@ -479,7 +521,7 @@ pub(super) fn render_finding_with_shared_sections(
         out.push_str(&format!(
             "  {} \u{2014} {}\n",
             static_limit_kind.as_str(),
-            static_limit_kind.describe()
+            static_limit_kind.describe_for_family(&finding.probe.family)
         ));
     }
 
@@ -544,7 +586,11 @@ pub(super) fn render_finding_with_shared_sections(
         if let Some(guidance) = shared.and_then(|shared| shared.guidance.as_deref()) {
             out.push_str(guidance);
         } else {
-            out.push_str(&format!("  {}\n", reconcile_next_step(finding)));
+            // #7756: labelled field line — no trailing period on the value.
+            out.push_str(&format!(
+                "  {}\n",
+                trim_field_period(&reconcile_next_step(finding))
+            ));
         }
     }
 
@@ -561,6 +607,9 @@ pub(super) fn render_finding_with_shared_sections(
 }
 
 pub(super) fn push_evidence_line(out: &mut String, line: &str) {
+    // #7756: list-item values carry no trailing period, matching the sibling
+    // stage lines; free-standing prose keeps its sentence period.
+    let line = trim_field_period(line);
     if is_wrappable_advisory_prose(line) {
         out.push_str(&wrap_human_prose(line, "  - ", "    "));
     } else {
@@ -1157,7 +1206,11 @@ fn is_callee_only_reach(reach: &crate::domain::StageEvidence) -> bool {
     reach.summary.starts_with(CALLEE_ONLY_REACH_PREFIX)
 }
 
-fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<String> {
+fn classification_hint(
+    class: &ExposureClass,
+    ripr: &RiprEvidence,
+    family: &ProbeFamily,
+) -> Option<String> {
     let reveal = &ripr.reveal;
     // #7003: "reaches this change" is a reach claim — a callee-only finding
     // has no test seen calling the owner, so every claim site below falls
@@ -1176,10 +1229,14 @@ fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<Str
         }
         ExposureClass::ReachableUnrevealed => {
             if reveal.observe.summary == crate::domain::ASSERTION_CONTEXT_UNESTABLISHED {
-                Some(
-                    "a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`"
-                        .to_string(),
-                )
+                let macro_name = if *family == ProbeFamily::MatchArm {
+                    "assert"
+                } else {
+                    "assert_eq"
+                };
+                Some(format!(
+                    "a related test asserts here, but ripr could not establish that the assertion runs and is the standard `{macro_name}!`"
+                ))
             } else if reveal.observe.state == StageState::No && !callee_only {
                 Some(
                     "a related test reaches this change, but no assertion observes the changed behavior"
@@ -1248,7 +1305,9 @@ fn should_render_language_metadata(finding: &Finding) -> bool {
 
 #[cfg(test)]
 mod classification_hint_tests {
-    use super::classification_hint;
+    fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<String> {
+        super::classification_hint(class, ripr, &crate::domain::ProbeFamily::ReturnValue)
+    }
     use crate::domain::{
         CALLEE_ONLY_REACH_PREFIX, Confidence, ExposureClass, RevealEvidence, RiprEvidence,
         StageEvidence, StageState,
@@ -1434,6 +1493,62 @@ mod classification_hint_tests {
             hint.as_deref(),
             Some(crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_SENTENCE)
         );
+    }
+}
+
+#[cfg(test)]
+mod trim_field_period_tests {
+    use super::trim_field_period;
+
+    #[test]
+    fn strips_a_single_trailing_period() {
+        assert_eq!(
+            trim_field_period("add a co-located test so a discriminator exists."),
+            "add a co-located test so a discriminator exists"
+        );
+    }
+
+    #[test]
+    fn keeps_ellipsis_and_abbreviation_dots() {
+        // Gemini review on #8096: trim_end_matches('.') also ate ellipses.
+        assert_eq!(
+            trim_field_period("TypeScript preview advisory: ..."),
+            "TypeScript preview advisory: ..."
+        );
+        assert_eq!(trim_field_period("ends with two.."), "ends with two..");
+        assert_eq!(trim_field_period("no period"), "no period");
+    }
+}
+
+#[cfg(test)]
+mod next_step_prefix_tests {
+    use super::next_step_prefix;
+
+    #[test]
+    fn nested_producer_label_renders_with_dash() {
+        // #7755: "Next step: TypeScript preview advisory: ..." stacks two colons.
+        assert_eq!(
+            next_step_prefix("TypeScript preview advisory: changed behavior is observed"),
+            "  Next step — "
+        );
+        assert_eq!(
+            next_step_prefix("Static limit `unsupported_syntax`: malformed input"),
+            "  Next step — "
+        );
+    }
+
+    #[test]
+    fn plain_prose_and_late_colon_keep_the_colon_form() {
+        assert_eq!(
+            next_step_prefix("add a co-located test that reaches the changed behavior"),
+            "  Next step: "
+        );
+        // A colon deep in the sentence is prose, not a leading label.
+        let late = format!(
+            "verify the assertion observes the boundary: {}",
+            "word ".repeat(12)
+        );
+        assert_eq!(next_step_prefix(&late), "  Next step: ");
     }
 }
 

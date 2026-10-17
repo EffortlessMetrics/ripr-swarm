@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- The committed mutation spot-check receipt is now a real harness run (`ripr-mutation-spot-check-v2`) over the five pinned repositories, and it records `analyzer_version`, so the public proof page names the ripr build behind its mutation agreement instead of disclosing "build unrecorded". `public-proof` reads the v2 `canonical_precise` records, so the agreement and join-coverage bars move with the stricter join (#5982).

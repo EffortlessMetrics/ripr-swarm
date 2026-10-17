@@ -1794,11 +1794,15 @@ mod tests {
             .receipt_command
             .as_deref()
             .ok_or("projected record must carry a receipt command")?;
+        // Host-aware quoting (#7729).
         assert_eq!(
             cmd,
-            "ripr receipt write --gap gap:typescript:typescript_preview:a1b2c3d4 \
-             --verify-command 'jest tests/discount.test.ts' --status not_run \
-             --out target/ripr/receipts/gap-typescript-typescript_preview-a1b2c3d4.json"
+            format!(
+                "ripr receipt write --gap gap:typescript:typescript_preview:a1b2c3d4 \
+                 --verify-command {} --status not_run \
+                 --out target/ripr/receipts/gap-typescript-typescript_preview-a1b2c3d4.json",
+                "'jest tests/discount.test.ts'"
+            )
         );
         assert!(
             !cmd.contains("ripr outcome"),

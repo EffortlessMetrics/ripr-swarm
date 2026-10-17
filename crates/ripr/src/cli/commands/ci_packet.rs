@@ -73,6 +73,7 @@ pub(super) struct CiPacketOptions {
 
 pub(super) fn ci_packet(args: &[String]) -> Result<(), String> {
     let options = parse_ci_packet_options(args)?;
+    crate::atomic_file::ensure_default_output_contained(&options.root)?;
     let exe = std::env::current_exe()
         .map_err(|err| format!("{COMMAND} cannot locate the running ripr binary: {err}"))?;
     let settings = CiSettings::from_env()?;

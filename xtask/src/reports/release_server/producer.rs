@@ -4,14 +4,25 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::policy::distribution::{DistributionContract, load_distribution_contract};
-use crate::run::run_output_owned;
+use crate::run::{run_output_owned, run_output_owned_with_envs};
 
 use super::payload::FinalNativePayloadIdentity;
 use super::sha256_file;
 
-const PRODUCER_SCHEMA_VERSION: u32 = 1;
+const PRODUCER_SCHEMA_VERSION: u32 = 2;
 const PRODUCER_KIND: &str = "ripr_final_native_payload_producer_build";
+const ARCHIVE_PROFILE_ENV: &[(&str, &str)] = &[
+    ("CARGO_PROFILE_RELEASE_LTO", "true"),
+    ("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1"),
+];
 pub(crate) const PRODUCER_RECEIPT_FILE: &str = "producer-build.json";
+
+fn recorded_archive_profile_env() -> Vec<(String, String)> {
+    ARCHIVE_PROFILE_ENV
+        .iter()
+        .map(|&(name, value)| (name.to_string(), value.to_string()))
+        .collect()
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -26,6 +37,8 @@ pub(crate) struct ProducerBuildReceipt {
     pub(crate) source_tree: String,
     pub(crate) cargo_lock_sha256: String,
     pub(crate) cargo_arguments: Vec<String>,
+    #[serde(default)]
+    pub(crate) archive_profile_env: Vec<(String, String)>,
     pub(crate) default_features: bool,
     pub(crate) features: Vec<String>,
     pub(crate) rustc_verbose_version: String,
@@ -82,7 +95,11 @@ pub(crate) fn build_release_executable(
         target.to_string(),
         "--message-format=json-render-diagnostics".to_string(),
     ];
-    let output = run_output_owned("cargo", &cargo_arguments)?;
+    // Archives ship the fully optimized profile; the workspace `release`
+    // profile trades that for build time. The overlay lives in
+    // `ARCHIVE_PROFILE_ENV` and is recorded on the receipt as
+    // `archive_profile_env` from that same constant.
+    let output = run_output_owned_with_envs("cargo", &cargo_arguments, ARCHIVE_PROFILE_ENV)?;
     let expected_executable = Path::new("target")
         .join(target)
         .join("release")
@@ -108,6 +125,7 @@ pub(crate) fn build_release_executable(
         source_tree,
         cargo_lock_sha256,
         cargo_arguments,
+        archive_profile_env: recorded_archive_profile_env(),
         default_features: contract.product.default_features,
         features: artifact.features,
         rustc_verbose_version: checked_output("rustc", &["-vV"], "rustc identity")?,
@@ -368,6 +386,11 @@ fn validate_receipt_shape(receipt: &ProducerBuildReceipt) -> Result<(), String> 
     {
         violations.push("cargo_arguments are not the canonical locked release build".to_string());
     }
+    if receipt.archive_profile_env.is_empty() {
+        violations.push("archive_profile_env is missing".to_string());
+    } else if receipt.archive_profile_env != recorded_archive_profile_env() {
+        violations.push("archive_profile_env does not match ARCHIVE_PROFILE_ENV".to_string());
+    }
     if !receipt.default_features {
         violations.push("default_features must be true".to_string());
     }
@@ -442,6 +465,17 @@ fn is_lower_hex(value: &str, length: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shipped_archives_keep_the_fat_lto_single_codegen_unit_profile() {
+        assert_eq!(
+            super::ARCHIVE_PROFILE_ENV,
+            &[
+                ("CARGO_PROFILE_RELEASE_LTO", "true"),
+                ("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1"),
+            ]
+        );
+    }
+
     use super::*;
 
     #[test]
@@ -499,6 +533,59 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn receipt_records_archive_profile_env_from_the_build_constant() -> Result<(), String> {
+        let receipt = fixture_receipt();
+        let expected = ARCHIVE_PROFILE_ENV
+            .iter()
+            .map(|&(name, value)| (name.to_string(), value.to_string()))
+            .collect::<Vec<_>>();
+        if receipt.archive_profile_env != expected {
+            return Err(format!(
+                "receipt archive_profile_env {:?} does not match ARCHIVE_PROFILE_ENV {expected:?}",
+                receipt.archive_profile_env
+            ));
+        }
+        validate_receipt_shape(&receipt)
+    }
+
+    #[test]
+    fn receipt_rejects_missing_archive_profile_env() -> Result<(), String> {
+        let mut value = serde_json::to_value(fixture_receipt())
+            .map_err(|err| format!("serialize fixture receipt: {err}"))?;
+        value
+            .as_object_mut()
+            .ok_or("fixture receipt JSON is not an object")?
+            .remove("archive_profile_env");
+        let receipt: ProducerBuildReceipt = serde_json::from_value(value)
+            .map_err(|err| format!("deserialize receipt missing archive_profile_env: {err}"))?;
+        let error = require_error(
+            validate_receipt_shape(&receipt),
+            "missing archive profile env",
+        )?;
+        if !error.contains("archive_profile_env is missing") {
+            return Err(format!("unexpected missing-profile error: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_rejects_mismatched_archive_profile_env() -> Result<(), String> {
+        let mut receipt = fixture_receipt();
+        let Some(first) = receipt.archive_profile_env.first_mut() else {
+            return Err("fixture receipt is missing archive_profile_env".to_string());
+        };
+        first.1 = "thin".to_string();
+        let error = require_error(
+            validate_receipt_shape(&receipt),
+            "mismatched archive profile env",
+        )?;
+        if !error.contains("archive_profile_env does not match ARCHIVE_PROFILE_ENV") {
+            return Err(format!("unexpected mismatched-profile error: {error}"));
+        }
+        Ok(())
+    }
+
     fn require_error<T>(result: Result<T, String>, label: &str) -> Result<String, String> {
         let Err(error) = result else {
             return Err(format!("{label} unexpectedly succeeded"));
@@ -530,6 +617,7 @@ mod tests {
             ]
             .map(str::to_string)
             .to_vec(),
+            archive_profile_env: recorded_archive_profile_env(),
             default_features: true,
             features: vec![
                 "lang-python".to_string(),

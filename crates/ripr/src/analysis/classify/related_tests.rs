@@ -1,3 +1,12 @@
+//! Related-test selection: which tests plausibly exercise a probe's owner.
+//!
+//! [`RelatedTestCandidateIndex`] is a deterministic prefilter over the Rust
+//! test set (call names, assertion tokens, trigrams). It only narrows
+//! candidates; every selected test still passes the relation, package, shadow
+//! and confidence checks in this file, and queries the bounded indexes cannot
+//! represent safely fall back to the full test set. Cross-package relations consume
+//! path-dependency adjacency owned by `analysis/workspace`.
+
 use super::super::rust_index::{
     FunctionSummary, RustIndex, TestSummary, extract_identifier_tokens,
 };
@@ -91,12 +100,18 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// Run-scoped activation memo, keyed by slots of the same index.
     test_value_facts: super::TestValueFacts,
     owner_pin_syntax: super::OwnerPinSyntax,
+    /// Run-scoped unseen-reach scan. `includes_external_docs` parses each
+    /// file; asking per owner re-parsed the crate on every changed function.
+    unseen_reach: super::UnseenReachNames,
     /// Run-scoped #5830 caller-walk memo, keyed by owner slot (#7024).
     owner_caller_names: super::super::classifier::OwnerCallerNames,
     /// The analysis root that probe paths are joined onto, while index and
     /// test paths stay relative to it (#6791). `None` when the caller did not
     /// name one; same-file matching then infers the changed file's path.
     analysis_root: Option<std::path::PathBuf>,
+    /// Tests the diff adds or changes (#8387). Ranking only; see
+    /// [`super::DiffTouchedTests`].
+    diff_touched: super::DiffTouchedTests,
 }
 
 impl RelatedTestCandidateIndex {
@@ -163,6 +178,7 @@ impl RelatedTestCandidateIndex {
             }
         }
         candidates.common_tokens = CommonTestTokens::new(index.tests());
+        candidates.unseen_reach = super::UnseenReachNames::build(index);
 
         candidates
     }
@@ -177,12 +193,30 @@ impl RelatedTestCandidateIndex {
         &self.owner_pin_syntax
     }
 
+    pub(in crate::analysis) fn unseen_reach_names(&self) -> &super::UnseenReachNames {
+        &self.unseen_reach
+    }
+
     /// Record the root that probe paths are joined onto, so same-file
     /// matching strips it exactly instead of inferring the changed file from
     /// indexed path tails (#6791).
     pub(in crate::analysis) fn with_analysis_root(mut self, root: &Path) -> Self {
         self.analysis_root = Some(root.to_path_buf());
         self
+    }
+
+    /// Record which tests the diff adds or changes, so they lead their
+    /// confidence tier (#8387). Never admits a test or raises a confidence.
+    pub(in crate::analysis) fn with_diff_touched(
+        mut self,
+        diff_touched: super::DiffTouchedTests,
+    ) -> Self {
+        self.diff_touched = diff_touched;
+        self
+    }
+
+    pub(in crate::analysis) fn diff_touched(&self) -> &super::DiffTouchedTests {
+        &self.diff_touched
     }
 
     /// Fold in the macro bindings of files a narrowed diff index withheld
@@ -1118,6 +1152,18 @@ fn find_related_tests_with_candidates<'a>(
     // (`bytes_mut_unsplit_empty_self` for bytes' `try_get_int`) stand in
     // front of the `direct_owner_call` test that pins the returned value.
     // Within one confidence tier the order stays name, then file.
+    //
+    // #8387: within one confidence tier a test the diff itself adds or
+    // changes leads: the author wrote it for this change. This reorders
+    // candidates only; it admits nothing and never lifts a tier.
+    let diff_touched = match candidates {
+        RelatedTestCandidates::Indexed(candidate_index) => Some(&candidate_index.diff_touched),
+        #[cfg(test)]
+        RelatedTestCandidates::FullScan => None,
+    };
+    let touched_by_diff = |test: &TestSummary| {
+        diff_touched.is_some_and(|touched| touched.touches(&test.file, test.start_line))
+    };
     related.sort_by(|(a, a_reason), (b, b_reason)| {
         relation_rank(*b_reason)
             .cmp(&relation_rank(*a_reason))
@@ -1126,8 +1172,16 @@ fn find_related_tests_with_candidates<'a>(
     });
     // A test related through two reasons is no longer adjacent to itself
     // once confidence leads the sort; keep its first (strongest) entry.
+    // The touched signal is deliberately applied only after this dedup, so
+    // it can never change which same-named entry survives and is analyzed.
     let mut seen = BTreeSet::new();
     related.retain(|(test, _)| seen.insert((test.name.clone(), test.file.clone())));
+    // Stable: name then file order holds within one (tier, touched) group.
+    related.sort_by(|(a, a_reason), (b, b_reason)| {
+        relation_rank(*b_reason)
+            .cmp(&relation_rank(*a_reason))
+            .then_with(|| touched_by_diff(b).cmp(&touched_by_diff(a)))
+    });
     related
 }
 
@@ -4105,6 +4159,190 @@ mod tests {
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
     }
 
+    /// #8387: a test the diff itself adds or changes leads its confidence
+    /// tier, ahead of name order, but is never lifted into a higher tier.
+    #[test]
+    fn diff_touched_test_leads_its_tier_without_changing_tiers() -> Result<(), String> {
+        let owner = function("src/lib.rs", "target_owner");
+        let untouched_direct = test_with_call(
+            "tests/target.rs",
+            "a_direct_call",
+            "target_owner(1)",
+            "target_owner",
+        );
+        let mut touched_direct = test_with_call(
+            "tests/target.rs",
+            "z_direct_call",
+            "target_owner(2)",
+            "target_owner",
+        );
+        touched_direct.start_line = 20;
+        touched_direct.end_line = 30;
+        let mut touched_weak = test("tests/target.rs", "zz_target_owner_name_only", "helper(1)");
+        touched_weak.start_line = 40;
+        touched_weak.end_line = 50;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![untouched_direct, touched_direct, touched_weak],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "target_owner(value)");
+        let changed = crate::analysis::diff::ChangedFile {
+            path: PathBuf::from("tests/target.rs"),
+            added_lines: [25, 45]
+                .into_iter()
+                .map(|line| crate::analysis::diff::ChangedLine {
+                    line,
+                    text: String::new(),
+                    new_side_line: line,
+                })
+                .collect(),
+            removed_lines: Vec::new(),
+        };
+        let touched = crate::analysis::classify::DiffTouchedTests::from_changed_files(
+            &[changed],
+            index.tests().iter(),
+        );
+        assert!(touched.touches(Path::new("tests/target.rs"), 20), "setup");
+        assert!(touched.touches(Path::new("tests/target.rs"), 40), "setup");
+
+        let names = |candidate_index: &RelatedTestCandidateIndex| {
+            find_related_tests_with_candidate_index(
+                &probe,
+                Some(&owner),
+                &index,
+                true,
+                None,
+                None,
+                candidate_index,
+            )
+            .into_iter()
+            .map(|(test, reason)| (test.name.clone(), reason.confidence()))
+            .collect::<Vec<_>>()
+        };
+
+        let baseline = names(&RelatedTestCandidateIndex::new(&index));
+        assert_eq!(baseline[0].0, "a_direct_call", "name order without a diff");
+
+        let ranked = names(&RelatedTestCandidateIndex::new(&index).with_diff_touched(touched));
+        assert_eq!(
+            ranked
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .take(2)
+                .collect::<Vec<_>>(),
+            ["z_direct_call", "a_direct_call"],
+            "the diff-touched direct call leads its tier: {ranked:?}"
+        );
+        let weak = ranked
+            .iter()
+            .find(|(name, _)| name == "zz_target_owner_name_only")
+            .ok_or("the touched name-only test must stay related")
+            .map_err(str::to_string)?;
+        assert_ne!(
+            weak.1,
+            RelationConfidence::High,
+            "a touched name-only test is not lifted a tier"
+        );
+        assert_eq!(
+            ranked.last().map(|(name, _)| name.as_str()),
+            Some("zz_target_owner_name_only"),
+            "a touched lower-tier test still trails every higher-tier test: {ranked:?}"
+        );
+        Ok(())
+    }
+
+    /// #8387: the diff-touched signal is a pure ranking key. Two same-named
+    /// tests in one file must resolve to the same analyzed body, and so the
+    /// same classification, reach, oracle strength and credited oracle, with
+    /// or without the signal.
+    #[test]
+    fn diff_touched_signal_does_not_change_which_duplicate_name_is_analyzed() -> Result<(), String>
+    {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let path = PathBuf::from("src/lib.rs");
+        let source = "pub fn score(x: i32) -> i32 {\n    if x > 3 { 1 } else { 0 }\n}\n\
+mod first {\n    use super::*;\n    #[test]\n    fn dup() {\n        assert_eq!(score(5), 1);\n    }\n}\n\
+mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = score(5);\n    }\n}\n";
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let mut index = RustIndex::default();
+        index.insert_file(path.clone(), facts, true);
+        let dups: Vec<_> = index.tests().iter().filter(|t| t.name == "dup").collect();
+        assert_eq!(dups.len(), 2, "setup: both same-named tests are indexed");
+        let later = dups
+            .iter()
+            .map(|t| t.start_line)
+            .max()
+            .ok_or("setup: no duplicate")?;
+        let changed_source = crate::analysis::diff::ChangedFile {
+            path: path.clone(),
+            added_lines: vec![crate::analysis::diff::ChangedLine {
+                line: 2,
+                text: "    if x > 3 { 1 } else { 0 }".to_string(),
+                new_side_line: 2,
+            }],
+            removed_lines: Vec::new(),
+        };
+        let changed_test = crate::analysis::diff::ChangedFile {
+            path: path.clone(),
+            added_lines: vec![crate::analysis::diff::ChangedLine {
+                line: later,
+                text: String::new(),
+                new_side_line: later,
+            }],
+            removed_lines: Vec::new(),
+        };
+        let touched = crate::analysis::classify::DiffTouchedTests::from_changed_files(
+            &[changed_test],
+            index.tests().iter(),
+        );
+        assert!(touched.touches(&path, later), "setup: later dup touched");
+        let seeded = crate::analysis::probes::probes_for_file_with_relations(
+            Path::new("."),
+            &changed_source,
+            &index,
+            &[],
+        );
+        let subject = seeded
+            .iter()
+            .find(|s| s.probe.family == ProbeFamily::Predicate)
+            .ok_or("setup: no predicate subject")?;
+
+        let classify = |candidates: &RelatedTestCandidateIndex| {
+            crate::analysis::classifier::classify_probe_with_candidate_index(
+                &subject.probe,
+                &index,
+                true,
+                None,
+                candidates,
+                &crate::analysis::classify::transitive_reach::TransitiveReachIndex::new(&index),
+                None,
+            )
+        };
+        let plain = classify(&RelatedTestCandidateIndex::new(&index));
+        let ranked = classify(&RelatedTestCandidateIndex::new(&index).with_diff_touched(touched));
+        assert!(
+            plain.related_tests.iter().any(|t| t.name == "dup"),
+            "setup: the duplicate-name test is related: {plain:?}"
+        );
+        assert_eq!(plain.class, ranked.class);
+        assert_eq!(plain.ripr.reach.state, ranked.ripr.reach.state);
+        assert_eq!(
+            plain
+                .related_tests
+                .iter()
+                .map(|t| (&t.name, t.line, t.oracle_strength.clone(), &t.oracle))
+                .collect::<Vec<_>>(),
+            ranked
+                .related_tests
+                .iter()
+                .map(|t| (&t.name, t.line, t.oracle_strength.clone(), &t.oracle))
+                .collect::<Vec<_>>(),
+            "the touched signal must not change the analyzed body or credited oracle"
+        );
+        Ok(())
+    }
+
     #[test]
     fn full_scan_oracle_detects_missing_index_candidates() {
         let owner = function("src/lib.rs", "target_owner");
@@ -5438,6 +5676,7 @@ mod tests {
                     ),
                 ],
                 earliest_unresolved_reason: None,
+                ..Default::default()
             },
         );
         let probe = probe("src/lib.rs", "String::new()");
@@ -5609,6 +5848,7 @@ mod tests {
                     ),
                 ],
                 earliest_unresolved_reason: None,
+                ..Default::default()
             },
         );
         let probe = probe("src/lib.rs", "String::new()");
@@ -5690,6 +5930,7 @@ mod tests {
                     false,
                 )],
                 earliest_unresolved_reason: None,
+                ..Default::default()
             },
         );
         with_source_provenance(
@@ -5708,6 +5949,7 @@ mod tests {
                     ),
                 ],
                 earliest_unresolved_reason: None,
+                ..Default::default()
             },
         );
         let probe = probe("src/impls.rs", "String::new()");
@@ -5919,6 +6161,7 @@ mod tests {
                 ),
             ],
             earliest_unresolved_reason: None,
+            ..Default::default()
         }
     }
 
@@ -5960,6 +6203,7 @@ mod tests {
                     ),
                 ],
                 earliest_unresolved_reason: None,
+                ..Default::default()
             },
         );
         assert_eq!(reason, RelationReason::DirectOwnerCall);
@@ -5990,6 +6234,7 @@ mod tests {
                         ),
                     ],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             );
             assert_eq!(
@@ -6020,6 +6265,7 @@ mod tests {
                     ),
                 ],
                 earliest_unresolved_reason: None,
+                ..Default::default()
             },
         );
         assert_eq!(reason, RelationReason::DirectOwnerCall);
@@ -6114,6 +6360,7 @@ mod tests {
                 SourceRoleProvenance {
                     edges: vec![],
                     earliest_unresolved_reason: Some("rust_module_ambiguous_parent".to_string()),
+                    ..Default::default()
                 },
             ),
             (
@@ -6130,6 +6377,7 @@ mod tests {
                         requires_test: false,
                     }],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -6145,6 +6393,7 @@ mod tests {
                         false,
                     )],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -6160,6 +6409,7 @@ mod tests {
                         false,
                     )],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ];

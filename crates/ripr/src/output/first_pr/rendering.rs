@@ -6,6 +6,7 @@ use super::{
 use crate::agent::loop_commands::display_path;
 use crate::output::markdown::{
     PowershellForm, code_span, powershell_command, powershell_form, push_context_command,
+    translated_form_claim, unchanged_form_claim,
 };
 use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state,
@@ -355,16 +356,21 @@ fn render_preflight_markdown(packet: &Value, out: &mut String) {
             match powershell_form(command) {
                 PowershellForm::Translated(line) => {
                     out.push_str(&format!("{label} (PowerShell):\n{}\n", code_span(&line)));
-                    out.push_str("The first form is written for Bash; cmd.exe is not supported.\n");
+                    out.push_str(translated_form_claim());
+                    out.push('\n');
                 }
                 PowershellForm::SameAsBash => {
-                    out.push_str(
-                        "It runs unchanged in Bash and PowerShell; cmd.exe is not supported.\n",
-                    );
+                    out.push_str(unchanged_form_claim());
+                    out.push('\n');
                 }
                 PowershellForm::Unavailable => {
+                    let tail = if cfg!(windows) {
+                        "use the printed form."
+                    } else {
+                        "use the Bash form. cmd.exe is not supported."
+                    };
                     out.push_str(&format!(
-                        "{}; use the Bash form. cmd.exe is not supported.\n",
+                        "{}; {tail}\n",
                         crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE
                     ));
                 }
@@ -599,17 +605,20 @@ fn push_shell_command_pair(
         PowershellForm::Translated(line) => {
             out.push_str(&format!("{label} (PowerShell):\n"));
             out.push_str(&format!("`{line}`\n\n"));
-            out.push_str("The first form is written for Bash; cmd.exe is not supported.\n");
+            out.push_str(translated_form_claim());
+            out.push('\n');
         }
         PowershellForm::SameAsBash => {
-            out.push_str("It runs unchanged in Bash and PowerShell; cmd.exe is not supported.\n");
+            out.push_str(unchanged_form_claim());
+            out.push('\n');
         }
         PowershellForm::Unavailable => {
             out.push_str(&format!(
                 "{}: `{command}`\n\n",
                 crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE
             ));
-            out.push_str("The first form is written for Bash; cmd.exe is not supported.\n");
+            out.push_str(translated_form_claim());
+            out.push('\n');
         }
     }
     if trailing_blank_line {
@@ -862,10 +871,12 @@ mod tests {
             out.contains("Recovery: Commit PR work before rerunning."),
             "{out}"
         );
-        assert!(
-            out.contains("It runs unchanged in Bash and PowerShell"),
-            "{out}"
-        );
+        let unchanged_claimed = if cfg!(windows) {
+            out.contains("It runs unchanged in cmd.exe, PowerShell, and Git Bash.")
+        } else {
+            out.contains("It runs unchanged in Bash and PowerShell")
+        };
+        assert!(unchanged_claimed, "{out}");
         assert!(
             out.contains("Recovery step 2 unavailable: use a single-line root/ref alias"),
             "{out}"

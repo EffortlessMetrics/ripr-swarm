@@ -1,3 +1,11 @@
+//! The `tower-lsp-server` `LanguageServer` implementation for the ripr sidecar.
+//!
+//! [`Backend`] owns client handles, workspace roots, open-document state,
+//! refresh and publication barriers, and the config-pull coordinator. It
+//! delegates analysis scheduling to `refresh_scheduler`, diagnostic shaping to
+//! `diagnostics`, and code actions to `actions`; keep protocol plumbing here
+//! and decisions in those owners.
+
 use super::AnalysisStatusNotification;
 use super::actions::{code_action_response, disable_retained_analysis_actions, resolve_action};
 use super::capabilities::{
@@ -7,9 +15,10 @@ use super::capabilities::{
 use super::client_features::ClientFeatureProfile;
 use super::config::{LspAnalysisConfig, validated_pulled_options};
 use super::diagnostics::{
-    DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache, WorkspaceDiagnostics,
-    delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
-    take_all_uris, withdrawn_quarantine_diagnostics,
+    AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
+    WorkspaceDiagnostics, analysis_pending_diagnostics, delivered_diagnostics_for_uri,
+    delivery_omission_diagnostic, diagnostic_refresh_plan, take_all_uris,
+    withdrawn_quarantine_diagnostics,
 };
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
@@ -1309,6 +1318,13 @@ impl Backend {
         self.refresh_scheduler.is_current_generation(generation)
     }
 
+    #[cfg(test)]
+    pub(super) fn refresh_telemetry_for_test(
+        &self,
+    ) -> super::refresh_scheduler::RefreshTelemetrySnapshot {
+        self.refresh_scheduler.telemetry()
+    }
+
     pub(super) fn workspace_revision(&self) -> u64 {
         self.workspace_revision
             .lock()
@@ -2604,6 +2620,16 @@ impl Backend {
             .and_then(|guard| guard.as_ref().cloned())
     }
 
+    /// The recovery route the pre-analysis pull marker may promise (#7774):
+    /// mirrors the `refresh_diagnostics` preconditions so a blocked state
+    /// never advertises a route that returns before analysis.
+    fn analysis_pending_recovery(&self) -> AnalysisPendingRecovery {
+        analysis_pending_recovery_for(
+            self.configuration_failure().as_ref(),
+            &self.workspace_root_authority(),
+        )
+    }
+
     /// Whether the most recent bounded disclosure window after an
     /// initialize-time failure commit expired without completing client
     /// delivery (#3802). Unreadable state fails closed: an unknown delivery
@@ -2984,6 +3010,76 @@ impl Backend {
             .lock()
             .ok()
             .map(|mut documents| (uri, documents.open(params)))
+    }
+
+    /// Whether the document opened by the just-processed `didOpen` already
+    /// matches the persisted saved bytes the store recorded for it. A failed
+    /// store lock is treated as a changed input: the conservative route is
+    /// the interactive refresh, never silently skipping it.
+    fn open_document_matches_saved_content(&self, uri: &Uri) -> bool {
+        self.documents
+            .lock()
+            .ok()
+            .map(|documents| documents.open_matches_persisted_saved_content(uri))
+            .unwrap_or(false)
+    }
+
+    /// Adopt the committed snapshot's analyzed identity for a clean open of a
+    /// Rust file the snapshot already analyzed byte-for-byte, so reopening an
+    /// unchanged file does not quarantine it as never analyzed. Returns
+    /// whether the document is now clean.
+    fn adopt_committed_snapshot_for_clean_open(&self, uri: &Uri) -> bool {
+        let committed = self.latest_analysis.lock().ok().and_then(|latest| {
+            let snapshot = latest.as_ref()?;
+            let relative = super::uri::file_uri_relative_to_root(&snapshot.root, uri)?;
+            let digest = snapshot.rust_consumed_sources.digest(&relative)?;
+            Some((digest, snapshot.input_identity_id()))
+        });
+        let Some((digest, input_identity)) = committed else {
+            return false;
+        };
+        self.documents.lock().ok().is_some_and(|mut documents| {
+            documents.adopt_committed_identity(uri, &digest, input_identity)
+        })
+    }
+
+    /// Whether a clean open still carries an input the committed snapshot
+    /// never analyzed: the file may have changed on disk while it was closed
+    /// and no watch event arrived, so the buffer matches the persisted bytes
+    /// while both differ from the bytes behind the session's seam evidence.
+    /// The opened Rust file's saved digest is compared with the digest the
+    /// committed snapshot captured for the same path; a captured mismatch
+    /// keeps the interactive refresh. An absent commitment (the file is
+    /// outside the committed snapshot, or the snapshot holds no captured
+    /// bytes for it) preserves the clean-open skip.
+    fn opened_file_differs_from_committed_snapshot(&self, uri: &Uri) -> bool {
+        let committed = self.latest_analysis.lock().ok().and_then(|latest| {
+            let snapshot = latest.as_ref()?;
+            let relative = super::uri::file_uri_relative_to_root(&snapshot.root, uri)?;
+            let analyzed_digest = snapshot.rust_consumed_sources.digest(&relative);
+            Some((relative, analyzed_digest))
+        });
+        let Some((_relative, Some(analyzed_digest))) = committed else {
+            return false;
+        };
+        let saved_digest_matches = self
+            .documents
+            .lock()
+            .ok()
+            .and_then(|documents| {
+                documents
+                    .state_for_uri(uri)
+                    .map(|state| state.saved_digest.as_deref() == Some(analyzed_digest.as_str()))
+            })
+            .unwrap_or(false);
+        !saved_digest_matches
+    }
+
+    /// Whether the refresh scheduler already holds analysis state (active,
+    /// pending, or completed). A failed lock reads as state present so the
+    /// conservative route is the interactive refresh.
+    fn refresh_scheduler_has_analysis_state(&self) -> bool {
+        self.refresh_scheduler.has_analysis_state()
     }
 
     fn change_document(
@@ -3568,11 +3664,23 @@ fn path_is_detectable_source_dir_python(root: &Path, path: &Path) -> bool {
 
 /// Root-relative components of `path` when `path` sits below `root`. Root
 /// components compare with the platform path rule (case-insensitive on
-/// Windows), mirroring the LSP URI authority's containment rule. `.` and
+/// Windows and macOS), mirroring the LSP URI authority's containment rule. `.` and
 /// `..` resolve on both sides first, including a root this process built
 /// with a relative join (`crates/ripr/../..`). A collapsed file URI and
 /// that uncollapsed root are the same directory.
 fn root_relative_components(root: &Path, path: &Path) -> Option<Vec<String>> {
+    root_relative_components_on(
+        root,
+        path,
+        crate::output::path::host_paths_case_insensitive(),
+    )
+}
+
+fn root_relative_components_on(
+    root: &Path,
+    path: &Path,
+    case_insensitive: bool,
+) -> Option<Vec<String>> {
     let root = super::uri::normalize_path(root);
     let path = super::uri::normalize_path(path);
     fn component_names(path: &Path) -> Vec<Option<String>> {
@@ -3596,7 +3704,7 @@ fn root_relative_components(root: &Path, path: &Path) -> Option<Vec<String>> {
         let (Some(expected), Some(actual)) = (expected, actual) else {
             return None;
         };
-        let matched = if cfg!(windows) {
+        let matched = if case_insensitive {
             expected.eq_ignore_ascii_case(actual)
         } else {
             expected == actual
@@ -3857,9 +3965,9 @@ mod workspace_input_tests {
         assert!(WorkspaceInputKind::PythonSourcePresence.reloads_repository_config());
         assert!(!WorkspaceInputKind::PythonSourcePresence.invalidates_workspace_graph());
 
-        if cfg!(windows) {
-            // Source-directory markers resolve through the Windows
-            // filesystem, so differently-cased components classify the same.
+        if crate::output::path::host_paths_case_insensitive() {
+            // Source-directory markers resolve through the case-insensitive
+            // host filesystem (Windows, macOS), so differently-cased components classify the same.
             let upper = root.join("SRC").join("app.py");
             assert_eq!(
                 workspace_input_kind(&root, &upper),
@@ -3867,6 +3975,21 @@ mod workspace_input_tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn root_relative_components_follow_explicit_host_case_rule() {
+        let root = Path::new("/Work/Repo");
+        let path = Path::new("/work/repo/src/lib.rs");
+        assert_eq!(
+            root_relative_components_on(root, path, true),
+            Some(vec!["src".to_string(), "lib.rs".to_string()])
+        );
+        assert_eq!(root_relative_components_on(root, path, false), None);
+        assert_eq!(
+            root_relative_components_on(root, Path::new("/Work/Repo/src/Lib.rs"), false),
+            Some(vec!["src".to_string(), "Lib.rs".to_string()])
+        );
     }
 
     #[test]
@@ -4495,10 +4618,15 @@ fn blocked_root_message(root: &WorkspaceRootAuthority) -> Option<String> {
         };
         format!(" {label}: {listed}.")
     };
-    // The stored details already name the recovery for ambiguous, removed
-    // and changed roots; an unavailable root only says what the client sent.
+    // The stored details already name the recovery for removed and changed
+    // roots; an unavailable root only says what the client sent. An
+    // ambiguous set lists its folders above, so the guidance names the only
+    // recovery the server implements: one folder per window, then a restart
+    // (#7461). No server command, setting, or request selects a root.
     let guidance = match root.state {
-        WorkspaceRootState::WorkspaceAmbiguous => " ripr analyzes one workspace root per server.",
+        WorkspaceRootState::WorkspaceAmbiguous => {
+            " ripr analyzes one workspace root per server. Remove the extra folder from the workspace (or open each repository in its own editor session), then restart the language server. In VS Code, the `ripr: Select Workspace Root` command picks one folder and restarts instead."
+        }
         WorkspaceRootState::RootUnavailable => {
             " Open the repository folder as the editor's workspace root, then restart the language server."
         }
@@ -4512,12 +4640,21 @@ fn blocked_root_message(root: &WorkspaceRootAuthority) -> Option<String> {
     ))
 }
 
+/// Recovery route for workspace-root states that stop analysis until the
+/// editor holds a single workspace root and the server restarts (#7461).
+/// The name describes the end state the user must produce because no server
+/// command, setting, or request implements a root-selection step; a
+/// `select_*` route would name a phantom action. One wording owner for both
+/// the status projection and the top-limitation payload so they cannot drift
+/// apart.
+const SINGLE_ROOT_RESTART_ROUTE: &str = "use_single_workspace_root_and_restart";
+
 fn root_recovery_route(state: &WorkspaceRootState) -> &'static str {
     match state {
         WorkspaceRootState::SelectedSingleRoot => "refresh",
-        WorkspaceRootState::WorkspaceAmbiguous => "select_root_and_restart",
-        WorkspaceRootState::RootUnavailable => "select_root_and_restart",
-        WorkspaceRootState::RootRemoved => "select_root_and_restart",
+        WorkspaceRootState::WorkspaceAmbiguous => SINGLE_ROOT_RESTART_ROUTE,
+        WorkspaceRootState::RootUnavailable => SINGLE_ROOT_RESTART_ROUTE,
+        WorkspaceRootState::RootRemoved => SINGLE_ROOT_RESTART_ROUTE,
         WorkspaceRootState::RootChanged => "refresh",
     }
 }
@@ -5340,7 +5477,7 @@ impl LanguageServer for Backend {
         // The store records exactly the params version with the open
         // decision (#1747); capture it before `params` moves.
         let decision_version = Some(params.text_document.version);
-        let Some((uri, transition)) = self.open_document(params) else {
+        let Some((uri, mut transition)) = self.open_document(params) else {
             // A failed store lock means the document was never registered;
             // skip every downstream mutation so the store, the workspace
             // revision, and the committed snapshot cannot diverge.
@@ -5352,9 +5489,46 @@ impl LanguageServer for Backend {
                 .await;
             return;
         };
-        self.advance_workspace_revision();
+        // #1908's principle applied to open: a didOpen whose buffer already
+        // matches the persisted saved bytes recorded at open carries no new
+        // saved-workspace input (the analysis reads persisted bytes). When
+        // the session already holds refresh state, such an open neither
+        // advances the workspace revision nor schedules an interactive
+        // refresh: superseding a completed full-seam snapshot with a
+        // same-input deferred snapshot withdrew real seam evidence
+        // mid-journey and made every subsequent evidence-reading command
+        // (collectContext, rooted copies) disclose staleness (#7408 matrix).
+        // A fresh session still refreshes so the first opened document
+        // establishes the session's analysis, and a diverging recovered
+        // buffer, an unreadable saved identity, or a failed store lock all
+        // keep today's interactive refresh. A buffer matching the persisted
+        // bytes but differing from the digest the committed snapshot
+        // captured for the same Rust path keeps the refresh too: the file
+        // changed on disk while closed, so the session's committed evidence
+        // predates the input it would otherwise keep serving.
+        if transition == QuarantineTransition::Entered
+            && self.refresh_scheduler_has_analysis_state()
+            && self.adopt_committed_snapshot_for_clean_open(&uri)
+        {
+            // The open created the document already quarantined as never
+            // analyzed and the adoption lifted that. Report the lift so the
+            // committed diagnostics are re-served: a stale withdrawal marker
+            // from an earlier dirty episode may still be the last publish.
+            transition = QuarantineTransition::Exited {
+                was_disclosed: false,
+            };
+        }
+        let open_matches_saved = self.open_document_matches_saved_content(&uri);
+        let session_has_analysis = self.refresh_scheduler_has_analysis_state();
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
             .await;
+        if open_matches_saved
+            && session_has_analysis
+            && !self.opened_file_differs_from_committed_snapshot(&uri)
+        {
+            return;
+        }
+        self.advance_workspace_revision();
         // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
         // Diff-scoped findings are complete; seams run on explicit refresh only.
         self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::DidOpen)
@@ -5742,16 +5916,15 @@ impl Backend {
         params: DocumentDiagnosticParams,
     ) -> LspResult<DocumentDiagnosticReportResult> {
         let Some((snapshot, result_ids)) = self.latest_pull_snapshot() else {
+            // Pre-analysis state (#7774): an empty report here would be
+            // indistinguishable from "analysis ran and found nothing",
+            // which is a completeness claim the server cannot support
+            // before the first snapshot commit. Serve the typed pending
+            // marker under a stable state identity instead, promising only
+            // the recovery route the current blocking state honors.
+            let recovery = self.analysis_pending_recovery();
             return Ok(
-                DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
-                    related_documents: None,
-                    full_document_diagnostic_report:
-                        tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
-                            result_id: None,
-                            items: Vec::new(),
-                        },
-                })
-                .into(),
+                analysis_pending_document_report(params.previous_result_id, recovery).into(),
             );
         };
         let uri = params.text_document.uri;
@@ -5832,7 +6005,15 @@ impl Backend {
         // snapshot fast path so a missing snapshot cannot skip the bound.
         check_previous_result_ids(&params.previous_result_ids)?;
         let Some((snapshot, result_ids)) = self.latest_pull_snapshot() else {
-            return Ok(WorkspaceDiagnosticReport { items: Vec::new() }.into());
+            // Pre-analysis state (#7774): serve the typed pending marker
+            // for every document the client already tracks, under the same
+            // stable state identity the document pull path uses, promising
+            // only the recovery route the current blocking state honors.
+            // A cold client with no previous result ids gets no items — a
+            // workspace report item needs a document URI, and the document
+            // pull path discloses the state for every open file.
+            let recovery = self.analysis_pending_recovery();
+            return Ok(analysis_pending_workspace_report(&params, recovery).into());
         };
         let mut uris = snapshot
             .diagnostics_by_uri
@@ -6160,7 +6341,22 @@ impl Backend {
             && health.attempt_id.is_none()
             && health.reason.is_none()
             && health.current_input_identity.is_none();
-        if !legacy_test_snapshot && !health.allows_current_repairs() {
+        // A same-input refresh that is merely queued or in flight does not
+        // make the committed snapshot's evidence stale: the snapshot's
+        // evidence describes exactly the input the running refresh is
+        // re-deriving, so the copy serves current evidence instead of a
+        // staleness disclosure (#7408 matrix — the save's debounced refresh
+        // racing the context copy read the just-committed full-seam snapshot
+        // as stale). Staleness stays for inputs that genuinely moved.
+        let same_input_refresh_in_flight = matches!(
+            health.state,
+            AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+        ) && health.current_input_identity.is_some()
+            && health.current_input_identity == snapshot.input_identity_id();
+        if !same_input_refresh_in_flight
+            && !legacy_test_snapshot
+            && !health.allows_current_repairs()
+        {
             return Some("analysis input is no longer current; refresh the workspace evidence");
         }
         if snapshot.seams_deferred {
@@ -6897,6 +7093,97 @@ fn quarantined_document_result_id(base: &str, reason: DocumentStalenessReason) -
     format!("{base}:{}:quarantined", reason.as_str())
 }
 
+/// The pull result identity for the pre-analysis state (#7774). A literal,
+/// not a payload digest: there is no snapshot to derive from and the served
+/// payload is the constant pending marker. The recovery id is folded in so
+/// a blocking-state change (for example configuration getting fixed)
+/// produces a fresh identity — the client re-renders the marker instead of
+/// holding a stale route behind `unchanged`.
+fn analysis_pending_result_id(recovery: &AnalysisPendingRecovery) -> String {
+    format!("ripr:analysis-pending:{}", recovery.recovery_id())
+}
+
+/// The recovery route the pre-analysis marker may promise (#7774 review):
+/// `refresh_diagnostics` returns before analysis when configuration has
+/// failed or the workspace root authority does not admit analysis, so a
+/// blocked state must surface its own route rather than save/refresh.
+fn analysis_pending_recovery_for(
+    configuration_failure: Option<&AnalysisFailure>,
+    authority: &WorkspaceRootAuthority,
+) -> AnalysisPendingRecovery {
+    if configuration_failure.is_some() {
+        return AnalysisPendingRecovery::FixConfiguration;
+    }
+    if authority.effective_root.is_none() || !authority.allows_analysis() {
+        return AnalysisPendingRecovery::RootBlocked(root_recovery_route(&authority.state));
+    }
+    AnalysisPendingRecovery::SaveOrRefresh
+}
+
+/// The pre-analysis document pull report (#7774): one Information marker
+/// under the stable pending identity, or `unchanged` when the client
+/// already holds exactly that report.
+fn analysis_pending_document_report(
+    previous_result_id: Option<String>,
+    recovery: AnalysisPendingRecovery,
+) -> DocumentDiagnosticReport {
+    let result_id = analysis_pending_result_id(&recovery);
+    if previous_result_id.as_deref() == Some(result_id.as_str()) {
+        return DocumentDiagnosticReport::Unchanged(RelatedUnchangedDocumentDiagnosticReport {
+            related_documents: None,
+            unchanged_document_diagnostic_report: UnchangedDocumentDiagnosticReport { result_id },
+        });
+    }
+    DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
+        related_documents: None,
+        full_document_diagnostic_report: tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
+            result_id: Some(result_id),
+            items: analysis_pending_diagnostics(recovery),
+        },
+    })
+}
+
+/// The pre-analysis workspace pull report (#7774): the pending marker rides
+/// one full report per document URI the client already tracks, under the
+/// same stable identity as the document pull path; previously served
+/// pending reports answer `unchanged`. A cold client with an empty
+/// previous-result-id set gets an empty item list because a workspace
+/// report item requires a document URI — the document pull path discloses
+/// the state for every open file.
+fn analysis_pending_workspace_report(
+    params: &WorkspaceDiagnosticParams,
+    recovery: AnalysisPendingRecovery,
+) -> WorkspaceDiagnosticReport {
+    let result_id = analysis_pending_result_id(&recovery);
+    let mut items = Vec::with_capacity(params.previous_result_ids.len());
+    for entry in &params.previous_result_ids {
+        if entry.value == result_id {
+            items.push(WorkspaceDocumentDiagnosticReport::Unchanged(
+                WorkspaceUnchangedDocumentDiagnosticReport {
+                    uri: entry.uri.clone(),
+                    version: None,
+                    unchanged_document_diagnostic_report: UnchangedDocumentDiagnosticReport {
+                        result_id: result_id.clone(),
+                    },
+                },
+            ));
+            continue;
+        }
+        items.push(WorkspaceDocumentDiagnosticReport::Full(
+            WorkspaceFullDocumentDiagnosticReport {
+                uri: entry.uri.clone(),
+                version: None,
+                full_document_diagnostic_report:
+                    tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
+                        result_id: Some(result_id.clone()),
+                        items: analysis_pending_diagnostics(recovery),
+                    },
+            },
+        ));
+    }
+    WorkspaceDiagnosticReport { items }
+}
+
 /// Disclosure emitted once per quarantine episode when a dirty document's
 /// line-local diagnostics are withdrawn (#1970).
 fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReason) -> String {
@@ -7376,17 +7663,17 @@ fn top_limitation_dto(
             WorkspaceRootState::WorkspaceAmbiguous => (
                 "workspace_ambiguous",
                 "workspace root authority is ambiguous; analysis input is not selected",
-                "select_root_and_restart",
+                SINGLE_ROOT_RESTART_ROUTE,
             ),
             WorkspaceRootState::RootUnavailable => (
                 "input_invalid",
                 "workspace root authority is unavailable; analysis input is not selected",
-                "select_root_and_restart",
+                SINGLE_ROOT_RESTART_ROUTE,
             ),
             WorkspaceRootState::RootRemoved => (
                 "input_invalid",
                 "the selected workspace root was removed; analysis input is invalid",
-                "select_root_and_restart",
+                SINGLE_ROOT_RESTART_ROUTE,
             ),
             WorkspaceRootState::RootChanged => (
                 "snapshot_stale",
@@ -10795,6 +11082,7 @@ mod delivery_selection_parity_tests {
     }
 
     // Keep the payload oracles separate from the selected-ID-only tests.
+    mod analysis_pending_tests;
     mod omission_tests;
     mod quarantine_marker_tests;
 

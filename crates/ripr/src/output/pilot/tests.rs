@@ -25,6 +25,7 @@ use crate::output::python_repair_card::PythonRepairCard;
 use std::path::{Path, PathBuf};
 
 mod spec_0237;
+mod timeout_retry;
 
 fn seam(file: &str, line: usize, expression: &str) -> RepoSeam {
     RepoSeam::new(
@@ -544,6 +545,45 @@ fn pilot_summary_md_names_unlisted_seams_on_an_owners_first_pick_only() {
 }
 
 #[test]
+fn pilot_summary_json_marks_the_actionable_total_as_a_lower_bound_after_a_seam_limit()
+-> Result<(), String> {
+    // #6739: the JSON consumer must be able to tell a complete count from a
+    // lower bound, exactly as the Markdown "at least N" wording does.
+    let entries = [classified_in_owner(
+        SeamGripClass::WeaklyGripped,
+        "src/a.rs",
+        "a::clone",
+        10,
+    )];
+    let limit = crate::analysis::SeamLimitInfo {
+        analyzed: 3,
+        total: 7,
+        source: crate::analysis::SeamLimitSource::Configured,
+    };
+    let artifacts = pilot_artifacts();
+    let mut context = pilot_context(&artifacts);
+    context.seam_limit = Some(&limit);
+    let limited: serde_json::Value =
+        serde_json::from_str(&render_pilot_summary_json(&entries, context))
+            .map_err(|err| err.to_string())?;
+    assert_eq!(limited["actionable_seams_total"], 1);
+    assert_eq!(limited["actionable_seams_total_is_lower_bound"], true);
+    assert_eq!(
+        limited["seam_limit"],
+        serde_json::json!({"analyzed": 3, "total": 7, "source": "configured"})
+    );
+
+    context.seam_limit = None;
+    let exact: serde_json::Value =
+        serde_json::from_str(&render_pilot_summary_json(&entries, context))
+            .map_err(|err| err.to_string())?;
+    assert_eq!(exact["actionable_seams_total"], 1);
+    assert_eq!(exact["actionable_seams_total_is_lower_bound"], false);
+    assert!(exact["seam_limit"].is_null(), "{exact}");
+    Ok(())
+}
+
+#[test]
 fn pilot_summary_md_marks_owner_counts_as_lower_bounds_after_a_seam_limit() {
     // #6602: a seam limit dropped classified seams before ranking, so a
     // function may have more seams than the kept slice shows.
@@ -864,7 +904,7 @@ fn pilot_summary_json_contains_config_state_artifacts_and_next_commands() {
         &[entry],
         context,
     ));
-    assert!(json.contains(r#""schema_version": "0.3""#));
+    assert!(json.contains(r#""schema_version": "0.4""#));
     assert!(json.contains(r#""status": "complete""#));
     assert!(json.contains(r#""state": "loaded""#));
     assert!(json.contains(r#""top_actionable_seams""#));
@@ -956,10 +996,16 @@ fn pilot_summary_md_pairs_bash_next_commands_with_powershell_variants() -> Resul
         "powershell after-snapshot translation missing:\n{md}"
     );
     // Disclosure precedes the first copyable command, mirroring the landed
-    // agent_workflow ordering, and states the cmd.exe boundary.
+    // agent_workflow ordering, and states the host shell boundary (#7729:
+    // cmd.exe unsupported off Windows; the Windows console named on it).
+    let boundary = if cfg!(windows) {
+        "Windows console"
+    } else {
+        "cmd.exe is not supported"
+    };
     let disclosure = md
-        .find("cmd.exe is not supported")
-        .ok_or_else(|| format!("pilot markdown must state the cmd.exe boundary: {md}"))?;
+        .find(boundary)
+        .ok_or_else(|| format!("pilot markdown must state the host shell boundary: {md}"))?;
     let first_fence = md
         .find("```bash")
         .ok_or_else(|| format!("pilot markdown must fence the bash commands: {md}"))?;
@@ -1084,7 +1130,7 @@ fn timeout_summary_json_is_partial_and_points_to_retry() {
     };
 
     let json = render_pilot_timeout_summary_json(context);
-    assert!(json.contains(r#""schema_version": "0.3""#));
+    assert!(json.contains(r#""schema_version": "0.4""#));
     assert!(json.contains(r#""status": "partial""#));
     assert!(json.contains(r#""reason": "timeout""#));
     assert!(json.contains(r#""actionable_seams_total": null"#));
@@ -1176,9 +1222,14 @@ fn timeout_summary_md_pairs_bash_retry_with_powershell_variant() -> Result<(), S
         !md.contains("```powershell"),
         "an unchanged retry must not repeat as a PowerShell block:\n{md}"
     );
-    let disclosure = md
-        .find("cmd.exe is not supported")
-        .ok_or_else(|| format!("pilot timeout markdown must state the cmd.exe boundary: {md}"))?;
+    let boundary = if cfg!(windows) {
+        "Windows console"
+    } else {
+        "cmd.exe is not supported"
+    };
+    let disclosure = md.find(boundary).ok_or_else(|| {
+        format!("pilot timeout markdown must state the host shell boundary: {md}")
+    })?;
     let first_fence = md
         .find("```bash")
         .ok_or_else(|| format!("pilot timeout markdown must fence the bash command: {md}"))?;
@@ -1759,6 +1810,58 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
     Ok(())
 }
 
+/// The repair-start line family follows the canonical pilot decision (#6986):
+/// an eligible top seam yields a pilot-delegated stop whose route is the
+/// printed command, and the negative control (a seam past the flip) yields a
+/// typed limitation and no repair line anywhere on the screen.
+#[test]
+fn pilot_repair_line_follows_the_canonical_pilot_decision() -> Result<(), String> {
+    use crate::domain::{NextActionClass, NextActionProducer, NextActionStop};
+
+    let artifacts = pilot_artifacts();
+    let root = Path::new(".");
+
+    let eligible = route_ready_entry(&["tests/pricing.rs"]);
+    let action = commands::canonical_next_action_for_pilot(root, &eligible)?;
+    assert_eq!(action.producer(), NextActionProducer::PilotDelegation);
+    assert_eq!(action.action_class(), NextActionClass::InspectDetails);
+    let Some(NextActionStop::PilotDelegated {
+        transaction_ref,
+        route,
+    }) = action.stop()
+    else {
+        return Err(format!(
+            "expected pilot delegation, got {:?}",
+            action.stop()
+        ));
+    };
+    assert_eq!(transaction_ref, eligible.seam.id().as_str());
+    assert_eq!(
+        commands::repair_start_command(root, &eligible).as_deref(),
+        Some(route.as_str())
+    );
+    let entries = [eligible];
+    let terminal = render_pilot_terminal(&entries, pilot_context(&artifacts));
+    assert!(terminal.contains(&format!("  repair this seam: {route}\n")));
+    assert!(terminal.contains(&format!("  1. {route}\n")));
+
+    // Negative control: past the flip no delegation is bound, so the decision
+    // is a typed limitation and the screen carries no repair route.
+    let ineligible = route_ready_entry(&["tests/pricing.rs", "tests/pricing.test.ts"]);
+    let action = commands::canonical_next_action_for_pilot(root, &ineligible)?;
+    assert_eq!(action.action_class(), NextActionClass::UnsupportedOrLimited);
+    assert!(matches!(
+        action.stop(),
+        Some(NextActionStop::Unsupported { .. })
+    ));
+    assert_eq!(commands::repair_start_command(root, &ineligible), None);
+    let entries = [ineligible];
+    let terminal = render_pilot_terminal(&entries, pilot_context(&artifacts));
+    assert!(!terminal.contains("agent repair --root"), "{terminal}");
+    assert!(!terminal.contains("Next, in order:"), "{terminal}");
+    Ok(())
+}
+
 fn discovered_files(
     entries: &[(crate::domain::LanguageId, &str)],
 ) -> Vec<(crate::domain::LanguageId, PathBuf)> {
@@ -1766,6 +1869,49 @@ fn discovered_files(
         .iter()
         .map(|(language, path)| (*language, PathBuf::from(path)))
         .collect()
+}
+
+/// #4908: real discovery tags every TS/JS-family file `TypeScript`; pilot
+/// splits the JavaScript-family files into the documented `javascript` route.
+#[test]
+fn pilot_language_routes_split_real_discovery_javascript_files() {
+    use crate::domain::LanguageId;
+
+    let root = Path::new(".");
+    let enabled = [LanguageId::Rust, LanguageId::TypeScript];
+    let routes_of = |entries: &[(LanguageId, &str)]| {
+        PilotLanguageRoutes::from_discovered(root, false, &enabled, &discovered_files(entries))
+            .routes
+            .iter()
+            .map(|route| (route.language, route.file_count))
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        routes_of(&[
+            (LanguageId::TypeScript, "web/a.js"),
+            (LanguageId::TypeScript, "web/b.mjs"),
+            (LanguageId::TypeScript, "web/c.cjs"),
+            (LanguageId::TypeScript, "web/d.jsx"),
+        ]),
+        vec![(LanguageId::JavaScript, 4)],
+        "a JS-only repository gets only the javascript route"
+    );
+    assert_eq!(
+        routes_of(&[
+            (LanguageId::TypeScript, "web/a.js"),
+            (LanguageId::TypeScript, "web/b.ts"),
+            (LanguageId::TypeScript, "web/c.mts"),
+            (LanguageId::TypeScript, "web/types.d.ts"),
+        ]),
+        vec![(LanguageId::TypeScript, 3), (LanguageId::JavaScript, 1)],
+        "a mixed repository keeps both routes with each file counted once"
+    );
+    assert_eq!(
+        routes_of(&[(LanguageId::TypeScript, "web/b.ts")]),
+        vec![(LanguageId::TypeScript, 1)],
+        "a TypeScript-only repository is unchanged"
+    );
 }
 
 #[test]

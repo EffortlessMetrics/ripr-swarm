@@ -52,6 +52,7 @@ fn expectations(class: &str, kind: &str, strength: &str) -> Vec<Assertion> {
             kind: kind.to_string(),
             strength: strength.to_string(),
             relation_reason: None,
+            miss: None,
         },
     ];
     if class == "exposed" {

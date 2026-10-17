@@ -9,7 +9,7 @@
 //! `output::markdown::powershell_command` translation (#2628) rather than a
 //! second quoting implementation.
 
-use crate::agent::loop_commands::shell_arg;
+use crate::agent::loop_commands::shell_arg_for;
 
 /// Build the canonical `ripr receipt write` command per RIPR-SPEC-0079.
 ///
@@ -28,13 +28,17 @@ pub(crate) fn receipt_write_command(
     verify_command: &str,
     out_path: Option<&str>,
 ) -> String {
+    // The canonical command is stored in versioned JSON records and
+    // compared byte-for-byte across hosts, so it always uses the POSIX
+    // quoting form (this module's "stays bash source" rule, #8437).
+    // Presentation surfaces derive the host paste form from it.
     let base = format!(
         "ripr receipt write --gap {} --verify-command {} --status not_run",
-        shell_arg(canonical_gap_id),
-        shell_arg(verify_command),
+        shell_arg_for(canonical_gap_id, false),
+        shell_arg_for(verify_command, false),
     );
     match out_path {
-        Some(path) => format!("{base} --out {}", shell_arg(path)),
+        Some(path) => format!("{base} --out {}", shell_arg_for(path, false)),
         None => base,
     }
 }
@@ -46,13 +50,17 @@ mod tests {
     #[test]
     fn receipt_write_command_emits_canonical_form_with_out_path() {
         // RIPR-SPEC-0079: receipt_command must start with `ripr receipt write --gap`.
+        // Host-aware quoting (#7729).
         assert_eq!(
             receipt_write_command(
                 "gap:rust:pricing:discount:threshold-boundary",
                 "cargo xtask fixtures boundary_gap",
                 Some("target/ripr/receipts/gap-rust-pricing.json"),
             ),
-            "ripr receipt write --gap gap:rust:pricing:discount:threshold-boundary --verify-command 'cargo xtask fixtures boundary_gap' --status not_run --out target/ripr/receipts/gap-rust-pricing.json"
+            format!(
+                "ripr receipt write --gap gap:rust:pricing:discount:threshold-boundary --verify-command {} --status not_run --out target/ripr/receipts/gap-rust-pricing.json",
+                "'cargo xtask fixtures boundary_gap'"
+            )
         );
     }
 
@@ -64,7 +72,10 @@ mod tests {
                 "cargo xtask fixtures boundary_gap",
                 None,
             ),
-            "ripr receipt write --gap gap:rust:pricing:discount:threshold-boundary --verify-command 'cargo xtask fixtures boundary_gap' --status not_run"
+            format!(
+                "ripr receipt write --gap gap:rust:pricing:discount:threshold-boundary --verify-command {} --status not_run",
+                "'cargo xtask fixtures boundary_gap'"
+            )
         );
     }
 
@@ -83,6 +94,20 @@ mod tests {
         assert!(
             !cmd.contains("ripr outcome"),
             "receipt_write_command must never emit ripr outcome, got: {cmd}"
+        );
+    }
+
+    #[test]
+    fn receipt_write_command_quoting_is_host_independent() {
+        // #8437: the canonical string is stored in versioned records, so
+        // its quoting must not depend on the host shell.
+        assert_eq!(
+            receipt_write_command(
+                "gap:rust:pricing:discount",
+                "npx --no-install jest tests/pricing.test.ts",
+                Some("target/ripr/receipts/gap.json"),
+            ),
+            "ripr receipt write --gap gap:rust:pricing:discount --verify-command 'npx --no-install jest tests/pricing.test.ts' --status not_run --out target/ripr/receipts/gap.json"
         );
     }
 

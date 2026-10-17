@@ -4,6 +4,9 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const REQUIRED_PORTABLE_TESTS = Object.freeze([
+  "missing native executable gives exact recovery for every registered target",
+  "public bin missing-native failure gives exact recovery after a directory move",
+  "public bin simulated unsupported platforms fail without reinstall advice or stdout",
   "public bin missing-library failure gives exact recovery after a directory move",
   "public bin preserves internal import and parser failures without library recovery advice",
   "public bin library recovery never guesses a version from invalid or unavailable metadata",
@@ -17,6 +20,8 @@ const REQUIRED_PORTABLE_TESTS = Object.freeze([
   "npm package contents are explicit and exclude tests and build residue",
 ]);
 const REQUIRED_POSIX_TESTS = Object.freeze([
+  "non-executable native payload gives exact recovery for each POSIX target",
+  "public bin non-executable recovery survives a directory move and restores launch",
   "forwards direct SIGTERM to native child exactly once and re-emits signal",
   "retains the first observed signal when a supervisor escalates SIGINT to SIGTERM",
   "observes terminal SIGINT and SIGHUP without forwarding duplicates to the native child",

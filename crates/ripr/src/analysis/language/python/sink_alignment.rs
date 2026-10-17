@@ -2,20 +2,23 @@ use super::assertion_selection::PythonAssertionFocus;
 use super::effect_alignment::{
     ChangedEffect, EffectReads, calls_owner_through_module, expected_computed_through_owner,
 };
+use super::owners_tests::collect_imports_from_statements;
 use super::probe_shape::classify_probe_shape;
 use super::related_tests::{
     oracle_operand_calls, oracle_operand_names, owner_module_callees, owner_result_locals,
 };
+use super::source_facts::parse_module_result;
 use super::{
-    PythonOwner, PythonTest, has_identifier_boundary, import_module_may_be_owners,
-    import_source_module_matches_owner, parse_attribute_assignment,
-    python_dict_field_segment_parts, significant_change_tokens,
+    PythonOwner, PythonTest, has_identifier_boundary, import_source_module_matches_owner,
+    parse_attribute_assignment, python_dict_field_segment_parts, significant_change_tokens,
     strong_test_calls_owner_method_on_bound_receiver, strong_test_imports_owner_from_module,
     strong_tests_import_only_rival_modules, top_level_python_segments,
 };
 use crate::domain::{OracleKind, OracleStrength, OwnerKind, ProbeFamily, RelatedTest};
+use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::Path;
 use std::rc::Rc;
 /// The visible read-out of the sink-alignment decision. `ripr`'s value over
 /// coverage is that a strong oracle credits `exposed` only when it *observes the
@@ -220,8 +223,9 @@ pub(super) fn dict_changed_keys_and_values(
     }
 }
 
-/// Whether a strong oracle observes the CHANGED dict element (#1290): a subscript or
-/// `.get(...)` of a changed key, the changed value literal, or a whole-collection
+/// Whether a strong oracle observes the CHANGED dict element (#1290 / #6585): a
+/// subscript or `.get(...)` of a changed key, the changed value literal when the
+/// oracle does not solely subscript an unchanged sibling, or a whole-collection
 /// comparison. Conservative — when in doubt it returns `true` (credit stands) so a
 /// genuine discriminator is never dropped; it only returns `false` for an oracle
 /// that observes purely a sibling key or an aggregate.
@@ -238,24 +242,43 @@ pub(super) fn oracle_observes_changed_dict_element(
     {
         return true;
     }
-    // Observes a changed value literal (e.g. the new `9090` / `"failure"`).
+    // Observes a changed value literal (e.g. the new `9090` / `"failure"`), but
+    // not when that literal only appears beside a sibling-key subscript
+    // (`assert build()['timeout'] == 80` after `'port'` changed to `80`).
     for value in changed_values {
         let literal = value.trim().trim_matches('"').trim_matches('\'');
-        if literal.len() >= 2 && oracle.contains(literal) {
-            return true;
-        }
-    }
-    // Subscripts a changed key by literal (`["port"]`, `['port']`, `.get("port")`).
-    for key in changed_keys {
-        if oracle.contains(&format!("[\"{key}\"]"))
-            || oracle.contains(&format!("['{key}']"))
-            || oracle.contains(&format!(".get(\"{key}\")"))
-            || oracle.contains(&format!(".get('{key}')"))
+        if literal.len() >= 2
+            && oracle.contains(literal)
+            && !oracle_solely_subscripts_unchanged_dict_key(oracle, changed_keys)
         {
             return true;
         }
     }
-    false
+    // Subscripts a changed key by literal (`["port"]`, `['port']`, `.get("port")`).
+    changed_keys
+        .iter()
+        .any(|key| oracle_subscripts_dict_key(oracle, key))
+}
+
+fn oracle_subscripts_dict_key(oracle: &str, key: &str) -> bool {
+    oracle.contains(&format!("[\"{key}\"]"))
+        || oracle.contains(&format!("['{key}']"))
+        || oracle.contains(&format!(".get(\"{key}\")"))
+        || oracle.contains(&format!(".get('{key}')"))
+}
+
+fn oracle_has_literal_dict_subscript(oracle: &str) -> bool {
+    oracle.contains("[\"")
+        || oracle.contains("['")
+        || oracle.contains(".get(\"")
+        || oracle.contains(".get('")
+}
+
+fn oracle_solely_subscripts_unchanged_dict_key(oracle: &str, changed_keys: &[String]) -> bool {
+    oracle_has_literal_dict_subscript(oracle)
+        && !changed_keys
+            .iter()
+            .any(|key| oracle_subscripts_dict_key(oracle, key))
 }
 
 /// Parse a list-literal line (a `return [...]`) into its top-level element source
@@ -311,8 +334,9 @@ fn list_changed_indices_and_values(
     }
 }
 
-/// Whether a strong oracle observes the CHANGED list element (#1290): a subscript of
-/// a changed index, the changed element value literal, or a whole-collection
+/// Whether a strong oracle observes the CHANGED list element (#1290 / #6585): a
+/// subscript of a changed index, the changed element value literal when the
+/// oracle does not solely subscript an unchanged sibling, or a whole-collection
 /// comparison. Conservative, mirroring [`oracle_observes_changed_dict_element`]: it
 /// returns `false` only for an oracle that observes purely a sibling index or an
 /// aggregate (`len(...)`).
@@ -330,16 +354,47 @@ fn oracle_observes_changed_list_element(
     }
     for value in changed_values {
         let literal = value.trim().trim_matches('"').trim_matches('\'');
-        if literal.len() >= 2 && oracle.contains(literal) {
+        if literal.len() >= 2
+            && oracle.contains(literal)
+            && !oracle_solely_subscripts_unchanged_list_index(oracle, changed_indices)
+        {
             return true;
         }
     }
-    for index in changed_indices {
-        if oracle.contains(&format!("[{index}]")) {
-            return true;
+    changed_indices
+        .iter()
+        .any(|index| oracle_subscripts_list_index(oracle, *index))
+}
+
+fn oracle_subscripts_list_index(oracle: &str, index: usize) -> bool {
+    oracle.contains(&format!("[{index}]"))
+}
+
+fn oracle_has_list_index_subscript(oracle: &str) -> bool {
+    let bytes = oracle.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'[' {
+            let mut j = i + 1;
+            if j < bytes.len() && bytes[j].is_ascii_digit() {
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j < bytes.len() && bytes[j] == b']' {
+                    return true;
+                }
+            }
         }
+        i += 1;
     }
     false
+}
+
+fn oracle_solely_subscripts_unchanged_list_index(oracle: &str, changed_indices: &[usize]) -> bool {
+    oracle_has_list_index_subscript(oracle)
+        && !changed_indices
+            .iter()
+            .any(|index| oracle_subscripts_list_index(oracle, *index))
 }
 
 /// Split an f-string source (`f"..."`/`f'...'`, optional `r` prefix) into its
@@ -603,34 +658,26 @@ pub(super) fn classify_sink_alignment_with_old(
         .rsplit('.')
         .next()
         .unwrap_or(owner.name.as_str());
-    let mut alias_tokens: Vec<String> = Vec::new();
     // A method owner's only importable alias is its class's, which rule 9 does
     // not count as identity alone; an aliased class reaches the bound-receiver
     // branch instead (`from m import Cart as C`, `C().total()`).
-    for test in all_tests
-        .iter()
-        .filter(|_| !is_method_owner)
-        .filter(|test| super::test_activation::activation_control(test).is_none())
-    {
-        for import in &test.imports {
-            // For a method/classmethod owner the bare method name is not directly
-            // importable, so only the owner's CLASS alias is identity-bearing.
-            // Matching the bare method name here would credit any same-named free
-            // function aliased in an unrelated module (a false-`exposed`).
-            let imported_matches = if is_method_owner {
-                owner_class_token.as_deref() == Some(import.imported.as_str())
-                    && import_module_may_be_owners(import, owner, &test.file)
-            } else {
+    let owner_aliases_in = |test: &PythonTest| -> Vec<String> {
+        if is_method_owner || super::test_activation::activation_control(test).is_some() {
+            return Vec::new();
+        }
+        test.imports
+            .iter()
+            .filter(|import| {
                 // Free-function alias: require module identity, else a same-named
                 // function aliased from an unrelated module credits a false-`exposed`.
                 (import.imported == owner_simple || import.imported == owner.name)
                     && import_source_module_matches_owner(import, owner, &test.file)
-            };
-            if imported_matches && !import.alias.is_empty() {
-                alias_tokens.push(import.alias.clone());
-            }
-        }
-    }
+            })
+            .filter(|import| import.alias.len() >= 2)
+            .map(|import| import.alias.clone())
+            .collect()
+    };
+    let mut alias_tokens: Vec<String> = all_tests.iter().flat_map(owner_aliases_in).collect();
     let mut change_only = change_tokens.clone();
     identity_tokens.retain(|token| token.len() >= 2);
     let method_name_token = method_name_token.filter(|token| token.len() >= 2);
@@ -683,6 +730,17 @@ pub(super) fn classify_sink_alignment_with_old(
         group
             .iter()
             .any(|token| oracle_text_observes_token(&unit.text, token))
+    };
+    // A function-scope stand-in (`fee = Mock(...)`, `fee = lambda ...`,
+    // `def fee`) is not the imported owner. Token presence of that name in
+    // the assertion is not observation of the production return (#8247).
+    let observes_imported_owner = |unit: &AlignmentUnit<'_>, group: &[String]| -> bool {
+        group.iter().any(|token| {
+            oracle_text_observes_token(&unit.text, token)
+                && !unit
+                    .test
+                    .is_some_and(|test| function_scope_stand_in(test, token, owner))
+        })
     };
     // Receiver identity for a method owner: the test holding the assertion must
     // call the owner's method on a receiver statically bound to the owner class
@@ -766,8 +824,9 @@ pub(super) fn classify_sink_alignment_with_old(
     // `9090` changes only `port`), but an assertion that merely calls the owner
     // and observes a SIBLING key (`build_config()["host"]`) or an aggregate
     // (`len(...)`) does not discriminate the change. Credit only when the
-    // assertion observes the CHANGED element: its changed value, a subscript of
-    // the changed key, or a whole-collection comparison. Non-dict changes (and
+    // assertion observes the CHANGED element: its changed value unless the
+    // oracle solely subscripts an unchanged sibling, a subscript of
+    // the changed key, or a whole-collection comparison. Non-dict changes (and)
     // changes whose changed keys cannot be localized from the paired old line) are
     // not gated and keep prior behavior (pass-through `true`).
     let dict_change = dict_changed_keys_and_values(old_line_text, line_text);
@@ -825,6 +884,7 @@ pub(super) fn classify_sink_alignment_with_old(
         field_construction_credit_ok(unit)
             && fstring_credit_ok(unit)
             && !expected_computed_through_owner(&unit.text, &owner_reference_tokens)
+            && !assertion_calls_stand_in(unit, owner)
     };
     // A mock assertion credits only through the effect branch, where it pins
     // the arguments of the very call the changed line makes.
@@ -846,10 +906,11 @@ pub(super) fn classify_sink_alignment_with_old(
             .is_some_and(|reads| reads.observed_by(&unit.text, unit.line))
             && field_construction_credit_ok(unit)
             && fstring_credit_ok(unit)
+            && !assertion_calls_stand_in(unit, owner)
     };
     let branches: [CreditBranch<'_, '_>; 6] = [
         ("direct", "strong_oracle_observes_owner_name", &|unit| {
-            observes(unit, &identity_tokens)
+            observes_imported_owner(unit, &identity_tokens)
                 && (method_owner_identity(unit) || free_fn_module_identity(unit))
                 && gates_ok(unit)
         }),
@@ -865,7 +926,12 @@ pub(super) fn classify_sink_alignment_with_old(
             },
         ),
         ("alias", "strong_oracle_observes_import_alias", &|unit| {
-            observes(unit, &alias_tokens) && gates_ok(unit)
+            // An alias binds only in the test that imports it: another test's
+            // `from m import owner as quote` does not make this test's `quote`
+            // the owner (#8247). Without source facts the pooled set stands.
+            let own_aliases = unit.test.map(owner_aliases_in);
+            observes_imported_owner(unit, own_aliases.as_deref().unwrap_or(&alias_tokens))
+                && gates_ok(unit)
         }),
         (
             "direct",
@@ -1028,4 +1094,208 @@ fn alignment_units<'a>(
         }
     }
     units
+}
+
+/// Whether this assertion calls a function-scope stand-in of the owner
+/// (or of an import alias) rather than the imported production function.
+fn assertion_calls_stand_in(unit: &AlignmentUnit<'_>, owner: &PythonOwner) -> bool {
+    let Some(test) = unit.test else {
+        return false;
+    };
+    std::iter::once(owner.name.as_str())
+        .chain(test.imports.iter().filter_map(|import| {
+            (import.imported == owner.name
+                && import_source_module_matches_owner(import, owner, &test.file))
+            .then_some(import.alias.as_str())
+        }))
+        .any(|name| {
+            oracle_operand_calls(&unit.text, name) && function_scope_stand_in(test, name, owner)
+        })
+}
+
+/// Whether `name` is bound in the test function's own scope by a substitute
+/// (assignment, local `def`/`class`, loop/`as` target, or a non-owner import).
+/// Nested `def`/`class` bodies are a different scope, so a helper-local
+/// shadow does not hide an outer assertion on the imported owner.
+fn function_scope_stand_in(test: &PythonTest, name: &str, owner: &PythonOwner) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let Some((parameter_names, body)) = parse_test_function_scope(test) else {
+        return false;
+    };
+    parameter_names.iter().any(|parameter| parameter == name)
+        || suite_binds_stand_in(&body, name, test, owner)
+}
+
+fn parse_test_function_scope(test: &PythonTest) -> Option<(Vec<String>, Vec<Stmt>)> {
+    let source = dedent_python(&test.body_text);
+    let Ok(Mod::Module(module)) = parse_module_result(Path::new("<python-test-body>"), &source)
+    else {
+        return None;
+    };
+    match module.body.len() {
+        1 => match module.body.into_iter().next()? {
+            Stmt::FunctionDef(function) => Some((argument_names(&function.args), function.body)),
+            Stmt::AsyncFunctionDef(function) => {
+                Some((argument_names(&function.args), function.body))
+            }
+            other => Some((Vec::new(), vec![other])),
+        },
+        _ => Some((Vec::new(), module.body)),
+    }
+}
+
+fn argument_names(args: &ast::Arguments) -> Vec<String> {
+    args.posonlyargs
+        .iter()
+        .chain(&args.args)
+        .chain(&args.kwonlyargs)
+        .map(|arg| arg.def.arg.to_string())
+        .chain(args.vararg.iter().map(|arg| arg.arg.to_string()))
+        .chain(args.kwarg.iter().map(|arg| arg.arg.to_string()))
+        .filter(|name| !matches!(name.as_str(), "self" | "cls"))
+        .collect()
+}
+
+fn suite_binds_stand_in(
+    statements: &[Stmt],
+    name: &str,
+    test: &PythonTest,
+    owner: &PythonOwner,
+) -> bool {
+    statements.iter().any(|stmt| match stmt {
+        Stmt::FunctionDef(function) => function.name.as_str() == name,
+        Stmt::AsyncFunctionDef(function) => function.name.as_str() == name,
+        Stmt::ClassDef(class) => class.name.as_str() == name,
+        Stmt::Assign(assign) => assign
+            .targets
+            .iter()
+            .any(|target| target_binds_name(target, name)),
+        Stmt::AnnAssign(assign) => target_binds_name(&assign.target, name),
+        Stmt::AugAssign(assign) => target_binds_name(&assign.target, name),
+        Stmt::Delete(delete) => delete
+            .targets
+            .iter()
+            .any(|target| target_binds_name(target, name)),
+        Stmt::For(stmt) => {
+            target_binds_name(&stmt.target, name)
+                || suite_binds_stand_in(&stmt.body, name, test, owner)
+                || suite_binds_stand_in(&stmt.orelse, name, test, owner)
+        }
+        Stmt::AsyncFor(stmt) => {
+            target_binds_name(&stmt.target, name)
+                || suite_binds_stand_in(&stmt.body, name, test, owner)
+                || suite_binds_stand_in(&stmt.orelse, name, test, owner)
+        }
+        Stmt::While(stmt) => {
+            suite_binds_stand_in(&stmt.body, name, test, owner)
+                || suite_binds_stand_in(&stmt.orelse, name, test, owner)
+        }
+        Stmt::If(stmt) => {
+            suite_binds_stand_in(&stmt.body, name, test, owner)
+                || suite_binds_stand_in(&stmt.orelse, name, test, owner)
+        }
+        Stmt::With(stmt) => {
+            stmt.items.iter().any(|item| {
+                item.optional_vars
+                    .as_ref()
+                    .is_some_and(|target| target_binds_name(target, name))
+            }) || suite_binds_stand_in(&stmt.body, name, test, owner)
+        }
+        Stmt::AsyncWith(stmt) => {
+            stmt.items.iter().any(|item| {
+                item.optional_vars
+                    .as_ref()
+                    .is_some_and(|target| target_binds_name(target, name))
+            }) || suite_binds_stand_in(&stmt.body, name, test, owner)
+        }
+        Stmt::Try(stmt) => try_binds_stand_in(
+            &stmt.body,
+            &stmt.handlers,
+            &stmt.orelse,
+            &stmt.finalbody,
+            name,
+            test,
+            owner,
+        ),
+        Stmt::TryStar(stmt) => try_binds_stand_in(
+            &stmt.body,
+            &stmt.handlers,
+            &stmt.orelse,
+            &stmt.finalbody,
+            name,
+            test,
+            owner,
+        ),
+        Stmt::Match(stmt) => stmt
+            .cases
+            .iter()
+            .any(|case| suite_binds_stand_in(&case.body, name, test, owner)),
+        Stmt::Import(_) | Stmt::ImportFrom(_) => {
+            let imports = collect_imports_from_statements(&test.file, std::slice::from_ref(stmt));
+            imports.iter().any(|import| {
+                import.alias == name
+                    && !(import.imported == owner.name
+                        && import_source_module_matches_owner(import, owner, &test.file))
+            })
+        }
+        _ => false,
+    })
+}
+
+fn try_binds_stand_in(
+    body: &[Stmt],
+    handlers: &[ast::ExceptHandler],
+    orelse: &[Stmt],
+    finalbody: &[Stmt],
+    name: &str,
+    test: &PythonTest,
+    owner: &PythonOwner,
+) -> bool {
+    suite_binds_stand_in(body, name, test, owner)
+        || handlers
+            .iter()
+            .any(|ast::ExceptHandler::ExceptHandler(handler)| {
+                handler
+                    .name
+                    .as_ref()
+                    .is_some_and(|bound| bound.as_str() == name)
+                    || suite_binds_stand_in(&handler.body, name, test, owner)
+            })
+        || suite_binds_stand_in(orelse, name, test, owner)
+        || suite_binds_stand_in(finalbody, name, test, owner)
+}
+
+fn target_binds_name(target: &Expr, name: &str) -> bool {
+    match target {
+        Expr::Name(bound) => bound.id.as_str() == name,
+        Expr::Tuple(tuple) => tuple
+            .elts
+            .iter()
+            .any(|element| target_binds_name(element, name)),
+        Expr::List(list) => list
+            .elts
+            .iter()
+            .any(|element| target_binds_name(element, name)),
+        Expr::Starred(starred) => target_binds_name(&starred.value, name),
+        _ => false,
+    }
+}
+
+fn dedent_python(source: &str) -> String {
+    let min_indent = source
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.len() - line.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    if min_indent == 0 {
+        return source.to_string();
+    }
+    source
+        .lines()
+        .map(|line| line.get(min_indent..).unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n")
 }

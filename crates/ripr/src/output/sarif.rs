@@ -37,13 +37,16 @@ const RIPR_SARIF_SCHEMA_VERSION: &str = "0.1";
 /// Match the producers' Unicode scalar-value columns. SARIF 2.1.0 §3.14.27
 /// requires this declaration for nonempty text results; empty runs may carry it.
 const SARIF_COLUMN_KIND: &str = "unicodeCodePoints";
-/// Per-class rule help anchors (#7371). Finding rules point at the exposure
-/// class table a maintainer landing on a code-scanning rule page needs; seam
-/// rules point at the seam inventory spec's classification contract. The
-/// SARIF policy spec (RIPR-SPEC-0008) documents severity mapping, not
-/// per-class meaning, so it no longer backs every rule's helpUri.
-const STATIC_EXPOSURE_MODEL_URI: &str = "https://github.com/EffortlessMetrics/ripr/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes";
-const SEAM_GRIP_SPEC_URI: &str = "https://github.com/EffortlessMetrics/ripr/blob/main/docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md";
+/// Per-class rule help anchors (#7371, #7397). Finding rules point at the
+/// exposure class table a maintainer landing on a code-scanning rule page
+/// needs; seam rules point at the seam inventory spec's classification
+/// contract. The SARIF policy spec (RIPR-SPEC-0008) documents severity
+/// mapping, `--root` stability, and RFC 3986 URI encoding, not per-class
+/// meaning, so it no longer backs every rule's helpUri. Cited docs use the
+/// current `ripr-swarm` blob so code-scanning help tracks the emitting
+/// development trunk instead of a stale `EffortlessMetrics/ripr` snapshot.
+const STATIC_EXPOSURE_MODEL_URI: &str = "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes";
+const SEAM_GRIP_SPEC_URI: &str = "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md";
 const PYTHON_PREVIEW_AUTHORITY_BOUNDARY: &str = "preview_advisory_only";
 
 /// Render diff-scoped Findings as SARIF.
@@ -2212,6 +2215,16 @@ weakly_gripped = "note"
                     "rule {id} keeps the severity-policy helpUri instead of a class anchor"
                 ));
             }
+            if !help_uri.starts_with(SWARM_BLOB_MAIN) {
+                return Err(format!(
+                    "rule {id} helpUri is not a current swarm blob: {help_uri}"
+                ));
+            }
+            if help_uri.contains("https://github.com/EffortlessMetrics/ripr/blob/") {
+                return Err(format!(
+                    "rule {id} helpUri still cites the release-repo snapshot: {help_uri}"
+                ));
+            }
         }
         // Spot anchors: the finding rules point at the exposure class table,
         // the seam rules at the seam inventory spec.
@@ -2225,6 +2238,37 @@ weakly_gripped = "note"
                 .as_str()
                 .is_some_and(|uri| uri.contains("RIPR-SPEC-0005-repo-seam-inventory.md"))
         );
+        Ok(())
+    }
+
+    const SWARM_BLOB_MAIN: &str = "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/";
+
+    /// #7397: the cited swarm docs exist in this checkout and cover the
+    /// class-meaning (helpUri) plus SARIF URI-encoding / `--root` stability
+    /// invariants the emitter implements. RIPR-SPEC-0008 is not the per-rule
+    /// helpUri (#7371) but remains the SARIF contract for those invariants.
+    #[test]
+    fn cited_swarm_docs_cover_class_meaning_and_sarif_uri_invariants() -> Result<(), String> {
+        let exposure = include_str!("../../../../docs/STATIC_EXPOSURE_MODEL.md");
+        let seam_spec =
+            include_str!("../../../../docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md");
+        let sarif_spec = include_str!("../../../../docs/specs/RIPR-SPEC-0008-sarif-ci-policy.md");
+        if !exposure.contains("## Exposure Classes") {
+            return Err(
+                "cited STATIC_EXPOSURE_MODEL.md is missing ## Exposure Classes".to_string(),
+            );
+        }
+        if !seam_spec.contains("SeamGripClass") {
+            return Err("cited RIPR-SPEC-0005 is missing SeamGripClass".to_string());
+        }
+        if !sarif_spec.contains("do not depend on how")
+            || !sarif_spec.contains("`--root` is spelled")
+        {
+            return Err("RIPR-SPEC-0008 lost the --root spelling stability invariant".to_string());
+        }
+        if !sarif_spec.contains("percent-encoded as an RFC 3986") {
+            return Err("RIPR-SPEC-0008 lost the RFC 3986 percent-encoding invariant".to_string());
+        }
         Ok(())
     }
 
@@ -2358,6 +2402,7 @@ weakly_gripped = "note"
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,

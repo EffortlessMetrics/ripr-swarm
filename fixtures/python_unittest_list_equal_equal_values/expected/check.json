@@ -41,9 +41,9 @@
         "infect": {"state":"yes","confidence":"low","summary":"Changed Python return expression can alter the owner return value: `return [1, True]`"},
         "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
-        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses a `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
        },
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `labels`", "infection yes: Changed Python return expression can alter the owner return value: `return [1, True]`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses a `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return [1, True] (line 2)", "related test tests/test_labels.py:4 test_labels uses strong exact value oracle: self.assertListEqual(labels(), [1, True])"],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `labels`", "infection yes: Changed Python return expression can alter the owner return value: `return [1, True]`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return [1, True] (line 2)", "related test tests/test_labels.py:4 test_labels uses strong exact value oracle: self.assertListEqual(labels(), [1, True])"],
       "flow_sinks": [
         {"kind":"return_value","text":"return [1, True]","line":2}
       ],

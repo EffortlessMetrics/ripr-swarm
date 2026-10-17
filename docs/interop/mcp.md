@@ -6,8 +6,9 @@ JSON-RPC on stdin and stdout. It tells an MCP client which repository root
 RIPR would use, what RIPR is and is not allowed to do there, and — after an
 explicit `ripr_refresh` — the committed analysis snapshot: a deterministically
 bounded working set of canonical items and one complete evidence document per
-item. It never edits source, runs tests or mutation, executes verification
-commands, or prepares a repair.
+item. It never edits source, runs tests or mutation, or executes verification
+commands; `ripr_prepare_repair` only creates an in-memory transaction that
+authorizes nothing (see [What it does not do](#what-it-does-not-do)).
 
 The design boundary is [ADR 0022](../adr/0022-mcp-is-a-bounded-projection.md).
 
@@ -38,6 +39,42 @@ A generic MCP client entry:
   }
 }
 ```
+
+### Register with a coding agent
+
+`ripr` must be on `PATH` (or use its absolute path as `command`). Agents start
+stdio servers from the project directory, so omitting `--root` resolves the
+repository the agent is working in; pass an absolute `--root` if your client
+starts servers elsewhere.
+
+```bash
+# Claude Code: writes a shareable .mcp.json in the project
+claude mcp add --scope project ripr -- ripr mcp --stdio
+# or let ripr write it (keeps your other servers): ripr init --mcp
+
+# Codex: adds an entry to its user config
+codex mcp add ripr -- ripr mcp --stdio
+```
+
+Equivalent Codex `config.toml` entry:
+
+```toml
+[mcp_servers.ripr]
+command = "ripr"
+args = ["mcp", "--stdio"]
+```
+
+A registered server still needs the client's own approval step before its
+tools reach a session. These snippets use each client's documented MCP
+registration; the repository has not yet retained cold-session proof that
+either client completes the flow (tracked in #3092), so treat them as
+configuration, not a support claim.
+
+An agent edits the worktree, but `ripr_refresh` analyzes only the committed
+default-branch diff. Commit your edits on a branch that is ahead of the
+default branch before `ripr_refresh` (a commit on the default branch itself
+leaves an empty diff), or use `ripr check --worktree --format json` outside
+MCP.
 
 ## Progressive flow
 
@@ -224,8 +261,12 @@ page — an omission disclosure alone over the ceiling — fails closed with
 `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the identity
 route. Other tool responses carry the document once at full fidelity:
 `content[0].text` is the compact JSON serialization, and
-`structuredContent` repeats it only while the complete envelope stays under
-the response bound.
+`structuredContent` repeats it in every successful response. Each tool
+advertises an `outputSchema`, so a success never ships without its
+structured copy: when the complete double-carry envelope does not fit the
+id-aware response budget, the call fails closed with the typed
+`result_too_large` refusal and that tool's recovery route (#7768) instead
+of silently dropping `structuredContent`.
 
 `ripr_get_gap` (and the equivalent resource `ripr://gap/{canonical_id}`)
 returns one canonical item's complete bounded evidence bound to its snapshot

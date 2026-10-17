@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr check` (including `repo-exposure-json`, and the LSP and MCP paths that run it) refuses to run when the workspace's `target`, `target/ripr` or `target/ripr/cache` resolves outside the workspace (symlink or junction), so a checked-in link can no longer redirect cache and artifact writes. Links that stay inside the workspace are unaffected. The refusal names the fix: replace the link with a real directory, or set `RIPR_CACHE_DIR` (for example `RIPR_CACHE_DIR=/var/cache/ripr`), which opts in explicitly (#7781).
