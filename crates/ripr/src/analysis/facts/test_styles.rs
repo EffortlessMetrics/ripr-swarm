@@ -121,9 +121,9 @@ fn normalize_indexed_file_test_styles(
             ),
         };
         let has_test_attribute = defines_test && !compiled_out;
-        // A test under a cfg that is false in a test build never runs and
-        // never compiles (#6293): evidence-only, so it is neither an
-        // executable test nor a production probe subject.
+        // Directly test-required helpers stay evidence-only. A test under a
+        // cfg that is false in a test build never runs or compiles (#6293)
+        // and is evidence-only too; neither becomes a production probe.
         let preserve_cfg_test_role = requires_test
             || (defines_test && compiled_out)
             || (!has_test_attribute
@@ -224,8 +224,8 @@ fn lexical_attributes_before<'source>(
 }
 
 /// Collects the attributes immediately preceding `start_line` so the
-/// compile-out check sees a multi-line gate (`#[cfg(\n    any()\n)]`) the
-/// same way a one-line gate is seen (#6293, #7043).
+/// compile-out and test-required checks see a multi-line gate
+/// (`#[cfg(\n    any()\n)]`) the same way as a one-line gate (#6293, #7043).
 ///
 /// The scan is a single forward pass over a byte-bounded suffix of the
 /// prefix: comments and blank lines are skipped, complete `#[...]` forms
