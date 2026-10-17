@@ -130,6 +130,9 @@ pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
             crate::ripr_debug_binary()
         }
     };
+    // Read before the long runs so a binary that cannot identify itself fails
+    // fast, and the recorded build is the one that does the classifying.
+    let analyzer = analyzer_version(&binary)?;
     for (name, checkout) in &options.repos {
         reject_checkout_inside_workspace(name, checkout)?;
     }
@@ -143,7 +146,6 @@ pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
             &binary, &scratch, name, checkout, &options,
         )?);
     }
-    let analyzer = analyzer_version(&binary)?;
     let report = build_report(&repos, options.examples, &analyzer);
     let json_text = serde_json::to_string_pretty(&report)
         .map_err(|err| format!("serialize mutation spot check: {err}"))?;
