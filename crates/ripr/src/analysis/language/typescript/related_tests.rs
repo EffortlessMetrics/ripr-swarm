@@ -1154,6 +1154,7 @@ pub(crate) fn receiver_names_for_constructor_calls(
 ) -> Vec<String> {
     let mut receiver_names = Vec::new();
     for line in body_text.lines() {
+        let line = strip_trailing_line_comment(line);
         let trimmed = line.trim_start();
         if trimmed.starts_with("//") {
             continue;
@@ -1170,6 +1171,33 @@ pub(crate) fn receiver_names_for_constructor_calls(
         }
     }
     receiver_names
+}
+
+/// `line` without a trailing `// comment` (a `//` outside any quote that is
+/// not part of a `://` URL scheme). Quote tracking is per line, so a quote
+/// opened earlier on a multi-line template leaves the text untouched: the
+/// result only ever drops text, which can withhold credit but not grant it.
+fn strip_trailing_line_comment(line: &str) -> &str {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut previous = '\0';
+    for (idx, ch) in line.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+        } else if matches!(ch, '"' | '\'' | '`') {
+            quote = Some(ch);
+        } else if ch == '/' && previous == '/' {
+            return &line[..idx - 1];
+        }
+        previous = ch;
+    }
+    line
 }
 
 fn constructed_receiver_declaration(
@@ -1202,6 +1230,11 @@ fn contains_inline_new_member_call(
     if !is_safe_javascript_identifier(method_name) {
         return false;
     }
+    let body_text = &body_text
+        .lines()
+        .map(strip_trailing_line_comment)
+        .collect::<Vec<_>>()
+        .join("\n");
     constructor_names.iter().any(|constructor| {
         let needle = format!("new {constructor}(");
         body_text.match_indices(&needle).any(|(idx, _)| {
@@ -3895,6 +3928,7 @@ mod constructed_receiver_tests {
             ("const c = new Other(0, 10);", false),
             ("// const c = new Clamp(0, 10);", false),
             ("const c = makeClamp(); // new Clamp(0, 10)", false),
+            ("const c = makeClamp() // new Clamp(0, 10)", false),
         ];
         for (body, expected) in cases {
             let bound = !receiver_names_for_constructor_calls(body, &ctors).is_empty();
@@ -3918,6 +3952,8 @@ mod constructed_receiver_tests {
             ("expect(new Clamp(0, 10) .limit(50))", false),
             ("expect(factory.new Clamp(0, 10).limit(50))", false),
             ("// new Clamp(0, 10).limit(50)", false),
+            ("setup(); // new Clamp(0, 10).limit(50)", false),
+            ("go('//'); expect(new Clamp(0, 10).limit(50))", true),
         ];
         for (body, expected) in cases {
             assert_eq!(
