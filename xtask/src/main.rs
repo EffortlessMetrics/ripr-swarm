@@ -326,9 +326,9 @@ pub(crate) use reports::{
     write_badge_artifacts_after_build, write_badge_artifacts_from_diff, write_badge_input_identity,
 };
 pub(crate) use reports::{
-    FixtureCheckFormat, fixture_dirs, goldens_check, is_manifest_only_fixture_dir,
-    normalize_fixture_human_output, normalize_fixture_json_output, ripr_fixture_binary,
-    run_fixture_check, yes_no,
+    FixtureCheckFormat, PrecommitGoldens, fixture_dirs, golden_staleness_trigger, goldens_check,
+    goldens_check_for_precommit, is_manifest_only_fixture_dir, normalize_fixture_human_output,
+    normalize_fixture_json_output, ripr_fixture_binary, run_fixture_check, yes_no,
 };
 #[cfg(test)]
 pub(crate) use reports::{
@@ -659,6 +659,9 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
     check_rust_source_role_authority()?;
     check_public_api()?;
     check_output_contracts()?;
+    if !collect_all {
+        precommit_goldens_for_output_changes()?;
+    }
     check_identity_registry()?;
     check_doc_artifacts()?;
     check_doc_index()?;
@@ -679,6 +682,38 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
         check_lint_policy()?;
     }
     publish_precommit_policy_report(collect_all)
+}
+
+/// Output-surface diffs must not reach review with stale goldens (#8421): main
+/// went red twice on 2026-10-17 because renderer wording changed without
+/// re-blessing the fixtures that print it. Running `goldens check` on every
+/// precommit is too slow (minutes), so it runs only when the diff against
+/// `origin/main` touches output-surface code or a fixture expectation. A
+/// dependency-preparation gap is reported as such, never as a pass.
+fn precommit_goldens_for_output_changes() -> Result<(), String> {
+    let mut changed = changed_files_vs_base(Path::new("."))?;
+    changed.extend(git_changed_files(Path::new("."), "HEAD")?);
+    let Some(trigger) = golden_staleness_trigger(&changed) else {
+        println!("goldens check: skipped, no output-surface or golden file changed vs origin/main");
+        return Ok(());
+    };
+    println!("goldens check: running because `{trigger}` changed vs origin/main");
+    match goldens_check_for_precommit()? {
+        PrecommitGoldens::Verified => {
+            println!("goldens check: pass");
+            Ok(())
+        }
+        PrecommitGoldens::EnvironmentGap(gaps) => {
+            println!(
+                "goldens check: INCOMPLETE (environment gap, not a pass): {} fixture(s) could not be compared; hosted CI still owns them. Run `cargo xtask goldens prepare` to close the gap.",
+                gaps.len()
+            );
+            for gap in gaps {
+                println!("  {gap}");
+            }
+            Ok(())
+        }
+    }
 }
 
 fn publish_precommit_policy_report(ci_policy: bool) -> Result<(), String> {
@@ -928,13 +963,18 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
 }
 
 fn changed_files_vs_base(root: &Path) -> Result<Vec<String>, String> {
+    git_changed_files(root, "origin/main...HEAD")
+}
+
+/// `git diff --name-only <rev>`; a bare `HEAD` covers staged and unstaged edits.
+fn git_changed_files(root: &Path, rev: &str) -> Result<Vec<String>, String> {
     // Raw NUL-delimited inventory (#4006): `-z` output is never C-quoted,
     // so exotic names survive byte-exact; parsing rules come from the
     // shared authority in `decode_changed_files`, not from line splitting
     // here. The spawn site is unchanged (gate-runner policy entry).
     let output = std::process::Command::new("git")
         .current_dir(root)
-        .args(["diff", "--name-only", "-z", "origin/main...HEAD"])
+        .args(["diff", "--name-only", "-z", rev])
         .output()
         .map_err(|err| format!("git diff --name-only failed: {err}"))?;
     if !output.status.success() {
@@ -945,7 +985,7 @@ fn changed_files_vs_base(root: &Path) -> Result<Vec<String>, String> {
             stderr
         };
         return Err(format!(
-            "git diff --name-only origin/main...HEAD failed: {detail};              if origin/main is not available, run `git fetch origin main` first"
+            "git diff --name-only {rev} failed: {detail};              if origin/main is not available, run `git fetch origin main` first"
         ));
     }
     decode_changed_files(&output.stdout)
