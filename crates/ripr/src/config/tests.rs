@@ -1952,6 +1952,59 @@ fn an_unknown_key_gets_no_table_hint() -> Result<(), String> {
 }
 
 #[test]
+fn a_recorded_retired_key_names_its_release_and_replacement() -> Result<(), String> {
+    // #7453: no released key is retired yet, so the production table is empty
+    // and the lookup is proved through an injected table.
+    let retired = [
+        RetiredKey {
+            key: "old_mode",
+            retired_in: "9.9.0",
+            replacement: Some("analysis.mode"),
+        },
+        RetiredKey {
+            key: "gone_key",
+            retired_in: "9.9.0",
+            replacement: None,
+        },
+    ];
+    let err = "TOML parse error at line 1, column 1\n  |\n1 | old_mode = 1\n  | ^^^^^^^^\nunknown field `old_mode`, expected one of `analysis`";
+    let hint = retired_key_hint_in(&retired, err)
+        .ok_or_else(|| "a recorded retired key must produce a hint".to_string())?;
+    assert_eq!(
+        hint,
+        "\n`old_mode` was retired in ripr 9.9.0; use `analysis.mode` instead"
+    );
+    let removed = retired_key_hint_in(&retired, &err.replace("old_mode", "gone_key"))
+        .ok_or_else(|| "a removed key must produce a hint".to_string())?;
+    assert!(removed.ends_with("`gone_key` was retired in ripr 9.9.0; remove it from ripr.toml"));
+    // A key that is not recorded keeps the plain serde error.
+    assert_eq!(
+        retired_key_hint_in(&retired, &err.replace("old_mode", "typo_key")),
+        None
+    );
+    // The shipped table records nothing, so today's errors are unchanged.
+    assert_eq!(retired_key_hint(err), None);
+    Ok(())
+}
+
+#[test]
+fn a_config_error_summary_keeps_a_recorded_retirement_but_drops_forged_lines() {
+    let retired = [RetiredKey {
+        key: "old_mode",
+        retired_in: "9.9.0",
+        replacement: Some("analysis.mode"),
+    }];
+    let line = retired_key_hint_line(&retired[0]);
+    let error = format!("TOML parse error\n{line}");
+    assert_eq!(
+        config_error_summary_with(&retired, &error),
+        format!("TOML parse error; {line}")
+    );
+    // Without the record the same text is file content and is dropped.
+    assert_eq!(config_error_summary_with(&[], &error), "TOML parse error");
+}
+
+#[test]
 fn an_invalid_oracle_strength_names_its_key() -> Result<(), String> {
     let Err(message) = parse_config("[oracles]\nbroad_error_strength = \"mega\"\n") else {
         return Err("an unknown strength must be refused".to_string());
