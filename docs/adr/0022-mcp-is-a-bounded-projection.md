@@ -79,6 +79,19 @@ beyond this status slice raises the SDK migration trigger rather than expanding
 a parallel framework. LSP and MCP remain peers over shared RIPR authority; one
 transport must not invoke or reinterpret the other.
 
+## Alternatives Considered
+
+- **Adopt the official Rust SDK in the first slice.** Not chosen then: it would
+  have made dependency adoption, lockfile regeneration, and conformance work
+  the dominant change (see Context). The SDK migration section below records
+  the successor that did adopt it.
+- **A local wire adapter as the long-term transport.** Superseded: the first
+  slice used one deliberately small adapter, and growth beyond status raised
+  the SDK migration trigger instead of expanding a parallel framework.
+- **Give MCP its own root discovery, evidence interpretation, or edit and
+  execution authority.** Rejected: MCP stays a projection over the shared
+  workspace-status producer, and LSP and MCP remain peers.
+
 ## SDK migration (#3088)
 
 The status-only successor uses pinned official `rmcp 3.5.0` with default

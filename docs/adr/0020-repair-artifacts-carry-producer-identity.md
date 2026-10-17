@@ -61,3 +61,15 @@ Costs and limits:
   can still emit a self-consistent artifact.
 - `receipt` provenance and verification-command execution are intentionally not
   claimed by this decision.
+
+## Alternatives Considered
+
+- **Trust path and JSON shape.** Rejected: a plausible snapshot would then
+  reach movement and receipt consumers without evidence that RIPR produced it
+  (see Context).
+- **A signature system.** Not chosen here: the commitment is an
+  integrity/currentness boundary, and signing is left to the follow-up
+  contracts under #1941 (see Decision).
+- **Compute the commitment in memory.** Not chosen: the bounded-memory
+  two-pass writer keeps large repo-exposure artifacts streaming
+  (see Consequences).
