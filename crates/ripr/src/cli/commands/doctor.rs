@@ -3890,6 +3890,18 @@ mod tests {
     }
 
     #[test]
+    fn ripr_artifact_tracked_is_not_checked_when_git_cannot_run() {
+        // A root that does not exist cannot host a git process, so the probe
+        // fails closed instead of claiming the index is clean (#8276).
+        let missing = unique_command_test_dir("artifact-tracked-missing");
+        assert!(!missing.exists());
+        assert_eq!(
+            ripr_artifact_tracked(&missing),
+            output::doctor::DoctorArtifactTracked::NotChecked
+        );
+    }
+
+    #[test]
     fn generated_workflow_line_flags_unpinned_and_other_version_installs() {
         // The exact install step `ripr 0.10.0 init --ci github` wrote.
         let v010 = "      - name: Install ripr\n        run: cargo install ripr --locked\n";
