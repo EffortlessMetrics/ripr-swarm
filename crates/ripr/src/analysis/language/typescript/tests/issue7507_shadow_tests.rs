@@ -431,6 +431,26 @@ fn issue7812_live_export_as_default_before_reassignment_stays_dropped() -> Resul
     Ok(())
 }
 
+/// #7812 review: `export default price` snapshots only for default importers.
+/// A binding that is also a live named export is observed after the later
+/// write by named importers, so the dead first arrow must stay dropped.
+#[test]
+fn issue7812_snapshot_default_does_not_excuse_a_live_named_export() -> Result<(), String> {
+    for source in [
+        "export let price = (n) => n - 20; export default price; price = (n) => 140;\n",
+        "let price = (n) => n - 20; export default price; export { price }; price = (n) => 140;\n",
+        "let price = (n) => n - 20; export default price; export { price as cost }; price = (n) => 140;\n",
+    ] {
+        let owners = owners_of_lib(source);
+        if owners.iter().any(|owner| owner.name == "price") {
+            return Err(format!(
+                "a live named export must keep the reassigned owner dropped for {source:?}: {owners:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn issue7507_conflicting_bare_module_exports_yield_no_owner() -> Result<(), String> {
     let source = "module.exports = function alpha(amount) { return amount - 20; };\nmodule.exports = function beta(amount) { return amount - 20; };\n";
