@@ -1,5 +1,27 @@
 # Golden Output Changes
 
+## Pending — boundary_gap (9)
+
+Reason:
+RIPR-SPEC-0153 (#3213) advances the classified Rust corpus generation to 1.81
+when directly test-gated helpers become evidence-only. Keep the portable
+unchanged-attempt snapshots and their dependent content/file commitments in
+sync. Under RIPR-SPEC-0020 the scenario still has unchanged weak grip, an
+incomplete receipt, and the same fail-closed first-action route; no finding,
+movement, status, limit, or tamper assertion changes.
+
+Validation:
+The existing `first_useful_action_corpus_pins_routing_cases` CLI test passes
+with default features and with `--no-default-features --features lang-rust`.
+It compares snapshots with the production normalizer and verifies the receipt
+hash chain. Only the corpus version and its transitive commitments changed;
+no blanket fixture regeneration was used.
+
+Updated:
+- `first-useful-action/unchanged-after-attempt/{before,after}.repo-exposure.json`
+- `first-useful-action/unchanged-after-attempt/agent-verify.json`
+- `first-useful-action/unchanged-after-attempt/agent-receipt.json`
+
 ## Pending — boundary_gap (8)
 
 Reason:
